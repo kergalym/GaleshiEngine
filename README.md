@@ -1,4 +1,4 @@
-![alt](./screenshots/initial_ver.png)
+![alt](./screenshoots/initial.png)
 
 # GaleshiEngine
 
