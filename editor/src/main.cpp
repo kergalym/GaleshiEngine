@@ -10,6 +10,7 @@
 #include "GaleshiEngine/Assets/Mesh.hpp"
 #include "GaleshiEngine/Editor/EditorState.hpp"
 #include "GaleshiEngine/Editor/ContentBrowser.hpp"
+#include "GaleshiEngine/Editor/FilePickerDialog.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -39,7 +40,18 @@ protected:
         m_browser    = std::make_unique<Galeshi::ContentBrowser>("assets");
         m_serializer = std::make_unique<Galeshi::SceneSerializer>(m_scene, *m_assets);
 
-        BuildTestScene();
+        // Авто-загрузка сцены, если она есть. Иначе — тестовая сцена.
+        namespace fs = std::filesystem;
+        if (fs::exists("scene.json")) {
+            if (m_serializer->Load("scene.json")) {
+                spdlog::info("[Editor] Scene auto-loaded from scene.json");
+            } else {
+                spdlog::warn("[Editor] Failed to load scene.json, building default");
+                BuildTestScene();
+            }
+        } else {
+            BuildTestScene();
+        }
 
         m_camera.SetPerspective(glm::radians(60.0f),
             static_cast<float>(GetRenderer()->Width()) /
@@ -103,7 +115,6 @@ protected:
             if (ImGui::IsKeyPressed(ImGuiKey_Delete)) DeleteSelected();
 
             if (ImGui::GetIO().KeyCtrl) {
-                if (ImGui::IsKeyPressed(ImGuiKey_S)) SaveScene();
                 if (ImGui::IsKeyPressed(ImGuiKey_O)) LoadScene();
             }
         }
@@ -113,9 +124,18 @@ protected:
         DrawOutliner();
         DrawDetails();
         DrawContentBrowser();
+
+        // File picker — рисуем поверх всего
+        std::string chosen = m_filePicker.Draw();
+        if (!chosen.empty()) {
+            SpawnFromModel(chosen, m_editor.camTarget);
+        }
     }
 
     void OnShutdown() override {
+        // Авто-сохранение сцены
+        SaveScene();
+
         m_render.reset();
         m_framebuffer.reset();
         m_serializer.reset();
@@ -128,16 +148,14 @@ private:
     // Save / Load
     // -------------------------------------------------------------------
     void SaveScene() {
-        m_serializer->Save("assets/scene.json");
+        if (m_serializer) m_serializer->Save("scene.json");
     }
     void LoadScene() {
-        namespace fs = std::filesystem;
-        if (!fs::exists("assets/scene.json")) {
-            spdlog::warn("[Editor] No scene.json found");
-            return;
-        }
-        m_editor.ClearSelection();
-        m_serializer->Load("assets/scene.json");
+        // Load Scene = импорт модели из любого места.
+        const char* home = std::getenv("HOME");
+        std::string start = home ? home : "/";
+        m_filePicker.Open(start, "Load Model",
+            { ".fbx", ".gltf", ".glb", ".obj", ".dae" });
     }
 
     void DeleteSelected() {
@@ -222,6 +240,15 @@ private:
         }
 
         m_viewportHovered = ImGui::IsItemHovered();
+
+        // --- Zoom ---
+        if (m_viewportHovered) {
+            float wheel = ImGui::GetIO().MouseWheel;
+            if (wheel != 0.0f) {
+                m_editor.camRadius -= wheel * 0.5f;
+                m_editor.camRadius = glm::clamp(m_editor.camRadius, 0.5f, 200.0f);
+            }
+        }
 
         // --- Drag-n-drop target ---
         if (ImGui::BeginDragDropTarget()) {
@@ -432,21 +459,60 @@ private:
         }
 
         namespace fs = std::filesystem;
-        auto name = fs::path(path).stem().string();
-        auto e = m_scene.CreateEntity(name);
+        const auto stem = fs::path(path).stem().string();
+        const bool multi = model.meshes.size() > 1;
 
-        e.AddComponent<Galeshi::MeshComponent>(
-            Galeshi::MeshComponent{ model.meshes[0], path, "" });
+        std::vector<Galeshi::Entity> spawned;
+        for (size_t i = 0; i < model.meshes.size(); ++i) {
+            std::string name = stem;
+            if (multi) name += "_" + std::to_string(i);
 
-        auto mat = model.materials.empty()
-                 ? std::make_shared<Galeshi::Material>()
-                 : model.materials[0];
-        e.AddComponent<Galeshi::MaterialComponent>(
-            Galeshi::MaterialComponent{ mat });
+            auto e = m_scene.CreateEntity(name);
 
-        e.GetComponent<Galeshi::TransformComponent>().position = pos;
+            auto mc = Galeshi::MeshComponent{
+                model.meshes[i], path, "", static_cast<int>(i) };
+            e.AddComponent<Galeshi::MeshComponent>(mc);
 
-        m_editor.Select(e);
+            std::shared_ptr<Galeshi::Material> mat;
+            if (i < model.meshMaterialIndex.size()) {
+                size_t matIdx = static_cast<size_t>(model.meshMaterialIndex[i]);
+                if (matIdx < model.materials.size())
+                    mat = model.materials[matIdx];
+            }
+            if (!mat && !model.materials.empty()) mat = model.materials[0];
+            if (!mat) mat = std::make_shared<Galeshi::Material>();
+
+            e.AddComponent<Galeshi::MaterialComponent>(
+                Galeshi::MaterialComponent{ mat });
+
+            e.GetComponent<Galeshi::TransformComponent>().position = pos;
+            spawned.push_back(e);
+        }
+
+        spdlog::info("[Editor] Spawned {} entit{} from {}",
+                     spawned.size(),
+                     spawned.size() == 1 ? "y" : "ies",
+                     path);
+
+        if (!spawned.empty()) {
+            m_editor.Select(spawned[0]);
+
+            // Авто-фокус: ставим target в центр модели и подбираем радиус
+            m_editor.camTarget = pos;
+            
+            // Вычисляем грубый радиус по размеру первого меша
+            auto& mesh = spawned[0].GetComponent<Galeshi::MeshComponent>().mesh;
+            if (mesh) {
+                glm::vec3 bmin, bmax;
+                mesh->LocalAABB(bmin, bmax);
+                float size = glm::length(bmax - bmin);
+                if (size > 0.1f) {
+                    m_editor.camRadius = size * 2.0f;
+                } else {
+                    m_editor.camRadius = 5.0f;
+                }
+            }
+        }
     }
 
     // -------------------------------------------------------------------
@@ -497,6 +563,8 @@ private:
 
     uint16_t m_viewportW = 0, m_viewportH = 0;
     bool     m_viewportHovered = false;
+
+    Galeshi::FilePickerDialog m_filePicker;
 };
 
 int main(int, char**) {

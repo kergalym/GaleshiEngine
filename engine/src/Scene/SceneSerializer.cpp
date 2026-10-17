@@ -66,6 +66,7 @@ bool SceneSerializer::Save(const std::string& path) const {
             je["mesh"] = {
                 {"sourceAssetPath", mc.sourceAssetPath},
                 {"primitiveType",   mc.primitiveType},
+                {"meshIndex",       mc.meshIndex},
             };
         }
 
@@ -147,17 +148,20 @@ bool SceneSerializer::Load(const std::string& path) {
             const std::string prim = jm.value("primitiveType", "");
             const std::string src  = jm.value("sourceAssetPath", "");
 
+            const int mi = jm.value("meshIndex", 0);
+
             std::shared_ptr<Mesh> mesh;
             if (prim == "cube") {
                 mesh = m_assets.CreateCubeMesh();
             } else if (!src.empty()) {
                 auto model = m_assets.LoadModel(src);
-                if (!model.meshes.empty()) mesh = model.meshes[0];
+                if (mi >= 0 && mi < static_cast<int>(model.meshes.size()))
+                    mesh = model.meshes[mi];
             }
 
             if (mesh) {
                 e.AddComponent<MeshComponent>(
-                    MeshComponent{ mesh, src, prim });
+                    MeshComponent{ mesh, src, prim, mi });
             }
         }
 

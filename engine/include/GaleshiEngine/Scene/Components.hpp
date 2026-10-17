@@ -25,16 +25,19 @@ struct TransformComponent {
 
 struct MeshComponent {
     std::shared_ptr<Mesh> mesh;
-    std::string           sourceAssetPath;   // путь к FBX/glTF, если загружено из файла
-    std::string           primitiveType;     // "cube" / "sphere" / "" для не-примитива
+    std::string           sourceAssetPath;   // путь к FBX/glTF
+    std::string           primitiveType;     // "cube" и т.п.
+    int                   meshIndex = 0;     // индекс сабмеша в модели
 
     MeshComponent() = default;
-    explicit MeshComponent(std::shared_ptr<Mesh> m,
-                           std::string path = {},
-                           std::string prim = {})
+    MeshComponent(std::shared_ptr<Mesh> m,
+                  std::string path = {},
+                  std::string prim = {},
+                  int mi = 0)
         : mesh(std::move(m))
         , sourceAssetPath(std::move(path))
-        , primitiveType(std::move(prim)) {}
+        , primitiveType(std::move(prim))
+        , meshIndex(mi) {}
 };
 
 struct MaterialComponent {

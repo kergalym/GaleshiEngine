@@ -11,29 +11,24 @@ class Texture;
 class Mesh;
 class Material;
 
-// Простой path-based кэш ассетов.
 class AssetManager {
 public:
     AssetManager();
     ~AssetManager();
 
-    // --- Текстуры ---
     std::shared_ptr<Texture> LoadTexture(const std::string& path);
 
-    // --- Модели (FBX/glTF/OBJ) ---
-    // Возвращает список мешей и материалов (по одному на submesh).
     struct LoadedModel {
         std::vector<std::shared_ptr<Mesh>>     meshes;
         std::vector<std::shared_ptr<Material>> materials;
+        std::vector<int>                       meshMaterialIndex;
     };
     LoadedModel LoadModel(const std::string& path);
 
-    // --- Встроенные дефолтные текстуры ---
     std::shared_ptr<Texture> WhiteTexture()       const { return m_white; }
     std::shared_ptr<Texture> BlackTexture()       const { return m_black; }
     std::shared_ptr<Texture> FlatNormalTexture()  const { return m_flatNormal; }
 
-    // Встроенный примитив-куб (общий для всех, кто его запросит).
     std::shared_ptr<Mesh> CreateCubeMesh();
 
     void Clear();

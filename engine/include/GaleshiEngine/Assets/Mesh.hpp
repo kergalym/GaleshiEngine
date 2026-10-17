@@ -22,7 +22,6 @@ public:
     Mesh(const Mesh&)            = delete;
     Mesh& operator=(const Mesh&) = delete;
 
-    // Создаёт статичный меш из CPU-данных
     void Upload(const std::vector<Vertex>& vertices,
                 const std::vector<uint32_t>& indices);
 
@@ -33,10 +32,18 @@ public:
     uint32_t IndexCount() const { return m_indexCount; }
     bool     Valid() const { return bgfx::isValid(m_vb) && bgfx::isValid(m_ib); }
 
+    const std::vector<Vertex>&   Vertices() const { return m_vertices; }
+    const std::vector<uint32_t>& Indices()  const { return m_indices; }
+
+    void LocalAABB(glm::vec3& outMin, glm::vec3& outMax) const;
+
 private:
     bgfx::VertexBufferHandle m_vb = BGFX_INVALID_HANDLE;
     bgfx::IndexBufferHandle  m_ib = BGFX_INVALID_HANDLE;
     uint32_t m_indexCount = 0;
+
+    std::vector<Vertex>   m_vertices;
+    std::vector<uint32_t> m_indices;
 };
 
 } // namespace Galeshi
