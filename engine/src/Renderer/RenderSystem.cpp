@@ -12,7 +12,7 @@
 
 namespace Galeshi {
 
-RenderSystem::RenderSystem() = default;
+RenderSystem::RenderSystem()  = default;
 RenderSystem::~RenderSystem() { Shutdown(); }
 
 void RenderSystem::Init(AssetManager* assets) {
@@ -37,7 +37,8 @@ void RenderSystem::Init(AssetManager* assets) {
 }
 
 void RenderSystem::Shutdown() {
-    if (bgfx::isValid(m_program)) bgfx::destroy(m_program);
+    // Идемпотентно: можно вызывать повторно.
+    if (bgfx::isValid(m_program))              bgfx::destroy(m_program);
     if (bgfx::isValid(u_albedoFactor))         bgfx::destroy(u_albedoFactor);
     if (bgfx::isValid(u_metallicFactor))       bgfx::destroy(u_metallicFactor);
     if (bgfx::isValid(u_roughnessFactor))      bgfx::destroy(u_roughnessFactor);
@@ -49,7 +50,18 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(s_metallicRoughnessMap)) bgfx::destroy(s_metallicRoughnessMap);
     if (bgfx::isValid(s_normalMap))            bgfx::destroy(s_normalMap);
 
-    m_program = BGFX_INVALID_HANDLE;
+    // Сбрасываем всё в invalid, чтобы повторный вызов ничего не делал.
+    m_program              = BGFX_INVALID_HANDLE;
+    u_albedoFactor         = BGFX_INVALID_HANDLE;
+    u_metallicFactor       = BGFX_INVALID_HANDLE;
+    u_roughnessFactor      = BGFX_INVALID_HANDLE;
+    u_emissiveFactor       = BGFX_INVALID_HANDLE;
+    u_cameraPosition       = BGFX_INVALID_HANDLE;
+    u_lightDirection       = BGFX_INVALID_HANDLE;
+    u_lightColorIntensity  = BGFX_INVALID_HANDLE;
+    s_albedoMap            = BGFX_INVALID_HANDLE;
+    s_metallicRoughnessMap = BGFX_INVALID_HANDLE;
+    s_normalMap            = BGFX_INVALID_HANDLE;
 }
 
 void RenderSystem::ApplyEnvironment(const Camera& camera,
@@ -75,17 +87,14 @@ void RenderSystem::Render(Scene& scene,
 {
     if (!bgfx::isValid(m_program)) return;
 
-    // Настройка view
-    const glm::mat4 vp = camera.ViewProj();
-    bgfx::setViewTransform(viewId, glm::value_ptr(camera.View()),
-                                    glm::value_ptr(camera.Projection()));
-    (void)vp;
+    bgfx::setViewTransform(viewId,
+        glm::value_ptr(camera.View()),
+        glm::value_ptr(camera.Projection()));
     bgfx::setViewRect(viewId, 0, 0, width, height);
     bgfx::setViewClear(viewId,
         BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH,
         0x232629ff, 1.0f, 0);
 
-    // Находим directional light (первый в сцене)
     glm::vec3 lightDir{-0.4f, -0.8f, -0.5f};
     glm::vec3 lightCol{1.0f, 0.97f, 0.9f};
     float     lightInt = 1.2f;
@@ -101,13 +110,12 @@ void RenderSystem::Render(Scene& scene,
 
     ApplyEnvironment(camera, lightDir, lightCol, lightInt);
 
-    // Проходим по всем сущностям с mesh+material
     auto view = scene.Registry().view<TransformComponent,
                                        MeshComponent,
                                        MaterialComponent>();
     for (auto h : view) {
-        const auto& tc = view.get<TransformComponent>(h);
-        const auto& mc = view.get<MeshComponent>(h);
+        const auto& tc   = view.get<TransformComponent>(h);
+        const auto& mc   = view.get<MeshComponent>(h);
         const auto& matc = view.get<MaterialComponent>(h);
 
         if (!mc.mesh || !mc.mesh->Valid()) continue;
@@ -117,7 +125,6 @@ void RenderSystem::Render(Scene& scene,
 
         bgfx::setTransform(glm::value_ptr(tc.Matrix()));
 
-        // Материал
         const float alb[4] = {mat.albedoFactor.r, mat.albedoFactor.g,
                               mat.albedoFactor.b, mat.albedoFactor.a};
         const float met[4] = {mat.metallicFactor, 0.0f, 0.0f, 0.0f};
@@ -130,9 +137,8 @@ void RenderSystem::Render(Scene& scene,
         bgfx::setUniform(u_roughnessFactor, rgh);
         bgfx::setUniform(u_emissiveFactor,  emi);
 
-        // Текстуры — с фоллбэками
-        auto white  = m_assets->WhiteTexture();
-        auto flatN  = m_assets->FlatNormalTexture();
+        auto white = m_assets->WhiteTexture();
+        auto flatN = m_assets->FlatNormalTexture();
 
         auto albedo = mat.albedoMap            ? mat.albedoMap            : white;
         auto mr     = mat.metallicRoughnessMap ? mat.metallicRoughnessMap : white;
@@ -142,7 +148,6 @@ void RenderSystem::Render(Scene& scene,
         bgfx::setTexture(1, s_metallicRoughnessMap, mr->Handle());
         bgfx::setTexture(2, s_normalMap,            nrm->Handle());
 
-        // Геометрия
         bgfx::setVertexBuffer(0, mc.mesh->VB());
         bgfx::setIndexBuffer(mc.mesh->IB());
 

@@ -25,17 +25,23 @@ struct TransformComponent {
 
 struct MeshComponent {
     std::shared_ptr<Mesh> mesh;
+
+    MeshComponent() = default;
+    explicit MeshComponent(std::shared_ptr<Mesh> m) : mesh(std::move(m)) {}
 };
 
 struct MaterialComponent {
     std::shared_ptr<Material> material;
+
+    MaterialComponent() = default;
+    explicit MaterialComponent(std::shared_ptr<Material> m) : material(std::move(m)) {}
 };
 
 struct CameraComponent {
-    float fovY      = 60.0f;    // градусы
-    float nearZ     = 0.1f;
-    float farZ      = 1000.0f;
-    bool  primary   = true;
+    float fovY    = 60.0f;
+    float nearZ   = 0.1f;
+    float farZ    = 1000.0f;
+    bool  primary = true;
 };
 
 struct DirectionalLightComponent {

@@ -18,6 +18,9 @@ target_include_directories(GaleshiEngine
         ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bx/3rdparty
         ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bx/include/compat/linux)
 
+target_compile_definitions(GaleshiEngine
+    PUBLIC GLM_ENABLE_EXPERIMENTAL)
+
 target_link_libraries(GaleshiEngine
     PUBLIC
         SDL3::SDL3
