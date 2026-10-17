@@ -62,14 +62,14 @@ void ImGuiBgfx::Init() {
 
 void ImGuiBgfx::Shutdown() {
     for (int i = 0; i < 2; ++i) {
-        if (bgfx::isValid(g_vb[i])) bgfx::destroy(g_vb[i]);
-        if (bgfx::isValid(g_ib[i])) bgfx::destroy(g_ib[i]);
+        if (bgfx::isValid(g_vb[i])) { bgfx::destroy(g_vb[i]); g_vb[i] = BGFX_INVALID_HANDLE; }
+        if (bgfx::isValid(g_ib[i])) { bgfx::destroy(g_ib[i]); g_ib[i] = BGFX_INVALID_HANDLE; }
         g_vbCapacity[i] = 0;
         g_ibCapacity[i] = 0;
     }
-    if (bgfx::isValid(g_fontTexture)) bgfx::destroy(g_fontTexture);
-    if (bgfx::isValid(g_texUniform))  bgfx::destroy(g_texUniform);
-    if (bgfx::isValid(g_program))     bgfx::destroy(g_program);
+    if (bgfx::isValid(g_fontTexture)) { bgfx::destroy(g_fontTexture); g_fontTexture = BGFX_INVALID_HANDLE; }
+    if (bgfx::isValid(g_texUniform))  { bgfx::destroy(g_texUniform);  g_texUniform  = BGFX_INVALID_HANDLE; }
+    if (bgfx::isValid(g_program))     { bgfx::destroy(g_program);     g_program     = BGFX_INVALID_HANDLE; }
 }
 
 namespace {

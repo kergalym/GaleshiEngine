@@ -158,7 +158,8 @@ Application::Application(const ApplicationSpec& spec)
     std::signal(SIGINT,  Galeshi::OnSignal);
     std::signal(SIGTERM, Galeshi::OnSignal);
 
-    const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    // Убираем HIGH_PIXEL_DENSITY — на Qtile может ломать swapchain
+    const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
     m_impl->window = SDL_CreateWindow(spec.name.c_str(), spec.width, spec.height, flags);
     if (!m_impl->window) {
         spdlog::critical("[Galeshi] SDL_CreateWindow failed: {}", SDL_GetError());

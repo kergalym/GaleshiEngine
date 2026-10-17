@@ -4,6 +4,7 @@
 #include "GaleshiEngine/Renderer/RenderSystem.hpp"
 #include "GaleshiEngine/Renderer/Framebuffer.hpp"
 #include "GaleshiEngine/Renderer/RayPick.hpp"
+#include "GaleshiEngine/Renderer/DebugRenderer.hpp"
 #include "GaleshiEngine/Scene/Scene.hpp"
 #include "GaleshiEngine/Scene/SceneSerializer.hpp"
 #include "GaleshiEngine/Assets/AssetManager.hpp"
@@ -51,6 +52,8 @@ protected:
         m_physics->Init();
         m_navSystem = std::make_unique<Galeshi::NavigationSystem>();
         m_navSystem->Init();
+        m_debug = std::make_unique<Galeshi::DebugRenderer>();
+        m_debug->Init();
         
         m_render  = std::make_unique<Galeshi::RenderSystem>();
         m_render->Init(m_assets.get());
@@ -173,14 +176,12 @@ protected:
         SaveScene();
 
         // 2. Останавливаем AI и физику
-        if (m_navSystem) {
-            m_navSystem->Shutdown();
-            m_navSystem.reset();
-        }
-        if (m_physics) {
-            m_physics->Shutdown();
-            m_physics.reset();
-        }
+        // reset() вызовет ~DebugRenderer → Shutdown() (идемпотентный)
+        m_debug.reset();
+        // reset() вызовет ~NavigationSystem → Shutdown() (идемпотентный)
+        m_navSystem.reset();
+        // reset() вызовет ~PhysicsSystem → Shutdown() (идемпотентный)
+        m_physics.reset();
 
         // 3. Уничтожаем ECS (освобождает Mesh/Texture через shared_ptr)
         m_scene.Registry().clear();
@@ -445,6 +446,40 @@ private:
         if (m_framebuffer && m_framebuffer->Valid()) {
             bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             m_render->Render(m_scene, m_camera, 1, w, h);
+        }
+
+        // Debug rendering (grid, navmesh, selection box)
+        if (m_debug) {
+            m_debug->Begin();
+            
+            // Grid (100x100 на полу)
+            m_debug->AddGrid(50.0f, 2.0f, {0.3f, 0.3f, 0.3f, 0.4f});
+            
+            // Оси в origin
+            m_debug->AddAxes({0, 0.05f, 0}, 2.0f);
+            
+            // NavMesh debug (если есть)
+            if (m_navSystem) {
+                const auto& navTris = m_navSystem->GetDebugTriangles();
+                if (!navTris.empty()) {
+                    // Просто рисуем как линии
+                    for (size_t i = 0; i + 2 < navTris.size(); i += 3) {
+                        const glm::vec4 c = {0.2f, 0.8f, 0.4f, 0.5f};
+                        m_debug->AddLine(navTris[i], navTris[i+1], c);
+                        m_debug->AddLine(navTris[i+1], navTris[i+2], c);
+                        m_debug->AddLine(navTris[i+2], navTris[i], c);
+                    }
+                }
+            }
+            
+            // Selection box (вокруг выделенного)
+            Galeshi::Entity sel = m_editor.Selected(&m_scene);
+            if (sel && sel.HasComponent<Galeshi::TransformComponent>()) {
+                auto& tc = sel.GetComponent<Galeshi::TransformComponent>();
+                m_debug->AddBox(tc.position, tc.scale + glm::vec3(0.1f), {1, 1, 0, 1});
+            }
+            
+            m_debug->Render(m_camera, 1, w, h);
         }
 
         if (m_framebuffer && bgfx::isValid(m_framebuffer->Color())) {
@@ -800,6 +835,7 @@ private:
     std::unique_ptr<Galeshi::SceneSerializer> m_serializer;
     std::unique_ptr<Galeshi::PhysicsSystem>   m_physics;
     std::unique_ptr<Galeshi::NavigationSystem> m_navSystem;
+    std::unique_ptr<Galeshi::DebugRenderer> m_debug;
 
     uint16_t    m_viewportW = 0, m_viewportH = 0;
     bool        m_viewportHovered = false;

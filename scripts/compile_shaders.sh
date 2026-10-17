@@ -40,6 +40,7 @@ esac
 varying_for() {
     case "$1" in
         vs_pbr|fs_pbr)     echo "$SRC_DIR/varying_pbr.def.sc"   ;;
+        vs_line|fs_line)   echo "$SRC_DIR/varying_line.def.sc"  ;;
         vs_imgui|fs_imgui) echo "$SRC_DIR/varying_imgui.def.sc" ;;
         *)                 echo "" ;;
     esac
