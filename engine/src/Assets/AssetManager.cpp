@@ -149,4 +149,46 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
     return out;
 }
 
+
+std::shared_ptr<Mesh> AssetManager::CreateCubeMesh() {
+    if (m_cubeMesh) return m_cubeMesh;
+
+    struct V { float x,y,z, nx,ny,nz, tx,ty,tz, u,v; };
+    static const V verts[24] = {
+        { 1,-1,-1,  1,0,0, 0,0,-1, 0,0}, { 1, 1,-1,  1,0,0, 0,0,-1, 0,1},
+        { 1, 1, 1,  1,0,0, 0,0,-1, 1,1}, { 1,-1, 1,  1,0,0, 0,0,-1, 1,0},
+        {-1,-1, 1, -1,0,0, 0,0,1, 0,0}, {-1, 1, 1, -1,0,0, 0,0,1, 0,1},
+        {-1, 1,-1, -1,0,0, 0,0,1, 1,1}, {-1,-1,-1, -1,0,0, 0,0,1, 1,0},
+        {-1, 1,-1,  0,1,0, 1,0,0, 0,0}, {-1, 1, 1,  0,1,0, 1,0,0, 0,1},
+        { 1, 1, 1,  0,1,0, 1,0,0, 1,1}, { 1, 1,-1,  0,1,0, 1,0,0, 1,0},
+        {-1,-1, 1,  0,-1,0,1,0,0, 0,0}, {-1,-1,-1,  0,-1,0,1,0,0, 0,1},
+        { 1,-1,-1,  0,-1,0,1,0,0, 1,1}, { 1,-1, 1,  0,-1,0,1,0,0, 1,0},
+        {-1,-1, 1,  0,0,1, 1,0,0, 0,0}, {-1, 1, 1,  0,0,1, 1,0,0, 0,1},
+        { 1, 1, 1,  0,0,1, 1,0,0, 1,1}, { 1,-1, 1,  0,0,1, 1,0,0, 1,0},
+        { 1,-1,-1,  0,0,-1,-1,0,0, 0,0}, { 1, 1,-1,  0,0,-1,-1,0,0, 0,1},
+        {-1, 1,-1,  0,0,-1,-1,0,0, 1,1}, {-1,-1,-1,  0,0,-1,-1,0,0, 1,0},
+    };
+    static const uint32_t idx[36] = {
+        0,1,2, 0,2,3,  4,5,6, 4,6,7,
+        8,9,10, 8,10,11, 12,13,14, 12,14,15,
+        16,17,18, 16,18,19, 20,21,22, 20,22,23,
+    };
+
+    std::vector<Vertex> vs;
+    vs.reserve(24);
+    for (auto& v : verts) {
+        Vertex vert{};
+        vert.position = {v.x, v.y, v.z};
+        vert.normal   = {v.nx, v.ny, v.nz};
+        vert.tangent  = {v.tx, v.ty, v.tz};
+        vert.uv       = {v.u, v.v};
+        vs.push_back(vert);
+    }
+    std::vector<uint32_t> is(idx, idx + 36);
+
+    m_cubeMesh = std::make_shared<Mesh>();
+    m_cubeMesh->Upload(vs, is);
+    return m_cubeMesh;
+}
+
 } // namespace Galeshi

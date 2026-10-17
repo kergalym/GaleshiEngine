@@ -3,6 +3,8 @@
 #include <imgui.h>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+
 namespace fs = std::filesystem;
 
 namespace Galeshi {
@@ -35,7 +37,6 @@ std::string ContentBrowser::Draw() {
     ImGui::Text("Path: %s", m_current.string().c_str());
     ImGui::Separator();
 
-    // Кнопка "вверх"
     if (m_current != fs::path(m_root)) {
         if (ImGui::Button("..")) {
             m_current = m_current.parent_path();
@@ -50,17 +51,34 @@ std::string ContentBrowser::Draw() {
 
     ImGui::BeginChild("content_list", ImVec2(0, 0), true);
     for (const auto& e : m_entries) {
-        const char* icon = e.isDirectory ? "[D]" : "[F]";
-        ImGui::Text("%s %s", icon, e.name.c_str());
+        ImGui::PushID(e.path.string().c_str());
 
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-            if (e.isDirectory) {
-                m_current = e.path;
-                Refresh();
-            } else {
-                clicked = e.path.string();
+        const char* icon = e.isDirectory ? "[D]" : "[F]";
+        const std::string label = std::string(icon) + " " + e.name;
+
+        if (ImGui::Selectable(label.c_str(), false,
+                              ImGuiSelectableFlags_AllowDoubleClick)) {
+            if (ImGui::IsMouseDoubleClicked(0)) {
+                if (e.isDirectory) {
+                    m_current = e.path;
+                    Refresh();
+                } else {
+                    clicked = e.path.string();
+                }
             }
         }
+
+        // Источник для drag-n-drop (только файлы, не папки)
+        if (!e.isDirectory &&
+            ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+            const std::string p = e.path.string();
+            ImGui::SetDragDropPayload("GALESHI_ASSET_PATH",
+                                      p.c_str(), p.size() + 1);
+            ImGui::Text("%s", e.name.c_str());
+            ImGui::EndDragDropSource();
+        }
+
+        ImGui::PopID();
     }
     ImGui::EndChild();
 

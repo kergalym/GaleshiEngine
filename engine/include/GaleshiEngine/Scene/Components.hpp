@@ -25,16 +25,24 @@ struct TransformComponent {
 
 struct MeshComponent {
     std::shared_ptr<Mesh> mesh;
+    std::string           sourceAssetPath;   // путь к FBX/glTF, если загружено из файла
+    std::string           primitiveType;     // "cube" / "sphere" / "" для не-примитива
 
     MeshComponent() = default;
-    explicit MeshComponent(std::shared_ptr<Mesh> m) : mesh(std::move(m)) {}
+    explicit MeshComponent(std::shared_ptr<Mesh> m,
+                           std::string path = {},
+                           std::string prim = {})
+        : mesh(std::move(m))
+        , sourceAssetPath(std::move(path))
+        , primitiveType(std::move(prim)) {}
 };
 
 struct MaterialComponent {
     std::shared_ptr<Material> material;
 
     MaterialComponent() = default;
-    explicit MaterialComponent(std::shared_ptr<Material> m) : material(std::move(m)) {}
+    explicit MaterialComponent(std::shared_ptr<Material> m)
+        : material(std::move(m)) {}
 };
 
 struct CameraComponent {

@@ -22,6 +22,7 @@ public:
     static Texture* CreateBlack();
 
     bgfx::TextureHandle Handle() const { return m_handle; }
+    const std::string& Path() const { return m_path; }
     bool Valid() const { return bgfx::isValid(m_handle); }
 
     void Destroy();

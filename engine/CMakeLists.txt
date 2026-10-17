@@ -27,6 +27,7 @@ target_link_libraries(GaleshiEngine
         glm::glm
         spdlog::spdlog
         EnTT::EnTT
+        nlohmann_json::nlohmann_json
         imgui
         imguizmo
         bgfx

@@ -33,12 +33,16 @@ public:
     std::shared_ptr<Texture> BlackTexture()       const { return m_black; }
     std::shared_ptr<Texture> FlatNormalTexture()  const { return m_flatNormal; }
 
+    // Встроенный примитив-куб (общий для всех, кто его запросит).
+    std::shared_ptr<Mesh> CreateCubeMesh();
+
     void Clear();
 
 private:
     std::unordered_map<std::string, std::shared_ptr<Texture>> m_textures;
     std::unordered_map<std::string, LoadedModel>              m_models;
 
+    std::shared_ptr<Mesh>    m_cubeMesh;
     std::shared_ptr<Texture> m_white;
     std::shared_ptr<Texture> m_black;
     std::shared_ptr<Texture> m_flatNormal;
