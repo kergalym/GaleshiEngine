@@ -3,6 +3,9 @@
 #include "GaleshiEngine/Renderer/ImGuiBgfx.hpp"
 
 #include <SDL3/SDL.h>
+#include <csignal>
+#include <cstdio>
+#include <atomic>
 #include <spdlog/spdlog.h>
 #include <imgui.h>
 #ifdef IMGUI_ENABLE_FREETYPE
@@ -13,6 +16,9 @@
 #include <filesystem>
 
 namespace Galeshi {
+
+static std::atomic<bool> g_interrupted{false};
+static void OnSignal(int) { g_interrupted.store(true); }
 
 
 static void ApplyBlackTheme() {
@@ -147,6 +153,11 @@ Application::Application(const ApplicationSpec& spec)
         std::abort();
     }
 
+    // Устанавливаем обработчики сигналов ПОСЛЕ SDL_Init
+    // (SDL может переопределять их при инициализации)
+    std::signal(SIGINT,  Galeshi::OnSignal);
+    std::signal(SIGTERM, Galeshi::OnSignal);
+
     const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
     m_impl->window = SDL_CreateWindow(spec.name.c_str(), spec.width, spec.height, flags);
     if (!m_impl->window) {
@@ -158,10 +169,9 @@ Application::Application(const ApplicationSpec& spec)
         std::error_code ec;
         std::filesystem::current_path(basePath, ec);
         if (ec) {
-            spdlog::warn("[Galeshi] Не удалось перейти в {}: {}",
-                         basePath, ec.message());
+            spdlog::warn("[Galeshi] Could not change CWD to {}: {}", basePath, ec.message());
         } else {
-            spdlog::info("[Galeshi] CWD → {}", basePath);
+            spdlog::info("[Galeshi] CWD = {}", basePath);
         }
     }
 
@@ -178,38 +188,15 @@ Application::Application(const ApplicationSpec& spec)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
-    // Пытаемся найти TTF шрифт в системе
+    // Загрузка шрифта с FreeType (см. отдельный fix)
     ImFontConfig font_cfg;
-    font_cfg.OversampleH = 1;
-    font_cfg.OversampleV = 1;
-            font_cfg.PixelSnapH = true;
-
+    font_cfg.PixelSnapH = true;
 #ifdef IMGUI_ENABLE_FREETYPE
     font_cfg.FontLoaderFlags = ImGuiFreeTypeLoaderFlags_NoHinting;
-    spdlog::info("[Galeshi] FreeType enabled (LightHinting)");
+    spdlog::info("[Galeshi] FreeType enabled (NoHinting)");
 #endif
-
-    // Устанавливаем RasterizerDensity в зависимости от DPI
-    float dpi_scale = 1.0f;
-    if (SDL_Window* win = m_impl->window) {
-        int w, h, pw, ph;
-        SDL_GetWindowSize(win, &w, &h);
-        SDL_GetWindowSizeInPixels(win, &pw, &ph);
-        if (w > 0 && h > 0) {
-            dpi_scale = (float)pw / (float)w;
-        }
-    }
-    font_cfg.RasterizerDensity = dpi_scale;
-    spdlog::info("[Galeshi] Font RasterizerDensity = {:.2f}", dpi_scale);
-    
-    // Диагностика размеров окна
-    if (SDL_Window* win = m_impl->window) {
-        int w, h, pw, ph;
-        SDL_GetWindowSize(win, &w, &h);
-        SDL_GetWindowSizeInPixels(win, &pw, &ph);
-        spdlog::info("[Galeshi] Window size: {}x{}, pixels: {}x{}", w, h, pw, ph);
-    }
 
     const char* fontPaths[] = {
         "/usr/share/fonts/dejavu/DejaVuSans.ttf",
@@ -221,12 +208,12 @@ Application::Application(const ApplicationSpec& spec)
     };
 
     bool fontLoaded = false;
-    for (const char* p : fontPaths) {
-        if (std::filesystem::exists(p)) {
-            io.Fonts->AddFontFromFileTTF(p, 32.0f, &font_cfg);
-            spdlog::info("[Galeshi] Font loaded: {}", p);
+    for (const char* fp : fontPaths) {
+        if (std::filesystem::exists(fp)) {
+            io.Fonts->AddFontFromFileTTF(fp, 32.0f, &font_cfg);
+            io.FontGlobalScale = 0.5f;  // 32px -> визуальные 16px (суперсэмплинг)
+            spdlog::info("[Galeshi] Font loaded: {}", fp);
             fontLoaded = true;
-            io.FontGlobalScale = 0.5f; // Суперсэмплинг: рендерим 32px, показываем 16px
             break;
         }
     }
@@ -234,25 +221,14 @@ Application::Application(const ApplicationSpec& spec)
         spdlog::warn("[Galeshi] No TTF font found. Install media-fonts/dejavu");
     }
 
-    // Загружаем TTF шрифт для сглаживания
-    std::string fontPath = "/usr/share/fonts/TTF/DejaVuSans.ttf";
-    if (!std::filesystem::exists(fontPath)) fontPath = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
-    if (!std::filesystem::exists(fontPath)) fontPath = "/usr/share/fonts/TTF/Ubuntu-R.ttf";
-    if (std::filesystem::exists(fontPath)) {
-        io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 16.0f);
-    }
-    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    // // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // Отключено для HiDPI // Отключено для корректного DPI
-    ApplyBlackTheme();
-
+    ImGui::StyleColorsDark();
     ImGui_ImplSDL3_InitForOther(m_impl->window);
     ImGuiBgfx::Init();
 
     m_impl->freq = static_cast<double>(SDL_GetPerformanceFrequency());
     m_impl->lastCounter = SDL_GetPerformanceCounter();
 
-    spdlog::info("[Galeshi] '{}' initialized ({}x{})",
-                 spec.name, spec.width, spec.height);
+    spdlog::info("[Galeshi] '{}' initialized ({}x{})", spec.name, spec.width, spec.height);
 }
 
 Application::~Application() {
@@ -276,7 +252,7 @@ int Application::Run() {
     OnStart();
     m_impl->running = true;
 
-    while (m_impl->running) {
+    while (m_impl->running && !Galeshi::g_interrupted.load()) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL3_ProcessEvent(&e);
@@ -322,6 +298,8 @@ int Application::Run() {
     }
 
     OnShutdown();
+    std::fflush(stdout);
+    std::fflush(stderr);
     return 0;
 }
 

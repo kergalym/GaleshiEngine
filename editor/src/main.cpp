@@ -14,6 +14,8 @@
 #include "GaleshiEngine/Editor/ContentBrowser.hpp"
 #include "GaleshiEngine/Editor/FilePickerDialog.hpp"
 #include "GaleshiEngine/Physics/PhysicsSystem.hpp"
+#include "GaleshiEngine/AI/NavigationSystem.hpp"
+#include "GaleshiEngine/AI/AISystem.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -28,6 +30,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstdio>
 #include <filesystem>
 #include <limits>
 #include <vector>
@@ -46,6 +49,8 @@ protected:
         m_assets  = std::make_unique<Galeshi::AssetManager>();
         m_physics = std::make_unique<Galeshi::PhysicsSystem>();
         m_physics->Init();
+        m_navSystem = std::make_unique<Galeshi::NavigationSystem>();
+        m_navSystem->Init();
         
         m_render  = std::make_unique<Galeshi::RenderSystem>();
         m_render->Init(m_assets.get());
@@ -77,6 +82,7 @@ protected:
 
     void OnUpdate(float dt) override {
         m_time += dt;
+        Galeshi::AISystem::Update(m_scene, dt);
 
         // Анимация скелета
         auto animView = m_scene.Registry().view<Galeshi::SkeletalComponent>();
@@ -161,15 +167,36 @@ protected:
     }
 
     void OnShutdown() override {
+        spdlog::info("[Editor] OnShutdown: begin");
+
+        // 1. Сохраняем сцену
         SaveScene();
+
+        // 2. Останавливаем AI и физику
+        if (m_navSystem) {
+            m_navSystem->Shutdown();
+            m_navSystem.reset();
+        }
+        if (m_physics) {
+            m_physics->Shutdown();
+            m_physics.reset();
+        }
+
+        // 3. Уничтожаем ECS (освобождает Mesh/Texture через shared_ptr)
         m_scene.Registry().clear();
+
+        // 4. UI и сериализация
         m_framebuffer.reset();
         m_serializer.reset();
         m_browser.reset();
+
+        // 5. RenderSystem — освобождает uniforms/programs (bgfx ещё жив)
         m_render.reset();
-        m_physics->Shutdown();
-        m_physics.reset();
+
+        // 6. AssetManager — освобождает текстуры и меши (bgfx ещё жив)
         m_assets.reset();
+
+        spdlog::info("[Editor] OnShutdown: done");
     }
 
 private:
@@ -250,7 +277,38 @@ private:
                 e.AddComponent<Galeshi::BoxColliderComponent>();
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("Point Light")) {
+            if (ImGui::MenuItem("AI Agent")) {
+                    auto e = m_scene.CreateEntity("AI_Agent");
+                    auto mesh = std::make_shared<Galeshi::Mesh>();
+                    auto cube = m_assets->CreateCubeMesh();
+                    // Переиспользуем куб
+                    e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ cube, "", "cube" });
+                    
+                    auto mat = std::make_shared<Galeshi::Material>();
+                    mat->albedoFactor = {0.2f, 0.8f, 0.2f, 1.0f}; // Зеленый
+                    e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+                    
+                    auto& tc = e.GetComponent<Galeshi::TransformComponent>();
+                    tc.position = {0, 1, 0}; // Над землей
+                    tc.scale = {0.5f, 0.5f, 0.5f};
+                    
+                    e.AddComponent<Galeshi::NavAgentComponent>();
+                    m_editor.Select(e);
+                }
+                if (ImGui::MenuItem("Build NavMesh")) {
+                    spdlog::info("[Editor] Build NavMesh menu clicked");
+                    if (!m_navSystem) {
+                        spdlog::error("[Editor] m_navSystem is NULL");
+                    } else {
+                        if (m_navSystem->BuildFromScene(m_scene)) {
+                            spdlog::info("[Editor] NavMesh generated");
+                        } else {
+                            spdlog::error("[Editor] BuildFromScene failed");
+                        }
+                    }
+                    spdlog::info("[Editor] Build NavMesh menu done");
+                }
+                if (ImGui::MenuItem("Point Light")) {
                 auto e = m_scene.CreateEntity("PointLight");
                 e.AddComponent<Galeshi::PointLightComponent>();
                 e.GetComponent<Galeshi::TransformComponent>().position = {0, 2, 0};
@@ -400,6 +458,20 @@ private:
         const ImVec2 vpSize = ImGui::GetItemRectSize();
 
         // Left-click Picking / Sculpting
+        if (m_viewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !m_editor.GizmoLocked()) {
+            Galeshi::Entity sel = m_editor.Selected(&m_scene);
+            if (sel && sel.HasComponent<Galeshi::NavAgentComponent>()) {
+                const ImVec2 mouse = ImGui::GetIO().MousePos;
+                auto ray = Galeshi::ScreenPointToRay(m_camera, mouse.x, mouse.y, vpPos.x, vpPos.y, vpSize.x, vpSize.y);
+                glm::vec3 hit;
+                if (Galeshi::IntersectPlaneY(ray, 0.0f, hit)) {
+                    auto& agent = sel.GetComponent<Galeshi::NavAgentComponent>();
+                    m_navSystem->FindPath(sel.GetComponent<Galeshi::TransformComponent>().position, hit, agent.path);
+                    agent.currentWaypoint = 0;
+                }
+            }
+        }
+
         if (m_viewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_editor.GizmoLocked()) {
             const ImVec2 mouse = ImGui::GetIO().MousePos;
             auto ray = Galeshi::ScreenPointToRay(m_camera, mouse.x, mouse.y, vpPos.x, vpPos.y, vpSize.x, vpSize.y);
@@ -607,6 +679,13 @@ private:
             }
         }
 
+        if (selected[0].HasComponent<Galeshi::NavAgentComponent>() && ImGui::CollapsingHeader("AI Agent", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& agent = selected[0].GetComponent<Galeshi::NavAgentComponent>();
+            ImGui::DragFloat("Speed", &agent.speed, 0.1f, 0.1f, 20.0f);
+            ImGui::Text("Path Waypoints: %zu", agent.path.size());
+            ImGui::Text("Use RMB in viewport to set target");
+        }
+
         if (selected[0].HasComponent<Galeshi::SkeletalComponent>() && ImGui::CollapsingHeader("Skeletal Animation", ImGuiTreeNodeFlags_DefaultOpen)) {
             auto& skel = selected[0].GetComponent<Galeshi::SkeletalComponent>();
             ImGui::Checkbox("Playing", &skel.isAnimated);
@@ -720,6 +799,7 @@ private:
     std::unique_ptr<Galeshi::ContentBrowser>  m_browser;
     std::unique_ptr<Galeshi::SceneSerializer> m_serializer;
     std::unique_ptr<Galeshi::PhysicsSystem>   m_physics;
+    std::unique_ptr<Galeshi::NavigationSystem> m_navSystem;
 
     uint16_t    m_viewportW = 0, m_viewportH = 0;
     bool        m_viewportHovered = false;
@@ -732,6 +812,20 @@ private:
 };
 
 int main(int, char**) {
-    GaleshiEditorApp app;
-    return app.Run();
+    // Принудительно небуферизированный stdout — чтобы логи
+    // появлялись до любого crash.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+
+    // ВАЖНО: создаём app через new и НИКОГДА не удаляем.
+    // Причина: ~Application вызывает bgfx::shutdown() и SDL_Quit(),
+    // которые падают в deadlock внутри libnvidia-glcore при dlclose.
+    // OnShutdown() (в конце Run) уже сохраняет сцену и делает cleanup.
+    // OS освободит GPU-ресурсы при завершении процесса.
+    GaleshiEditorApp* app = new GaleshiEditorApp();
+    int exitCode = app->Run();
+
+    std::fflush(stdout);
+    std::fflush(stderr);
+    std::_Exit(exitCode);  // нет деструкторов, нет dlclose, нет NVIDIA deadlock
 }

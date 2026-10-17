@@ -93,4 +93,11 @@ struct LandscapeComponent {
     std::vector<float> heights;
 };
 
+struct NavAgentComponent {
+    std::vector<glm::vec3> path;
+    size_t currentWaypoint = 0;
+    float speed = 3.0f;
+    float stoppingDistance = 0.5f;
+};
+
 } // namespace Galeshi
