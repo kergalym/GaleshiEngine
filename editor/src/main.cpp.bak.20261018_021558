@@ -1,0 +1,1001 @@
+#include "GaleshiEngine/Core/Application.hpp"
+#include "GaleshiEngine/Renderer/Renderer.hpp"
+#include "GaleshiEngine/Renderer/Camera.hpp"
+#include "GaleshiEngine/Renderer/RenderSystem.hpp"
+#include "GaleshiEngine/Renderer/Framebuffer.hpp"
+#include "GaleshiEngine/Renderer/RayPick.hpp"
+#include "GaleshiEngine/Renderer/DebugRenderer.hpp"
+#include "GaleshiEngine/Scene/Scene.hpp"
+#include "GaleshiEngine/Scene/SceneSerializer.hpp"
+#include "GaleshiEngine/Assets/AssetManager.hpp"
+#include "GaleshiEngine/Assets/Material.hpp"
+#include "GaleshiEngine/Assets/Texture.hpp"
+#include "GaleshiEngine/Assets/Mesh.hpp"
+#include "GaleshiEngine/Assets/LandscapeMesh.hpp"
+#include "GaleshiEngine/Editor/EditorState.hpp"
+#include "GaleshiEngine/Editor/ContentBrowser.hpp"
+#include "GaleshiEngine/Editor/FilePickerDialog.hpp"
+#include "GaleshiEngine/Physics/PhysicsSystem.hpp"
+#include "GaleshiEngine/AI/NavigationSystem.hpp"
+#include "GaleshiEngine/AI/AISystem.hpp"
+#include "GaleshiEngine/Audio/AudioSystem.hpp"
+#include "GaleshiEngine/Physics/PhysicsSystem.hpp"
+#include "GaleshiEngine/Scripting/ScriptEngine.hpp"
+#include "GaleshiEngine/Renderer/PostProcessManager.hpp"
+
+#include <imgui.h>
+#include <imgui_internal.h>
+#include <spdlog/spdlog.h>
+#include <ImGuizmo.h>
+#include <bgfx/bgfx.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/quaternion.hpp>
+
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
+#include <cstdio>
+#include <filesystem>
+#include <limits>
+#include <vector>
+
+class GaleshiEditorApp final : public Galeshi::Application {
+    Galeshi::AudioSystem m_audio;
+    Galeshi::ScriptEngine m_scripts;
+    Galeshi::PostProcessManager m_postProcess;
+
+public:
+    GaleshiEditorApp()
+        : Galeshi::Application({
+              .name = "GaleshiEditor", .width = 1600, .height = 900, .editor = true}) {}
+
+protected:
+    // -------------------------------------------------------------------
+    // LIFECYCLE
+    // -------------------------------------------------------------------
+        spdlog::info("[Test] Spawned 5 falling cubes");
+    }
+
+void OnStart() override {
+        // --- Auto-inserted subsystem init ---
+        spdlog::info("[Subsystem] m_audio.Init() begin");
+        if (!m_audio.Init()) spdlog::error("[Subsystem] m_audio.Init() failed");
+        else spdlog::info("[Subsystem] m_audio.Init() done");
+        m_physics = std::make_unique<Galeshi::EnginePhysicsSystem>();
+        spdlog::info("[Subsystem] m_physics->Init() begin");
+        if (!m_physics->Init()) spdlog::error("[Subsystem] m_physics->Init() failed");
+        else spdlog::info("[Subsystem] m_physics->Init() done");
+        m_scripts.BindFunctions();
+        spdlog::info("[Subsystem] m_scripts.RunScript(init.lua) begin");
+        if (!m_scripts.RunScript("assets/scripts/init.lua"))
+            spdlog::error("[Subsystem] m_scripts.RunScript(init.lua) failed");
+        else
+            spdlog::info("[Subsystem] m_scripts.RunScript(init.lua) done");
+        // --- End auto-inserted ---
+
+        m_assets  = std::make_unique<Galeshi::AssetManager>();
+        m_physics = std::make_unique<Galeshi::EnginePhysicsSystem>();
+        m_physics->Init();
+        m_navSystem = std::make_unique<Galeshi::NavigationSystem>();
+        m_navSystem->Init();
+        m_debug = std::make_unique<Galeshi::DebugRenderer>();
+        m_debug->Init();
+        
+        m_render  = std::make_unique<Galeshi::RenderSystem>();
+        m_render->Init(m_assets.get());
+
+        m_browser    = std::make_unique<Galeshi::ContentBrowser>("assets");
+        m_serializer = std::make_unique<Galeshi::SceneSerializer>(m_scene, *m_assets);
+
+        // Авто-загрузка сцены, если есть. Иначе — тестовая сцена.
+        namespace fs = std::filesystem;
+        if (fs::exists("scene.json")) {
+            if (m_serializer->Load("scene.json")) {
+                spdlog::info("[Editor] Scene auto-loaded from scene.json");
+            } else {
+                BuildTestScene();
+            }
+        } else {
+            BuildTestScene();
+        }
+
+        // Первый снапшот для Undo/Redo
+        m_history.clear();
+        m_historyIndex = -1;
+        PushHistory();
+
+        m_camera.SetPerspective(glm::radians(60.0f),
+            static_cast<float>(GetRenderer()->Width()) / static_cast<float>(GetRenderer()->Height()),
+            0.1f, 1000.0f);
+    }
+
+    void OnUpdate(float dt) override {
+        // --- Auto-inserted physics update ---
+        if (m_physics) m_physics->Update(m_scene, dt);
+        // --- End auto-inserted ---
+
+        m_time += dt;
+        Galeshi::AISystem::Update(m_scene, dt);
+
+        // Анимация скелета
+        auto animView = m_scene.Registry().view<Galeshi::SkeletalComponent>();
+        for (auto h : animView) {
+            auto& skel = animView.get<Galeshi::SkeletalComponent>(h);
+            if (skel.isAnimated) {
+                skel.currentTime += dt * skel.animationSpeed;
+                if (skel.currentTime > 10.0f) skel.currentTime = 0.0f;
+            }
+        }
+
+        // Логика камеры
+        const bool cameraControllable = m_viewportHovered && !m_editor.GizmoLocked() && !ImGuizmo::IsUsing() && !ImGuizmo::IsOver();
+        
+        // Зум
+        if (m_viewportHovered) {
+            float wheel = ImGui::GetIO().MouseWheel;
+            if (wheel != 0.0f) {
+                m_editor.camRadius -= wheel * 0.5f;
+                m_editor.camRadius = glm::clamp(m_editor.camRadius, 0.5f, 200.0f);
+            }
+        }
+
+        // Вращение ПКМ
+        if (cameraControllable && ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+            auto d = ImGui::GetIO().MouseDelta;
+            m_editor.camYaw   -= d.x * 0.01f;
+            m_editor.camPitch -= d.y * 0.01f;
+            m_editor.camPitch  = glm::clamp(m_editor.camPitch, -1.5f, 1.5f);
+        }
+
+        // Перемещение стрелками
+        if (cameraControllable && !ImGui::GetIO().WantTextInput) {
+            float panSpeed = 10.0f * dt;
+            float yaw = m_editor.camYaw;
+            glm::vec3 forward(std::sin(yaw), 0.0f, std::cos(yaw));
+            glm::vec3 right(forward.z, 0.0f, -forward.x);
+
+            if (ImGui::IsKeyDown(ImGuiKey_UpArrow))    m_editor.camTarget -= forward * panSpeed;
+            if (ImGui::IsKeyDown(ImGuiKey_DownArrow))  m_editor.camTarget += forward * panSpeed;
+            if (ImGui::IsKeyDown(ImGuiKey_LeftArrow))  m_editor.camTarget -= right * panSpeed;
+            if (ImGui::IsKeyDown(ImGuiKey_RightArrow)) m_editor.camTarget += right * panSpeed;
+        }
+
+        const float aspect = m_viewportH ? static_cast<float>(m_viewportW) / m_viewportH : 16.0f / 9.0f;
+        m_camera.SetPerspective(glm::radians(60.0f), aspect, 0.1f, 1000.0f);
+        m_camera.Orbit(m_editor.camTarget, m_editor.camYaw, m_editor.camPitch, m_editor.camRadius);
+    }
+
+    void OnRender() override {} // Всё во Viewport
+
+    void OnImGui() override {
+        DrawMainMenuBar();
+
+        // Hotkeys
+        if (!ImGui::GetIO().WantTextInput) {
+            if (ImGui::IsKeyPressed(ImGuiKey_W)) m_editor.SetMode(Galeshi::GizmoMode::Translate);
+            if (ImGui::IsKeyPressed(ImGuiKey_E)) m_editor.SetMode(Galeshi::GizmoMode::Rotate);
+            if (ImGui::IsKeyPressed(ImGuiKey_R)) m_editor.SetMode(Galeshi::GizmoMode::Scale);
+            if (ImGui::IsKeyPressed(ImGuiKey_Delete)) DeleteSelected();
+
+            if (ImGui::GetIO().KeyCtrl) {
+                if (ImGui::IsKeyPressed(ImGuiKey_I)) OpenFileDialog();
+                if (ImGui::IsKeyPressed(ImGuiKey_S)) SaveScene();
+                if (ImGui::IsKeyPressed(ImGuiKey_O)) LoadScene();
+                if (ImGui::IsKeyPressed(ImGuiKey_Z)) Undo();
+                if (ImGui::IsKeyPressed(ImGuiKey_Y)) Redo();
+            }
+        }
+
+        DrawDockspace();
+        DrawViewport();
+        DrawOutliner();
+        DrawDetails();
+        DrawContentBrowser();
+
+        // File Picker (модальный)
+        
+        // --- File pickers (модальные диалоги) ---
+        std::string chosenOpen = m_filePicker.Draw();
+        if (!chosenOpen.empty()) {
+            SpawnFromModel(chosenOpen, m_editor.camTarget);
+        }
+
+        std::string chosenSave = m_filePickerSave.Draw();
+        if (!chosenSave.empty()) {
+            if (m_serializer) {
+                if (m_serializer->Save(chosenSave)) {
+                    spdlog::info("[Editor] Scene saved to {}", chosenSave);
+                } else {
+                    spdlog::error("[Editor] Failed to save scene to {}", chosenSave);
+                }
+            }
+        }
+
+        // Load Scene dialog (.json)
+        std::string chosenLoad = m_scenePicker.Draw();
+        if (!chosenLoad.empty()) {
+            m_editor.ClearSelection();
+            if (m_serializer->Load(chosenLoad)) {
+                spdlog::info("[Editor] Scene loaded from {}", chosenLoad);
+            } else {
+                spdlog::error("[Editor] Failed to load scene: {}", chosenLoad);
+            }
+        }
+    }
+
+    void OnShutdown() override {
+        spdlog::info("[Editor] OnShutdown: begin");
+
+        // Автосохранение ОТКЛЮЧЕНО. Сцена сохраняется только вручную
+        // через File -> Save Scene (Ctrl+S).
+
+        // Выходим без очистки GPU (иначе NVIDIA deadlock)
+        spdlog::info("[Editor] OnShutdown: exit (skip GPU cleanup)");
+        std::fflush(stdout);
+        std::fflush(stderr);
+        std::_Exit(0);
+    }
+
+private:
+    // -------------------------------------------------------------------
+    // UI: Menu Bar
+    // -------------------------------------------------------------------
+    void DrawMainMenuBar() {
+        if (!ImGui::BeginMainMenuBar()) return;
+
+        // Play/Stop
+        if (ImGui::Button(m_editor.isPlaying ? "Stop" : "Play", ImVec2(60, 0))) {
+            if (!m_editor.isPlaying) {
+                PushHistory();
+                m_editor.isPlaying = true;
+            } else {
+                m_editor.isPlaying = false;
+                m_physics->Reset();
+                if (m_historyIndex >= 0) m_serializer->LoadFromString(m_history[m_historyIndex]);
+            }
+        }
+        ImGui::SameLine();
+        ImGui::Text("|");
+        ImGui::SameLine();
+
+        if (ImGui::BeginMenu("File")) {
+            if (ImGui::MenuItem("Import Model...", "Ctrl+I")) OpenFileDialog();
+            if (ImGui::MenuItem("Load Scene", "Ctrl+O")) LoadScene();
+                if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveScene();
+            ImGui::Separator();
+            if (ImGui::MenuItem("Reset Scene")) {
+                m_editor.ClearSelection();
+                m_scene.Registry().clear();
+                BuildTestScene();
+                PushHistory();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Exit")) std::exit(0);
+            ImGui::EndMenu();
+        }
+        
+        if (ImGui::BeginMenu("Edit")) {
+            if (ImGui::MenuItem("Undo", "Ctrl+Z")) Undo();
+            if (ImGui::MenuItem("Redo", "Ctrl+Y")) Redo();
+            ImGui::Separator();
+            if (ImGui::MenuItem("Translate", "W")) m_editor.SetMode(Galeshi::GizmoMode::Translate);
+            if (ImGui::MenuItem("Rotate",    "E")) m_editor.SetMode(Galeshi::GizmoMode::Rotate);
+            if (ImGui::MenuItem("Scale",     "R")) m_editor.SetMode(Galeshi::GizmoMode::Scale);
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Create")) {
+            if (ImGui::MenuItem("Empty Entity"))
+                m_editor.Select(m_scene.CreateEntity("New Entity"));
+            
+            if (ImGui::MenuItem("Landscape")) {
+                auto e = m_scene.CreateEntity("Landscape");
+                auto& lc = e.AddComponent<Galeshi::LandscapeComponent>();
+                lc.sizeX = 100; lc.sizeZ = 100; lc.scale = 1.0f;
+                lc.heights.resize(lc.sizeX * lc.sizeZ, 0.0f);
+                
+                auto mesh = std::make_shared<Galeshi::Mesh>();
+                Galeshi::LandscapeMesh::Rebuild(lc, *mesh);
+                
+                e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ mesh, "", "landscape" });
+                auto mat = std::make_shared<Galeshi::Material>();
+                mat->albedoFactor = {0.4f, 0.6f, 0.3f, 1.0f};
+                mat->roughnessFactor = 0.9f;
+                e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+                
+                m_editor.Select(e);
+            }
+            if (ImGui::MenuItem("Cube")) {
+                auto e = MakeCube("Cube", {0, 0, 0});
+                m_editor.Select(e);
+            }
+            if (ImGui::MenuItem("Physics Cube")) {
+                auto e = MakeCube("PhysicsCube", {0, 5, 0});
+                e.AddComponent<Galeshi::RigidBodyComponent>();
+                e.AddComponent<Galeshi::BoxColliderComponent>();
+                m_editor.Select(e);
+            }
+            if (ImGui::MenuItem("AI Agent")) {
+                    auto e = m_scene.CreateEntity("AI_Agent");
+                    auto mesh = std::make_shared<Galeshi::Mesh>();
+                    auto cube = m_assets->CreateCubeMesh();
+                    // Переиспользуем куб
+                    e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ cube, "", "cube" });
+                    
+                    auto mat = std::make_shared<Galeshi::Material>();
+                    mat->albedoFactor = {0.2f, 0.8f, 0.2f, 1.0f}; // Зеленый
+                    e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+                    
+                    auto& tc = e.GetComponent<Galeshi::TransformComponent>();
+                    tc.position = {0, 1, 0}; // Над землей
+                    tc.scale = {0.5f, 0.5f, 0.5f};
+                    
+                    e.AddComponent<Galeshi::NavAgentComponent>();
+                    m_editor.Select(e);
+                }
+                if (ImGui::MenuItem("Build NavMesh")) {
+                    spdlog::info("[Editor] Build NavMesh menu clicked");
+                    if (!m_navSystem) {
+                        spdlog::error("[Editor] m_navSystem is NULL");
+                    } else {
+                        if (m_navSystem->BuildFromScene(m_scene)) {
+                            spdlog::info("[Editor] NavMesh generated");
+                        } else {
+                            spdlog::error("[Editor] BuildFromScene failed");
+                        }
+                    }
+                    spdlog::info("[Editor] Build NavMesh menu done");
+                }
+                if (ImGui::MenuItem("Point Light")) {
+                auto e = m_scene.CreateEntity("PointLight");
+                e.AddComponent<Galeshi::PointLightComponent>();
+                e.GetComponent<Galeshi::TransformComponent>().position = {0, 2, 0};
+                m_editor.Select(e);
+            }
+            ImGui::EndMenu();
+        }
+        
+        if (ImGui::BeginMenu("Stats")) {
+            ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
+            ImGui::Text("Entities: %d", (int)m_scene.AllEntities().size());
+            ImGui::EndMenu();
+        }
+
+        ImGui::EndMainMenuBar();
+    }
+
+    // -------------------------------------------------------------------
+    // Undo / Redo
+    // -------------------------------------------------------------------
+    void PushHistory() {
+        if (m_isRestoringHistory) return;
+        std::string snap = m_serializer->SaveToString();
+        if (m_historyIndex >= 0 && m_history[m_historyIndex] == snap) return;
+
+        m_history.resize(m_historyIndex + 1);
+        m_history.push_back(snap);
+        m_historyIndex = (int)m_history.size() - 1;
+
+        if (m_history.size() > 50) {
+            m_history.erase(m_history.begin());
+            m_historyIndex--;
+        }
+    }
+
+    void Undo() {
+        if (m_historyIndex <= 0) return;
+        m_historyIndex--;
+        m_isRestoringHistory = true;
+        m_editor.ClearSelection();
+        m_serializer->LoadFromString(m_history[m_historyIndex]);
+        m_isRestoringHistory = false;
+    }
+
+    void Redo() {
+        if (m_historyIndex + 1 >= (int)m_history.size()) return;
+        m_historyIndex++;
+        m_isRestoringHistory = true;
+        m_editor.ClearSelection();
+        m_serializer->LoadFromString(m_history[m_historyIndex]);
+        m_isRestoringHistory = false;
+    }
+
+    // -------------------------------------------------------------------
+    // Save / Load / Delete
+    // -------------------------------------------------------------------
+    void SaveScene() {
+        const char* home = std::getenv("HOME");
+        std::string start = home ? home : "/";
+        m_filePickerSave.SaveAs(start, "scene.json", "Save Scene", { ".json" });
+    }
+    
+    void LoadScene() {
+        // Load Scene -> модальный диалог для .json файлов
+        const char* home = std::getenv("HOME");
+        std::string start = home ? home : "/";
+        m_scenePicker.Open(start, "Load Scene", { ".json" });
+    }
+
+    void DeleteSelected() {
+        if (!m_editor.HasSelection()) return;
+        PushHistory();
+        auto entities = m_editor.SelectedAll(&m_scene);
+        for (auto e : entities) m_scene.DestroyEntity(e);
+        m_editor.ClearSelection();
+    }
+
+    // -------------------------------------------------------------------
+    // Dockspace
+    // -------------------------------------------------------------------
+    void DrawDockspace() {
+        ImGuiViewport* vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(vp->Pos);
+        ImGui::SetNextWindowSize(vp->Size);
+        ImGui::SetNextWindowViewport(vp->ID);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+
+        ImGui::Begin("DockSpace", nullptr,
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus);
+
+        ImGui::PopStyleVar(3);
+
+        const ImGuiID dockspaceId = ImGui::GetID("GaleshiDockspace");
+        if (ImGui::DockBuilderGetNode(dockspaceId) == nullptr) {
+            ImGui::DockBuilderRemoveNode(dockspaceId);
+            ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+            ImGui::DockBuilderSetNodeSize(dockspaceId, vp->Size);
+
+            ImGuiID center = dockspaceId;
+            ImGuiID right  = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.25f, nullptr, &center);
+            ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down,  0.30f, nullptr, &center);
+            ImGuiID left   = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left,  0.20f, nullptr, &center);
+
+            ImGui::DockBuilderDockWindow("Viewport",        center);
+            ImGui::DockBuilderDockWindow("World Outliner",  left);
+            ImGui::DockBuilderDockWindow("Details",         right);
+            ImGui::DockBuilderDockWindow("Content Browser", bottom);
+            ImGui::DockBuilderFinish(dockspaceId);
+        }
+        ImGui::DockSpace(dockspaceId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
+        ImGui::End();
+    }
+
+    // -------------------------------------------------------------------
+    // Viewport & Picking & Sculpting
+    // -------------------------------------------------------------------
+    void DrawViewport() {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+        ImGui::Begin("Viewport");
+
+        const ImVec2 avail = ImGui::GetContentRegionAvail();
+        const uint16_t w = static_cast<uint16_t>(avail.x);
+        const uint16_t h = static_cast<uint16_t>(avail.y);
+
+        if (w > 0 && h > 0) {
+            if (!m_framebuffer || m_framebuffer->Width() != w || m_framebuffer->Height() != h) {
+                if (!m_framebuffer) m_framebuffer = std::make_unique<Galeshi::Framebuffer>();
+                m_framebuffer->Resize(w, h);
+            }
+        }
+
+        m_viewportW = w;
+        m_viewportH = h;
+
+        if (m_framebuffer && m_framebuffer->Valid()) {
+            bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
+            m_render->Render(m_scene, m_camera, 1, w, h);
+        }
+
+        // Debug rendering (grid, navmesh, selection box)
+        if (m_debug) {
+            m_debug->Begin();
+            
+            // Grid (100x100 на полу)
+            m_debug->AddGrid(50.0f, 2.0f, {0.3f, 0.3f, 0.3f, 0.4f});
+            
+            // Оси в origin
+            m_debug->AddAxes({0, 0.05f, 0}, 2.0f);
+            
+            // NavMesh debug (если есть)
+            if (m_navSystem) {
+                const auto& navTris = m_navSystem->GetDebugTriangles();
+                if (!navTris.empty()) {
+                    // Просто рисуем как линии
+                    for (size_t i = 0; i + 2 < navTris.size(); i += 3) {
+                        const glm::vec4 c = {0.2f, 0.8f, 0.4f, 0.5f};
+                        m_debug->AddLine(navTris[i], navTris[i+1], c);
+                        m_debug->AddLine(navTris[i+1], navTris[i+2], c);
+                        m_debug->AddLine(navTris[i+2], navTris[i], c);
+                    }
+                }
+            }
+            
+            // Selection box (вокруг выделенного)
+            Galeshi::Entity sel = m_editor.Selected(&m_scene);
+            if (sel && sel.HasComponent<Galeshi::TransformComponent>()) {
+                auto& tc = sel.GetComponent<Galeshi::TransformComponent>();
+                m_debug->AddBox(tc.position, tc.scale + glm::vec3(0.1f), {1, 1, 0, 1});
+            }
+            
+            m_debug->Render(m_camera, 1, w, h);
+        }
+
+        if (m_framebuffer && bgfx::isValid(m_framebuffer->Color())) {
+            ImTextureID texId = static_cast<ImTextureID>(m_framebuffer->Color().idx);
+            ImGui::Image(texId, ImVec2(static_cast<float>(w), static_cast<float>(h)),
+                         ImVec2(0, 0), ImVec2(1, 1));
+        }
+
+        m_viewportHovered = ImGui::IsItemHovered();
+        const ImVec2 vpPos  = ImGui::GetItemRectMin();
+        const ImVec2 vpSize = ImGui::GetItemRectSize();
+
+        // Left-click Picking / Sculpting
+        if (m_viewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !m_editor.GizmoLocked()) {
+            Galeshi::Entity sel = m_editor.Selected(&m_scene);
+            if (sel && sel.HasComponent<Galeshi::NavAgentComponent>()) {
+                const ImVec2 mouse = ImGui::GetIO().MousePos;
+                auto ray = Galeshi::ScreenPointToRay(m_camera, mouse.x, mouse.y, vpPos.x, vpPos.y, vpSize.x, vpSize.y);
+                glm::vec3 hit;
+                if (Galeshi::IntersectPlaneY(ray, 0.0f, hit)) {
+                    auto& agent = sel.GetComponent<Galeshi::NavAgentComponent>();
+                    m_navSystem->FindPath(sel.GetComponent<Galeshi::TransformComponent>().position, hit, agent.path);
+                    agent.currentWaypoint = 0;
+                }
+            }
+        }
+
+        if (m_viewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_editor.GizmoLocked()) {
+            const ImVec2 mouse = ImGui::GetIO().MousePos;
+            auto ray = Galeshi::ScreenPointToRay(m_camera, mouse.x, mouse.y, vpPos.x, vpPos.y, vpSize.x, vpSize.y);
+
+            if (m_editor.toolMode == Galeshi::EditorState::ToolMode::Raise) {
+                auto& reg = m_scene.Registry();
+                auto view = reg.view<Galeshi::LandscapeComponent>();
+                for (auto e : view) {
+                    auto& lc = view.get<Galeshi::LandscapeComponent>(e);
+                    auto& mc = reg.get<Galeshi::MeshComponent>(e);
+                    
+                    glm::vec3 hit;
+                    if (Galeshi::IntersectPlaneY(ray, 0.0f, hit)) {
+                        int gx = static_cast<int>((hit.x / lc.scale) + static_cast<float>(lc.sizeX) / 2.0f);
+                        int gz = static_cast<int>((hit.z / lc.scale) + static_cast<float>(lc.sizeZ) / 2.0f);
+                        for (int dz = -2; dz <= 2; ++dz) {
+                            for (int dx = -2; dx <= 2; ++dx) {
+                                int nx = gx + dx, nz = gz + dz;
+                                if (nx >= 0 && nx < lc.sizeX && nz >= 0 && nz < lc.sizeZ) {
+                                    lc.heights[nz * lc.sizeX + nx] += 0.5f;
+                                }
+                            }
+                        }
+                        Galeshi::LandscapeMesh::Rebuild(lc, *mc.mesh);
+                    }
+                }
+            } else {
+                auto picked = PickEntity(ray);
+                if (picked) {
+                    if (ImGui::GetIO().KeyCtrl) m_editor.AddToSelection(picked);
+                    else                        m_editor.Select(picked);
+                } else {
+                    if (!ImGui::GetIO().KeyCtrl) m_editor.ClearSelection();
+                }
+            }
+        }
+
+        // Drag-n-drop
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
+                const char* assetPath = static_cast<const char*>(payload->Data);
+                const ImVec2 mouse = ImGui::GetIO().MousePos;
+                auto ray = Galeshi::ScreenPointToRay(m_camera, mouse.x, mouse.y, vpPos.x, vpPos.y, vpSize.x, vpSize.y);
+                glm::vec3 hit{0.0f};
+                if (!Galeshi::IntersectPlaneY(ray, 0.0f, hit)) hit = m_editor.camTarget;
+                OnAssetDropped(assetPath, hit);
+            }
+            ImGui::EndDragDropTarget();
+        }
+
+        Galeshi::Entity sel = m_editor.Selected(&m_scene);
+        if (sel && sel.HasComponent<Galeshi::TransformComponent>()) DrawGizmo(sel, vpPos, vpSize);
+
+        ImGui::SetCursorPos(ImVec2(10, 10));
+        ImGui::Text("GaleshiEngine - Stage 4 | FPS: %.1f", static_cast<double>(ImGui::GetIO().Framerate));
+
+        ImGui::End();
+        ImGui::PopStyleVar();
+    }
+
+    void DrawGizmo(Galeshi::Entity sel, const ImVec2& vpPos, const ImVec2& vpSize) {
+        auto& tc = sel.GetComponent<Galeshi::TransformComponent>();
+        ImGuizmo::SetOrthographic(false);
+        ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
+        ImGuizmo::SetRect(vpPos.x, vpPos.y, vpSize.x, vpSize.y);
+        glm::mat4 model = tc.LocalMatrix();
+        
+        ImGuizmo::OPERATION op = ImGuizmo::TRANSLATE;
+        if (m_editor.Mode() == Galeshi::GizmoMode::Rotate) op = ImGuizmo::ROTATE;
+        else if (m_editor.Mode() == Galeshi::GizmoMode::Scale) op = ImGuizmo::SCALE;
+
+        ImGui::PushClipRect(ImVec2(vpPos.x, vpPos.y), ImVec2(vpPos.x + vpSize.x, vpPos.y + vpSize.y), true);
+        ImGuizmo::Manipulate(glm::value_ptr(m_camera.View()), glm::value_ptr(m_camera.Projection()), op, ImGuizmo::LOCAL, glm::value_ptr(model));
+        ImGui::PopClipRect();
+
+        m_editor.SetGizmoLocked(ImGuizmo::IsUsing() || ImGuizmo::IsOver());
+
+        if (ImGuizmo::IsUsing()) {
+            glm::vec3 t, r, s;
+            ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(model), glm::value_ptr(t), glm::value_ptr(r), glm::value_ptr(s));
+            const glm::vec3 deltaT = t - tc.position;
+            const glm::vec3 deltaS = s - tc.scale;
+
+            auto all = m_editor.SelectedAll(&m_scene);
+            for (auto e : all) {
+                if (!e.HasComponent<Galeshi::TransformComponent>()) continue;
+                auto& etc = e.GetComponent<Galeshi::TransformComponent>();
+                if (e == sel) {
+                    etc.position = t;
+                    etc.rotation = glm::quat(glm::radians(r));
+                    etc.scale    = s;
+                } else if (m_editor.Mode() == Galeshi::GizmoMode::Translate) {
+                    etc.position += deltaT;
+                } else if (m_editor.Mode() == Galeshi::GizmoMode::Scale) {
+                    etc.scale += deltaS;
+                }
+            }
+        }
+    }
+
+    Galeshi::Entity PickEntity(const Galeshi::Ray& worldRay) {
+        Galeshi::Entity best{};
+        float bestT = std::numeric_limits<float>::max();
+        auto view = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::MeshComponent>();
+        for (auto h : view) {
+            const auto& tc = view.get<Galeshi::TransformComponent>(h);
+            const auto& mc = view.get<Galeshi::MeshComponent>(h);
+            if (!mc.mesh || !mc.mesh->Valid()) continue;
+            const glm::mat4 M = tc.LocalMatrix();
+            const glm::mat4 Minv = glm::inverse(M);
+            const glm::vec3 localOrigin = glm::vec3(Minv * glm::vec4(worldRay.origin, 1.0f));
+            const glm::vec3 localDir    = glm::vec3(Minv * glm::vec4(worldRay.direction, 0.0f));
+            float tLocal = 0.0f;
+            if (!Galeshi::IntersectMesh(localOrigin, localDir, *mc.mesh, tLocal)) continue;
+            const glm::vec3 hitWorld = glm::vec3(M * glm::vec4(localOrigin + localDir * tLocal, 1.0f));
+            const float distWorld = glm::length(hitWorld - worldRay.origin);
+            if (distWorld < bestT) {
+                bestT = distWorld;
+                best  = Galeshi::Entity{ h, &m_scene };
+            }
+        }
+        if (best && best.HasComponent<Galeshi::ParentComponent>()) {
+            entt::entity p = best.GetComponent<Galeshi::ParentComponent>().parent;
+            if (p != entt::null) best = Galeshi::Entity{ p, &m_scene };
+        }
+        return best;
+    }
+
+    // -------------------------------------------------------------------
+    // Outliner
+    // -------------------------------------------------------------------
+    void DrawEntityNode(Galeshi::Entity e) {
+        bool isSelected = m_editor.IsSelected(e);
+        auto& nc = e.GetComponent<Galeshi::NameComponent>();
+        std::vector<Galeshi::Entity> children;
+        auto view = m_scene.Registry().view<Galeshi::ParentComponent>();
+        for (auto h : view) {
+            if (view.get<Galeshi::ParentComponent>(h).parent == e.Handle()) children.emplace_back(h, &m_scene);
+        }
+        ImGuiTreeNodeFlags flags = ((isSelected) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (children.empty()) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+
+        bool opened = ImGui::TreeNodeEx((void*)(uintptr_t)e.Handle(), flags, "%s", nc.name.c_str());
+        if (ImGui::IsItemClicked()) {
+            if (ImGui::GetIO().KeyCtrl) { if (isSelected) m_editor.RemoveFromSelection(e); else m_editor.AddToSelection(e); }
+            else { m_editor.Select(e); }
+        }
+        if (opened && !children.empty()) {
+            for (auto c : children) DrawEntityNode(c);
+            ImGui::TreePop();
+        }
+    }
+
+    void DrawOutliner() {
+        ImGui::Begin("World Outliner");
+        auto entities = m_scene.AllEntities();
+        for (auto& e : entities) if (!e.HasComponent<Galeshi::ParentComponent>()) DrawEntityNode(e);
+        if (ImGui::BeginPopupContextWindow("outliner_ctx")) {
+            if (ImGui::MenuItem("Create Empty")) m_editor.Select(m_scene.CreateEntity("New Entity"));
+            if (ImGui::MenuItem("Delete Selected") && m_editor.HasSelection()) DeleteSelected();
+            ImGui::EndPopup();
+        }
+        ImGui::End();
+    }
+
+    // -------------------------------------------------------------------
+    // Details
+    // -------------------------------------------------------------------
+    void DrawTextureSlot(const char* label, std::shared_ptr<Galeshi::Texture>& slot) {
+        ImGui::PushID(label);
+        ImGui::Text("%s", label);
+
+        if (slot && bgfx::isValid(slot->Handle())) {
+            ImTextureID texId = static_cast<ImTextureID>(slot->Handle().idx);
+            ImGui::Image(texId, ImVec2(64, 64));
+            ImGui::SameLine();
+            ImGui::BeginGroup();
+            std::string path = slot->Path();
+            auto slash = path.find_last_of('/');
+            std::string name = (slash != std::string::npos) ? path.substr(slash + 1) : path;
+            ImGui::TextWrapped("%s", name.c_str());
+            if (ImGui::Button("Clear")) {
+                slot.reset();
+            }
+            ImGui::EndGroup();
+        } else {
+            ImGui::Button("Empty (drop texture here)", ImVec2(200, 64));
+        }
+
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
+                const char* path = static_cast<const char*>(payload->Data);
+                std::string p = path;
+                auto dotPos = p.find_last_of('.');
+                std::string ext = (dotPos != std::string::npos) ? p.substr(dotPos) : "";
+                for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+                if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+                    ext == ".bmp" || ext == ".tga") {
+                    slot = m_assets->LoadTexture(p);
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+
+        ImGui::PopID();
+    }
+
+    void DrawDetails() {
+        ImGui::Begin("Details");
+        auto selected = m_editor.SelectedAll(&m_scene);
+        if (selected.empty()) { ImGui::TextDisabled("No selection"); ImGui::End(); return; }
+
+        if (!selected.empty() && selected[0].HasComponent<Galeshi::NameComponent>()) {
+            auto& nc = selected[0].GetComponent<Galeshi::NameComponent>();
+            char buf[256]; std::snprintf(buf, sizeof(buf), "%s", nc.name.c_str());
+            if (ImGui::InputText("Name", buf, sizeof(buf))) nc.name = buf;
+        }
+
+        if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+            glm::vec3 pos = selected[0].HasComponent<Galeshi::TransformComponent>() ? selected[0].GetComponent<Galeshi::TransformComponent>().position : glm::vec3(0.0f);
+            glm::vec3 scl = selected[0].HasComponent<Galeshi::TransformComponent>() ? selected[0].GetComponent<Galeshi::TransformComponent>().scale : glm::vec3(1.0f);
+            glm::vec3 rot = selected[0].HasComponent<Galeshi::TransformComponent>() ? glm::degrees(glm::eulerAngles(selected[0].GetComponent<Galeshi::TransformComponent>().rotation)) : glm::vec3(0.0f);
+
+            if (ImGui::DragFloat3("Position", glm::value_ptr(pos), 0.05f)) { for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().position = pos; }
+            if (ImGui::DragFloat3("Scale", glm::value_ptr(scl), 0.05f, 0.01f, 100.0f)) { for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().scale = scl; }
+            if (ImGui::DragFloat3("Rotation", glm::value_ptr(rot), 1.0f)) { glm::quat q = glm::quat(glm::radians(rot)); for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().rotation = q; }
+        }
+
+        if (selected[0].HasComponent<Galeshi::LandscapeComponent>() && ImGui::CollapsingHeader("Landscape (Sculpting)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Text("Use Left Click in viewport to sculpt");
+            if (ImGui::Button("Toggle Raise Brush")) {
+                m_editor.toolMode = (m_editor.toolMode == Galeshi::EditorState::ToolMode::Raise) ? Galeshi::EditorState::ToolMode::Select : Galeshi::EditorState::ToolMode::Raise;
+            }
+            ImGui::Text("Current Tool: %s", m_editor.toolMode == Galeshi::EditorState::ToolMode::Raise ? "Raise" : "Select");
+        }
+
+        if (selected[0].HasComponent<Galeshi::MaterialComponent>() && ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& matc = selected[0].GetComponent<Galeshi::MaterialComponent>();
+            if (matc.material) {
+                auto& m = *matc.material;
+                ImGui::ColorEdit4("Albedo Factor", glm::value_ptr(m.albedoFactor));
+                ImGui::SliderFloat("Metallic Factor",  &m.metallicFactor,  0.0f, 1.0f);
+                ImGui::SliderFloat("Roughness Factor", &m.roughnessFactor, 0.04f, 1.0f);
+                ImGui::ColorEdit3("Emissive", glm::value_ptr(m.emissiveFactor));
+
+                ImGui::Separator();
+                ImGui::Text("Texture Maps (drag from Content Browser):");
+
+                DrawTextureSlot("Albedo Map",           m.albedoMap);
+                DrawTextureSlot("Normal Map",           m.normalMap);
+                DrawTextureSlot("Metallic/Roughness",   m.metallicRoughnessMap);
+            }
+        }
+
+        if (selected[0].HasComponent<Galeshi::NavAgentComponent>() && ImGui::CollapsingHeader("AI Agent", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& agent = selected[0].GetComponent<Galeshi::NavAgentComponent>();
+            ImGui::DragFloat("Speed", &agent.speed, 0.1f, 0.1f, 20.0f);
+            ImGui::Text("Path Waypoints: %zu", agent.path.size());
+            ImGui::Text("Use RMB in viewport to set target");
+        }
+
+        if (selected[0].HasComponent<Galeshi::SkeletalComponent>() && ImGui::CollapsingHeader("Skeletal Animation", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& skel = selected[0].GetComponent<Galeshi::SkeletalComponent>();
+            ImGui::Checkbox("Playing", &skel.isAnimated);
+            ImGui::DragFloat("Speed", &skel.animationSpeed, 0.1f, 0.0f, 10.0f);
+        }
+        
+        if (selected[0].HasComponent<Galeshi::DirectionalLightComponent>() && ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& dl = selected[0].GetComponent<Galeshi::DirectionalLightComponent>();
+            ImGui::DragFloat3("Direction", glm::value_ptr(dl.direction), 0.05f, -1.0f, 1.0f);
+            ImGui::ColorEdit3("Color", glm::value_ptr(dl.color));
+            ImGui::SliderFloat("Intensity", &dl.intensity, 0.0f, 10.0f);
+        }
+
+        ImGui::End();
+    }
+
+    // -------------------------------------------------------------------
+    // Content Browser & Assets
+    // -------------------------------------------------------------------
+    void DrawContentBrowser() {
+        ImGui::Begin("Content Browser");
+        std::string clicked = m_browser->Draw();
+        if (!clicked.empty()) OnAssetDoubleClicked(clicked);
+        ImGui::End();
+    }
+
+    void OpenFileDialog() {
+        const char* home = std::getenv("HOME");
+        std::string start = home ? home : "/";
+        m_filePicker.Open(start, "Load Model", { ".fbx", ".gltf", ".glb", ".obj", ".dae" });
+    }
+
+    void OnAssetDoubleClicked(const std::string& path) {
+        namespace fs = std::filesystem;
+        std::string ext = fs::path(path).extension().string();
+        for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+
+        if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") {
+            SpawnFromModel(path, glm::vec3(0.0f));
+        } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+                   ext == ".bmp" || ext == ".tga") {
+            // Применяем к выделенному объекту
+            Galeshi::Entity sel = m_editor.Selected(&m_scene);
+            if (sel && sel.HasComponent<Galeshi::MaterialComponent>()) {
+                auto& matc = sel.GetComponent<Galeshi::MaterialComponent>();
+                if (matc.material) {
+                    matc.material->albedoMap = m_assets->LoadTexture(path);
+                    spdlog::info("[Editor] Applied texture to selected: {}", path);
+                }
+            }
+        }
+    }
+
+    void OnAssetDropped(const std::string& path, glm::vec3 pos) {
+        namespace fs = std::filesystem;
+        std::string ext = fs::path(path).extension().string();
+        for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+
+        if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") {
+            SpawnFromModel(path, pos);
+            return;
+        }
+
+        // Если бросили текстуру на объект с материалом — установить в albedo
+        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+            ext == ".bmp" || ext == ".tga") {
+            Galeshi::Entity sel = m_editor.Selected(&m_scene);
+            if (sel && sel.HasComponent<Galeshi::MaterialComponent>()) {
+                auto& matc = sel.GetComponent<Galeshi::MaterialComponent>();
+                if (matc.material) {
+                    matc.material->albedoMap = m_assets->LoadTexture(path);
+                    spdlog::info("[Editor] Set albedo map: {}", path);
+                }
+            }
+        }
+    }
+
+    void SpawnFromModel(const std::string& path, glm::vec3 pos) {
+        PushHistory();
+        auto model = m_assets->LoadModel(path);
+        if (model.meshes.empty()) return;
+        namespace fs = std::filesystem;
+        const auto stem = fs::path(path).stem().string();
+
+        auto root = m_scene.CreateEntity(stem);
+        root.GetComponent<Galeshi::TransformComponent>().position = pos;
+
+        if (model.hasAnimation) {
+            auto& skel = root.AddComponent<Galeshi::SkeletalComponent>();
+            skel.isAnimated = true; skel.sourcePath = path; skel.boneMatrices.resize(256, glm::mat4(1.0f));
+        }
+
+        for (size_t i = 0; i < model.meshes.size(); ++i) {
+            auto e = m_scene.CreateEntity(stem + "_" + std::to_string(i));
+            e.AddComponent<Galeshi::ParentComponent>(Galeshi::ParentComponent{ root.Handle() });
+            e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ model.meshes[i], path, "", static_cast<int>(i) });
+            // Правильный материал по индексу меша
+            std::shared_ptr<Galeshi::Material> mat;
+            if (i < model.meshMaterialIndex.size()) {
+                int matIdx = model.meshMaterialIndex[i];
+                if (matIdx >= 0 && matIdx < static_cast<int>(model.materials.size()))
+                    mat = model.materials[static_cast<size_t>(matIdx)];
+            }
+            if (!mat && !model.materials.empty())
+                mat = model.materials[0];
+            if (!mat)
+                mat = std::make_shared<Galeshi::Material>();
+            e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+        }
+        m_editor.Select(root);
+        m_editor.camTarget = pos;
+        m_editor.camRadius = 5.0f;
+    }
+
+    // -------------------------------------------------------------------
+    // Scene Helpers
+    // -------------------------------------------------------------------
+    Galeshi::Entity MakeCube(const std::string& name, glm::vec3 pos) {
+        auto e = m_scene.CreateEntity(name);
+        auto mesh = m_assets->CreateCubeMesh();
+        e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ mesh, "", "cube" });
+        auto mat = std::make_shared<Galeshi::Material>();
+        e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+        e.GetComponent<Galeshi::TransformComponent>().position = pos;
+        return e;
+    }
+
+    void BuildTestScene() {
+        auto sun = m_scene.CreateEntity("Sun");
+        auto& dl = sun.AddComponent<Galeshi::DirectionalLightComponent>();
+        dl.direction = glm::normalize(glm::vec3(-0.4f, -0.8f, -0.5f));
+        dl.color = {1.0f, 0.97f, 0.9f}; dl.intensity = 3.0f;
+
+        { auto e = MakeCube("Cube_Orange", { 0.0f, 0.0f, 0.0f}); auto& m = *e.GetComponent<Galeshi::MaterialComponent>().material; m.albedoFactor = {0.85f, 0.55f, 0.25f, 1.0f}; m.roughnessFactor = 0.4f; }
+        { auto e = MakeCube("Cube_Metal",  {-2.5f, 0.0f, 0.0f}); auto& m = *e.GetComponent<Galeshi::MaterialComponent>().material; m.albedoFactor = {0.95f, 0.95f, 0.95f, 1.0f}; m.metallicFactor = 1.0f; m.roughnessFactor = 0.15f; }
+        { auto e = MakeCube("Cube_Rough",  { 2.5f, 0.0f, 0.0f}); auto& m = *e.GetComponent<Galeshi::MaterialComponent>().material; m.albedoFactor = {0.30f, 0.55f, 0.85f, 1.0f}; m.roughnessFactor = 0.9f; }
+
+        auto pl = m_scene.CreateEntity("PointLight");
+        pl.AddComponent<Galeshi::PointLightComponent>();
+        pl.GetComponent<Galeshi::TransformComponent>().position = {0.0f, 2.0f, 0.0f};
+    }
+
+    // --- Состояние ---
+    Galeshi::Scene          m_scene;
+    Galeshi::Camera         m_camera;
+    Galeshi::EditorState    m_editor;
+    float                   m_time = 0.0f;
+
+    std::unique_ptr<Galeshi::AssetManager>    m_assets;
+    std::unique_ptr<Galeshi::RenderSystem>    m_render;
+    std::unique_ptr<Galeshi::Framebuffer>     m_framebuffer;
+    std::unique_ptr<Galeshi::ContentBrowser>  m_browser;
+    std::unique_ptr<Galeshi::SceneSerializer> m_serializer;
+    std::unique_ptr<Galeshi::EnginePhysicsSystem>   m_physics;
+    std::unique_ptr<Galeshi::NavigationSystem> m_navSystem;
+    std::unique_ptr<Galeshi::DebugRenderer> m_debug;
+
+    uint16_t    m_viewportW = 0, m_viewportH = 0;
+    bool        m_viewportHovered = false;
+    Galeshi::FilePickerDialog m_filePicker;
+    Galeshi::FilePickerDialog m_filePickerSave;
+    Galeshi::FilePickerDialog m_scenePicker;
+
+    std::vector<std::string> m_history;
+    int  m_historyIndex = -1;
+    bool m_isRestoringHistory = false;
+    bool m_wasUsingGizmo = false;
+};
+
+int main(int, char**) {
+    // Принудительно небуферизированный stdout — чтобы логи
+    // появлялись до любого crash.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+
+    // ВАЖНО: создаём app через new и НИКОГДА не удаляем.
+    // Причина: ~Application вызывает bgfx::shutdown() и SDL_Quit(),
+    // которые падают в deadlock внутри libnvidia-glcore при dlclose.
+    // OnShutdown() (в конце Run) уже сохраняет сцену и делает cleanup.
+    // OS освободит GPU-ресурсы при завершении процесса.
+    GaleshiEditorApp* app = new GaleshiEditorApp();
+    int exitCode = app->Run();
+
+    std::fflush(stdout);
+    std::fflush(stderr);
+    std::_Exit(exitCode);  // нет деструкторов, нет dlclose, нет NVIDIA deadlock
+}

@@ -1,0 +1,184 @@
+#include "GaleshiEngine/Scene/Scene.hpp"
+#include "GaleshiEngine/Scene/Components.hpp"
+#include <Jolt/Physics/Body/BodyLockInterface.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Body/BodyInterface.h>
+#include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Jolt.h>
+#include <Jolt/RegisterTypes.h>
+#include <Jolt/Core/Factory.h>
+#include <Jolt/Core/TempAllocator.h>
+#include <Jolt/Core/JobSystemThreadPool.h>
+#include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
+#include <Jolt/Physics/Collision/ObjectLayer.h>
+#include <algorithm>
+#include <memory>
+#include <thread>
+
+#include "GaleshiEngine/Physics/PhysicsSystem.hpp"
+
+namespace Galeshi {
+
+namespace Layers {
+    static constexpr JPH::ObjectLayer NON_MOVING = 0;
+    static constexpr JPH::ObjectLayer MOVING     = 1;
+    static constexpr JPH::ObjectLayer NUM_LAYERS = 2;
+}
+namespace BroadPhaseLayers {
+    static constexpr JPH::BroadPhaseLayer NON_MOVING(0);
+    static constexpr JPH::BroadPhaseLayer MOVING(1);
+    static constexpr JPH::uint NUM_LAYERS = 2;
+}
+
+class BPLayerInterfaceImpl final : public JPH::BroadPhaseLayerInterface {
+public:
+    BPLayerInterfaceImpl() {
+        mObjectToBroadPhase[Layers::NON_MOVING] = BroadPhaseLayers::NON_MOVING;
+        mObjectToBroadPhase[Layers::MOVING]     = BroadPhaseLayers::MOVING;
+    }
+    virtual JPH::uint GetNumBroadPhaseLayers() const override {
+        return BroadPhaseLayers::NUM_LAYERS;
+    }
+    virtual JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer inLayer) const override {
+        JPH_ASSERT(inLayer < Layers::NUM_LAYERS);
+        return mObjectToBroadPhase[inLayer];
+    }
+#if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
+    virtual const char* GetBroadPhaseLayerName(JPH::BroadPhaseLayer inLayer) const override {
+        switch ((JPH::BroadPhaseLayer::Type)inLayer) {
+            case (JPH::BroadPhaseLayer::Type)BroadPhaseLayers::NON_MOVING: return "NON_MOVING";
+            case (JPH::BroadPhaseLayer::Type)BroadPhaseLayers::MOVING:     return "MOVING";
+            default: JPH_ASSERT(false); return "INVALID";
+        }
+    }
+#endif
+private:
+    JPH::BroadPhaseLayer mObjectToBroadPhase[Layers::NUM_LAYERS];
+};
+
+class ObjectVsBroadPhaseLayerFilterImpl : public JPH::ObjectVsBroadPhaseLayerFilter {
+public:
+    virtual bool ShouldCollide(JPH::ObjectLayer, JPH::BroadPhaseLayer) const override { return true; }
+};
+class ObjectLayerPairFilterImpl : public JPH::ObjectLayerPairFilter {
+public:
+    virtual bool ShouldCollide(JPH::ObjectLayer, JPH::ObjectLayer) const override { return true; }
+};
+
+struct EnginePhysicsSystem::Impl {
+    JPH::PhysicsSystem physicsSystem;
+    BPLayerInterfaceImpl broadPhaseLayerInterface;
+    ObjectVsBroadPhaseLayerFilterImpl objectVsBroadPhaseLayerFilter;
+    ObjectLayerPairFilterImpl objectLayerPairFilter;
+
+    // ВАЖНО: указатели, а не значения — чтобы создать их ПОСЛЕ RegisterDefaultAllocator()
+    std::unique_ptr<JPH::TempAllocatorImpl> temp_allocator;
+    std::unique_ptr<JPH::JobSystemThreadPool> job_system;
+    bool registered = false;
+
+    Impl() {
+        // 1) Регистрация ДО любых аллокаций Jolt
+        JPH::RegisterDefaultAllocator();
+        JPH::Factory::sInstance = new JPH::Factory();
+        JPH::RegisterTypes();
+        registered = true;
+
+        // 2) Теперь можно аллоцировать
+        temp_allocator = std::make_unique<JPH::TempAllocatorImpl>(10 * 1024 * 1024);
+        int numThreads = std::max(1, static_cast<int>(std::thread::hardware_concurrency()) - 1);
+        job_system = std::make_unique<JPH::JobSystemThreadPool>();
+        job_system->Init(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, numThreads);
+    }
+
+    ~Impl() {
+        job_system.reset();
+        temp_allocator.reset();
+        if (registered) {
+            JPH::UnregisterTypes();
+            delete JPH::Factory::sInstance;
+            JPH::Factory::sInstance = nullptr;
+        }
+    }
+};
+
+EnginePhysicsSystem::EnginePhysicsSystem() : m_impl(std::make_unique<Impl>()) {}
+EnginePhysicsSystem::~EnginePhysicsSystem() = default;
+
+bool EnginePhysicsSystem::Init() {
+    m_impl->physicsSystem.Init(
+        1024, 0, 1024, 1024,
+        m_impl->broadPhaseLayerInterface,
+        m_impl->objectVsBroadPhaseLayerFilter,
+        m_impl->objectLayerPairFilter);
+    return true;
+}
+
+void EnginePhysicsSystem::Shutdown() {}
+void EnginePhysicsSystem::Reset() {}
+
+void EnginePhysicsSystem::Update(Scene& scene, float deltaTime) {
+    (void)scene;
+    if (m_impl && m_impl->temp_allocator && m_impl->job_system) {
+        m_impl->physicsSystem.Update(
+            deltaTime, 1,
+            m_impl->temp_allocator.get(),
+            m_impl->job_system.get());
+    }
+    SyncTransformsToECS(scene);
+
+}
+
+
+uint32_t EnginePhysicsSystem::CreateBox(const glm::vec3& position,
+                                        const glm::vec3& halfExtent,
+                                        bool isDynamic)
+{
+    JPH::BodyInterface& bi = m_impl->physicsSystem.GetBodyInterface();
+
+    JPH::BoxShapeSettings shape_settings(JPH::Vec3(halfExtent.x, halfExtent.y, halfExtent.z));
+    JPH::ShapeSettings::ShapeResult shape_result = shape_settings.Create();
+    if (shape_result.HasError()) return 0xFFFFFFFFu;
+
+    JPH::BodyCreationSettings settings(
+        shape_result.Get(),
+        JPH::RVec3(position.x, position.y, position.z),
+        JPH::Quat::sIdentity(),
+        isDynamic ? JPH::EMotionType::Dynamic : JPH::EMotionType::Static,
+        isDynamic ? Layers::MOVING : Layers::NON_MOVING
+    );
+    settings.mAllowSleeping = true;
+
+    JPH::Body* body = bi.CreateBody(settings);
+    if (!body) return 0xFFFFFFFFu;
+    bi.AddBody(body->GetID(), JPH::EActivation::Activate);
+    return static_cast<uint32_t>(body->GetID().GetIndexAndSequenceNumber());
+}
+
+void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene)
+{
+    auto& reg = scene.Registry();
+    auto view = reg.view<Galeshi::RigidBodyComponent, Galeshi::TransformComponent>();
+    JPH::BodyInterface& bi = m_impl->physicsSystem.GetBodyInterface();
+
+    for (auto e : view) {
+        auto& rb = view.get<Galeshi::RigidBodyComponent>(e);
+        auto& tf = view.get<Galeshi::TransformComponent>(e);
+        if (rb.bodyId == 0xFFFFFFFFu || !rb.active) continue;
+
+        JPH::BodyID id(rb.bodyId);
+        if (!bi.IsAdded(id)) continue;
+
+        JPH::RVec3 p = bi.GetCenterOfMassPosition(id);
+        JPH::Quat  q = bi.GetRotation(id);
+        tf.position = glm::vec3(static_cast<float>(p.GetX()),
+                                static_cast<float>(p.GetY()),
+                                static_cast<float>(p.GetZ()));
+        tf.rotation = glm::quat(static_cast<float>(q.GetW()),
+                                static_cast<float>(q.GetX()),
+                                static_cast<float>(q.GetY()),
+                                static_cast<float>(q.GetZ()));
+    }
+}
+
+} // namespace Galeshi

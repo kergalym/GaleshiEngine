@@ -40,11 +40,11 @@ A minimalist game engine inspired by Unreal Engine 5. The goal is a cross-platfo
 ```bash
 git clone <repo> GaleshiEngine
 cd GaleshiEngine
-
-cmake --preset debug
-cmake --build --preset debug -j$(nproc)
+cmake --preset debug --fresh
+cmake --build --preset debug --target GaleshiEditor -j$(nproc)
 
 ./build/debug/bin/GaleshiEditor
+```
 
 Technology stack
 Component	Library	License

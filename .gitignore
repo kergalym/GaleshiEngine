@@ -23,4 +23,5 @@ CMakeCache.txt
 CMakeFiles/
 imgui.ini
 *.log
+*.bak
 build/**/shaders/*.bin
