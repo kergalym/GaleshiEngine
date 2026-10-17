@@ -13,6 +13,7 @@ target_include_directories(GaleshiEngine
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bgfx/include
         ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bimg/include
+        ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bimg/3rdparty/stb
         ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bx/include
         ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bx/3rdparty
         ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bx/include/compat/linux)

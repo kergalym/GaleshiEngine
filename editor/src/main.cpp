@@ -1,168 +1,180 @@
 #include "GaleshiEngine/Core/Application.hpp"
 #include "GaleshiEngine/Renderer/Renderer.hpp"
 #include "GaleshiEngine/Renderer/Camera.hpp"
-#include "GaleshiEngine/Renderer/ShaderManager.hpp"
+#include "GaleshiEngine/Renderer/RenderSystem.hpp"
+#include "GaleshiEngine/Scene/Scene.hpp"
+#include "GaleshiEngine/Assets/AssetManager.hpp"
+#include "GaleshiEngine/Assets/Material.hpp"
+#include "GaleshiEngine/Assets/Mesh.hpp"
 
 #include <imgui.h>
 #include <bgfx/bgfx.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
 
 #include <cmath>
-#include <cstdint>
 
 class GaleshiEditorApp final : public Galeshi::Application {
 public:
     GaleshiEditorApp()
         : Galeshi::Application({
-              .name   = "GaleshiEditor",
-              .width  = 1600,
-              .height = 900,
-              .editor = true,
-          }) {}
+              .name = "GaleshiEditor", .width = 1600, .height = 900, .editor = true}) {}
 
 protected:
     void OnStart() override {
-        auto* r = GetRenderer();
-        m_camera.SetPerspective(
-            glm::radians(60.0f),
-            static_cast<float>(r->Width()) / static_cast<float>(r->Height()),
-            0.1f, 1000.0f);
+        m_assets = std::make_unique<Galeshi::AssetManager>();
+        m_render = std::make_unique<Galeshi::RenderSystem>();
+        m_render->Init(m_assets.get());
 
-        BuildCube();
+        // --- Свет ---
+        auto sun = m_scene.CreateEntity("Sun");
+        auto& dl = sun.AddComponent<Galeshi::DirectionalLightComponent>();
+        dl.direction = glm::normalize(glm::vec3(-0.4f, -0.8f, -0.5f));
+        dl.color     = {1.0f, 0.97f, 0.9f};
+        dl.intensity = 3.0f;
 
-        m_program = Galeshi::ShaderManager::LoadProgram(
-            "shaders/vs_cube.bin", "shaders/fs_cube.bin");
+        // --- Куб 1: центр ---
+        auto e1 = m_scene.CreateEntity("Cube_Orange");
+        {
+            auto mesh = std::make_shared<Galeshi::Mesh>();
+            BuildCube(mesh.get());
+            e1.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ mesh });
 
-        u_albedo     = bgfx::createUniform("u_albedo",     bgfx::UniformType::Vec4);
-        u_lightDir   = bgfx::createUniform("u_lightDir",   bgfx::UniformType::Vec4);
-        u_lightColor = bgfx::createUniform("u_lightColor", bgfx::UniformType::Vec4);
-        u_cameraPos  = bgfx::createUniform("u_cameraPos",  bgfx::UniformType::Vec4);
+            auto mat = std::make_shared<Galeshi::Material>();
+            mat->albedoFactor    = {0.85f, 0.55f, 0.25f, 1.0f};
+            mat->metallicFactor  = 0.0f;
+            mat->roughnessFactor = 0.4f;
+            e1.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+
+            auto& tc = e1.GetComponent<Galeshi::TransformComponent>();
+            tc.position = {0.0f, 0.0f, 0.0f};
+        }
+
+        // --- Куб 2: металл ---
+        auto e2 = m_scene.CreateEntity("Cube_Metal");
+        {
+            auto mesh = std::make_shared<Galeshi::Mesh>();
+            BuildCube(mesh.get());
+            e2.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ mesh });
+
+            auto mat = std::make_shared<Galeshi::Material>();
+            mat->albedoFactor    = {0.95f, 0.95f, 0.95f, 1.0f};
+            mat->metallicFactor  = 1.0f;
+            mat->roughnessFactor = 0.15f;
+            e2.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+
+            auto& tc = e2.GetComponent<Galeshi::TransformComponent>();
+            tc.position = {-2.5f, 0.0f, 0.0f};
+        }
+
+        // --- Куб 3: шершавый ---
+        auto e3 = m_scene.CreateEntity("Cube_Rough");
+        {
+            auto mesh = std::make_shared<Galeshi::Mesh>();
+            BuildCube(mesh.get());
+            e3.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ mesh });
+
+            auto mat = std::make_shared<Galeshi::Material>();
+            mat->albedoFactor    = {0.3f, 0.55f, 0.85f, 1.0f};
+            mat->metallicFactor  = 0.0f;
+            mat->roughnessFactor = 0.9f;
+            e3.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+
+            auto& tc = e3.GetComponent<Galeshi::TransformComponent>();
+            tc.position = {2.5f, 0.0f, 0.0f};
+        }
     }
 
     void OnUpdate(float dt) override {
         m_time += dt;
-
-        auto* r = GetRenderer();
-        m_camera.SetPerspective(
-            glm::radians(60.0f),
+        const auto* r = GetRenderer();
+        m_camera.SetPerspective(glm::radians(60.0f),
             static_cast<float>(r->Width()) / static_cast<float>(r->Height()),
             0.1f, 1000.0f);
-
-        m_camera.Orbit(glm::vec3(0.0f), m_time * 0.4f, 0.45f, 4.5f);
+        m_camera.Orbit(glm::vec3(0.0f), m_time * 0.4f, 0.35f, 8.0f);
     }
 
     void OnRender() override {
-        if (!bgfx::isValid(m_program)) return;
-
         auto* r = GetRenderer();
-
-        const glm::mat4 model = glm::rotate(
-            glm::mat4(1.0f),
-            m_time * 0.7f,
-            glm::vec3(0.0f, 1.0f, 0.0f));
-
-        bgfx::setTransform(glm::value_ptr(model));
-
-        const glm::mat4 vp = m_camera.ViewProj();
-        bgfx::setViewTransform(0, nullptr, glm::value_ptr(vp));
-        bgfx::setViewRect(0, 0, 0,
-            static_cast<uint16_t>(r->Width()),
-            static_cast<uint16_t>(r->Height()));
-
-        const float albedo[4]     = {0.85f, 0.55f, 0.25f, 1.0f};
-        const float lightDir[4]   = {-0.4f, -0.8f, -0.5f, 1.2f};
-        const float lightColor[4] = {1.00f, 0.97f, 0.90f, 1.0f};
-        const glm::vec3 p         = m_camera.Position();
-        const float camPos[4]     = {p.x, p.y, p.z, 1.0f};
-
-        bgfx::setUniform(u_albedo,     albedo);
-        bgfx::setUniform(u_lightDir,   lightDir);
-        bgfx::setUniform(u_lightColor, lightColor);
-        bgfx::setUniform(u_cameraPos,  camPos);
-
-        bgfx::setVertexBuffer(0, m_vb);
-        bgfx::setIndexBuffer(m_ib);
-
-        // УБРАН BGFX_STATE_CULL_CW — он отсекал все видимые грани.
-        bgfx::setState(
-            BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
-            BGFX_STATE_DEPTH_TEST_LESS |
-            BGFX_STATE_MSAA);
-
-        bgfx::submit(0, m_program);
+        bgfx::setViewClear(0, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH,
+                           0x1a1d21ff, 1.0f, 0);
+        m_render->Render(m_scene, m_camera, 0,
+                         static_cast<uint16_t>(r->Width()),
+                         static_cast<uint16_t>(r->Height()));
     }
 
     void OnImGui() override {
         ImGui::Begin("Viewport");
-        ImGui::Text("GaleshiEngine — Stage 2 renderer");
+        ImGui::Text("Stage 3 — PBR + Scene (EnTT)");
         ImGui::Text("Backend: %s", bgfx::getRendererName(bgfx::getRendererType()));
         ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
         ImGui::End();
 
-        ImGui::Begin("World Outliner");   ImGui::Text("(empty scene)");      ImGui::End();
-        ImGui::Begin("Details");          ImGui::Text("No selection");       ImGui::End();
-        ImGui::Begin("Content Browser");  ImGui::Text("assets/");            ImGui::End();
+        ImGui::Begin("World Outliner");
+        for (auto& e : m_scene.AllEntities()) {
+            auto& nc = e.GetComponent<Galeshi::NameComponent>();
+            ImGui::BulletText("%s", nc.name.c_str());
+        }
+        ImGui::End();
+
+        ImGui::Begin("Details");   ImGui::Text("(not wired yet)");  ImGui::End();
+        ImGui::Begin("Content Browser"); ImGui::Text("assets/");   ImGui::End();
     }
 
     void OnShutdown() override {
-        if (bgfx::isValid(m_vb))      bgfx::destroy(m_vb);
-        if (bgfx::isValid(m_ib))      bgfx::destroy(m_ib);
-        if (bgfx::isValid(m_program)) bgfx::destroy(m_program);
-
-        if (bgfx::isValid(u_albedo))     bgfx::destroy(u_albedo);
-        if (bgfx::isValid(u_lightDir))   bgfx::destroy(u_lightDir);
-        if (bgfx::isValid(u_lightColor)) bgfx::destroy(u_lightColor);
-        if (bgfx::isValid(u_cameraPos))  bgfx::destroy(u_cameraPos);
+        if (m_render) m_render->Shutdown();
+        m_assets.reset();
+        m_render.reset();
     }
 
 private:
-    void BuildCube() {
-        struct V { float x, y, z, nx, ny, nz; };
-
+    void BuildCube(Galeshi::Mesh* mesh) {
+        struct V { float x, y, z, nx, ny, nz, tx, ty, tz, u, v; };
         static const V verts[24] = {
             // +X
-            { 1,-1,-1,  1,0,0}, { 1, 1,-1,  1,0,0}, { 1, 1, 1,  1,0,0}, { 1,-1, 1,  1,0,0},
+            { 1,-1,-1,  1,0,0, 0,0,-1, 0,0}, { 1, 1,-1,  1,0,0, 0,0,-1, 0,1},
+            { 1, 1, 1,  1,0,0, 0,0,-1, 1,1}, { 1,-1, 1,  1,0,0, 0,0,-1, 1,0},
             // -X
-            {-1,-1, 1, -1,0,0}, {-1, 1, 1, -1,0,0}, {-1, 1,-1, -1,0,0}, {-1,-1,-1, -1,0,0},
+            {-1,-1, 1, -1,0,0, 0,0,1, 0,0}, {-1, 1, 1, -1,0,0, 0,0,1, 0,1},
+            {-1, 1,-1, -1,0,0, 0,0,1, 1,1}, {-1,-1,-1, -1,0,0, 0,0,1, 1,0},
             // +Y
-            {-1, 1,-1,  0,1,0}, {-1, 1, 1,  0,1,0}, { 1, 1, 1,  0,1,0}, { 1, 1,-1,  0,1,0},
+            {-1, 1,-1,  0,1,0, 1,0,0, 0,0}, {-1, 1, 1,  0,1,0, 1,0,0, 0,1},
+            { 1, 1, 1,  0,1,0, 1,0,0, 1,1}, { 1, 1,-1,  0,1,0, 1,0,0, 1,0},
             // -Y
-            {-1,-1, 1,  0,-1,0},{-1,-1,-1,  0,-1,0},{ 1,-1,-1,  0,-1,0},{ 1,-1, 1,  0,-1,0},
+            {-1,-1, 1,  0,-1,0,1,0,0, 0,0}, {-1,-1,-1,  0,-1,0,1,0,0, 0,1},
+            { 1,-1,-1,  0,-1,0,1,0,0, 1,1}, { 1,-1, 1,  0,-1,0,1,0,0, 1,0},
             // +Z
-            {-1,-1, 1,  0,0,1}, {-1, 1, 1,  0,0,1}, { 1, 1, 1,  0,0,1}, { 1,-1, 1,  0,0,1},
+            {-1,-1, 1,  0,0,1, 1,0,0, 0,0}, {-1, 1, 1,  0,0,1, 1,0,0, 0,1},
+            { 1, 1, 1,  0,0,1, 1,0,0, 1,1}, { 1,-1, 1,  0,0,1, 1,0,0, 1,0},
             // -Z
-            { 1,-1,-1,  0,0,-1},{ 1, 1,-1,  0,0,-1},{-1, 1,-1,  0,0,-1},{-1,-1,-1,  0,0,-1},
+            { 1,-1,-1,  0,0,-1,-1,0,0, 0,0}, { 1, 1,-1,  0,0,-1,-1,0,0, 0,1},
+            {-1, 1,-1,  0,0,-1,-1,0,0, 1,1}, {-1,-1,-1,  0,0,-1,-1,0,0, 1,0},
         };
-
-        static const uint16_t idx[36] = {
+        static const uint32_t idx[36] = {
             0,1,2, 0,2,3,   4,5,6, 4,6,7,
             8,9,10, 8,10,11, 12,13,14, 12,14,15,
             16,17,18, 16,18,19, 20,21,22, 20,22,23,
         };
 
-        bgfx::VertexLayout layout;
-        layout.begin()
-            .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
-            .add(bgfx::Attrib::Normal,   3, bgfx::AttribType::Float)
-            .end();
-
-        m_vb = bgfx::createVertexBuffer(bgfx::copy(verts, sizeof(verts)), layout);
-        m_ib = bgfx::createIndexBuffer(bgfx::copy(idx, sizeof(idx)));
+        std::vector<Galeshi::Vertex> vs;
+        vs.reserve(24);
+        for (auto& v : verts) {
+            Galeshi::Vertex vert{};
+            vert.position = {v.x, v.y, v.z};
+            vert.normal   = {v.nx, v.ny, v.nz};
+            vert.tangent  = {v.tx, v.ty, v.tz};
+            vert.uv       = {v.u, v.v};
+            vs.push_back(vert);
+        }
+        std::vector<uint32_t> is(idx, idx + 36);
+        mesh->Upload(vs, is);
     }
 
-    Galeshi::Camera m_camera;
-    float m_time = 0.0f;
-
-    bgfx::VertexBufferHandle m_vb      = BGFX_INVALID_HANDLE;
-    bgfx::IndexBufferHandle  m_ib      = BGFX_INVALID_HANDLE;
-    bgfx::ProgramHandle      m_program = BGFX_INVALID_HANDLE;
-
-    bgfx::UniformHandle u_albedo     = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle u_lightDir   = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle u_lightColor = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle u_cameraPos  = BGFX_INVALID_HANDLE;
+    Galeshi::Scene       m_scene;
+    Galeshi::Camera      m_camera;
+    float                m_time = 0.0f;
+    std::unique_ptr<Galeshi::AssetManager> m_assets;
+    std::unique_ptr<Galeshi::RenderSystem> m_render;
 };
 
 int main(int, char**) {

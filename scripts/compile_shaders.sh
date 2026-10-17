@@ -1,31 +1,23 @@
 #!/usr/bin/env bash
-# Использование: compile_shaders.sh <build_dir> <shader_src> <shader_dst>
 set -euo pipefail
 
 BUILD_DIR="${1:-build/debug}"
 SRC_DIR="${2:-shaders}"
 DST_DIR="${3:-${BUILD_DIR}/bin/shaders}"
 
-# ---------- Поиск shaderc ----------
+# ---------- shaderc ----------
 SHADERC="$(command -v shaderc 2>/dev/null || true)"
 if [ -z "$SHADERC" ]; then
     for p in \
         /usr/local/bin/shaderc \
-        /usr/bin/shaderc \
-        "$BUILD_DIR"/_deps/bgfx-build/cmake/bgfx/shaderc \
-        "$BUILD_DIR"/_deps/bgfx-build/tools/shaderc/shaderc \
-        "$BUILD_DIR"/_deps/bgfx-build/shaderc; do
+        /usr/bin/shaderc; do
         if [ -x "$p" ]; then SHADERC="$p"; break; fi
     done
 fi
-
-if [ -z "$SHADERC" ]; then
-    echo "[shaders] shaderc не найден"
-    exit 1
-fi
+[ -z "$SHADERC" ] && { echo "[shaders] shaderc not found"; exit 1; }
 echo "[shaders] using shaderc: $SHADERC"
 
-# ---------- Поиск include-ов bgfx ----------
+# ---------- bgfx include ----------
 BGFX_SRC=""
 for p in \
     "$BUILD_DIR"/_deps/bgfx-src/bgfx/src \
@@ -33,24 +25,8 @@ for p in \
     "$BUILD_DIR"/_deps/bgfx.cmake-src/bgfx/src; do
     if [ -f "$p/bgfx_shader.sh" ]; then BGFX_SRC="$p"; break; fi
 done
-
-if [ -z "$BGFX_SRC" ]; then
-    BGFX_SRC="$(dirname "$(find "$BUILD_DIR/_deps" -name 'bgfx_shader.sh' -print -quit 2>/dev/null)")"
-fi
-
-if [ -z "$BGFX_SRC" ] || [ ! -f "$BGFX_SRC/bgfx_shader.sh" ]; then
-    echo "[shaders] bgfx_shader.sh не найден"
-    find "$BUILD_DIR/_deps" -name 'bgfx_shader.sh' 2>/dev/null
-    exit 1
-fi
+[ -z "$BGFX_SRC" ] && { echo "[shaders] bgfx_shader.sh not found"; exit 1; }
 echo "[shaders] bgfx src: $BGFX_SRC"
-
-# ---------- Входные файлы ----------
-VARYING_DEF="$SRC_DIR/varying.def.sc"
-if [ ! -f "$VARYING_DEF" ]; then
-    echo "[shaders] $VARYING_DEF не найден"
-    exit 1
-fi
 
 mkdir -p "$DST_DIR"
 
@@ -60,34 +36,34 @@ case "$(uname -s)" in
     *)       PLATFORM=windows ;;
 esac
 
-# ---------- Компиляция всех *.sc ----------
-shopt -s nullglob
-shaders_list=("$SRC_DIR"/*.sc)
-shopt -u nullglob
-
-if [ ${#shaders_list[@]} -eq 0 ]; then
-    echo "[shaders] Нет .sc файлов в $SRC_DIR"
-    exit 1
-fi
+# Какой .def.sc использовать для конкретного шейдера
+varying_for() {
+    case "$1" in
+        vs_pbr|fs_pbr)     echo "$SRC_DIR/varying_pbr.def.sc"   ;;
+        vs_imgui|fs_imgui) echo "$SRC_DIR/varying_imgui.def.sc" ;;
+        *)                 echo "" ;;
+    esac
+}
 
 compiled=0
-for shader in "${shaders_list[@]}"; do
+for shader in "$SRC_DIR"/vs_*.sc "$SRC_DIR"/fs_*.sc "$SRC_DIR"/cs_*.sc; do
+    [ -f "$shader" ] || continue
     name="$(basename "$shader" .sc)"
-    if [ "$name" = "varying.def" ]; then
-        continue
-    fi
 
     case "$name" in
         vs_*) type=vertex   ;;
         fs_*) type=fragment ;;
         cs_*) type=compute  ;;
-        *)
-            echo "[shaders] пропускаю $name (не vs_/fs_/cs_)"
-            continue
-            ;;
     esac
 
-    echo "[shaders] compiling $name ($type)..."
+    VDEF="$(varying_for "$name")"
+    if [ -z "$VDEF" ] || [ ! -f "$VDEF" ]; then
+        echo "[shaders] SKIP $name (нет def-файла)"
+        continue
+    fi
+
+    echo "[shaders] $name ($type) using $(basename "$VDEF")"
+
     "$SHADERC" \
         -f "$shader" \
         -o "$DST_DIR/$name.bin" \
@@ -95,9 +71,8 @@ for shader in "${shaders_list[@]}"; do
         --platform "$PLATFORM" \
         --profile spirv \
         -i "$BGFX_SRC" \
-        --varyingdef "$VARYING_DEF"
-
+        --varyingdef "$VDEF"
     compiled=$((compiled + 1))
 done
 
-echo "[shaders] $compiled shader(s) → $DST_DIR"
+echo "[shaders] $compiled shader(s) -> $DST_DIR"
