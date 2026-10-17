@@ -70,3 +70,35 @@ add_custom_target(CompileGaleshiShaders
 
 add_dependencies(GaleshiEditor CompileGaleshiShaders)
 add_dependencies(GaleshiRuntime CompileGaleshiShaders)
+
+# === GALESHI_SYSTEM_INCLUDES ===
+# Помечаем include-пути сторонних библиотек как системные,
+# чтобы -Wconversion / -Wsign-conversion не сыпались из _deps.
+set(_galeshi_dep_incs
+    ${CMAKE_BINARY_DIR}/_deps/glm-src
+    ${CMAKE_BINARY_DIR}/_deps/spdlog-src/include
+    ${CMAKE_BINARY_DIR}/_deps/entt-src/src
+    ${CMAKE_BINARY_DIR}/_deps/json-src/single_include
+    ${CMAKE_BINARY_DIR}/_deps/imgui-src
+    ${CMAKE_BINARY_DIR}/_deps/imgui-src/backends
+    ${CMAKE_BINARY_DIR}/_deps/imguizmo-src/src
+    ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bgfx/include
+    ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bimg/include
+    ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bx/include
+    ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bx/3rdparty
+    ${CMAKE_BINARY_DIR}/_deps/sdl3-build/include-revision
+    ${CMAKE_BINARY_DIR}/_deps/sdl3-src/include
+    ${CMAKE_BINARY_DIR}/_deps/assimp-src/include
+    ${CMAKE_BINARY_DIR}/_deps/recastnavigation-src/Recast/Include
+    ${CMAKE_BINARY_DIR}/_deps/recastnavigation-src/Detour/Include
+    ${CMAKE_BINARY_DIR}/_deps/recastnavigation-src/DetourCrowd/Include
+    ${CMAKE_BINARY_DIR}/_deps/joltphysics-src
+    ${CMAKE_BINARY_DIR}/_deps/sol2-src/include
+    ${CMAKE_BINARY_DIR}/_deps/lua-src/src
+)
+foreach(_d ${_galeshi_dep_incs})
+    if(EXISTS "${_d}")
+        include_directories(SYSTEM "${_d}")
+    endif()
+endforeach()
+# === /GALESHI_SYSTEM_INCLUDES ===
