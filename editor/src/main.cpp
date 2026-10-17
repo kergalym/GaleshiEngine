@@ -9,6 +9,7 @@
 #include "GaleshiEngine/Scene/SceneSerializer.hpp"
 #include "GaleshiEngine/Assets/AssetManager.hpp"
 #include "GaleshiEngine/Assets/Material.hpp"
+#include "GaleshiEngine/Assets/Texture.hpp"
 #include "GaleshiEngine/Assets/Mesh.hpp"
 #include "GaleshiEngine/Assets/LandscapeMesh.hpp"
 #include "GaleshiEngine/Editor/EditorState.hpp"
@@ -163,41 +164,47 @@ protected:
         DrawContentBrowser();
 
         // File Picker (модальный)
-        std::string chosen = m_filePicker.Draw();
-        if (!chosen.empty()) {
-            SpawnFromModel(chosen, m_editor.camTarget);
+        
+        // --- File pickers (модальные диалоги) ---
+        std::string chosenOpen = m_filePicker.Draw();
+        if (!chosenOpen.empty()) {
+            SpawnFromModel(chosenOpen, m_editor.camTarget);
+        }
+
+        std::string chosenSave = m_filePickerSave.Draw();
+        if (!chosenSave.empty()) {
+            if (m_serializer) {
+                if (m_serializer->Save(chosenSave)) {
+                    spdlog::info("[Editor] Scene saved to {}", chosenSave);
+                } else {
+                    spdlog::error("[Editor] Failed to save scene to {}", chosenSave);
+                }
+            }
+        }
+
+        // Load Scene dialog (.json)
+        std::string chosenLoad = m_scenePicker.Draw();
+        if (!chosenLoad.empty()) {
+            m_editor.ClearSelection();
+            if (m_serializer->Load(chosenLoad)) {
+                spdlog::info("[Editor] Scene loaded from {}", chosenLoad);
+            } else {
+                spdlog::error("[Editor] Failed to load scene: {}", chosenLoad);
+            }
         }
     }
 
     void OnShutdown() override {
         spdlog::info("[Editor] OnShutdown: begin");
 
-        // 1. Сохраняем сцену
-        SaveScene();
+        // Автосохранение ОТКЛЮЧЕНО. Сцена сохраняется только вручную
+        // через File -> Save Scene (Ctrl+S).
 
-        // 2. Останавливаем AI и физику
-        // reset() вызовет ~DebugRenderer → Shutdown() (идемпотентный)
-        m_debug.reset();
-        // reset() вызовет ~NavigationSystem → Shutdown() (идемпотентный)
-        m_navSystem.reset();
-        // reset() вызовет ~PhysicsSystem → Shutdown() (идемпотентный)
-        m_physics.reset();
-
-        // 3. Уничтожаем ECS (освобождает Mesh/Texture через shared_ptr)
-        m_scene.Registry().clear();
-
-        // 4. UI и сериализация
-        m_framebuffer.reset();
-        m_serializer.reset();
-        m_browser.reset();
-
-        // 5. RenderSystem — освобождает uniforms/programs (bgfx ещё жив)
-        m_render.reset();
-
-        // 6. AssetManager — освобождает текстуры и меши (bgfx ещё жив)
-        m_assets.reset();
-
-        spdlog::info("[Editor] OnShutdown: done");
+        // Выходим без очистки GPU (иначе NVIDIA deadlock)
+        spdlog::info("[Editor] OnShutdown: exit (skip GPU cleanup)");
+        std::fflush(stdout);
+        std::fflush(stderr);
+        std::_Exit(0);
     }
 
 private:
@@ -225,6 +232,7 @@ private:
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Import Model...", "Ctrl+I")) OpenFileDialog();
             if (ImGui::MenuItem("Load Scene", "Ctrl+O")) LoadScene();
+                if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveScene();
             ImGui::Separator();
             if (ImGui::MenuItem("Reset Scene")) {
                 m_editor.ClearSelection();
@@ -366,12 +374,17 @@ private:
     // -------------------------------------------------------------------
     // Save / Load / Delete
     // -------------------------------------------------------------------
-    void SaveScene() { if (m_serializer) m_serializer->Save("scene.json"); }
-    
-    void LoadScene() {
+    void SaveScene() {
         const char* home = std::getenv("HOME");
         std::string start = home ? home : "/";
-        m_filePicker.Open(start, "Load Model", { ".fbx", ".gltf", ".glb", ".obj", ".dae" });
+        m_filePickerSave.SaveAs(start, "scene.json", "Save Scene", { ".json" });
+    }
+    
+    void LoadScene() {
+        // Load Scene -> модальный диалог для .json файлов
+        const char* home = std::getenv("HOME");
+        std::string start = home ? home : "/";
+        m_scenePicker.Open(start, "Load Scene", { ".json" });
     }
 
     void DeleteSelected() {
@@ -675,6 +688,45 @@ private:
     // -------------------------------------------------------------------
     // Details
     // -------------------------------------------------------------------
+    void DrawTextureSlot(const char* label, std::shared_ptr<Galeshi::Texture>& slot) {
+        ImGui::PushID(label);
+        ImGui::Text("%s", label);
+
+        if (slot && bgfx::isValid(slot->Handle())) {
+            ImTextureID texId = static_cast<ImTextureID>(slot->Handle().idx);
+            ImGui::Image(texId, ImVec2(64, 64));
+            ImGui::SameLine();
+            ImGui::BeginGroup();
+            std::string path = slot->Path();
+            auto slash = path.find_last_of('/');
+            std::string name = (slash != std::string::npos) ? path.substr(slash + 1) : path;
+            ImGui::TextWrapped("%s", name.c_str());
+            if (ImGui::Button("Clear")) {
+                slot.reset();
+            }
+            ImGui::EndGroup();
+        } else {
+            ImGui::Button("Empty (drop texture here)", ImVec2(200, 64));
+        }
+
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
+                const char* path = static_cast<const char*>(payload->Data);
+                std::string p = path;
+                auto dotPos = p.find_last_of('.');
+                std::string ext = (dotPos != std::string::npos) ? p.substr(dotPos) : "";
+                for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+                if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+                    ext == ".bmp" || ext == ".tga") {
+                    slot = m_assets->LoadTexture(p);
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+
+        ImGui::PopID();
+    }
+
     void DrawDetails() {
         ImGui::Begin("Details");
         auto selected = m_editor.SelectedAll(&m_scene);
@@ -708,9 +760,17 @@ private:
             auto& matc = selected[0].GetComponent<Galeshi::MaterialComponent>();
             if (matc.material) {
                 auto& m = *matc.material;
-                ImGui::ColorEdit4("Albedo", glm::value_ptr(m.albedoFactor));
-                ImGui::SliderFloat("Metallic",  &m.metallicFactor,  0.0f, 1.0f);
-                ImGui::SliderFloat("Roughness", &m.roughnessFactor, 0.04f, 1.0f);
+                ImGui::ColorEdit4("Albedo Factor", glm::value_ptr(m.albedoFactor));
+                ImGui::SliderFloat("Metallic Factor",  &m.metallicFactor,  0.0f, 1.0f);
+                ImGui::SliderFloat("Roughness Factor", &m.roughnessFactor, 0.04f, 1.0f);
+                ImGui::ColorEdit3("Emissive", glm::value_ptr(m.emissiveFactor));
+
+                ImGui::Separator();
+                ImGui::Text("Texture Maps (drag from Content Browser):");
+
+                DrawTextureSlot("Albedo Map",           m.albedoMap);
+                DrawTextureSlot("Normal Map",           m.normalMap);
+                DrawTextureSlot("Metallic/Roughness",   m.metallicRoughnessMap);
             }
         }
 
@@ -757,14 +817,45 @@ private:
         namespace fs = std::filesystem;
         std::string ext = fs::path(path).extension().string();
         for (auto& c : ext) c = static_cast<char>(std::tolower(c));
-        if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") SpawnFromModel(path, glm::vec3(0.0f));
+
+        if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") {
+            SpawnFromModel(path, glm::vec3(0.0f));
+        } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+                   ext == ".bmp" || ext == ".tga") {
+            // Применяем к выделенному объекту
+            Galeshi::Entity sel = m_editor.Selected(&m_scene);
+            if (sel && sel.HasComponent<Galeshi::MaterialComponent>()) {
+                auto& matc = sel.GetComponent<Galeshi::MaterialComponent>();
+                if (matc.material) {
+                    matc.material->albedoMap = m_assets->LoadTexture(path);
+                    spdlog::info("[Editor] Applied texture to selected: {}", path);
+                }
+            }
+        }
     }
 
     void OnAssetDropped(const std::string& path, glm::vec3 pos) {
         namespace fs = std::filesystem;
         std::string ext = fs::path(path).extension().string();
         for (auto& c : ext) c = static_cast<char>(std::tolower(c));
-        if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") SpawnFromModel(path, pos);
+
+        if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") {
+            SpawnFromModel(path, pos);
+            return;
+        }
+
+        // Если бросили текстуру на объект с материалом — установить в albedo
+        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+            ext == ".bmp" || ext == ".tga") {
+            Galeshi::Entity sel = m_editor.Selected(&m_scene);
+            if (sel && sel.HasComponent<Galeshi::MaterialComponent>()) {
+                auto& matc = sel.GetComponent<Galeshi::MaterialComponent>();
+                if (matc.material) {
+                    matc.material->albedoMap = m_assets->LoadTexture(path);
+                    spdlog::info("[Editor] Set albedo map: {}", path);
+                }
+            }
+        }
     }
 
     void SpawnFromModel(const std::string& path, glm::vec3 pos) {
@@ -786,7 +877,17 @@ private:
             auto e = m_scene.CreateEntity(stem + "_" + std::to_string(i));
             e.AddComponent<Galeshi::ParentComponent>(Galeshi::ParentComponent{ root.Handle() });
             e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ model.meshes[i], path, "", static_cast<int>(i) });
-            auto mat = model.materials.empty() ? std::make_shared<Galeshi::Material>() : model.materials[0];
+            // Правильный материал по индексу меша
+            std::shared_ptr<Galeshi::Material> mat;
+            if (i < model.meshMaterialIndex.size()) {
+                int matIdx = model.meshMaterialIndex[i];
+                if (matIdx >= 0 && matIdx < static_cast<int>(model.materials.size()))
+                    mat = model.materials[static_cast<size_t>(matIdx)];
+            }
+            if (!mat && !model.materials.empty())
+                mat = model.materials[0];
+            if (!mat)
+                mat = std::make_shared<Galeshi::Material>();
             e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
         }
         m_editor.Select(root);
@@ -840,6 +941,8 @@ private:
     uint16_t    m_viewportW = 0, m_viewportH = 0;
     bool        m_viewportHovered = false;
     Galeshi::FilePickerDialog m_filePicker;
+    Galeshi::FilePickerDialog m_filePickerSave;
+    Galeshi::FilePickerDialog m_scenePicker;
 
     std::vector<std::string> m_history;
     int  m_historyIndex = -1;

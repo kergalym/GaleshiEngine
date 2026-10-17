@@ -4,10 +4,12 @@
 #include "GaleshiEngine/Assets/Mesh.hpp"
 #include "GaleshiEngine/Assets/Material.hpp"
 #include "GaleshiEngine/Assets/Texture.hpp"
+#include "GaleshiEngine/Assets/LandscapeMesh.hpp"
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <fstream>
 #include <sstream>
+#include <cmath>
 #include <glm/gtc/quaternion.hpp>
 
 using json = nlohmann::json;
@@ -36,6 +38,21 @@ std::string SceneSerializer::SaveToString() const {
             const auto& tc = m_scene.Registry().get<TransformComponent>(h);
             je["transform"] = { {"position", Vec3ToJson(tc.position)}, {"rotation", QuatToJson(tc.rotation)}, {"scale", Vec3ToJson(tc.scale)} };
         }
+        if (m_scene.Registry().all_of<LandscapeComponent>(h)) {
+            const auto& lc = m_scene.Registry().get<LandscapeComponent>(h);
+            // Sanitize NaN/Infinity для JSON
+            std::vector<float> safeHeights = lc.heights;
+            for (auto& v : safeHeights) {
+                if (!std::isfinite(v)) v = 0.0f;
+            }
+            je["landscape"] = {
+                {"sizeX", lc.sizeX},
+                {"sizeZ", lc.sizeZ},
+                {"scale", lc.scale},
+                {"heights", safeHeights}
+            };
+        }
+
         if (m_scene.Registry().all_of<MeshComponent>(h)) {
             const auto& mc = m_scene.Registry().get<MeshComponent>(h);
             je["mesh"] = { {"sourceAssetPath", mc.sourceAssetPath}, {"primitiveType", mc.primitiveType}, {"meshIndex", mc.meshIndex} };

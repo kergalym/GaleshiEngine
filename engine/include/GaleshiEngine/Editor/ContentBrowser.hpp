@@ -6,9 +6,11 @@
 
 namespace Galeshi {
 
+class AssetManager;
+
 class ContentBrowser {
 public:
-    explicit ContentBrowser(std::string rootDir);
+    explicit ContentBrowser(std::string rootDir, AssetManager* assets = nullptr);
 
     // Рисует панель. Возвращает путь к файлу, если пользователь сделал
     // двойной клик по нему ("" — ничего не выбрано).
@@ -26,6 +28,7 @@ private:
     void DrawDirectory(const std::filesystem::path& dir);
 
     std::string           m_root;
+    AssetManager*         m_assets = nullptr;
     std::filesystem::path m_current;
     std::vector<Entry>    m_entries;
 };

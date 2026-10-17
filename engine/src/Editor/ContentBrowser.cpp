@@ -1,7 +1,11 @@
 #include "GaleshiEngine/Editor/ContentBrowser.hpp"
+#include "GaleshiEngine/Assets/AssetManager.hpp"
+#include "GaleshiEngine/Assets/Texture.hpp"
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
+#include <bgfx/bgfx.h>
+#include <cctype>
 
 #include <algorithm>
 
@@ -9,8 +13,8 @@ namespace fs = std::filesystem;
 
 namespace Galeshi {
 
-ContentBrowser::ContentBrowser(std::string rootDir)
-    : m_root(std::move(rootDir)), m_current(m_root) {}
+ContentBrowser::ContentBrowser(std::string rootDir, AssetManager* assets)
+    : m_root(std::move(rootDir)), m_assets(assets), m_current(m_root) {}
 
 void ContentBrowser::Refresh() {
     m_entries.clear();
@@ -52,6 +56,30 @@ std::string ContentBrowser::Draw() {
     ImGui::BeginChild("content_list", ImVec2(0, 0), true);
     for (const auto& e : m_entries) {
         ImGui::PushID(e.path.string().c_str());
+
+        // Определяем тип файла
+        std::string ext;
+        if (!e.isDirectory) {
+            auto dotPos = e.name.find_last_of('.');
+            if (dotPos != std::string::npos) {
+                ext = e.name.substr(dotPos);
+                for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+            }
+        }
+
+        // Thumbnail для изображений
+        bool isImage = (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+                        ext == ".bmp" || ext == ".tga");
+
+        if (isImage && m_assets) {
+            std::string path = e.path.string();
+            auto tex = m_assets->LoadTexture(path);
+            if (tex && bgfx::isValid(tex->Handle())) {
+                ImTextureID texId = static_cast<ImTextureID>(tex->Handle().idx);
+                ImGui::Image(texId, ImVec2(32, 32));
+                ImGui::SameLine();
+            }
+        }
 
         const char* icon = e.isDirectory ? "[D]" : "[F]";
         const std::string label = std::string(icon) + " " + e.name;

@@ -2,6 +2,7 @@
 
 #include <bgfx/bgfx.h>
 #include <string>
+#include <cstddef>
 
 namespace Galeshi {
 
@@ -15,6 +16,7 @@ public:
 
     // Загрузка из файла (PNG/JPG/DDS/KTX через bimg)
     static Texture* LoadFromFile(const std::string& path);
+    static Texture* LoadFromMemory(const unsigned char* data, size_t size);
 
     // 1x1 белая / плоская normal / чёрная
     static Texture* CreateWhite();

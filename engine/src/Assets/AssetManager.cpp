@@ -16,6 +16,11 @@
 
 namespace Galeshi {
 
+const aiScene* g_currentAiScene = nullptr;
+
+// Глобалка для передачи aiScene в MakeMaterialFromAssimp
+// (для embedded FBX текстур — scene->mTextures)
+
 AssetManager::AssetManager() {
     m_white      = std::shared_ptr<Texture>(Texture::CreateWhite());
     m_black      = std::shared_ptr<Texture>(Texture::CreateBlack());
@@ -126,127 +131,212 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
     auto it = m_models.find(path);
     if (it != m_models.end()) return it->second;
 
+    spdlog::info("[AssetManager] === Loading: {} ===", path);
+
     LoadedModel out;
     auto importer = std::make_shared<Assimp::Importer>();
-    const aiScene* scene = importer->ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenSmoothNormals);
-    
-    if (!scene || !scene->mRootNode) return out;
-    
+    const aiScene* scene = importer->ReadFile(path,
+        aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenSmoothNormals);
+
+    if (!scene || !scene->mRootNode) {
+        spdlog::error("[AssetManager] Assimp failed: {}", importer->GetErrorString());
+        return out;
+    }
+
+    g_currentAiScene = scene;
     out.importer = importer;
     out.rawScene = std::shared_ptr<aiScene>(const_cast<aiScene*>(scene), [](aiScene*){});
 
+    // === ДИАГНОСТИКА ===
+    spdlog::info("[AssetManager] Scene stats:");
+    spdlog::info("  meshes:           {}", scene->mNumMeshes);
+    spdlog::info("  materials:        {}", scene->mNumMaterials);
+    spdlog::info("  embedded textures:{}", scene->mNumTextures);
+    spdlog::info("  animations:       {}", scene->mNumAnimations);
+
+    for (unsigned i = 0; i < scene->mNumTextures; ++i) {
+        const aiTexture* t = scene->mTextures[i];
+        std::string fname = t->mFilename.C_Str();
+        spdlog::info("  embedded[{}]: '{}', {}x{}, format '{}'",
+                     i, fname, t->mWidth, t->mHeight, t->achFormatHint);
+    }
+
     const std::string dir = std::filesystem::path(path).parent_path().string();
 
+    // === МАТЕРИАЛЫ ===
     out.materials.reserve(scene->mNumMaterials);
     for (unsigned i = 0; i < scene->mNumMaterials; ++i) {
+        aiMaterial* aiMat = scene->mMaterials[i];
         auto mat = std::make_shared<Material>();
-        aiString name; scene->mMaterials[i]->Get(AI_MATKEY_NAME, name); mat->name = name.C_Str();
-        
+
+        aiString name;
+        aiMat->Get(AI_MATKEY_NAME, name);
+        mat->name = name.C_Str();
+
+        spdlog::info("[AssetManager] Material[{}] '{}':", i, mat->name);
+
+        // Цвет
         aiColor4D col;
-        if (scene->mMaterials[i]->Get(AI_MATKEY_BASE_COLOR, col) == AI_SUCCESS) mat->albedoFactor = {col.r, col.g, col.b, col.a};
-        else if (scene->mMaterials[i]->Get(AI_MATKEY_COLOR_DIFFUSE, col) == AI_SUCCESS) mat->albedoFactor = {col.r, col.g, col.b, col.a};
-        
-        aiString texPath;
-        bool hasTex = false;
-        if (scene->mMaterials[i]->GetTexture(aiTextureType_BASE_COLOR, 0, &texPath) == AI_SUCCESS ||
-            scene->mMaterials[i]->GetTexture(aiTextureType_DIFFUSE,    0, &texPath) == AI_SUCCESS ||
-            scene->mMaterials[i]->GetTexture(aiTextureType_UNKNOWN,    0, &texPath) == AI_SUCCESS) {
-            hasTex = true;
+        if (aiMat->Get(AI_MATKEY_BASE_COLOR, col) == AI_SUCCESS ||
+            aiMat->Get(AI_MATKEY_COLOR_DIFFUSE, col) == AI_SUCCESS) {
+            mat->albedoFactor = {col.r, col.g, col.b, col.a};
+            spdlog::info("  base color: ({:.2f},{:.2f},{:.2f},{:.2f})",
+                         col.r, col.g, col.b, col.a);
         }
-        if (hasTex) {
-            std::filesystem::path p(texPath.C_Str());
-            mat->sourcePath = p.is_absolute() ? p.string() : (std::filesystem::path(dir) / p).string();
-            mat->albedoFactor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+
+        // Все texture slots — для диагностики
+        bool albedoAssigned = false;
+        for (unsigned t = 0; t < 32; ++t) {
+            unsigned cnt = aiMat->GetTextureCount(static_cast<aiTextureType>(t));
+            for (unsigned j = 0; j < cnt; ++j) {
+                aiString p;
+                if (aiMat->GetTexture(static_cast<aiTextureType>(t), j, &p) != AI_SUCCESS)
+                    continue;
+                std::string ps = p.C_Str();
+                spdlog::info("  texture type[{}][{}] = '{}'",
+                             t, j, ps);
+
+                // Загружаем первый найденный texture как albedo
+                if (!albedoAssigned &&
+                    (t == aiTextureType_BASE_COLOR ||
+                     t == aiTextureType_DIFFUSE ||
+                     t == aiTextureType_UNKNOWN)) {
+                    std::shared_ptr<Texture> tex;
+                    if (!ps.empty() && ps[0] == '*') {
+                        // EMBEDDED
+                        try {
+                            int idx = std::stoi(ps.substr(1));
+                            if (idx >= 0 && idx < static_cast<int>(scene->mNumTextures)) {
+                                const aiTexture* at = scene->mTextures[idx];
+                                if (at->mHeight == 0) {
+                                    // Compressed PNG/JPG
+                                    tex = std::shared_ptr<Texture>(Texture::LoadFromMemory(
+                                        reinterpret_cast<const unsigned char*>(at->pcData),
+                                        static_cast<size_t>(at->mWidth)));
+                                } else {
+                                    // Raw RGBA (mWidth x mHeight)
+                                    tex = std::shared_ptr<Texture>(Texture::LoadFromMemory(
+                                        reinterpret_cast<const unsigned char*>(at->pcData),
+                                        static_cast<size_t>(at->mWidth * at->mHeight * 4)));
+                                }
+                                if (tex) {
+                                    spdlog::info("  → EMBEDDED #{}: OK", idx);
+                                }
+                            }
+                        } catch (...) {
+                            spdlog::warn("  → embedded parse error");
+                        }
+                    } else if (!ps.empty()) {
+                        // EXTERNAL
+                        std::filesystem::path pp(ps);
+                        std::string full = pp.is_absolute() ? ps
+                            : (std::filesystem::path(dir) / pp).string();
+                        tex = LoadTexture(full);
+                        if (tex && tex != m_white) {
+                            spdlog::info("  → EXTERNAL: OK ({})", full);
+                        }
+                    }
+
+                    if (tex && tex != m_white) {
+                        mat->albedoMap = tex;
+                        mat->albedoFactor = glm::vec4(1, 1, 1, 1);
+                        mat->sourcePath = ps;
+                        albedoAssigned = true;
+                    }
+                }
+            }
         }
+
+        if (!albedoAssigned) {
+            spdlog::warn("  ⚠ No albedo texture found for material '{}'", mat->name);
+        }
+
         out.materials.push_back(mat);
     }
 
-    std::unordered_map<std::string, int> globalBoneMap;
-    int nextBoneIndex = 0;
+    // === МЕШИ ===
     for (unsigned i = 0; i < scene->mNumMeshes; ++i) {
         const aiMesh* am = scene->mMeshes[i];
+        spdlog::info("[AssetManager] Mesh[{}]: {} verts, material index {}",
+                     i, am->mNumVertices, am->mMaterialIndex);
+
+        std::vector<Vertex> verts;
+        verts.reserve(am->mNumVertices);
+        for (unsigned v = 0; v < am->mNumVertices; ++v) {
+            Vertex vert{};
+            vert.position = aiToVec3(am->mVertices[v]);
+            if (am->HasNormals()) vert.normal = aiToVec3(am->mNormals[v]);
+            if (am->HasTangentsAndBitangents()) vert.tangent = aiToVec3(am->mTangents[v]);
+            if (am->HasTextureCoords(0)) vert.uv = aiToVec2(am->mTextureCoords[0][v]);
+            vert.boneWeights = glm::vec4(0.0f);
+            vert.boneIDs = glm::vec4(0.0f);
+            verts.push_back(vert);
+        }
+
+        std::vector<uint32_t> indices;
+        for (unsigned f = 0; f < am->mNumFaces; ++f) {
+            const aiFace& face = am->mFaces[f];
+            for (unsigned j = 0; j < face.mNumIndices; ++j)
+                indices.push_back(face.mIndices[j]);
+        }
+
+        auto mesh = std::make_shared<Mesh>();
+        mesh->Upload(verts, indices);
+        out.meshes.push_back(mesh);
+        out.meshMaterialIndex.push_back(am->mMaterialIndex);
+    }
+
+    // === BONES (из первого меша) ===
+    std::unordered_map<std::string, int> globalBoneMap;
+    int nextBoneIndex = 0;
+    for (unsigned m = 0; m < scene->mNumMeshes; ++m) {
+        const aiMesh* am = scene->mMeshes[m];
         for (unsigned b = 0; b < am->mNumBones; ++b) {
             std::string bname = am->mBones[b]->mName.data;
-            if (globalBoneMap.find(bname) == globalBoneMap.end() && nextBoneIndex < 254) {
+            if (globalBoneMap.find(bname) == globalBoneMap.end() && nextBoneIndex < 254)
                 globalBoneMap[bname] = nextBoneIndex++;
-            }
         }
     }
     out.boneMap = globalBoneMap;
     out.totalBones = nextBoneIndex;
-    bool hasBones = nextBoneIndex > 0;
 
-    std::function<void(aiNode*, const glm::mat4&)> processNode;
-    processNode = [&](aiNode* node, const glm::mat4& parentTransform) {
-        glm::mat4 localTransform = aiToGlm(node->mTransformation);
-        glm::mat4 globalTransform = parentTransform * localTransform;
-        glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(globalTransform)));
+    // Заполняем bone weights для каждого меша
+    for (size_t i = 0; i < out.meshes.size(); ++i) {
+        const aiMesh* am = scene->mMeshes[i];
+        if (am->mNumBones == 0) continue;
 
-        for (unsigned int i = 0; i < node->mNumMeshes; ++i) {
-            unsigned int meshIdx = node->mMeshes[i];
-            const aiMesh* am = scene->mMeshes[meshIdx];
-            bool meshHasBones = am->mNumBones > 0;
+        std::vector<Vertex> verts = out.meshes[i]->Vertices();
+        std::vector<uint32_t> idx = out.meshes[i]->Indices();
 
-            std::vector<Vertex> verts;
-            verts.reserve(am->mNumVertices);
-            for (unsigned v = 0; v < am->mNumVertices; ++v) {
-                Vertex vert{};
-                vert.position = aiToVec3(am->mVertices[v]);
-                if (am->HasNormals()) vert.normal = aiToVec3(am->mNormals[v]);
-                if (am->HasTangentsAndBitangents()) vert.tangent = aiToVec3(am->mTangents[v]);
-                if (am->HasTextureCoords(0)) vert.uv = aiToVec2(am->mTextureCoords[0][v]);
-                vert.boneWeights = glm::vec4(0.0f);
-                vert.boneIDs = glm::vec4(0.0f);
-                verts.push_back(vert);
-            }
-
-            if (meshHasBones) {
-                for (unsigned b = 0; b < am->mNumBones; ++b) {
-                    aiBone* bone = am->mBones[b];
-                    int globalIdx = globalBoneMap[bone->mName.data];
-                    for (unsigned w = 0; w < bone->mNumWeights; ++w) {
-                        unsigned vId = bone->mWeights[w].mVertexId;
-                        float weight = bone->mWeights[w].mWeight;
-                        for (int k = 0; k < 4; ++k) {
-                            if (verts[vId].boneWeights[k] == 0.0f) {
-                                verts[vId].boneIDs[k] = (float)globalIdx;
-                                verts[vId].boneWeights[k] = weight;
-                                break;
-                            }
-                        }
+        for (unsigned b = 0; b < am->mNumBones; ++b) {
+            aiBone* bone = am->mBones[b];
+            int globalIdx = globalBoneMap[bone->mName.data];
+            for (unsigned w = 0; w < bone->mNumWeights; ++w) {
+                unsigned vId = bone->mWeights[w].mVertexId;
+                float weight = bone->mWeights[w].mWeight;
+                for (int k = 0; k < 4; ++k) {
+                    if (verts[vId].boneWeights[k] == 0.0f) {
+                        verts[vId].boneIDs[k] = static_cast<float>(globalIdx);
+                        verts[vId].boneWeights[k] = weight;
+                        break;
                     }
                 }
             }
-
-            // ЖЕСТКИЙ ФИКС: Вершины без весов (или целые меши без костей) 
-            // привязываем к Dummy Bone 255 и запекаем в мировое пространство.
-            for (auto& v : verts) {
-                if (v.boneWeights.x + v.boneWeights.y + v.boneWeights.z + v.boneWeights.w < 0.001f) {
-                    glm::vec4 wpos = globalTransform * glm::vec4(v.position, 1.0f);
-                    v.position = glm::vec3(wpos);
-                    v.normal = normalMatrix * v.normal;
-                    v.boneIDs = glm::vec4(255.0f, 0, 0, 0);
-                    v.boneWeights = glm::vec4(1.0f, 0, 0, 0);
-                }
-            }
-
-            std::vector<uint32_t> indices;
-            for (unsigned f = 0; f < am->mNumFaces; ++f) {
-                const aiFace& face = am->mFaces[f];
-                for (unsigned j = 0; j < face.mNumIndices; ++j) indices.push_back(face.mIndices[j]);
-            }
-
-            auto mesh = std::make_shared<Mesh>();
-            mesh->Upload(verts, indices);
-            out.meshes.push_back(mesh);
-            out.meshMaterialIndex.push_back(am->mMaterialIndex);
         }
-        for (unsigned int i = 0; i < node->mNumChildren; ++i) processNode(node->mChildren[i], globalTransform);
-    };
-    processNode(scene->mRootNode, glm::mat4(1.0f));
+        for (auto& v : verts) {
+            if (v.boneWeights.x + v.boneWeights.y + v.boneWeights.z + v.boneWeights.w < 0.001f) {
+                v.boneIDs[0] = 0.0f; v.boneWeights[0] = 1.0f;
+            }
+        }
+        out.meshes[i]->Upload(verts, idx);
+    }
 
     m_models[path] = out;
+    spdlog::info("[AssetManager] === Loaded: {} ({} meshes, {} mats, {} bones) ===",
+                 path, out.meshes.size(), out.materials.size(), nextBoneIndex);
     return out;
+
+
 }
 
 void AssetManager::UpdateAnimation(const LoadedModel& model, float time, std::vector<glm::mat4>& outBoneMatrices) {

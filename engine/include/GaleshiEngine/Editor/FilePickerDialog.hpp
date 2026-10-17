@@ -6,35 +6,39 @@
 
 namespace Galeshi {
 
-// Модальный файловый диалог на ImGui.
-// Использование:
-//     picker.Open("assets", "3D Models", {".fbx", ".gltf", ".glb", ".obj"});
-//     ...
-//     std::string chosen = picker.Draw();
-//     if (!chosen.empty()) { /* загрузить модель */ }
 class FilePickerDialog {
 public:
     FilePickerDialog() = default;
 
+    // Режим открытия файла
     void Open(const std::string& startDir,
               const std::string& title,
               std::vector<std::string> extensions);
 
-    bool IsOpen() const { return m_open; }
-    void Close() { m_open = false; }
+    // Режим сохранения файла (с полем ввода имени)
+    void SaveAs(const std::string& startDir,
+                const std::string& defaultName,
+                const std::string& title,
+                std::vector<std::string> extensions);
 
-    // Рисуется каждый кадр. Возвращает выбранный путь, если пользователь
-    // нажал "Open" (пустая строка иначе).
+    bool IsOpen()  const { return m_open; }
+    bool IsSave()  const { return m_saveMode; }
+    void Close()   { m_open = false; }
+
+    // Рисуется каждый кадр. Возвращает выбранный/введённый путь, если
+    // пользователь нажал Open/Save (пустая строка иначе).
     std::string Draw();
 
 private:
     void Refresh();
 
     bool         m_open = false;
+    bool         m_saveMode = false;
     std::string  m_title = "Open File";
     std::string  m_root;
     std::filesystem::path m_current;
     std::string  m_selectedFile;
+    char         m_saveNameBuf[256] = {};
     std::vector<std::string> m_allowedExts;
 
     struct Entry {

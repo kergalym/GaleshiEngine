@@ -53,6 +53,33 @@ Texture* Texture::LoadFromFile(const std::string& path) {
     return tex;
 }
 
+Texture* Texture::LoadFromMemory(const unsigned char* data, size_t size) {
+    if (!data || size == 0) return nullptr;
+
+    int w = 0, h = 0, channels = 0;
+    stbi_set_flip_vertically_on_load(true);
+    unsigned char* pixels = stbi_load_from_memory(
+        data, static_cast<int>(size), &w, &h, &channels, 4);
+
+    if (!pixels) {
+        spdlog::error("[Texture] Cannot decode embedded texture ({} bytes): {}",
+                      size, stbi_failure_reason());
+        return nullptr;
+    }
+
+    Texture* tex = new Texture();
+    tex->m_path = "<embedded>";
+    tex->m_handle = bgfx::createTexture2D(
+        static_cast<uint16_t>(w), static_cast<uint16_t>(h),
+        false, 1, bgfx::TextureFormat::RGBA8,
+        BGFX_TEXTURE_NONE,
+        bgfx::copy(pixels, static_cast<uint32_t>(w * h * 4)));
+
+    stbi_image_free(pixels);
+    spdlog::info("[Texture] Embedded loaded ({}x{})", w, h);
+    return tex;
+}
+
 Texture* Texture::CreateWhite() {
     const uint32_t pixel = 0xFFFFFFFF;
     Texture* tex = new Texture();
