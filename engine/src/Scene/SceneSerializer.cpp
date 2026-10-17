@@ -123,10 +123,13 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
         }
         if (je.contains("skeletal")) {
             const auto& js = je["skeletal"];
-            auto& skel = e.AddComponent<SkeletalComponent>();
-            skel.isAnimated = js.value("isAnimated", true); skel.sourcePath = js.value("sourcePath", "");
-            skel.currentTime = js.value("currentTime", 0.0f); skel.animationSpeed = js.value("animationSpeed", 1.0f);
-            skel.boneMatrices.resize(256, glm::mat4(1.0f));
+            std::string src = js.value("sourcePath", "");
+            if (!src.empty()) {
+                auto& skel = e.AddComponent<SkeletalComponent>();
+                skel.isAnimated = js.value("isAnimated", true); skel.sourcePath = src;
+                skel.currentTime = js.value("currentTime", 0.0f); skel.animationSpeed = js.value("animationSpeed", 1.0f);
+                skel.boneMatrices.resize(256, glm::mat4(1.0f));
+            }
         }
         if (je.contains("parent")) parentsToFix.push_back({e.Handle(), je["parent"].get<uint32_t>()});
         if (je.contains("directionalLight")) {

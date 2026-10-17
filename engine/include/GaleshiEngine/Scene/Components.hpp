@@ -73,4 +73,17 @@ struct PointLightComponent {
     float     radius    = 10.0f;
 };
 
+struct RigidBodyComponent {
+    enum class MotionType { Static, Dynamic, Kinematic };
+    MotionType motionType = MotionType::Dynamic;
+    float      mass       = 1.0f;
+    float      friction   = 0.5f;
+    float      restitution = 0.0f;
+    bool       useGravity = true;
+};
+
+struct BoxColliderComponent {
+    glm::vec3 halfExtents{0.5f};
+};
+
 } // namespace Galeshi

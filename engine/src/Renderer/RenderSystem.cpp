@@ -124,9 +124,16 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
                 model = model * scene.Registry().get<TransformComponent>(*it).LocalMatrix();
         }
 
-        bool hasSkeleton = scene.Registry().all_of<SkeletalComponent>(h);
+        // Ищем SkeletalComponent вверх по иерархии (на корне)
+        entt::entity root = h;
+        while (root != entt::null) {
+            if (scene.Registry().all_of<ParentComponent>(root)) 
+                root = scene.Registry().get<ParentComponent>(root).parent;
+            else break;
+        }
+        bool hasSkeleton = scene.Registry().all_of<SkeletalComponent>(root);
         if (hasSkeleton) {
-            auto& skel = scene.Registry().get<SkeletalComponent>(h);
+            auto& skel = scene.Registry().get<SkeletalComponent>(root);
             if (skel.isAnimated && !skel.sourcePath.empty()) {
                 if (skel.boneMatrices.size() != kMaxBones) {
                     skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));

@@ -44,6 +44,11 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0)
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
+vec3 aces_tonemap(vec3 color) {
+    // Krzysztof Narkowicz ACES approximation
+    return clamp((color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14), 0.0, 1.0);
+}
+
 void main()
 {
     vec3 albedo    = u_albedoFactor.rgb * texture2D(s_albedoMap, v_uv).rgb;
@@ -80,7 +85,7 @@ void main()
     vec3 radiance = u_lightColorIntensity.rgb * u_lightColorIntensity.a;
 
     vec3 direct = (kD * albedo / PI + specular) * radiance * NdL;
-    vec3 ambient = albedo * 0.08 * (1.0 - metallic);
+    vec3 ambient = albedo * 0.15 * (1.0 - metallic);
 
     vec3 color = ambient + direct + u_emissiveFactor.rgb;
 

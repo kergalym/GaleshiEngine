@@ -23,11 +23,7 @@ AssetManager::AssetManager() {
 }
 
 AssetManager::~AssetManager() = default;
-
-void AssetManager::Clear() {
-    m_models.clear();
-    m_textures.clear();
-}
+void AssetManager::Clear() { m_models.clear(); m_textures.clear(); }
 
 std::shared_ptr<Texture> AssetManager::LoadTexture(const std::string& path) {
     auto it = m_textures.find(path);
@@ -54,53 +50,56 @@ glm::mat4 aiToGlm(const aiMatrix4x4& from) {
 
 void ReadNodeHeirarchy(const aiScene* scene, float time, const aiNode* node, const glm::mat4& parentTransform, std::vector<glm::mat4>& boneMatrices, const std::unordered_map<std::string, int>& boneMap) {
     std::string nodeName(node->mName.data);
-    const aiAnimation* anim = scene->mAnimations[0];
-    float ticksPerSecond = anim->mTicksPerSecond != 0 ? anim->mTicksPerSecond : 25.0f;
-    float timeInTicks = fmod(time * ticksPerSecond, anim->mDuration);
-
     glm::mat4 nodeTransform = aiToGlm(node->mTransformation);
-    const aiNodeAnim* nodeAnim = nullptr;
-    for (unsigned int i = 0; i < anim->mNumChannels; ++i) {
-        if (std::string(anim->mChannels[i]->mNodeName.data) == nodeName) {
-            nodeAnim = anim->mChannels[i];
-            break;
-        }
-    }
 
-    if (nodeAnim) {
-        glm::vec3 pos = aiToVec3(nodeAnim->mPositionKeys[0].mValue);
-        if (nodeAnim->mNumPositionKeys > 1) {
-            for (unsigned int i = 0; i < nodeAnim->mNumPositionKeys - 1; ++i) {
-                if (timeInTicks < (float)nodeAnim->mPositionKeys[i + 1].mTime) {
-                    float dt = (float)nodeAnim->mPositionKeys[i + 1].mTime - (float)nodeAnim->mPositionKeys[i].mTime;
-                    float factor = (timeInTicks - (float)nodeAnim->mPositionKeys[i].mTime) / dt;
-                    pos = glm::mix(aiToVec3(nodeAnim->mPositionKeys[i].mValue), aiToVec3(nodeAnim->mPositionKeys[i + 1].mValue), factor);
-                    break;
-                }
+    if (scene->mNumAnimations > 0) {
+        const aiAnimation* anim = scene->mAnimations[0];
+        float ticksPerSecond = anim->mTicksPerSecond != 0 ? anim->mTicksPerSecond : 25.0f;
+        float timeInTicks = fmod(time * ticksPerSecond, anim->mDuration);
+
+        const aiNodeAnim* nodeAnim = nullptr;
+        for (unsigned int i = 0; i < anim->mNumChannels; ++i) {
+            if (std::string(anim->mChannels[i]->mNodeName.data) == nodeName) {
+                nodeAnim = anim->mChannels[i];
+                break;
             }
         }
-        glm::quat rot(nodeAnim->mRotationKeys[0].mValue.w, nodeAnim->mRotationKeys[0].mValue.x, nodeAnim->mRotationKeys[0].mValue.y, nodeAnim->mRotationKeys[0].mValue.z);
-        if (nodeAnim->mNumRotationKeys > 1) {
-            for (unsigned int i = 0; i < nodeAnim->mNumRotationKeys - 1; ++i) {
-                if (timeInTicks < (float)nodeAnim->mRotationKeys[i + 1].mTime) {
-                    float dt = (float)nodeAnim->mRotationKeys[i + 1].mTime - (float)nodeAnim->mRotationKeys[i].mTime;
-                    float factor = (timeInTicks - (float)nodeAnim->mRotationKeys[i].mTime) / dt;
-                    glm::quat start(nodeAnim->mRotationKeys[i].mValue.w, nodeAnim->mRotationKeys[i].mValue.x, nodeAnim->mRotationKeys[i].mValue.y, nodeAnim->mRotationKeys[i].mValue.z);
-                    glm::quat end(nodeAnim->mRotationKeys[i + 1].mValue.w, nodeAnim->mRotationKeys[i + 1].mValue.x, nodeAnim->mRotationKeys[i + 1].mValue.y, nodeAnim->mRotationKeys[i + 1].mValue.z);
-                    rot = glm::slerp(start, end, factor);
-                    break;
+
+        if (nodeAnim) {
+            glm::vec3 pos = aiToVec3(nodeAnim->mPositionKeys[0].mValue);
+            if (nodeAnim->mNumPositionKeys > 1) {
+                for (unsigned int i = 0; i < nodeAnim->mNumPositionKeys - 1; ++i) {
+                    if (timeInTicks < (float)nodeAnim->mPositionKeys[i + 1].mTime) {
+                        float dt = (float)nodeAnim->mPositionKeys[i + 1].mTime - (float)nodeAnim->mPositionKeys[i].mTime;
+                        float factor = (timeInTicks - (float)nodeAnim->mPositionKeys[i].mTime) / dt;
+                        pos = glm::mix(aiToVec3(nodeAnim->mPositionKeys[i].mValue), aiToVec3(nodeAnim->mPositionKeys[i + 1].mValue), factor);
+                        break;
+                    }
                 }
             }
+            glm::quat rot(nodeAnim->mRotationKeys[0].mValue.w, nodeAnim->mRotationKeys[0].mValue.x, nodeAnim->mRotationKeys[0].mValue.y, nodeAnim->mRotationKeys[0].mValue.z);
+            if (nodeAnim->mNumRotationKeys > 1) {
+                for (unsigned int i = 0; i < nodeAnim->mNumRotationKeys - 1; ++i) {
+                    if (timeInTicks < (float)nodeAnim->mRotationKeys[i + 1].mTime) {
+                        float dt = (float)nodeAnim->mRotationKeys[i + 1].mTime - (float)nodeAnim->mRotationKeys[i].mTime;
+                        float factor = (timeInTicks - (float)nodeAnim->mRotationKeys[i].mTime) / dt;
+                        glm::quat start(nodeAnim->mRotationKeys[i].mValue.w, nodeAnim->mRotationKeys[i].mValue.x, nodeAnim->mRotationKeys[i].mValue.y, nodeAnim->mRotationKeys[i].mValue.z);
+                        glm::quat end(nodeAnim->mRotationKeys[i + 1].mValue.w, nodeAnim->mRotationKeys[i + 1].mValue.x, nodeAnim->mRotationKeys[i + 1].mValue.y, nodeAnim->mRotationKeys[i + 1].mValue.z);
+                        rot = glm::slerp(start, end, factor);
+                        break;
+                    }
+                }
+            }
+            glm::vec3 scale = aiToVec3(nodeAnim->mScalingKeys[0].mValue);
+            nodeTransform = glm::translate(glm::mat4(1.0f), pos) * glm::mat4_cast(rot) * glm::scale(glm::mat4(1.0f), scale);
         }
-        glm::vec3 scale = aiToVec3(nodeAnim->mScalingKeys[0].mValue);
-        nodeTransform = glm::translate(glm::mat4(1.0f), pos) * glm::mat4_cast(rot) * glm::scale(glm::mat4(1.0f), scale);
     }
 
     glm::mat4 globalTransform = parentTransform * nodeTransform;
 
     if (boneMap.find(nodeName) != boneMap.end()) {
         int boneIndex = boneMap.at(nodeName);
-        if (boneIndex < (int)boneMatrices.size()) {
+        if (boneIndex < 254) { // 255 зарезервирован под Identity
             aiBone* bone = nullptr;
             for (unsigned m = 0; m < scene->mNumMeshes && !bone; ++m) {
                 for (unsigned i = 0; i < scene->mMeshes[m]->mNumBones; ++i) {
@@ -123,6 +122,7 @@ void ReadNodeHeirarchy(const aiScene* scene, float time, const aiNode* node, con
 } // namespace
 
 AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
+    if (path.empty()) return LoadedModel{};
     auto it = m_models.find(path);
     if (it != m_models.end()) return it->second;
 
@@ -130,24 +130,34 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
     auto importer = std::make_shared<Assimp::Importer>();
     const aiScene* scene = importer->ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenSmoothNormals);
     
-    if (!scene || !scene->mRootNode) {
-        spdlog::error("[AssetManager] Assimp: {}", importer->GetErrorString());
-        return out;
-    }
+    if (!scene || !scene->mRootNode) return out;
     
     out.importer = importer;
-    out.rawScene = std::shared_ptr<aiScene>(const_cast<aiScene*>(scene), [](aiScene*){}); // Non-owning
+    out.rawScene = std::shared_ptr<aiScene>(const_cast<aiScene*>(scene), [](aiScene*){});
 
     const std::string dir = std::filesystem::path(path).parent_path().string();
 
     out.materials.reserve(scene->mNumMaterials);
     for (unsigned i = 0; i < scene->mNumMaterials; ++i) {
         auto mat = std::make_shared<Material>();
-        aiString name;
-        scene->mMaterials[i]->Get(AI_MATKEY_NAME, name);
-        mat->name = name.C_Str();
+        aiString name; scene->mMaterials[i]->Get(AI_MATKEY_NAME, name); mat->name = name.C_Str();
+        
         aiColor4D col;
         if (scene->mMaterials[i]->Get(AI_MATKEY_BASE_COLOR, col) == AI_SUCCESS) mat->albedoFactor = {col.r, col.g, col.b, col.a};
+        else if (scene->mMaterials[i]->Get(AI_MATKEY_COLOR_DIFFUSE, col) == AI_SUCCESS) mat->albedoFactor = {col.r, col.g, col.b, col.a};
+        
+        aiString texPath;
+        bool hasTex = false;
+        if (scene->mMaterials[i]->GetTexture(aiTextureType_BASE_COLOR, 0, &texPath) == AI_SUCCESS ||
+            scene->mMaterials[i]->GetTexture(aiTextureType_DIFFUSE,    0, &texPath) == AI_SUCCESS ||
+            scene->mMaterials[i]->GetTexture(aiTextureType_UNKNOWN,    0, &texPath) == AI_SUCCESS) {
+            hasTex = true;
+        }
+        if (hasTex) {
+            std::filesystem::path p(texPath.C_Str());
+            mat->sourcePath = p.is_absolute() ? p.string() : (std::filesystem::path(dir) / p).string();
+            mat->albedoFactor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+        }
         out.materials.push_back(mat);
     }
 
@@ -157,28 +167,13 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
         const aiMesh* am = scene->mMeshes[i];
         for (unsigned b = 0; b < am->mNumBones; ++b) {
             std::string bname = am->mBones[b]->mName.data;
-            if (globalBoneMap.find(bname) == globalBoneMap.end()) globalBoneMap[bname] = nextBoneIndex++;
+            if (globalBoneMap.find(bname) == globalBoneMap.end() && nextBoneIndex < 254) {
+                globalBoneMap[bname] = nextBoneIndex++;
+            }
         }
     }
     out.boneMap = globalBoneMap;
     out.totalBones = nextBoneIndex;
-
-    // Рекурсивно ищем узел Armature, чтобы исправить ориентацию (Z-up / Y-up)
-    std::function<aiNode*(aiNode*)> findArmature = [&](aiNode* node) -> aiNode* {
-        std::string name = node->mName.data;
-        if (name.find("Armature") != std::string::npos || name.find("Root") != std::string::npos) {
-            return node;
-        }
-        for (unsigned i = 0; i < node->mNumChildren; ++i) {
-            aiNode* found = findArmature(node->mChildren[i]);
-            if (found) return found;
-        }
-        return nullptr;
-    };
-
-    if (aiNode* armature = findArmature(scene->mRootNode)) {
-        out.rootTransform = aiToGlm(armature->mTransformation);
-    }
     bool hasBones = nextBoneIndex > 0;
 
     std::function<void(aiNode*, const glm::mat4&)> processNode;
@@ -190,32 +185,25 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
         for (unsigned int i = 0; i < node->mNumMeshes; ++i) {
             unsigned int meshIdx = node->mMeshes[i];
             const aiMesh* am = scene->mMeshes[meshIdx];
-
-            // Если модель скелетная, НЕ запекаем globalTransform, иначе
-            // offsetMatrix костей будет работать неправильно.
-            glm::mat4 vertexTransform = hasBones ? glm::mat4(1.0f) : globalTransform;
-            glm::mat3 vertexNormalMat = hasBones ? glm::mat3(1.0f) : normalMatrix;
+            bool meshHasBones = am->mNumBones > 0;
 
             std::vector<Vertex> verts;
             verts.reserve(am->mNumVertices);
             for (unsigned v = 0; v < am->mNumVertices; ++v) {
                 Vertex vert{};
-                glm::vec4 pos = vertexTransform * glm::vec4(aiToVec3(am->mVertices[v]), 1.0f);
-                vert.position = glm::vec3(pos);
-                if (am->HasNormals()) vert.normal = vertexNormalMat * aiToVec3(am->mNormals[v]);
-                if (am->HasTangentsAndBitangents()) vert.tangent = vertexNormalMat * aiToVec3(am->mTangents[v]);
+                vert.position = aiToVec3(am->mVertices[v]);
+                if (am->HasNormals()) vert.normal = aiToVec3(am->mNormals[v]);
+                if (am->HasTangentsAndBitangents()) vert.tangent = aiToVec3(am->mTangents[v]);
                 if (am->HasTextureCoords(0)) vert.uv = aiToVec2(am->mTextureCoords[0][v]);
-                
                 vert.boneWeights = glm::vec4(0.0f);
                 vert.boneIDs = glm::vec4(0.0f);
                 verts.push_back(vert);
             }
 
-            if (hasBones) {
+            if (meshHasBones) {
                 for (unsigned b = 0; b < am->mNumBones; ++b) {
                     aiBone* bone = am->mBones[b];
                     int globalIdx = globalBoneMap[bone->mName.data];
-                    if (globalIdx >= 256) continue;
                     for (unsigned w = 0; w < bone->mNumWeights; ++w) {
                         unsigned vId = bone->mWeights[w].mVertexId;
                         float weight = bone->mWeights[w].mWeight;
@@ -228,10 +216,17 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
                         }
                     }
                 }
-                for (auto& v : verts) {
-                    if (v.boneWeights.x + v.boneWeights.y + v.boneWeights.z + v.boneWeights.w < 0.001f) {
-                        v.boneIDs[0] = 0.0f; v.boneWeights[0] = 1.0f;
-                    }
+            }
+
+            // ЖЕСТКИЙ ФИКС: Вершины без весов (или целые меши без костей) 
+            // привязываем к Dummy Bone 255 и запекаем в мировое пространство.
+            for (auto& v : verts) {
+                if (v.boneWeights.x + v.boneWeights.y + v.boneWeights.z + v.boneWeights.w < 0.001f) {
+                    glm::vec4 wpos = globalTransform * glm::vec4(v.position, 1.0f);
+                    v.position = glm::vec3(wpos);
+                    v.normal = normalMatrix * v.normal;
+                    v.boneIDs = glm::vec4(255.0f, 0, 0, 0);
+                    v.boneWeights = glm::vec4(1.0f, 0, 0, 0);
                 }
             }
 
@@ -255,8 +250,9 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
 }
 
 void AssetManager::UpdateAnimation(const LoadedModel& model, float time, std::vector<glm::mat4>& outBoneMatrices) {
-    if (!model.rawScene || model.rawScene->mNumAnimations == 0) return;
-    outBoneMatrices.resize(256, glm::mat4(1.0f));
+    if (outBoneMatrices.size() != 256) outBoneMatrices.resize(256, glm::mat4(1.0f));
+    outBoneMatrices[255] = glm::mat4(1.0f); // Dummy bone всегда Identity
+    if (!model.rawScene) return;
     ReadNodeHeirarchy(model.rawScene.get(), time, model.rawScene->mRootNode, glm::mat4(1.0f), outBoneMatrices, model.boneMap);
 }
 
@@ -287,6 +283,8 @@ std::shared_ptr<Mesh> AssetManager::CreateCubeMesh() {
         Vertex vert{};
         vert.position = {v.x, v.y, v.z}; vert.normal = {v.nx, v.ny, v.nz};
         vert.tangent = {v.tx, v.ty, v.tz}; vert.uv = {v.u, v.v};
+        vert.boneIDs = glm::vec4(255.0f, 0, 0, 0); // Для кубов тоже используем Dummy Bone
+        vert.boneWeights = glm::vec4(1.0f, 0, 0, 0);
         vs.push_back(vert);
     }
     std::vector<uint32_t> is(idx, idx + 36);

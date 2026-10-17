@@ -11,6 +11,7 @@ add_library(GaleshiEngine STATIC
 target_include_directories(GaleshiEngine
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE
         ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bgfx/include
         ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bimg/include
         ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bimg/3rdparty/stb
@@ -20,6 +21,8 @@ target_include_directories(GaleshiEngine
 
 target_compile_definitions(GaleshiEngine
     PUBLIC GLM_ENABLE_EXPERIMENTAL)
+
+
 
 target_link_libraries(GaleshiEngine
     PUBLIC
@@ -35,7 +38,6 @@ target_link_libraries(GaleshiEngine
         bx
     PRIVATE
         assimp::assimp
-        # Jolt
         Recast
         Detour
         DetourCrowd)

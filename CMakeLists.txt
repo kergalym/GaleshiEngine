@@ -5,6 +5,7 @@ project(GaleshiEngine
     DESCRIPTION "GaleshiEngine — a minimal UE5-like game engine"
     LANGUAGES CXX C
 )
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
 # --- Глобально: тесты не собираем и не запускаем ---
 set(BUILD_TESTING OFF CACHE BOOL "" FORCE)

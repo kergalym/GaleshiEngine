@@ -47,6 +47,9 @@ public:
     bool GizmoLocked() const { return m_gizmoLocked; }
     void SetGizmoLocked(bool v) { m_gizmoLocked = v; }
 
+    // --- Play Mode ---
+    bool isPlaying = false;
+
     // --- Editor camera (orbit) ---
     float     camYaw    = 0.0f;
     float     camPitch  = 0.35f;

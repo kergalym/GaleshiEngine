@@ -1,3 +1,4 @@
+set(CMAKE_POSITION_INDEPENDENT_CODE ON CACHE BOOL "" FORCE)
 include(FetchContent)
 
 # =====================================================================
@@ -111,18 +112,7 @@ set(ASSIMP_BUILD_ZLIB                 OFF CACHE BOOL "" FORCE)
 set(ASSIMP_USE_HUNTER                 OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(assimp)
 
-# --- Jolt Physics (ВРЕМЕННО ОТКЛЮЧЁН) ---
-# Разберёмся после того, как редактор запустится.
-# FetchContent_Declare(JoltPhysics
-#     GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
-#     GIT_TAG        v5.2.0
-#     GIT_SHALLOW    TRUE)
-# set(TARGET_UNIT_TESTS       OFF CACHE BOOL "" FORCE)
-# set(TARGET_HELLO_WORLD      OFF CACHE BOOL "" FORCE)
-# set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
-# set(TARGET_SAMPLES          OFF CACHE BOOL "" FORCE)
-# set(TARGET_VIEWER           OFF CACHE BOOL "" FORCE)
-# FetchContent_MakeAvailable(JoltPhysics)
+
 
 # --- RecastNavigation ---
 FetchContent_Declare(recastnavigation
@@ -193,3 +183,37 @@ set(JSON_BuildTests          OFF CACHE BOOL "" FORCE)
 set(JSON_Install             OFF CACHE BOOL "" FORCE)
 set(JSON_MultipleHeaders     OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(json)
+
+# (physics disabled)
+if(FALSE)
+# --- Jolt Physics ---
+# USE_STD_ALLOCATOR=OFF обязательно, иначе Memory.cpp не компилируется
+# и JPH::AlignedAllocate пропадает из libJolt.a
+set(USE_STD_ALLOCATOR        OFF CACHE BOOL "" FORCE)
+set(TARGET_SAMPLES           OFF CACHE BOOL "" FORCE)
+set(TARGET_VIEWER            OFF CACHE BOOL "" FORCE)
+set(TARGET_PERFORMANCE_TEST  OFF CACHE BOOL "" FORCE)
+set(TARGET_UNIT_TESTS        OFF CACHE BOOL "" FORCE)
+set(TARGET_HELLO_WORLD       OFF CACHE BOOL "" FORCE)
+set(TARGET_SHARED_LIB        OFF CACHE BOOL "" FORCE)
+
+# Отключаем SIMD (иначе SIGILL при несовпадении с клиентом)
+set(USE_AVX         OFF CACHE BOOL "" FORCE)
+set(USE_AVX2        OFF CACHE BOOL "" FORCE)
+set(USE_AVX512      OFF CACHE BOOL "" FORCE)
+set(USE_F16C        OFF CACHE BOOL "" FORCE)
+set(USE_FMADD       OFF CACHE BOOL "" FORCE)
+set(USE_LZCNT       OFF CACHE BOOL "" FORCE)
+set(USE_SSE4_1      OFF CACHE BOOL "" FORCE)
+set(USE_SSE4_2      OFF CACHE BOOL "" FORCE)
+set(USE_TZCNT       OFF CACHE BOOL "" FORCE)
+set(USE_RVV         OFF CACHE BOOL "" FORCE)
+set(USE_STD_ALLOCATOR OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(JoltPhysics
+    GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+    GIT_TAG        v5.2.0
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  Build)
+FetchContent_MakeAvailable(JoltPhysics)
+endif()

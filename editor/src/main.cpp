@@ -11,6 +11,7 @@
 #include "GaleshiEngine/Editor/EditorState.hpp"
 #include "GaleshiEngine/Editor/ContentBrowser.hpp"
 #include "GaleshiEngine/Editor/FilePickerDialog.hpp"
+#include "GaleshiEngine/Physics/PhysicsSystem.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -34,6 +35,8 @@ public:
 protected:
     void OnStart() override {
         m_assets  = std::make_unique<Galeshi::AssetManager>();
+        m_physics = std::make_unique<Galeshi::PhysicsSystem>();
+        m_physics->Init();
         m_render  = std::make_unique<Galeshi::RenderSystem>();
         m_render->Init(m_assets.get());
 
@@ -67,6 +70,10 @@ protected:
     void OnUpdate(float dt) override {
         m_time += dt;
 
+        if (m_editor.isPlaying) {
+            m_physics->Update(m_scene, dt);
+        }
+
         auto animView = m_scene.Registry().view<Galeshi::SkeletalComponent>();
         for (auto h : animView) {
             auto& skel = animView.get<Galeshi::SkeletalComponent>(h);
@@ -95,6 +102,21 @@ protected:
             m_viewportH ? static_cast<float>(m_viewportW) / m_viewportH
                         : 16.0f / 9.0f;
         m_camera.SetPerspective(glm::radians(60.0f), aspect, 0.1f, 1000.0f);
+        // --- Перемещение стрелками (Pan) ---
+        if (!ImGui::GetIO().WantTextInput && m_viewportHovered) {
+            float panSpeed = 10.0f * dt;
+            
+            // Вычисляем forward и right на плоскости XZ
+            float yaw = m_editor.camYaw;
+            glm::vec3 forward(std::sin(yaw), 0.0f, std::cos(yaw));
+            glm::vec3 right(forward.z, 0.0f, -forward.x); // перпендикуляр в плоскости XZ
+
+            if (ImGui::IsKeyDown(ImGuiKey_UpArrow))    m_editor.camTarget -= forward * panSpeed;
+            if (ImGui::IsKeyDown(ImGuiKey_DownArrow))  m_editor.camTarget += forward * panSpeed;
+            if (ImGui::IsKeyDown(ImGuiKey_LeftArrow))  m_editor.camTarget -= right * panSpeed;
+            if (ImGui::IsKeyDown(ImGuiKey_RightArrow)) m_editor.camTarget += right * panSpeed;
+        }
+
         m_camera.Orbit(m_editor.camTarget,
                        m_editor.camYaw,
                        m_editor.camPitch,
@@ -120,6 +142,21 @@ protected:
                 if (ImGui::MenuItem("Exit")) std::exit(0);
                 ImGui::EndMenu();
             }
+            if (ImGui::Button(m_editor.isPlaying ? "Stop" : "Play")) {
+                if (!m_editor.isPlaying) {
+                    PushHistory();
+                    m_editor.isPlaying = true;
+                } else {
+                    m_editor.isPlaying = false;
+                    m_physics->Reset();
+                    // Возврат к состоянию до Play
+                    if (m_historyIndex >= 0) {
+                        m_serializer->LoadFromString(m_history[m_historyIndex]);
+                    }
+                }
+            }
+            ImGui::SameLine();
+
             if (ImGui::BeginMenu("Edit")) {
                 if (ImGui::MenuItem("Undo", "Ctrl+Z")) Undo();
                 if (ImGui::MenuItem("Redo", "Ctrl+Y")) Redo();
@@ -211,7 +248,9 @@ private:
     // Save / Load
     // -------------------------------------------------------------------
     void OpenFileDialog() {
-        m_filePicker.Open("assets", "Import Model",
+        const char* home = std::getenv("HOME");
+        std::string start = home ? home : "/";
+        m_filePicker.Open(start, "Import Model",
             { ".fbx", ".gltf", ".glb", ".obj", ".dae" });
     }
 
@@ -437,62 +476,69 @@ private:
     // -------------------------------------------------------------------
     void DrawDetails() {
         ImGui::Begin("Details");
-
-        Galeshi::Entity sel = m_editor.Selected(&m_scene);
-        if (!sel) {
+        auto selected = m_editor.SelectedAll(&m_scene);
+        if (selected.empty()) {
             ImGui::TextDisabled("No selection");
             ImGui::End();
             return;
         }
 
-        if (m_editor.SelectedAll(&m_scene).size() > 1) {
-            ImGui::TextColored(ImVec4(1, 0.8f, 0.4f, 1),
-                "Multi-select: editing first entity");
+        const bool multi = selected.size() > 1;
+        if (multi) {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.4f, 1.0f), "Editing %d entities", (int)selected.size());
             ImGui::Separator();
         }
 
-        if (sel.HasComponent<Galeshi::NameComponent>()) {
-            auto& nc = sel.GetComponent<Galeshi::NameComponent>();
-            char buf[256];
-            std::snprintf(buf, sizeof(buf), "%s", nc.name.c_str());
+        // Name
+        if (!multi && selected[0].HasComponent<Galeshi::NameComponent>()) {
+            auto& nc = selected[0].GetComponent<Galeshi::NameComponent>();
+            char buf[256]; std::snprintf(buf, sizeof(buf), "%s", nc.name.c_str());
             if (ImGui::InputText("Name", buf, sizeof(buf))) nc.name = buf;
         }
 
-        if (sel.HasComponent<Galeshi::TransformComponent>()) {
-            if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
-                auto& tc = sel.GetComponent<Galeshi::TransformComponent>();
-                ImGui::DragFloat3("Position", glm::value_ptr(tc.position), 0.05f);
-                ImGui::DragFloat3("Scale",    glm::value_ptr(tc.scale), 0.05f, 0.01f, 100.0f);
+        // Transform
+        if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+            glm::vec3 pos = selected[0].HasComponent<Galeshi::TransformComponent>() ? selected[0].GetComponent<Galeshi::TransformComponent>().position : glm::vec3(0.0f);
+            glm::vec3 scl = selected[0].HasComponent<Galeshi::TransformComponent>() ? selected[0].GetComponent<Galeshi::TransformComponent>().scale : glm::vec3(1.0f);
+            glm::vec3 rot = selected[0].HasComponent<Galeshi::TransformComponent>() ? glm::degrees(glm::eulerAngles(selected[0].GetComponent<Galeshi::TransformComponent>().rotation)) : glm::vec3(0.0f);
 
-                glm::vec3 euler = glm::degrees(glm::eulerAngles(tc.rotation));
-                if (ImGui::DragFloat3("Rotation", glm::value_ptr(euler), 1.0f)) {
-                    tc.rotation = glm::quat(glm::radians(euler));
+            if (ImGui::DragFloat3("Position", glm::value_ptr(pos), 0.05f)) {
+                for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().position = pos;
+            }
+            if (ImGui::DragFloat3("Scale", glm::value_ptr(scl), 0.05f, 0.01f, 100.0f)) {
+                for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().scale = scl;
+            }
+            if (ImGui::DragFloat3("Rotation", glm::value_ptr(rot), 1.0f)) {
+                glm::quat q = glm::quat(glm::radians(rot));
+                for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().rotation = q;
+            }
+        }
+
+        // Material
+        if (selected[0].HasComponent<Galeshi::MaterialComponent>() && ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& matc = selected[0].GetComponent<Galeshi::MaterialComponent>();
+            if (matc.material) {
+                auto& m = *matc.material;
+                if (ImGui::ColorEdit4("Albedo", glm::value_ptr(m.albedoFactor))) {
+                    for (auto e : selected) {
+                        if (e.HasComponent<Galeshi::MaterialComponent>() && e.GetComponent<Galeshi::MaterialComponent>().material) {
+                            e.GetComponent<Galeshi::MaterialComponent>().material->albedoFactor = m.albedoFactor;
+                        }
+                    }
+                }
+                if (ImGui::SliderFloat("Metallic", &m.metallicFactor, 0.0f, 1.0f)) {
+                    for (auto e : selected) if (e.HasComponent<Galeshi::MaterialComponent>() && e.GetComponent<Galeshi::MaterialComponent>().material) e.GetComponent<Galeshi::MaterialComponent>().material->metallicFactor = m.metallicFactor;
+                }
+                if (ImGui::SliderFloat("Roughness", &m.roughnessFactor, 0.04f, 1.0f)) {
+                    for (auto e : selected) if (e.HasComponent<Galeshi::MaterialComponent>() && e.GetComponent<Galeshi::MaterialComponent>().material) e.GetComponent<Galeshi::MaterialComponent>().material->roughnessFactor = m.roughnessFactor;
                 }
             }
         }
 
-        if (sel.HasComponent<Galeshi::MaterialComponent>()) {
-            if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
-                auto& matc = sel.GetComponent<Galeshi::MaterialComponent>();
-                if (matc.material) {
-                    auto& m = *matc.material;
-                    ImGui::ColorEdit4("Albedo", glm::value_ptr(m.albedoFactor));
-                    ImGui::SliderFloat("Metallic",  &m.metallicFactor,  0.0f, 1.0f);
-                    ImGui::SliderFloat("Roughness", &m.roughnessFactor, 0.04f, 1.0f);
-                    ImGui::ColorEdit3("Emissive", glm::value_ptr(m.emissiveFactor));
-                } else {
-                    ImGui::TextDisabled("No material");
-                }
-            }
-        }
-
-        if (sel.HasComponent<Galeshi::DirectionalLightComponent>()) {
-            if (ImGui::CollapsingHeader("Directional Light", ImGuiTreeNodeFlags_DefaultOpen)) {
-                auto& dl = sel.GetComponent<Galeshi::DirectionalLightComponent>();
-                ImGui::DragFloat3("Direction", glm::value_ptr(dl.direction), 0.05f, -1.0f, 1.0f);
-                ImGui::ColorEdit3("Color", glm::value_ptr(dl.color));
-                ImGui::SliderFloat("Intensity", &dl.intensity, 0.0f, 10.0f);
-            }
+        // Physics
+        if (selected[0].HasComponent<Galeshi::RigidBodyComponent>() && ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& rb = selected[0].GetComponent<Galeshi::RigidBodyComponent>();
+            ImGui::DragFloat("Mass", &rb.mass, 0.1f, 0.01f, 1000.0f);
         }
 
         ImGui::End();
@@ -542,28 +588,18 @@ private:
         const auto stem = fs::path(path).stem().string();
 
         auto root = m_scene.CreateEntity(stem);
-        
-        // Применяем матрицу Armature (rootTransform) к корневому Entity
         auto& tc = root.GetComponent<Galeshi::TransformComponent>();
-        glm::mat4 rootMat = model.rootTransform;
-        
-        glm::vec3 t = glm::vec3(rootMat[3]);
-        glm::vec3 sc(
-            glm::length(glm::vec3(rootMat[0])),
-            glm::length(glm::vec3(rootMat[1])),
-            glm::length(glm::vec3(rootMat[2]))
-        );
-        if (sc.x == 0) sc.x = 1; if (sc.y == 0) sc.y = 1; if (sc.z == 0) sc.z = 1;
-        
-        glm::mat3 rotMat(
-            glm::vec3(rootMat[0]) / sc.x,
-            glm::vec3(rootMat[1]) / sc.y,
-            glm::vec3(rootMat[2]) / sc.z
-        );
-        
-        tc.position = pos + t;
-        tc.rotation = glm::quat_cast(rotMat);
-        tc.scale = sc;
+        tc.position = pos;
+
+        if (model.totalBones > 0) {
+            auto& skel = root.AddComponent<Galeshi::SkeletalComponent>();
+            skel.isAnimated = true;
+            skel.sourcePath = path;
+            skel.boneMatrices.resize(256, glm::mat4(1.0f));
+        }
+
+        glm::vec3 bmin(std::numeric_limits<float>::max());
+        glm::vec3 bmax(-std::numeric_limits<float>::max());
 
         for (size_t i = 0; i < model.meshes.size(); ++i) {
             auto e = m_scene.CreateEntity(stem + "_" + std::to_string(i));
@@ -573,16 +609,17 @@ private:
             auto mat = model.materials.empty() ? std::make_shared<Galeshi::Material>() : model.materials[0];
             e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
 
-            if (model.totalBones > 0) {
-                auto& skel = e.AddComponent<Galeshi::SkeletalComponent>();
-                skel.isAnimated = true;
-                skel.sourcePath = path;
-                skel.boneMatrices.resize(256, glm::mat4(1.0f));
-            }
+            glm::vec3 mmin, mmax;
+            model.meshes[i]->LocalAABB(mmin, mmax);
+            bmin = glm::min(bmin, mmin);
+            bmax = glm::max(bmax, mmax);
         }
+        
         m_editor.Select(root);
-        m_editor.camTarget = pos;
-        m_editor.camRadius = 5.0f;
+        m_editor.camTarget = pos + (bmin + bmax) * 0.5f;
+        
+        float size = glm::length(bmax - bmin);
+        m_editor.camRadius = (size > 0.1f) ? size * 1.5f : 5.0f;
     }
 
     // -------------------------------------------------------------------
@@ -630,6 +667,7 @@ private:
     std::unique_ptr<Galeshi::Framebuffer>     m_framebuffer;
     std::unique_ptr<Galeshi::ContentBrowser>  m_browser;
     std::unique_ptr<Galeshi::SceneSerializer> m_serializer;
+    std::unique_ptr<Galeshi::PhysicsSystem>   m_physics;
 
     uint16_t m_viewportW = 0, m_viewportH = 0;
     bool     m_viewportHovered = false;
