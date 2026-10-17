@@ -89,9 +89,15 @@ static void ApplyBlackTheme() {
 
     c[ImGuiCol_Tab]                   = bg0;
     c[ImGuiCol_TabHovered]            = bg2;
+#if IMGUI_VERSION_NUM >= 19200
+    c[ImGuiCol_TabSelected]           = bg1;
+    c[ImGuiCol_TabDimmed]             = bg0;
+    c[ImGuiCol_TabDimmedSelected]     = bg1;
+#else
     c[ImGuiCol_TabActive]             = bg1;
     c[ImGuiCol_TabUnfocused]          = bg0;
     c[ImGuiCol_TabUnfocusedActive]    = bg1;
+#endif
 
     c[ImGuiCol_DockingPreview]        = ImVec4(0.55f, 0.55f, 0.55f, 0.70f);
     c[ImGuiCol_DockingEmptyBg]        = ImVec4(0.03f, 0.03f, 0.03f, 1.00f);
