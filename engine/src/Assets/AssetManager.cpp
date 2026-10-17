@@ -229,8 +229,23 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
                     } else if (!ps.empty()) {
                         // EXTERNAL
                         std::filesystem::path pp(ps);
-                        std::string full = pp.is_absolute() ? ps
-                            : (std::filesystem::path(dir) / pp).string();
+                        std::string full;
+                        if (pp.is_absolute()) {
+                            if (std::filesystem::exists(pp)) {
+                                full = ps;
+                            } else {
+                                // Если абсолютный путь не найден, ищем файл рядом с FBX
+                                std::string local = (std::filesystem::path(dir) / pp.filename()).string();
+                                if (std::filesystem::exists(local)) {
+                                    full = local;
+                                    spdlog::info("  → Исправлен путь к текстуре: {}", full);
+                                } else {
+                                    full = ps; // оставляем как есть, не загрузится
+                                }
+                            }
+                        } else {
+                            full = (std::filesystem::path(dir) / pp).string();
+                        }
                         tex = LoadTexture(full);
                         if (tex && tex != m_white) {
                             spdlog::info("  → EXTERNAL: OK ({})", full);
@@ -257,8 +272,8 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
     // === МЕШИ ===
     for (unsigned i = 0; i < scene->mNumMeshes; ++i) {
         const aiMesh* am = scene->mMeshes[i];
-        spdlog::info("[AssetManager] Mesh[{}]: {} verts, material index {}",
-                     i, am->mNumVertices, am->mMaterialIndex);
+        spdlog::info("[AssetManager] Mesh[{}]: {} verts, {} bones, material index {}",
+                     i, am->mNumVertices, am->mNumBones, am->mMaterialIndex);
 
         std::vector<Vertex> verts;
         verts.reserve(am->mNumVertices);
@@ -299,6 +314,7 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
     }
     out.boneMap = globalBoneMap;
     out.totalBones = nextBoneIndex;
+    out.hasAnimation = (out.rawScene && out.rawScene->mNumAnimations > 0);
 
     // Заполняем bone weights для каждого меша
     for (size_t i = 0; i < out.meshes.size(); ++i) {
@@ -325,7 +341,10 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
         }
         for (auto& v : verts) {
             if (v.boneWeights.x + v.boneWeights.y + v.boneWeights.z + v.boneWeights.w < 0.001f) {
-                v.boneIDs[0] = 0.0f; v.boneWeights[0] = 1.0f;
+                // Вершины без весов привязываем к dummy bone 255 (Identity)
+                // Position уже в правильном месте (armature space)
+                v.boneIDs[0] = 255.0f;
+                v.boneWeights[0] = 1.0f;
             }
         }
         out.meshes[i]->Upload(verts, idx);

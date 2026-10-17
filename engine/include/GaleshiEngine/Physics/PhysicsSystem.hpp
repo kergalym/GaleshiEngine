@@ -1,20 +1,27 @@
 #pragma once
 
+#include <Jolt/Jolt.h>
+#include <Jolt/RegisterTypes.h>
+#include <Jolt/Core/Factory.h>
+#include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
+#include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <memory>
 
 namespace Galeshi {
 
 class Scene;
 
-class PhysicsSystem {
+// Оставляем имя EnginePhysicsSystem, так как именно оно было вставлено в main.cpp
+class EnginePhysicsSystem {
 public:
-    PhysicsSystem();
-    ~PhysicsSystem();
+    EnginePhysicsSystem();
+    ~EnginePhysicsSystem();
 
-    void Init();
+    bool Init();
     void Shutdown();
-    void Update(Scene& scene, float dt);
     void Reset();
+    void Update(Scene& scene, float deltaTime);
 
 private:
     struct Impl;

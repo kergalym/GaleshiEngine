@@ -18,6 +18,10 @@
 #include "GaleshiEngine/Physics/PhysicsSystem.hpp"
 #include "GaleshiEngine/AI/NavigationSystem.hpp"
 #include "GaleshiEngine/AI/AISystem.hpp"
+#include "GaleshiEngine/Audio/AudioSystem.hpp"
+#include "GaleshiEngine/Physics/PhysicsSystem.hpp"
+#include "GaleshiEngine/Scripting/ScriptEngine.hpp"
+#include "GaleshiEngine/Renderer/PostProcessManager.hpp"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -38,6 +42,10 @@
 #include <vector>
 
 class GaleshiEditorApp final : public Galeshi::Application {
+    Galeshi::AudioSystem m_audio;
+    Galeshi::ScriptEngine m_scripts;
+    Galeshi::PostProcessManager m_postProcess;
+
 public:
     GaleshiEditorApp()
         : Galeshi::Application({
@@ -48,8 +56,24 @@ protected:
     // LIFECYCLE
     // -------------------------------------------------------------------
     void OnStart() override {
+        // --- Auto-inserted subsystem init ---
+        spdlog::info("[Subsystem] m_audio.Init() begin");
+        if (!m_audio.Init()) spdlog::error("[Subsystem] m_audio.Init() failed");
+        else spdlog::info("[Subsystem] m_audio.Init() done");
+        m_physics = std::make_unique<Galeshi::EnginePhysicsSystem>();
+        spdlog::info("[Subsystem] m_physics->Init() begin");
+        if (!m_physics->Init()) spdlog::error("[Subsystem] m_physics->Init() failed");
+        else spdlog::info("[Subsystem] m_physics->Init() done");
+        m_scripts.BindFunctions();
+        spdlog::info("[Subsystem] m_scripts.RunScript(init.lua) begin");
+        if (!m_scripts.RunScript("assets/scripts/init.lua"))
+            spdlog::error("[Subsystem] m_scripts.RunScript(init.lua) failed");
+        else
+            spdlog::info("[Subsystem] m_scripts.RunScript(init.lua) done");
+        // --- End auto-inserted ---
+
         m_assets  = std::make_unique<Galeshi::AssetManager>();
-        m_physics = std::make_unique<Galeshi::PhysicsSystem>();
+        m_physics = std::make_unique<Galeshi::EnginePhysicsSystem>();
         m_physics->Init();
         m_navSystem = std::make_unique<Galeshi::NavigationSystem>();
         m_navSystem->Init();
@@ -85,6 +109,10 @@ protected:
     }
 
     void OnUpdate(float dt) override {
+        // --- Auto-inserted physics update ---
+        if (m_physics) m_physics->Update(m_scene, dt);
+        // --- End auto-inserted ---
+
         m_time += dt;
         Galeshi::AISystem::Update(m_scene, dt);
 
@@ -868,7 +896,7 @@ private:
         auto root = m_scene.CreateEntity(stem);
         root.GetComponent<Galeshi::TransformComponent>().position = pos;
 
-        if (model.totalBones > 0) {
+        if (model.hasAnimation) {
             auto& skel = root.AddComponent<Galeshi::SkeletalComponent>();
             skel.isAnimated = true; skel.sourcePath = path; skel.boneMatrices.resize(256, glm::mat4(1.0f));
         }
@@ -934,7 +962,7 @@ private:
     std::unique_ptr<Galeshi::Framebuffer>     m_framebuffer;
     std::unique_ptr<Galeshi::ContentBrowser>  m_browser;
     std::unique_ptr<Galeshi::SceneSerializer> m_serializer;
-    std::unique_ptr<Galeshi::PhysicsSystem>   m_physics;
+    std::unique_ptr<Galeshi::EnginePhysicsSystem>   m_physics;
     std::unique_ptr<Galeshi::NavigationSystem> m_navSystem;
     std::unique_ptr<Galeshi::DebugRenderer> m_debug;
 

@@ -100,7 +100,8 @@ FetchContent_MakeAvailable(glm)
 FetchContent_Declare(assimp
     GIT_REPOSITORY https://github.com/assimp/assimp.git
     GIT_TAG        v6.0.5
-    GIT_SHALLOW    TRUE)
+    GIT_SHALLOW    TRUE
+)
 set(ASSIMP_BUILD_TESTS                OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ASSIMP_TOOLS         OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_SAMPLES              OFF CACHE BOOL "" FORCE)
@@ -189,7 +190,7 @@ set(JSON_MultipleHeaders     OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(json)
 
 # (physics disabled)
-if(FALSE)
+if(TRUE)
 # --- Jolt Physics ---
 # USE_STD_ALLOCATOR=OFF обязательно, иначе Memory.cpp не компилируется
 # и JPH::AlignedAllocate пропадает из libJolt.a
@@ -221,3 +222,13 @@ FetchContent_Declare(JoltPhysics
     SOURCE_SUBDIR  Build)
 FetchContent_MakeAvailable(JoltPhysics)
 endif()
+
+# --- sol2 + lua (Добавлено скриптом) ---
+include(FetchContent)
+FetchContent_Declare(sol2 URL https://github.com/ThePhD/sol2/archive/refs/tags/v3.5.0.tar.gz)
+FetchContent_Declare(lua URL https://www.lua.org/ftp/lua-5.4.6.tar.gz)
+FetchContent_MakeAvailable(sol2 lua)
+file(GLOB LUA_SOURCES "${lua_SOURCE_DIR}/src/*.c")
+list(REMOVE_ITEM LUA_SOURCES "${lua_SOURCE_DIR}/src/lua.c" "${lua_SOURCE_DIR}/src/luac.c")
+add_library(lua STATIC ${LUA_SOURCES})
+target_include_directories(lua PUBLIC ${lua_SOURCE_DIR}/src)
