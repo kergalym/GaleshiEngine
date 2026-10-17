@@ -60,7 +60,48 @@ ECS	EnTT	MIT
 Logging	spdlog	MIT
 
 All dependencies are pulled via FetchContent on the first configuration. The first build takes 15 to 30 minutes (bgfx and Assimp); subsequent builds take seconds.
-Roadmap
+
+## Roadmap
+
+### P0 — Physics ↔ ECS
+- [ ] `PhysicsSystem::SyncTransformsToECS()` — read body positions from Jolt, write to `TransformComponent`
+- [ ] Call `SyncTransformsToECS()` from `OnUpdate()` after `PhysicsSystem::Update()`
+- [ ] Spawn test scene: 5 dynamic cubes (`CreateBox()` + `RigidBodyComponent`)
+- [ ] Verify cubes fall and settle on the floor
+
+### P1 — Scripting & Audio
+- [ ] Lua ↔ ECS: pass entity IDs from C++ to Lua (`new_entity()`)
+- [ ] Implement real `set_position(entity, x, y, z)` on `TransformComponent`
+- [ ] Add `get_position`, `translate` bindings
+- [ ] Hot-reload `init.lua` on keypress
+- [ ] `AudioSystem::PlaySound(path)` via miniaudio
+- [ ] `AudioSourceComponent` in ECS
+- [ ] Trigger sound on keypress / collision / script event
+
+### P2 — Post-processing
+- [ ] Off-screen FBO: color + depth + normal + position
+- [ ] `PostProcessManager::Render(fbo)` — takes scene textures
+- [ ] First effect: color inversion (pipeline smoke test)
+- [ ] SSAO from depth + normal
+- [ ] SSR as optional pass
+- [ ] TAA / FXAA / SMAA selectable in UI
+
+### P3 — Navigation, Editor, Serialization
+- [ ] Recast NavMesh generation from `MeshComponent` scene
+- [ ] `NavAgentComponent` + Detour pathfinding
+- [ ] Scene hierarchy panel (drag & drop)
+- [ ] Inspector: edit `Transform`, `RigidBody`, `Mesh`
+- [ ] ImGuizmo translate/rotate/scale
+- [ ] Undo/Redo (`m_history`, `m_historyIndex`)
+- [ ] `Scene::Save/Load(path)` via nlohmann/json (`*.gscn`)
+
+### P4 — Long-term
+- [ ] Multi-threaded ECS job system (integrated with `JPH::JobSystemThreadPool`)
+- [ ] Asset pipeline: `.fbx` / `.gltf` → `.gasset` with cache
+- [ ] Node-based material editor
+- [ ] Blueprint-like visual scripting over Lua
+- [ ] Packaging: `GaleshiEditor --package Game.gproj`
+- [ ] CLI: `galeshi build`, `galeshi run`, `galeshi package`
 
     ☑
 
