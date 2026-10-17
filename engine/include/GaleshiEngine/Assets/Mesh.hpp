@@ -12,6 +12,8 @@ struct Vertex {
     glm::vec3 normal;
     glm::vec3 tangent;
     glm::vec2 uv;
+    glm::vec4  boneIDs{0.0f};     // до 4 костей на вершину
+    glm::vec4  boneWeights{1.0f, 0.0f, 0.0f, 0.0f}; // вес каждой кости
 };
 
 class Mesh {
@@ -19,12 +21,10 @@ public:
     Mesh() = default;
     ~Mesh();
 
-    Mesh(const Mesh&)            = delete;
+    Mesh(const Mesh&) = delete;
     Mesh& operator=(const Mesh&) = delete;
 
-    void Upload(const std::vector<Vertex>& vertices,
-                const std::vector<uint32_t>& indices);
-
+    void Upload(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices);
     void Destroy();
 
     bgfx::VertexBufferHandle VB() const { return m_vb; }
@@ -41,7 +41,6 @@ private:
     bgfx::VertexBufferHandle m_vb = BGFX_INVALID_HANDLE;
     bgfx::IndexBufferHandle  m_ib = BGFX_INVALID_HANDLE;
     uint32_t m_indexCount = 0;
-
     std::vector<Vertex>   m_vertices;
     std::vector<uint32_t> m_indices;
 };

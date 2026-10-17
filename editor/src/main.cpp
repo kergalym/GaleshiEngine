@@ -53,6 +53,11 @@ protected:
             BuildTestScene();
         }
 
+        // Первый снапшот для Undo/Redo
+        m_history.clear();
+        m_historyIndex = -1;
+        PushHistory();
+
         m_camera.SetPerspective(glm::radians(60.0f),
             static_cast<float>(GetRenderer()->Width()) /
             static_cast<float>(GetRenderer()->Height()),
@@ -61,6 +66,16 @@ protected:
 
     void OnUpdate(float dt) override {
         m_time += dt;
+
+        auto animView = m_scene.Registry().view<Galeshi::SkeletalComponent>();
+        for (auto h : animView) {
+            auto& skel = animView.get<Galeshi::SkeletalComponent>(h);
+            if (skel.isAnimated) {
+                skel.currentTime += dt * skel.animationSpeed;
+                // Loop
+                if (skel.currentTime > 10.0f) skel.currentTime = 0.0f;
+            }
+        }
 
         // Editor camera — только если ImGuizmo не захватил управление
         const bool cameraControllable =
@@ -92,13 +107,23 @@ protected:
         // --- Меню ---
         if (ImGui::BeginMainMenuBar()) {
             if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveScene();
+                if (ImGui::MenuItem("Import Model...", "Ctrl+I")) OpenFileDialog();
                 if (ImGui::MenuItem("Load Scene", "Ctrl+O")) LoadScene();
+                ImGui::Separator();
+                if (ImGui::MenuItem("Reset Scene")) {
+                    m_editor.ClearSelection();
+                    m_scene.Registry().clear();
+                    BuildTestScene();
+                    PushHistory();
+                }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Exit")) std::exit(0);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Edit")) {
+                if (ImGui::MenuItem("Undo", "Ctrl+Z")) Undo();
+                if (ImGui::MenuItem("Redo", "Ctrl+Y")) Redo();
+                ImGui::Separator();
                 if (ImGui::MenuItem("Translate", "W")) m_editor.SetMode(Galeshi::GizmoMode::Translate);
                 if (ImGui::MenuItem("Rotate",    "E")) m_editor.SetMode(Galeshi::GizmoMode::Rotate);
                 if (ImGui::MenuItem("Scale",     "R")) m_editor.SetMode(Galeshi::GizmoMode::Scale);
@@ -145,8 +170,51 @@ protected:
 
 private:
     // -------------------------------------------------------------------
+    // Undo / Redo
+    // -------------------------------------------------------------------
+    void PushHistory() {
+        if (m_isRestoringHistory) return;
+        std::string snap = m_serializer->SaveToString();
+        if (m_historyIndex >= 0 && m_history[static_cast<size_t>(m_historyIndex)] == snap) return;
+
+        // Обрезаем redo-хвост
+        m_history.resize(static_cast<size_t>(m_historyIndex + 1));
+        m_history.push_back(snap);
+        m_historyIndex = (int)m_history.size() - 1;
+
+        // Лимит истории
+        if (m_history.size() > 50) {
+            m_history.erase(m_history.begin());
+            m_historyIndex--;
+        }
+    }
+
+    void Undo() {
+        if (m_historyIndex <= 0) return;
+        m_historyIndex--;
+        m_isRestoringHistory = true;
+        m_editor.ClearSelection();
+        m_serializer->LoadFromString(m_history[static_cast<size_t>(m_historyIndex)]);
+        m_isRestoringHistory = false;
+    }
+
+    void Redo() {
+        if (m_historyIndex + 1 >= (int)m_history.size()) return;
+        m_historyIndex++;
+        m_isRestoringHistory = true;
+        m_editor.ClearSelection();
+        m_serializer->LoadFromString(m_history[static_cast<size_t>(m_historyIndex)]);
+        m_isRestoringHistory = false;
+    }
+
+    // -------------------------------------------------------------------
     // Save / Load
     // -------------------------------------------------------------------
+    void OpenFileDialog() {
+        m_filePicker.Open("assets", "Import Model",
+            { ".fbx", ".gltf", ".glb", ".obj", ".dae" });
+    }
+
     void SaveScene() {
         if (m_serializer) m_serializer->Save("scene.json");
     }
@@ -160,6 +228,7 @@ private:
 
     void DeleteSelected() {
         if (!m_editor.HasSelection()) return;
+        PushHistory();
         auto entities = m_editor.SelectedAll(&m_scene);
         for (auto e : entities) m_scene.DestroyEntity(e);
         m_editor.ClearSelection();
@@ -285,7 +354,7 @@ private:
         const ImVec2 size = ImGui::GetWindowSize();
         ImGuizmo::SetRect(pos.x, pos.y, size.x, size.y);
 
-        glm::mat4 model = tc.Matrix();
+        glm::mat4 model = tc.LocalMatrix();
 
         const float* viewPtr = glm::value_ptr(m_camera.View());
         const float* projPtr = glm::value_ptr(m_camera.Projection());
@@ -316,37 +385,50 @@ private:
     // -------------------------------------------------------------------
     // Outliner (multi-select)
     // -------------------------------------------------------------------
-    void DrawOutliner() {
-        ImGui::Begin("World Outliner");
-
-        const bool ctrlHeld = ImGui::GetIO().KeyCtrl;
-
-        auto entities = m_scene.AllEntities();
-        for (auto& e : entities) {
-            auto& nc = e.GetComponent<Galeshi::NameComponent>();
-
-            const bool isSelected = m_editor.IsSelected(e);
-            if (ImGui::Selectable(nc.name.c_str(), isSelected)) {
-                if (ctrlHeld) {
-                    if (isSelected) m_editor.RemoveFromSelection(e);
-                    else            m_editor.AddToSelection(e);
-                } else {
-                    m_editor.Select(e);
-                }
+    void DrawEntityNode(Galeshi::Entity e) {
+        bool isSelected = m_editor.IsSelected(e);
+        auto& nc = e.GetComponent<Galeshi::NameComponent>();
+        
+        std::vector<Galeshi::Entity> children;
+        auto view = m_scene.Registry().view<Galeshi::ParentComponent>();
+        for (auto h : view) {
+            if (view.get<Galeshi::ParentComponent>(h).parent == e.Handle()) {
+                children.emplace_back(h, &m_scene);
             }
         }
 
-        if (ImGui::BeginPopupContextWindow("outliner_ctx")) {
-            if (ImGui::MenuItem("Create Empty")) {
-                auto e = m_scene.CreateEntity("New Entity");
+        ImGuiTreeNodeFlags flags = ((isSelected) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (children.empty()) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+
+        bool opened = ImGui::TreeNodeEx((void*)(uintptr_t)e.Handle(), flags, "%s", nc.name.c_str());
+        
+        if (ImGui::IsItemClicked()) {
+            if (ImGui::GetIO().KeyCtrl) {
+                if (isSelected) m_editor.RemoveFromSelection(e); else m_editor.AddToSelection(e);
+            } else {
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("Delete Selected") && m_editor.HasSelection()) {
-                DeleteSelected();
-            }
-            ImGui::EndPopup();
         }
 
+        if (opened && !children.empty()) {
+            for (auto c : children) DrawEntityNode(c);
+            ImGui::TreePop();
+        }
+    }
+
+    void DrawOutliner() {
+        ImGui::Begin("World Outliner");
+        auto entities = m_scene.AllEntities();
+        for (auto& e : entities) {
+            if (!e.HasComponent<Galeshi::ParentComponent>()) {
+                DrawEntityNode(e);
+            }
+        }
+        if (ImGui::BeginPopupContextWindow("outliner_ctx")) {
+            if (ImGui::MenuItem("Create Empty")) m_editor.Select(m_scene.CreateEntity("New Entity"));
+            if (ImGui::MenuItem("Delete Selected") && m_editor.HasSelection()) DeleteSelected();
+            ImGui::EndPopup();
+        }
         ImGui::End();
     }
 
@@ -452,67 +534,55 @@ private:
     }
 
     void SpawnFromModel(const std::string& path, glm::vec3 pos) {
+        PushHistory();
         auto model = m_assets->LoadModel(path);
-        if (model.meshes.empty()) {
-            spdlog::warn("[Editor] Model has no meshes: {}", path);
-            return;
-        }
+        if (model.meshes.empty()) return;
 
         namespace fs = std::filesystem;
         const auto stem = fs::path(path).stem().string();
-        const bool multi = model.meshes.size() > 1;
 
-        std::vector<Galeshi::Entity> spawned;
+        auto root = m_scene.CreateEntity(stem);
+        
+        // Применяем матрицу Armature (rootTransform) к корневому Entity
+        auto& tc = root.GetComponent<Galeshi::TransformComponent>();
+        glm::mat4 rootMat = model.rootTransform;
+        
+        glm::vec3 t = glm::vec3(rootMat[3]);
+        glm::vec3 sc(
+            glm::length(glm::vec3(rootMat[0])),
+            glm::length(glm::vec3(rootMat[1])),
+            glm::length(glm::vec3(rootMat[2]))
+        );
+        if (sc.x == 0) sc.x = 1; if (sc.y == 0) sc.y = 1; if (sc.z == 0) sc.z = 1;
+        
+        glm::mat3 rotMat(
+            glm::vec3(rootMat[0]) / sc.x,
+            glm::vec3(rootMat[1]) / sc.y,
+            glm::vec3(rootMat[2]) / sc.z
+        );
+        
+        tc.position = pos + t;
+        tc.rotation = glm::quat_cast(rotMat);
+        tc.scale = sc;
+
         for (size_t i = 0; i < model.meshes.size(); ++i) {
-            std::string name = stem;
-            if (multi) name += "_" + std::to_string(i);
-
-            auto e = m_scene.CreateEntity(name);
-
-            auto mc = Galeshi::MeshComponent{
-                model.meshes[i], path, "", static_cast<int>(i) };
-            e.AddComponent<Galeshi::MeshComponent>(mc);
-
-            std::shared_ptr<Galeshi::Material> mat;
-            if (i < model.meshMaterialIndex.size()) {
-                size_t matIdx = static_cast<size_t>(model.meshMaterialIndex[i]);
-                if (matIdx < model.materials.size())
-                    mat = model.materials[matIdx];
-            }
-            if (!mat && !model.materials.empty()) mat = model.materials[0];
-            if (!mat) mat = std::make_shared<Galeshi::Material>();
-
-            e.AddComponent<Galeshi::MaterialComponent>(
-                Galeshi::MaterialComponent{ mat });
-
-            e.GetComponent<Galeshi::TransformComponent>().position = pos;
-            spawned.push_back(e);
-        }
-
-        spdlog::info("[Editor] Spawned {} entit{} from {}",
-                     spawned.size(),
-                     spawned.size() == 1 ? "y" : "ies",
-                     path);
-
-        if (!spawned.empty()) {
-            m_editor.Select(spawned[0]);
-
-            // Авто-фокус: ставим target в центр модели и подбираем радиус
-            m_editor.camTarget = pos;
+            auto e = m_scene.CreateEntity(stem + "_" + std::to_string(i));
+            e.AddComponent<Galeshi::ParentComponent>(Galeshi::ParentComponent{ root.Handle() });
+            e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ model.meshes[i], path, "", static_cast<int>(i) });
             
-            // Вычисляем грубый радиус по размеру первого меша
-            auto& mesh = spawned[0].GetComponent<Galeshi::MeshComponent>().mesh;
-            if (mesh) {
-                glm::vec3 bmin, bmax;
-                mesh->LocalAABB(bmin, bmax);
-                float size = glm::length(bmax - bmin);
-                if (size > 0.1f) {
-                    m_editor.camRadius = size * 2.0f;
-                } else {
-                    m_editor.camRadius = 5.0f;
-                }
+            auto mat = model.materials.empty() ? std::make_shared<Galeshi::Material>() : model.materials[0];
+            e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+
+            if (model.totalBones > 0) {
+                auto& skel = e.AddComponent<Galeshi::SkeletalComponent>();
+                skel.isAnimated = true;
+                skel.sourcePath = path;
+                skel.boneMatrices.resize(256, glm::mat4(1.0f));
             }
         }
+        m_editor.Select(root);
+        m_editor.camTarget = pos;
+        m_editor.camRadius = 5.0f;
     }
 
     // -------------------------------------------------------------------
@@ -565,6 +635,10 @@ private:
     bool     m_viewportHovered = false;
 
     Galeshi::FilePickerDialog m_filePicker;
+
+    std::vector<std::string> m_history;
+    int  m_historyIndex = -1;
+    bool m_isRestoringHistory = false;
 };
 
 int main(int, char**) {

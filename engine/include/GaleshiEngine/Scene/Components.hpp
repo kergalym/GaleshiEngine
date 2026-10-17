@@ -1,10 +1,11 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <entt/entt.hpp>
 #include <glm/gtc/quaternion.hpp>
-
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace Galeshi {
 
@@ -20,38 +21,43 @@ struct TransformComponent {
     glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 scale{1.0f};
 
-    glm::mat4 Matrix() const;
+    glm::mat4 LocalMatrix() const;
+};
+
+struct ParentComponent {
+    entt::entity parent = entt::null;
 };
 
 struct MeshComponent {
     std::shared_ptr<Mesh> mesh;
-    std::string           sourceAssetPath;   // путь к FBX/glTF
-    std::string           primitiveType;     // "cube" и т.п.
-    int                   meshIndex = 0;     // индекс сабмеша в модели
+    std::string           sourceAssetPath;
+    std::string           primitiveType;
+    int                   meshIndex = 0;
 
     MeshComponent() = default;
-    MeshComponent(std::shared_ptr<Mesh> m,
-                  std::string path = {},
-                  std::string prim = {},
-                  int mi = 0)
-        : mesh(std::move(m))
-        , sourceAssetPath(std::move(path))
-        , primitiveType(std::move(prim))
-        , meshIndex(mi) {}
+    MeshComponent(std::shared_ptr<Mesh> m, std::string path = {}, std::string prim = {}, int mi = 0)
+        : mesh(std::move(m)), sourceAssetPath(std::move(path)), primitiveType(std::move(prim)), meshIndex(mi) {}
+};
+
+struct SkeletalComponent {
+    bool isAnimated = false;
+    std::string sourcePath;
+    float currentTime = 0.0f;
+    float animationSpeed = 1.0f;
+    int activeAnimation = 0;
+    std::vector<glm::mat4> boneMatrices;
 };
 
 struct MaterialComponent {
     std::shared_ptr<Material> material;
-
     MaterialComponent() = default;
-    explicit MaterialComponent(std::shared_ptr<Material> m)
-        : material(std::move(m)) {}
+    explicit MaterialComponent(std::shared_ptr<Material> m) : material(std::move(m)) {}
 };
 
 struct CameraComponent {
     float fovY    = 60.0f;
     float nearZ   = 0.1f;
-    float farZ    = 1000.0f;
+    float farZ   = 1000.0f;
     bool  primary = true;
 };
 

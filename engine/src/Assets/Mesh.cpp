@@ -15,9 +15,7 @@ void Mesh::Destroy() {
     m_indices.clear();
 }
 
-void Mesh::Upload(const std::vector<Vertex>& vertices,
-                  const std::vector<uint32_t>& indices)
-{
+void Mesh::Upload(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices) {
     if (vertices.empty() || indices.empty()) return;
 
     bgfx::VertexLayout layout;
@@ -26,17 +24,13 @@ void Mesh::Upload(const std::vector<Vertex>& vertices,
         .add(bgfx::Attrib::Normal,    3, bgfx::AttribType::Float)
         .add(bgfx::Attrib::Tangent,   3, bgfx::AttribType::Float)
         .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
+        .add(bgfx::Attrib::Indices,   4, bgfx::AttribType::Float) // ID костей
+        .add(bgfx::Attrib::Weight,    4, bgfx::AttribType::Float) // Веса
         .end();
 
-    m_vb = bgfx::createVertexBuffer(
-        bgfx::copy(vertices.data(), static_cast<uint32_t>(vertices.size() * sizeof(Vertex))),
-        layout);
-
-    m_ib = bgfx::createIndexBuffer(
-        bgfx::copy(indices.data(), static_cast<uint32_t>(indices.size() * sizeof(uint32_t))),
-        BGFX_BUFFER_INDEX32);
-
-    m_indexCount = static_cast<uint32_t>(indices.size());
+    m_vb = bgfx::createVertexBuffer(bgfx::copy(vertices.data(), uint32_t(vertices.size() * sizeof(Vertex))), layout);
+    m_ib = bgfx::createIndexBuffer(bgfx::copy(indices.data(), uint32_t(indices.size() * sizeof(uint32_t))), BGFX_BUFFER_INDEX32);
+    m_indexCount = uint32_t(indices.size());
     m_vertices   = vertices;
     m_indices    = indices;
 }

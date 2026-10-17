@@ -175,6 +175,44 @@ Application::Application(const ApplicationSpec& spec)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
+
+    // Пытаемся найти TTF шрифт в системе
+    ImFontConfig font_cfg;
+    font_cfg.OversampleH = 2;
+    font_cfg.OversampleV = 2;
+    font_cfg.PixelSnapH = false;
+    
+    const char* fontPaths[] = {
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/Ubuntu-R.ttf",
+        "/usr/share/fonts/ubuntu/Ubuntu-R.ttf",
+        "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf"
+    };
+    
+    bool fontLoaded = false;
+    for (const char* p : fontPaths) {
+        if (std::filesystem::exists(p)) {
+            io.Fonts->AddFontFromFileTTF(p, 16.0f, &font_cfg);
+            fontLoaded = true;
+            break;
+        }
+    }
+    if (!fontLoaded) {
+        // Фоллбэк: дефолтный шрифт с лучшим сглаживанием
+        ImFontConfig cfg;
+        cfg.SizePixels = 16.0f;
+        io.Fonts->AddFontDefault(&cfg);
+    }
+
+    // Загружаем TTF шрифт для сглаживания
+    std::string fontPath = "/usr/share/fonts/TTF/DejaVuSans.ttf";
+    if (!std::filesystem::exists(fontPath)) fontPath = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf";
+    if (!std::filesystem::exists(fontPath)) fontPath = "/usr/share/fonts/TTF/Ubuntu-R.ttf";
+    if (std::filesystem::exists(fontPath)) {
+        io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 16.0f);
+    }
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
     ApplyBlackTheme();

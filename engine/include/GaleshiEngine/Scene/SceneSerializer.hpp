@@ -15,9 +15,13 @@ public:
     bool Save(const std::string& path) const;
     bool Load(const std::string& path);
 
+    // Для Undo/Redo
+    std::string SaveToString() const;
+    bool LoadFromString(const std::string& jsonStr);
+
 private:
-    Scene&         m_scene;
-    AssetManager&  m_assets;
+    Scene&        m_scene;
+    AssetManager& m_assets;
 };
 
 } // namespace Galeshi
