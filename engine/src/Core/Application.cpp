@@ -5,6 +5,9 @@
 #include <SDL3/SDL.h>
 #include <spdlog/spdlog.h>
 #include <imgui.h>
+#ifdef IMGUI_ENABLE_FREETYPE
+#include "misc/freetype/imgui_freetype.h"
+#endif
 #include <imgui_impl_sdl3.h>
 
 #include <filesystem>
@@ -178,32 +181,57 @@ Application::Application(const ApplicationSpec& spec)
 
     // Пытаемся найти TTF шрифт в системе
     ImFontConfig font_cfg;
-    font_cfg.OversampleH = 2;
-    font_cfg.OversampleV = 2;
-    font_cfg.PixelSnapH = false;
+    font_cfg.OversampleH = 1;
+    font_cfg.OversampleV = 1;
+            font_cfg.PixelSnapH = true;
+
+#ifdef IMGUI_ENABLE_FREETYPE
+    font_cfg.FontLoaderFlags = ImGuiFreeTypeLoaderFlags_NoHinting;
+    spdlog::info("[Galeshi] FreeType enabled (LightHinting)");
+#endif
+
+    // Устанавливаем RasterizerDensity в зависимости от DPI
+    float dpi_scale = 1.0f;
+    if (SDL_Window* win = m_impl->window) {
+        int w, h, pw, ph;
+        SDL_GetWindowSize(win, &w, &h);
+        SDL_GetWindowSizeInPixels(win, &pw, &ph);
+        if (w > 0 && h > 0) {
+            dpi_scale = (float)pw / (float)w;
+        }
+    }
+    font_cfg.RasterizerDensity = dpi_scale;
+    spdlog::info("[Galeshi] Font RasterizerDensity = {:.2f}", dpi_scale);
     
+    // Диагностика размеров окна
+    if (SDL_Window* win = m_impl->window) {
+        int w, h, pw, ph;
+        SDL_GetWindowSize(win, &w, &h);
+        SDL_GetWindowSizeInPixels(win, &pw, &ph);
+        spdlog::info("[Galeshi] Window size: {}x{}, pixels: {}x{}", w, h, pw, ph);
+    }
+
     const char* fontPaths[] = {
         "/usr/share/fonts/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/TTF/Ubuntu-R.ttf",
-        "/usr/share/fonts/ubuntu/Ubuntu-R.ttf",
+        "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf",
         "/usr/share/fonts/liberation-sans/LiberationSans-Regular.ttf"
     };
-    
+
     bool fontLoaded = false;
     for (const char* p : fontPaths) {
         if (std::filesystem::exists(p)) {
-            io.Fonts->AddFontFromFileTTF(p, 16.0f, &font_cfg);
+            io.Fonts->AddFontFromFileTTF(p, 32.0f, &font_cfg);
+            spdlog::info("[Galeshi] Font loaded: {}", p);
             fontLoaded = true;
+            io.FontGlobalScale = 0.5f; // Суперсэмплинг: рендерим 32px, показываем 16px
             break;
         }
     }
     if (!fontLoaded) {
-        // Фоллбэк: дефолтный шрифт с лучшим сглаживанием
-        ImFontConfig cfg;
-        cfg.SizePixels = 16.0f;
-        io.Fonts->AddFontDefault(&cfg);
+        spdlog::warn("[Galeshi] No TTF font found. Install media-fonts/dejavu");
     }
 
     // Загружаем TTF шрифт для сглаживания
@@ -214,7 +242,7 @@ Application::Application(const ApplicationSpec& spec)
         io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 16.0f);
     }
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-    io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    // // io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable; // Отключено для HiDPI // Отключено для корректного DPI
     ApplyBlackTheme();
 
     ImGui_ImplSDL3_InitForOther(m_impl->window);
@@ -271,6 +299,18 @@ int Application::Run() {
         OnUpdate(dt);
 
         ImGui_ImplSDL3_NewFrame();
+        
+        // Обновляем размеры для корректного DPI/масштабирования
+        ImGuiIO& io = ImGui::GetIO();
+        int w, h;
+        SDL_GetWindowSize(m_impl->window, &w, &h);
+        int pw, ph;
+        SDL_GetWindowSizeInPixels(m_impl->window, &pw, &ph);
+        if (w > 0 && h > 0) {
+            io.DisplaySize = ImVec2((float)w, (float)h);
+            io.DisplayFramebufferScale = ImVec2((float)pw / (float)w, (float)ph / (float)h);
+        }
+        
         ImGui::NewFrame();
         OnImGui();
         ImGui::Render();
