@@ -86,4 +86,11 @@ struct BoxColliderComponent {
     glm::vec3 halfExtents{0.5f};
 };
 
+struct LandscapeComponent {
+    int sizeX = 100;
+    int sizeZ = 100;
+    float scale = 1.0f;
+    std::vector<float> heights;
+};
+
 } // namespace Galeshi
