@@ -85,6 +85,7 @@ void PostProcessManager::Init() {
             s_worldPos    = bgfx::createUniform("s_worldPos",    bgfx::UniformType::Sampler);
             s_shadowMap   = bgfx::createUniform("s_shadowMap",   bgfx::UniformType::Sampler);
             u_lightVP     = bgfx::createUniform("u_lightViewProj", bgfx::UniformType::Mat4);
+            u_invVP       = bgfx::createUniform("u_invViewProj",    bgfx::UniformType::Mat4);
             u_plPos       = bgfx::createUniform("u_pointLightPosRadius", bgfx::UniformType::Vec4, 8);
             u_plCol       = bgfx::createUniform("u_pointLightColorInt",  bgfx::UniformType::Vec4, 8);
             u_plCnt       = bgfx::createUniform("u_pointLightCount",     bgfx::UniformType::Vec4);
@@ -151,7 +152,7 @@ void PostProcessManager::Shutdown() {
     destroyUni(s_texColor); destroyUni(u_texelSize);
     destroyUni(u_camPos); destroyUni(u_lightDir); destroyUni(u_lightCol);
     destroyUni(s_albedoMr); destroyUni(s_normalRough); destroyUni(s_worldPos);
-    destroyUni(s_shadowMap); destroyUni(u_lightVP);
+    destroyUni(s_shadowMap); destroyUni(u_lightVP); destroyUni(u_invVP);
     destroyUni(u_plPos); destroyUni(u_plCol); destroyUni(u_plCnt);
     destroyUni(u_slPos); destroyUni(u_slDir); destroyUni(u_slCol); destroyUni(u_slCnt);
     destroyUni(u_ssaoProj); destroyUni(u_ssaoInvProj); destroyUni(u_ssaoParams);
@@ -215,7 +216,7 @@ bgfx::TextureHandle PostProcessManager::Render(bgfx::ViewId viewId, bgfx::Textur
 
 bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::TextureHandle albedoMr, bgfx::TextureHandle normalRough, bgfx::TextureHandle worldPos,
-    bgfx::TextureHandle shadowMap, const glm::mat4& lightMtx,
+    bgfx::TextureHandle shadowMap, const glm::mat4& lightMtx, const glm::mat4& invViewProj,
     const float camPos[4], const float lightDir[4], const float lightColorIntensity[4],
     const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
     const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], int spotLightCount,
@@ -237,6 +238,7 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::setTexture(2, s_worldPos,    worldPos);
     bgfx::setTexture(3, s_shadowMap,   shadowMap);
     bgfx::setUniform(u_lightVP, glm::value_ptr(lightMtx));
+    bgfx::setUniform(u_invVP, glm::value_ptr(invViewProj));
 
     if (pointLightCount > 0) {
         bgfx::setUniform(u_plPos, pointLightPos, 8);

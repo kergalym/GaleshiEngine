@@ -663,7 +663,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     m_framebuffer->Color(),
                     m_framebuffer->Normal(),
                     m_framebuffer->WorldPos(),
-                    m_shadowMap, lightMtx,
+                    m_shadowMap, lightMtx, invProj,
                     camPos, lDirA, lColA,
                     plPosA, plColA, plCount,
                     slPos, slDir, slCol, slCount,
