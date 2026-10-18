@@ -39,6 +39,7 @@ esac
 # Какой .def.sc использовать для конкретного шейдера
 varying_for() {
     case "$1" in
+        vs_fullscreen|fs_passthrough|fs_invert) echo "$SRC_DIR/varying_fullscreen.def.sc" ;;
         vs_pbr|fs_pbr)     echo "$SRC_DIR/varying_pbr.def.sc"   ;;
         vs_line|fs_line)   echo "$SRC_DIR/varying_line.def.sc"  ;;
         vs_imgui|fs_imgui) echo "$SRC_DIR/varying_imgui.def.sc" ;;

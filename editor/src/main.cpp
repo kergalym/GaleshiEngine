@@ -99,6 +99,7 @@ protected:
         
         m_render  = std::make_unique<Galeshi::RenderSystem>();
         m_render->Init(m_assets.get());
+        m_postProcess.Init();
 
         m_browser    = std::make_unique<Galeshi::ContentBrowser>("assets");
         m_serializer = std::make_unique<Galeshi::SceneSerializer>(m_scene, *m_assets);
@@ -527,6 +528,7 @@ private:
         if (m_framebuffer && m_framebuffer->Valid()) {
             bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             m_render->Render(m_scene, m_camera, 1, w, h);
+            m_postProcess.Render(2, m_framebuffer->Color(), w, h);
         }
 
         // Debug rendering (grid, navmesh, selection box)
@@ -564,7 +566,20 @@ private:
         }
 
         if (m_framebuffer && bgfx::isValid(m_framebuffer->Color())) {
-            ImTextureID texId = static_cast<ImTextureID>(m_framebuffer->Color().idx);
+            bgfx::TextureHandle __ppTex = m_postProcess.OutputTexture();
+            bgfx::TextureHandle __disp = bgfx::isValid(__ppTex)
+                ? __ppTex : m_framebuffer->Color();
+            ImTextureID texId = static_cast<ImTextureID>(__disp.idx);
+            // P2: post-process toggle (inline, above viewport image)
+            {
+                bool __inv = m_postProcess.InvertEnabled();
+                if (ImGui::Checkbox("Invert Colors", &__inv))
+                    m_postProcess.SetInvertEnabled(__inv);
+                ImGui::SameLine();
+                if (ImGui::Button("Reset Effects"))
+                    m_postProcess.SetInvertEnabled(false);
+                ImGui::Separator();
+            }
             ImGui::Image(texId, ImVec2(static_cast<float>(w), static_cast<float>(h)),
                          ImVec2(0, 0), ImVec2(1, 1));
         }
