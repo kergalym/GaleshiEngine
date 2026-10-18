@@ -70,13 +70,13 @@ All dependencies are pulled via FetchContent on the first configuration. The fir
 - [✔] Verify cubes fall and settle on the floor
 
 ### P1 — Scripting & Audio
-- [ ] Lua ↔ ECS: pass entity IDs from C++ to Lua (`new_entity()`)
-- [ ] Implement real `set_position(entity, x, y, z)` on `TransformComponent`
-- [ ] Add `get_position`, `translate` bindings
-- [ ] Hot-reload `init.lua` on keypress
-- [ ] `AudioSystem::PlaySound(path)` via miniaudio
-- [ ] `AudioSourceComponent` in ECS
-- [ ] Trigger sound on keypress / collision / script event
+- [✔] Lua ↔ ECS: pass entity IDs from C++ to Lua (`new_entity()`)
+- [✔] Implement real `set_position(entity, x, y, z)` on `TransformComponent`
+- [✔] Add `get_position`, `translate` bindings
+- [✔] Hot-reload `init.lua` on keypress
+- [✔] `AudioSystem::PlaySound(path)` via miniaudio
+- [✔] `AudioSourceComponent` in ECS
+- [✔] Trigger sound on keypress / collision / script event
 
 ### P2 — Post-processing
 - [ ] Off-screen FBO: color + depth + normal + position
