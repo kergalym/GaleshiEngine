@@ -4,12 +4,14 @@ $input v_texcoord0
 SAMPLER2D(s_albedoMr,    0);
 SAMPLER2D(s_normalRough, 1);
 SAMPLER2D(s_worldPos,    2);
-SAMPLER2D(s_shadowMap,   3);
+SAMPLER2D(s_shadowMap0,  3);
+SAMPLER2D(s_shadowMap1,  4);
+SAMPLER2D(s_shadowMap2,  5);
 
 uniform vec4 u_cameraPosition;
 uniform vec4 u_lightDirection;
 uniform vec4 u_lightColorIntensity;
-uniform mat4 u_lightViewProj;
+uniform mat4 u_lightViewProj[3];
 
 uniform vec4 u_pointLightPosRadius[8];
 uniform vec4 u_pointLightColorInt[8];
@@ -53,24 +55,25 @@ vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, vec3 L,
     return (diffuse + specular) * radiance * NdotL;
 }
 
-float calculateShadow(vec4 lightSpacePos, float NdotL) {
+float calculateShadow(vec4 lightSpacePos, float NdotL, int cascadeIdx) {
     vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
-    
+
     if (projCoords.z > 1.0 || projCoords.z < 0.0 ||
         projCoords.x < 0.0 || projCoords.x > 1.0 ||
         projCoords.y < 0.0 || projCoords.y > 1.0) return 0.0;
 
     float currentDepth = projCoords.z;
-    // Меньший bias, чтобы тени были чёткими, но без acne
-    float bias = max(0.005 * (1.0 - NdotL), 0.0005); 
+    float bias = max(0.005 * (1.0 - NdotL), 0.0005);
     float shadow = 0.0;
     vec2 texelSize = vec2(1.0 / 2048.0, 1.0 / 2048.0);
 
-    // PCF 3x3 для мягких краев
     for(int x = -1; x <= 1; ++x) {
         for(int y = -1; y <= 1; ++y) {
-            float pcfDepth = texture2D(s_shadowMap, projCoords.xy + vec2(x, y) * texelSize).r;
+            float pcfDepth;
+            if (cascadeIdx == 0) pcfDepth = texture2D(s_shadowMap0, projCoords.xy + vec2(x, y) * texelSize).r;
+            else if (cascadeIdx == 1) pcfDepth = texture2D(s_shadowMap1, projCoords.xy + vec2(x, y) * texelSize).r;
+            else pcfDepth = texture2D(s_shadowMap2, projCoords.xy + vec2(x, y) * texelSize).r;
             shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
         }
     }
@@ -105,9 +108,14 @@ void main()
     vec3 radiance_dir = u_lightColorIntensity.rgb * u_lightColorIntensity.a;
     float NdotL = max(dot(N, L_dir), 0.0);
 
+    float camDist = length(wPos.xyz - u_cameraPosition.xyz);
+    int cascadeIdx = 0;
+    if (camDist > 40.0) cascadeIdx = 2;
+    else if (camDist > 15.0) cascadeIdx = 1;
+
     // Normal Offset: сдвигаем позицию пикселя по нормали, чтобы избежать acne
-    vec4 lightSpacePos = mul(u_lightViewProj, vec4(wPos.xyz + N * 0.1, 1.0));
-    float shadowFactor = calculateShadow(lightSpacePos, NdotL);
+    vec4 lightSpacePos = mul(u_lightViewProj[cascadeIdx], vec4(wPos.xyz + N * 0.1, 1.0));
+    float shadowFactor = calculateShadow(lightSpacePos, NdotL, cascadeIdx);
     float visibility = 1.0 - shadowFactor;
 
     finalColor += calcLight(N, V, albedo, metallic, rough, L_dir, radiance_dir) * visibility;

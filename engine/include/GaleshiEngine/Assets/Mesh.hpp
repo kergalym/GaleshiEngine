@@ -27,7 +27,7 @@ public:
     void Upload(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices);
     void Destroy();
 
-    bgfx::VertexBufferHandle VB() const { return m_vb; }
+    bgfx::DynamicVertexBufferHandle VB() const { return m_vb; }
     bgfx::IndexBufferHandle  IB() const { return m_ib; }
     uint32_t IndexCount() const { return m_indexCount; }
     bool     Valid() const { return bgfx::isValid(m_vb) && bgfx::isValid(m_ib); }
@@ -36,9 +36,10 @@ public:
     const std::vector<uint32_t>& Indices()  const { return m_indices; }
 
     void LocalAABB(glm::vec3& outMin, glm::vec3& outMax) const;
+    void UpdateVertices(const std::vector<glm::vec3>& newPositions);
 
 private:
-    bgfx::VertexBufferHandle m_vb = BGFX_INVALID_HANDLE;
+    bgfx::DynamicVertexBufferHandle m_vb = BGFX_INVALID_HANDLE;
     bgfx::IndexBufferHandle  m_ib = BGFX_INVALID_HANDLE;
     uint32_t m_indexCount = 0;
     std::vector<Vertex>   m_vertices;

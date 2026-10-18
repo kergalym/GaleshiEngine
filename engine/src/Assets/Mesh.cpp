@@ -28,7 +28,7 @@ void Mesh::Upload(const std::vector<Vertex>& vertices, const std::vector<uint32_
         .add(bgfx::Attrib::Weight,    4, bgfx::AttribType::Float) // Веса
         .end();
 
-    m_vb = bgfx::createVertexBuffer(bgfx::copy(vertices.data(), uint32_t(vertices.size() * sizeof(Vertex))), layout);
+    m_vb = bgfx::createDynamicVertexBuffer(bgfx::copy(vertices.data(), uint32_t(vertices.size() * sizeof(Vertex))), layout);
     m_ib = bgfx::createIndexBuffer(bgfx::copy(indices.data(), uint32_t(indices.size() * sizeof(uint32_t))), BGFX_BUFFER_INDEX32);
     m_indexCount = uint32_t(indices.size());
     m_vertices   = vertices;
@@ -44,6 +44,22 @@ void Mesh::LocalAABB(glm::vec3& outMin, glm::vec3& outMax) const {
         outMin = glm::min(outMin, v.position);
         outMax = glm::max(outMax, v.position);
     }
+}
+
+void Mesh::UpdateVertices(const std::vector<glm::vec3>& newPositions) {
+    if (newPositions.size() != m_vertices.size()) return;
+    for (size_t i = 0; i < m_vertices.size(); ++i) {
+        m_vertices[i].position = newPositions[i];
+    }
+    for (auto& v : m_vertices) v.normal = glm::vec3(0.0f);
+    for (size_t i = 0; i < m_indices.size(); i += 3) {
+        uint32_t i0 = m_indices[i], i1 = m_indices[i+1], i2 = m_indices[i+2];
+        glm::vec3 v0 = m_vertices[i0].position, v1 = m_vertices[i1].position, v2 = m_vertices[i2].position;
+        glm::vec3 n = glm::cross(v1 - v0, v2 - v0);
+        m_vertices[i0].normal += n; m_vertices[i1].normal += n; m_vertices[i2].normal += n;
+    }
+    for (auto& v : m_vertices) v.normal = glm::normalize(v.normal);
+    bgfx::update(m_vb, 0, bgfx::copy(m_vertices.data(), m_vertices.size() * sizeof(Vertex)));
 }
 
 } // namespace Galeshi

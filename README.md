@@ -86,7 +86,7 @@ All dependencies are pulled via FetchContent on the first configuration. The fir
 - [✔] First effect: color inversion (pipeline smoke test)
 - [✔] SSAO from depth + normal
 - [✔] SSR as optional pass
-- [ ] TAA / FXAA / SMAA selectable in UI
+- [✔] TAA / FXAA / SMAA selectable in UI
 
 ### P3 — Navigation, Editor, Serialization
 - [ ] Recast NavMesh generation from `MeshComponent` scene

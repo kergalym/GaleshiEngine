@@ -20,6 +20,10 @@
 #include "GaleshiEngine/Physics/PhysicsSystem.hpp"
 #include <spdlog/spdlog.h>
 #include "GaleshiEngine/Scene/Scene.hpp"
+#include "GaleshiEngine/Assets/Mesh.hpp"
+#include <Jolt/Physics/SoftBody/SoftBodyMotionProperties.h>
+#include <Jolt/Physics/Body/BodyLockInterface.h>
+#include <Jolt/Physics/Body/BodyLock.h>
 #include "GaleshiEngine/Scene/Components.hpp"
 
 #include <algorithm>
@@ -300,12 +304,30 @@ uint32_t EnginePhysicsSystem::CreateCloth(int gridX, int gridY, float spacing, c
 
 
 void EnginePhysicsSystem::UpdateSoftBodies(Scene& scene) {
-    // Заглушка: mesh обновляется отдельно в RenderSystem или SceneSerializer.
-    // Для полноценного обновления нужен доступ к SoftBodyMotionProperties:
-    //   JPH::Body* body = bodyInterface->TryGetBody(id);
-    //   auto* mp = static_cast<JPH::SoftBodyMotionProperties*>(body->GetMotionProperties());
-    //   for (auto& v : mp->GetVertices()) { ... }
-    (void)scene;
+    auto view = scene.Registry().view<SoftBodyComponent, MeshComponent>();
+    for (auto e : view) {
+        auto& sb = view.get<SoftBodyComponent>(e);
+        auto& mc = view.get<MeshComponent>(e);
+        if (sb.softBodyId == 0xFFFFFFFF || !mc.mesh) continue;
+
+        JPH::BodyID id(sb.softBodyId);
+        const JPH::BodyLockInterface& lockInterface = m_impl->physicsSystem->GetBodyLockInterface();
+        JPH::BodyLockRead lock(lockInterface, id);
+        if (!lock.Succeeded()) continue;
+        const JPH::Body& body = lock.GetBody();
+        const auto* mp = static_cast<const JPH::SoftBodyMotionProperties*>(body.GetMotionProperties());
+        if (!mp) continue;
+
+        const auto& joltVertices = mp->GetVertices();
+        std::vector<glm::vec3> positions(joltVertices.size());
+        JPH::RVec3 bodyPos = body.GetPosition();
+        JPH::Quat bodyRot = body.GetRotation();
+        for (size_t i = 0; i < joltVertices.size(); ++i) {
+            JPH::RVec3 pos = bodyPos + bodyRot * joltVertices[i].mPosition;
+            positions[i] = glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ());
+        }
+        mc.mesh->UpdateVertices(positions);
+    }
 }
 
 void EnginePhysicsSystem::SetBodyTransform(uint32_t bodyId, const glm::vec3& position, const glm::quat& rotation) {

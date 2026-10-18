@@ -105,8 +105,10 @@ protected:
         // SSAO/SSR включим на 2-м кадре — чтобы первый кадр прошёл
         // без sampling render target (иначе Vulkan layout mismatch).
         m_pendingEffectsEnable = true;
-        m_shadowMap = bgfx::createTexture2D(4096, 4096, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
-        m_shadowFbo = bgfx::createFrameBuffer(1, &m_shadowMap, false);
+        for (int i = 0; i < 3; ++i) {
+            m_shadowMaps[i] = bgfx::createTexture2D(2048, 2048, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+            m_shadowFbos[i] = bgfx::createFrameBuffer(1, &m_shadowMaps[i], false);
+        }
 
         m_browser    = std::make_unique<Galeshi::ContentBrowser>("assets");
         m_serializer = std::make_unique<Galeshi::SceneSerializer>(m_scene, *m_assets);
@@ -403,6 +405,35 @@ if (ImGui::BeginMenu("File")) {
                 sb.gridX = 10; sb.gridY = 10;
                 sb.origin = {0, 5, 0};
                 sb.softBodyId = m_physics->CreateCloth(sb.gridX, sb.gridY, sb.spacing, sb.origin, static_cast<entt::entity>(e));
+
+                auto mesh = std::make_shared<Galeshi::Mesh>();
+                std::vector<Galeshi::Vertex> verts;
+                std::vector<uint32_t> idxs;
+                for (int y = 0; y < sb.gridY; ++y) {
+                    for (int x = 0; x < sb.gridX; ++x) {
+                        Galeshi::Vertex v{};
+                        v.position = sb.origin + glm::vec3(x * sb.spacing, 0, y * sb.spacing);
+                        v.normal = glm::vec3(0, 1, 0);
+                        v.uv = glm::vec2(float(x)/sb.gridX, float(y)/sb.gridY);
+                        verts.push_back(v);
+                    }
+                }
+                for (int y = 0; y < sb.gridY - 1; ++y) {
+                    for (int x = 0; x < sb.gridX - 1; ++x) {
+                        uint32_t i0 = y * sb.gridX + x;
+                        uint32_t i1 = i0 + 1;
+                        uint32_t i2 = i0 + sb.gridX;
+                        uint32_t i3 = i2 + 1;
+                        idxs.push_back(i0); idxs.push_back(i2); idxs.push_back(i1);
+                        idxs.push_back(i1); idxs.push_back(i2); idxs.push_back(i3);
+                    }
+                }
+                mesh->Upload(verts, idxs);
+                e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ mesh, "", "cloth" });
+                auto mat = std::make_shared<Galeshi::Material>();
+                mat->albedoFactor = {0.8f, 0.2f, 0.2f, 1.0f};
+                e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+
                 m_editor.Select(e);
             }
             if (ImGui::MenuItem("Physics Cube")) {
@@ -601,21 +632,29 @@ if (ImGui::BeginMenu("File")) {
             
             // --- SHADOW PASS ---
             auto lview = m_scene.Registry().view<Galeshi::DirectionalLightComponent>();
-            glm::mat4 lightProj, lightView, lightMtx;
+            glm::mat4 lightMtcs[3];
             if (!lview.empty()) {
                 auto lh = *lview.begin();
                 auto& dl = lview.get<Galeshi::DirectionalLightComponent>(lh);
                 glm::vec3 center = m_editor.camTarget;
-                glm::vec3 eye = center - dl.direction * 20.0f;
-                lightView = glm::lookAt(eye, center, glm::vec3(0,1,0));
-                bx::mtxOrtho(glm::value_ptr(lightProj), -15.0f, 15.0f, -15.0f, 15.0f, 0.1f, 50.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
-                lightMtx = lightProj * lightView;
+                float extents[3] = { 15.0f, 40.0f, 100.0f };
+                for (int i = 0; i < 3; ++i) {
+                    glm::vec3 eye = center - dl.direction * (extents[i] * 2.0f);
+                    glm::mat4 lightView = glm::lookAt(eye, center, glm::vec3(0,1,0));
+                    glm::mat4 lightProj;
+                    bx::mtxOrtho(glm::value_ptr(lightProj), -extents[i], extents[i], -extents[i], extents[i], 0.1f, 400.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
+                    lightMtcs[i] = lightProj * lightView;
+                    m_render->RenderShadowMap(m_scene, lightMtcs[i], 6 + i, m_shadowFbos[i]);
+                }
             } else {
-                lightView = glm::lookAt(glm::vec3(0,20,0), glm::vec3(0), glm::vec3(0,1,0));
-                bx::mtxOrtho(glm::value_ptr(lightProj), -15.0f, 15.0f, -15.0f, 15.0f, 0.1f, 50.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
-                lightMtx = lightProj * lightView;
+                for (int i = 0; i < 3; ++i) {
+                    glm::mat4 lightView = glm::lookAt(glm::vec3(0,20,0), glm::vec3(0), glm::vec3(0,1,0));
+                    glm::mat4 lightProj;
+                    bx::mtxOrtho(glm::value_ptr(lightProj), -15.0f, 15.0f, -15.0f, 15.0f, 0.1f, 50.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
+                    lightMtcs[i] = lightProj * lightView;
+                    m_render->RenderShadowMap(m_scene, lightMtcs[i], 6 + i, m_shadowFbos[i]);
+                }
             }
-            m_render->RenderShadowMap(m_scene, lightMtx, 6, m_shadowFbo);
 
 bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             m_render->Render(m_scene, m_camera, 1, w, h);
@@ -687,7 +726,8 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     m_framebuffer->Color(),
                     m_framebuffer->Normal(),
                     m_framebuffer->WorldPos(),
-                    m_shadowMap, lightMtx,
+                    m_shadowMaps[0], m_shadowMaps[1], m_shadowMaps[2],
+                    lightMtcs[0], lightMtcs[1], lightMtcs[2],
                     camPos, lDirA, lColA,
                     plPosA, plColA, plCount,
                     slPos, slDir, slCol, slCount,
@@ -1409,8 +1449,8 @@ void DrawDetails() {
     std::unique_ptr<Galeshi::EnginePhysicsSystem>   m_physics;
     std::unique_ptr<Galeshi::NavigationSystem> m_navSystem;
     std::unique_ptr<Galeshi::DebugRenderer> m_debug;
-    bgfx::TextureHandle m_shadowMap = BGFX_INVALID_HANDLE;
-    bgfx::FrameBufferHandle m_shadowFbo = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_shadowMaps[3] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
+    bgfx::FrameBufferHandle m_shadowFbos[3] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
 
     uint16_t    m_viewportW = 0, m_viewportH = 0;
     bool        m_viewportHovered = false;
