@@ -29,6 +29,7 @@ RenderSystem::~RenderSystem() { Shutdown(); }
 void RenderSystem::Init(AssetManager* assets) {
     m_assets = assets;
     m_program = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_pbr.bin");
+    m_shadowProg = ShaderManager::LoadProgram("shaders/vs_shadow.bin", "shaders/fs_shadow.bin");
     if (!bgfx::isValid(m_program)) return;
 
     u_albedoFactor = bgfx::createUniform("u_albedoFactor", bgfx::UniformType::Vec4);
@@ -52,6 +53,7 @@ void RenderSystem::Init(AssetManager* assets) {
 
 void RenderSystem::Shutdown() {
     if (bgfx::isValid(m_program)) bgfx::destroy(m_program);
+    if (bgfx::isValid(m_shadowProg)) bgfx::destroy(m_shadowProg);
     if (bgfx::isValid(u_albedoFactor)) bgfx::destroy(u_albedoFactor);
     if (bgfx::isValid(u_metallicFactor)) bgfx::destroy(u_metallicFactor);
     if (bgfx::isValid(u_roughnessFactor)) bgfx::destroy(u_roughnessFactor);

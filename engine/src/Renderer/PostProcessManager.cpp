@@ -86,7 +86,7 @@ void PostProcessManager::Init() {
             s_shadowMap0  = bgfx::createUniform("s_shadowMap0",  bgfx::UniformType::Sampler);
             s_shadowMap1  = bgfx::createUniform("s_shadowMap1",  bgfx::UniformType::Sampler);
             s_shadowMap2  = bgfx::createUniform("s_shadowMap2",  bgfx::UniformType::Sampler);
-            u_lightVP     = bgfx::createUniform("u_lightViewProj", bgfx::UniformType::Mat4);
+            u_lightVP     = bgfx::createUniform("u_lightViewProj", bgfx::UniformType::Mat4, 3);
             u_plPos       = bgfx::createUniform("u_pointLightPosRadius", bgfx::UniformType::Vec4, 8);
             spdlog::info("[PP] u_plPos valid: {}", bgfx::isValid(u_plPos));
             u_plCol       = bgfx::createUniform("u_pointLightColorInt",  bgfx::UniformType::Vec4, 8);
@@ -145,6 +145,9 @@ void PostProcessManager::Init() {
           m_skyProg = bgfx::createProgram(vs, fs, true);
           u_skyInvVP = bgfx::createUniform("u_skyInvViewProj", bgfx::UniformType::Mat4);
           u_skySun = bgfx::createUniform("u_skySunDir", bgfx::UniformType::Vec4);
+          spdlog::info("[PP] Sky shader loaded successfully");
+      } else {
+          spdlog::error("[PP] Failed to load sky shader (fs_sky.bin missing?)");
       } }
     { auto vs = LoadBinShader("shaders/vs_fullscreen.bin");
       auto fs = LoadBinShader("shaders/fs_smaa_edge.bin");

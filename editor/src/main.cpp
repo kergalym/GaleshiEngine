@@ -118,6 +118,15 @@ protected:
         if (fs::exists("scene.json")) {
             if (m_serializer->Load("scene.json")) {
                 spdlog::info("[Editor] Scene auto-loaded from scene.json");
+                // Fix upward-pointing sun for correct shadows
+                auto lview = m_scene.Registry().view<Galeshi::DirectionalLightComponent>();
+                for (auto e : lview) {
+                    auto& dl = lview.get<Galeshi::DirectionalLightComponent>(e);
+                    if (dl.direction.y > 0.0f) {
+                        dl.direction = glm::normalize(glm::vec3(-0.4f, -0.8f, -0.5f));
+                        spdlog::warn("[Editor] Sun was pointing up, flipped downwards for shadows");
+                    }
+                }
             } else {
                 BuildTestScene();
             }
