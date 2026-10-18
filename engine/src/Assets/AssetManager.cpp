@@ -270,8 +270,22 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
     }
 
     // === МЕШИ ===
+    // Build mesh node transform map to apply correct offsets
+    std::unordered_map<unsigned, glm::mat4> meshToNodeTransform;
+    std::function<void(aiNode*, const glm::mat4&)> processNode = [&](aiNode* node, const glm::mat4& parentTransform) {
+        glm::mat4 globalTransform = parentTransform * aiToGlm(node->mTransformation);
+        for (unsigned i = 0; i < node->mNumMeshes; ++i) {
+            meshToNodeTransform[node->mMeshes[i]] = globalTransform;
+        }
+        for (unsigned i = 0; i < node->mNumChildren; ++i) {
+            processNode(node->mChildren[i], globalTransform);
+        }
+    };
+    processNode(scene->mRootNode, glm::mat4(1.0f));
+
     for (unsigned i = 0; i < scene->mNumMeshes; ++i) {
         const aiMesh* am = scene->mMeshes[i];
+        glm::mat4 meshTransform = meshToNodeTransform[i];
         spdlog::info("[AssetManager] Mesh[{}]: {} verts, {} bones, material index {}",
                      i, am->mNumVertices, am->mNumBones, am->mMaterialIndex);
 
@@ -279,8 +293,10 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
         verts.reserve(am->mNumVertices);
         for (unsigned v = 0; v < am->mNumVertices; ++v) {
             Vertex vert{};
-            vert.position = aiToVec3(am->mVertices[v]);
-            if (am->HasNormals()) vert.normal = aiToVec3(am->mNormals[v]);
+            vert.position = glm::vec3(meshTransform * glm::vec4(aiToVec3(am->mVertices[v]), 1.0f));
+            if (am->HasNormals()) {
+                vert.normal = glm::normalize(glm::vec3(meshTransform * glm::vec4(aiToVec3(am->mNormals[v]), 0.0f)));
+            }
             if (am->HasTangentsAndBitangents()) vert.tangent = aiToVec3(am->mTangents[v]);
             if (am->HasTextureCoords(0)) vert.uv = aiToVec2(am->mTextureCoords[0][v]);
             vert.boneWeights = glm::vec4(0.0f);
@@ -340,9 +356,12 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
             }
         }
         for (auto& v : verts) {
-            if (v.boneWeights.x + v.boneWeights.y + v.boneWeights.z + v.boneWeights.w < 0.001f) {
+            float totalWeight = v.boneWeights.x + v.boneWeights.y + v.boneWeights.z + v.boneWeights.w;
+            if (totalWeight > 0.001f) {
+                // Normalize weights to prevent vertex shrinking
+                v.boneWeights /= totalWeight;
+            } else {
                 // Вершины без весов привязываем к dummy bone 255 (Identity)
-                // Position уже в правильном месте (armature space)
                 v.boneIDs[0] = 255.0f;
                 v.boneWeights[0] = 1.0f;
             }
