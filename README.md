@@ -44,6 +44,8 @@ cmake --preset debug --fresh
 cmake --build --preset debug --target GaleshiEditor -j$(nproc)
 
 ./build/debug/bin/GaleshiEditor
+or 
+./build/debug/bin/GaleshiEditor --debug
 ```
 
 Technology stack

@@ -323,6 +323,10 @@ private:
             if (ImGui::MenuItem("FXAA", nullptr, &fxaa)) m_postProcess.SetFxaaEnabled(fxaa);
             bool ssao = m_postProcess.SsaoEnabled();
             if (ImGui::MenuItem("SSAO", nullptr, &ssao)) m_postProcess.SetSsaoEnabled(ssao);
+            bool smaa = m_postProcess.SmaaEnabled();
+            if (ImGui::MenuItem("SMAA", nullptr, &smaa)) m_postProcess.SetSmaaEnabled(smaa);
+            bool taa = m_postProcess.TaaEnabled();
+            if (ImGui::MenuItem("TAA", nullptr, &taa)) m_postProcess.SetTaaEnabled(taa);
             bool ssr = m_postProcess.SsrEnabled();
             if (ImGui::MenuItem("SSR", nullptr, &ssr)) m_postProcess.SetSsrEnabled(ssr);
             ImGui::Separator();
@@ -690,6 +694,13 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     2, w, h);
 
 
+                // Render procedural sky (depth test ALWAYS means it only fills empty space)
+                if (true) { // Replace with a toggle if needed
+                    glm::mat4 invView = glm::inverse(m_camera.View());
+                    float sunDir[4] = {ldir.x, ldir.y, ldir.z, 0.0f};
+                    m_postProcess.RenderSky(invProj, invView, sunDir, m_postProcess.OutputFbo(), 3, w, h);
+                }
+
                 if (m_postProcess.SsaoEnabled()) {
                     bgfx::TextureHandle depth = m_framebuffer->Depth();
                     bgfx::TextureHandle normal = m_framebuffer->Normal();
@@ -705,6 +716,19 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     m_postProcess.RenderSSR(color, normal, depth,
                         m_postProcess.PingFbo(), invProj, camPos, 3, w, h);
                     m_postProcess.SwapFbos();
+                }
+
+                if (m_postProcess.SmaaEnabled()) {
+                    m_postProcess.RenderSmaa(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 3, w, h);
+                    m_postProcess.SwapFbos();
+                }
+
+                if (m_postProcess.TaaEnabled()) {
+                    glm::mat4 prevVP = m_postProcess.GetPrevViewProj(); // Need to expose this
+                    glm::mat4 currVP = m_camera.Projection() * m_camera.View();
+                    m_postProcess.RenderTaa(m_postProcess.OutputTexture(), m_framebuffer->Depth(), prevVP, glm::inverse(currVP), m_postProcess.PingFbo(), 3, w, h);
+                    m_postProcess.SwapFbos();
+                    m_postProcess.SetPrevViewProj(currVP);
                 }
 
                 if (m_postProcess.FxaaEnabled()) {

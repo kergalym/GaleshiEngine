@@ -46,7 +46,17 @@ public:
     bool SsaoEnabled() const { return m_ssaoEnabled; }
     void SetSsaoEnabled(bool v) { m_ssaoEnabled = v; }
     bool SsrEnabled() const { return m_ssrEnabled; }
+    void SetTaaEnabled(bool v) { m_taaEnabled = v; }
+    bool TaaEnabled() const { return m_taaEnabled; }
+    bgfx::TextureHandle RenderTaa(bgfx::TextureHandle color, bgfx::TextureHandle depth, const glm::mat4& prevVP, const glm::mat4& invVP, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h);
+    bgfx::TextureHandle RenderSky(const glm::mat4& invProj, const glm::mat4& invView, const float sunDir[4], bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h);
+    void SetSmaaEnabled(bool v) { m_smaaEnabled = v; }
+    bool SmaaEnabled() const { return m_smaaEnabled; }
+    bgfx::TextureHandle RenderSmaa(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h);
     void SetSsrEnabled(bool v) { m_ssrEnabled = v; }
+
+    glm::mat4 GetPrevViewProj() const { return m_prevViewProj; }
+    void SetPrevViewProj(const glm::mat4& m) { m_prevViewProj = m; }
 
 private:
     void EnsureOutputFbo(uint16_t w, uint16_t h);
@@ -87,6 +97,8 @@ private:
     bgfx::UniformHandle s_ssrColor    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_ssrNormal   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_ssrDepth    = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_smaaEdges   = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_taaColor    = BGFX_INVALID_HANDLE;
 
     bgfx::VertexBufferHandle m_vbh    = BGFX_INVALID_HANDLE;
     bgfx::IndexBufferHandle  m_ibh    = BGFX_INVALID_HANDLE;
@@ -99,12 +111,31 @@ private:
     bgfx::TextureHandle     m_blitTexB    = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle     m_blitDepth   = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_pingFbo     = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_blitFboA    = BGFX_INVALID_HANDLE;
+    bool m_historyValid = false;
 
     uint16_t m_width = 0, m_height = 0;
     bool m_invertEnabled = false;
     bool m_fxaaEnabled   = false;
     bool m_ssaoEnabled   = false;
     bool m_ssrEnabled    = false;
+    bool m_taaEnabled    = false;
+    bgfx::ProgramHandle m_taaProg = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_taaPrevVP = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_taaInvVP = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_taaParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_taaHistory = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_taaDepth = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_historyColor = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_historyFbo = BGFX_INVALID_HANDLE;
+    glm::mat4 m_prevViewProj{1.0f};
+    bgfx::ProgramHandle m_skyProg = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_skyInvVP = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_skySun = BGFX_INVALID_HANDLE;
+    bool m_smaaEnabled   = false;
+    bgfx::ProgramHandle m_smaaEdgeProg = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_smaaBlendProg = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_smaaEdgeTex = BGFX_INVALID_HANDLE;
 };
 
 } // namespace Galeshi
