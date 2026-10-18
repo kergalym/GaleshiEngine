@@ -29,7 +29,8 @@ public:
 
     bgfx::TextureHandle RenderLighting(bgfx::TextureHandle albedoMr, bgfx::TextureHandle normalRough, bgfx::TextureHandle worldPos,
                                        bgfx::TextureHandle shadowMap0, bgfx::TextureHandle shadowMap1, bgfx::TextureHandle shadowMap2,
-                                       const glm::mat4& lightMtx0, const glm::mat4& lightMtx1, const glm::mat4& lightMtx2, 
+                                       const glm::mat4& lightMtx0, const glm::mat4& lightMtx1, const glm::mat4& lightMtx2,
+                                       const glm::mat4& invViewProj, 
                                        const float camPos[4], const float lightDir[4], const float lightColorIntensity[4],
                                        const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
                                        const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], int spotLightCount,
@@ -37,6 +38,8 @@ public:
 
     bgfx::TextureHandle RenderSSAO(bgfx::TextureHandle color, bgfx::TextureHandle depth, bgfx::TextureHandle normal, bgfx::FrameBufferHandle targetFbo, const glm::mat4& proj, const glm::mat4& invProj, bgfx::ViewId viewId, uint16_t width, uint16_t height);
     bgfx::TextureHandle RenderSSR(bgfx::TextureHandle color, bgfx::TextureHandle normal, bgfx::TextureHandle depth, bgfx::FrameBufferHandle targetFbo, const glm::mat4& invProj, const float camPos[4], bgfx::ViewId viewId, uint16_t width, uint16_t height);
+    bgfx::TextureHandle RenderBloom(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float threshold, float intensity);
+    bgfx::TextureHandle RenderTonemap(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float exposure, float contrast, float saturation);
     bgfx::TextureHandle RenderFxaa(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height);
     bgfx::TextureHandle RenderInvert(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height);
 
@@ -123,7 +126,16 @@ private:
     bool m_ssaoEnabled   = false;
     bool m_ssrEnabled    = false;
     bool m_taaEnabled    = false;
-    bgfx::ProgramHandle m_taaProg = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_taaProg;
+    bgfx::ProgramHandle m_bloomExtractProg;
+    bgfx::ProgramHandle m_bloomBlurProg;
+    bgfx::ProgramHandle m_bloomCombineProg;
+    bgfx::ProgramHandle m_tonemapProg;
+    bgfx::UniformHandle u_bloomThreshold;
+    bgfx::UniformHandle u_bloomTexelSize = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_bloomDir       = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_bloomIntensity;
+    bgfx::UniformHandle u_colorParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_taaPrevVP = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_taaInvVP = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_taaParams = BGFX_INVALID_HANDLE;

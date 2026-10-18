@@ -167,6 +167,32 @@ void PostProcessManager::Init() {
     m_ibh = bgfx::createIndexBuffer(bgfx::makeRef(indices, sizeof(indices)));
 
     spdlog::info("[PP] === BUILD_MARKER_V2 ===");
+    
+    // Tonemap & Bloom
+    { auto vs = LoadBinShader("shaders/vs_fullscreen.bin");
+      auto fs = LoadBinShader("shaders/fs_tonemap.bin");
+      if(bgfx::isValid(vs) && bgfx::isValid(fs)) {
+          m_tonemapProg = bgfx::createProgram(vs, fs, true);
+          u_colorParams = bgfx::createUniform("u_colorParams", bgfx::UniformType::Vec4);
+      }
+      fs = LoadBinShader("shaders/fs_bloom_extract.bin");
+      if(bgfx::isValid(vs) && bgfx::isValid(fs)) {
+          m_bloomExtractProg = bgfx::createProgram(vs, fs, true);
+          u_bloomThreshold = bgfx::createUniform("u_threshold", bgfx::UniformType::Vec4);
+          u_bloomTexelSize = bgfx::createUniform("u_bloomTexelSize", bgfx::UniformType::Vec4);
+          u_bloomDir = bgfx::createUniform("u_bloomDir", bgfx::UniformType::Vec4);
+      }
+      fs = LoadBinShader("shaders/fs_bloom_blur.bin");
+      if(bgfx::isValid(vs) && bgfx::isValid(fs)) {
+          m_bloomBlurProg = bgfx::createProgram(vs, fs, true);
+      }
+      fs = LoadBinShader("shaders/fs_bloom_combine.bin");
+      if(bgfx::isValid(vs) && bgfx::isValid(fs)) {
+          m_bloomCombineProg = bgfx::createProgram(vs, fs, true);
+          u_bloomIntensity = bgfx::createUniform("u_bloomIntensity", bgfx::UniformType::Vec4);
+      }
+    }
+
     spdlog::info("[PP] PostProcessManager initialized");
 }
 
@@ -264,7 +290,8 @@ bgfx::TextureHandle PostProcessManager::Render(bgfx::ViewId viewId, bgfx::Textur
 bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::TextureHandle albedoMr, bgfx::TextureHandle normalRough, bgfx::TextureHandle worldPos,
     bgfx::TextureHandle shadowMap0, bgfx::TextureHandle shadowMap1, bgfx::TextureHandle shadowMap2,
-    const glm::mat4& lightMtx0, const glm::mat4& lightMtx1, const glm::mat4& lightMtx2, 
+    const glm::mat4& lightMtx0, const glm::mat4& lightMtx1, const glm::mat4& lightMtx2,
+    const glm::mat4& invViewProj, 
     const float camPos[4], const float lightDir[4], const float lightColorIntensity[4],
     const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
     const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], int spotLightCount,
@@ -289,6 +316,7 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::setTexture(5, s_shadowMap2,  shadowMap2);
     glm::mat4 lightMtcs[3] = { lightMtx0, lightMtx1, lightMtx2 };
     bgfx::setUniform(u_lightVP, glm::value_ptr(lightMtcs[0]), 3);
+    bgfx::setUniform(u_skyInvVP, glm::value_ptr(invViewProj));
     
 
     if (pointLightCount > 0) {
@@ -348,6 +376,74 @@ bgfx::TextureHandle PostProcessManager::RenderSSR(bgfx::TextureHandle color, bgf
     bgfx::setIndexBuffer(m_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId, m_ssrProg);
+    return m_pingColor;
+}
+
+
+bgfx::TextureHandle PostProcessManager::RenderBloom(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float threshold, float intensity) {
+    if (!bgfx::isValid(m_bloomExtractProg) || !bgfx::isValid(m_bloomBlurProg) || !bgfx::isValid(m_bloomCombineProg)) return color;
+    EnsureOutputFbo(w, h);
+
+    // Safety check: if uniform handles are invalid, we still shouldn't call bgfx::submit with invalid programs
+    if (!bgfx::isValid(m_bloomExtractProg)) return color;
+    if (!bgfx::isValid(m_bloomBlurProg)) return color;
+    if (!bgfx::isValid(m_bloomCombineProg)) return color;
+
+    float ts[4] = { 1.0f/w, 1.0f/h, 0.0f, 0.0f };
+    float th[4] = { threshold, 0, 0, 0 };
+    float dirH[4] = { 1.0f, 0.0f, 0, 0 };
+    float dirV[4] = { 0.0f, 1.0f, 0, 0 };
+
+    // Extract
+    bgfx::setViewFrameBuffer(viewId, m_blitFboA);
+    bgfx::setViewRect(viewId, 0, 0, w, h);
+    bgfx::setTexture(0, s_texColor, color);
+    bgfx::setUniform(u_bloomThreshold, th);
+    bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+    bgfx::submit(viewId, m_bloomExtractProg);
+
+    // Blur H
+    bgfx::setViewFrameBuffer(viewId+1, m_outputFbo);
+    bgfx::setViewRect(viewId+1, 0, 0, w, h);
+    bgfx::setTexture(0, s_texColor, m_blitTexA);
+    bgfx::setUniform(u_bloomTexelSize, ts);
+    bgfx::setUniform(u_bloomDir, dirH); // Note: reusing u_texelSize for dir in shader
+    bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
+    bgfx::submit(viewId+1, m_bloomBlurProg);
+
+    // Blur V
+    bgfx::setViewFrameBuffer(viewId+2, m_blitFboA);
+    bgfx::setViewRect(viewId+2, 0, 0, w, h);
+    bgfx::setTexture(0, s_texColor, m_outputColor);
+    bgfx::setUniform(u_bloomTexelSize, ts);
+    bgfx::setUniform(u_bloomDir, dirV);
+    bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
+    bgfx::submit(viewId+2, m_bloomBlurProg);
+
+    // Combine
+    bgfx::setViewFrameBuffer(viewId+3, target);
+    bgfx::setViewRect(viewId+3, 0, 0, w, h);
+    bgfx::setTexture(0, s_texColor, color);
+    bgfx::setTexture(1, s_smaaEdges, m_blitTexA); // Reusing s_smaaEdges as s_bloom
+    float bi[4] = { intensity, 0, 0, 0 };
+    bgfx::setUniform(u_bloomIntensity, bi);
+    bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
+    bgfx::submit(viewId+3, m_bloomCombineProg);
+
+    return m_pingColor;
+}
+
+bgfx::TextureHandle PostProcessManager::RenderTonemap(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float exposure, float contrast, float saturation) {
+    if (!bgfx::isValid(m_tonemapProg)) return color;
+    bgfx::setViewFrameBuffer(viewId, target);
+    bgfx::setViewRect(viewId, 0, 0, w, h);
+    bgfx::setTexture(0, s_texColor, color);
+    float params[4] = { exposure, contrast, saturation, 0 };
+    bgfx::setUniform(u_colorParams, params);
+    bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+    bgfx::submit(viewId, m_tonemapProg);
     return m_pingColor;
 }
 

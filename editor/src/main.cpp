@@ -122,7 +122,7 @@ protected:
                 auto lview = m_scene.Registry().view<Galeshi::DirectionalLightComponent>();
                 for (auto e : lview) {
                     auto& dl = lview.get<Galeshi::DirectionalLightComponent>(e);
-                    if (dl.direction.y > 0.0f) {
+                    if (dl.direction.y > 0.0f || true) {
                         dl.direction = glm::normalize(glm::vec3(-0.4f, -0.8f, -0.5f));
                         spdlog::warn("[Editor] Sun was pointing up, flipped downwards for shadows");
                     }
@@ -729,6 +729,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
 
                 glm::mat4 proj = m_camera.Projection();
                 glm::mat4 invProj = glm::inverse(proj);
+                glm::mat4 invViewProj = glm::inverse(proj * m_camera.View());
                 
 
                 m_postProcess.RenderLighting(
@@ -737,18 +738,20 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     m_framebuffer->WorldPos(),
                     m_shadowMaps[0], m_shadowMaps[1], m_shadowMaps[2],
                     lightMtcs[0], lightMtcs[1], lightMtcs[2],
+                    invViewProj,
                     camPos, lDirA, lColA,
                     plPosA, plColA, plCount,
                     slPos, slDir, slCol, slCount,
                     2, w, h);
 
 
-                // Render procedural sky (depth test ALWAYS means it only fills empty space)
-                if (true) { // Replace with a toggle if needed
-                    glm::mat4 invView = glm::inverse(m_camera.View());
-                    float sunDir[4] = {ldir.x, ldir.y, ldir.z, 0.0f};
-                    m_postProcess.RenderSky(invProj, invView, sunDir, m_postProcess.OutputFbo(), 3, w, h);
-                }
+
+
+                // Bloom + Tonemap (applied before SSAO/SSR to keep color space linear)
+                // m_postProcess.RenderBloom(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 3, w, h, 1.0f, 0.5f);
+                // m_postProcess.SwapFbos();
+                m_postProcess.RenderTonemap(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 3, w, h, 0.0f, 1.0f, 1.0f);
+                m_postProcess.SwapFbos();
 
                 if (m_postProcess.SsaoEnabled()) {
                     bgfx::TextureHandle depth = m_framebuffer->Depth();

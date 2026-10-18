@@ -12,6 +12,7 @@ uniform vec4 u_cameraPosition;
 uniform vec4 u_lightDirection;
 uniform vec4 u_lightColorIntensity;
 uniform mat4 u_lightViewProj[3];
+uniform mat4 u_skyInvViewProj;
 
 uniform vec4 u_pointLightPosRadius[8];
 uniform vec4 u_pointLightColorInt[8];
@@ -86,7 +87,15 @@ void main()
     vec4 wPos = texture2D(s_worldPos, uv);
     
     if (length(wPos.xyz) < 0.001) {
-        gl_FragColor = vec4(0.15, 0.15, 0.18, 1.0);
+        vec2 ndc = uv * 2.0 - 1.0;
+        vec4 clip = vec4(ndc, 1.0, 1.0);
+        vec4 world = mul(u_skyInvViewProj, clip);
+        vec3 dir = normalize(world.xyz / world.w);
+        
+        vec3 skyColor = mix(vec3(0.4, 0.6, 1.0), vec3(0.05, 0.1, 0.3), clamp(dir.y, 0.0, 1.0));
+        float sun = max(dot(dir, normalize(-u_lightDirection.xyz)), 0.0);
+        skyColor += vec3(1.0, 0.9, 0.8) * pow(sun, 128.0) * 10.0;
+        gl_FragColor = vec4(skyColor, 1.0);
         return;
     }
 
@@ -137,9 +146,7 @@ void main()
         finalColor += calcLight(N, V, albedo, metallic, rough, L, radiance);
     }
 
-    // Tone Mapping
-    finalColor = finalColor / (finalColor + vec3(1.0));
-    finalColor = pow(finalColor, vec3(1.0 / 2.2));
+    // Tonemapping moved to post-process
 
     gl_FragColor = vec4(finalColor, 1.0);
 }
