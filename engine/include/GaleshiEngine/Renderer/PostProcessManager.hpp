@@ -1,5 +1,6 @@
 #pragma once
 #include <bgfx/bgfx.h>
+#include <glm/glm.hpp>
 #include <cstdint>
 
 namespace Galeshi {
@@ -33,9 +34,18 @@ public:
     bgfx::TextureHandle RenderLighting(bgfx::TextureHandle albedoMr,
                                        bgfx::TextureHandle normalRough,
                                        bgfx::TextureHandle worldPos,
+                                       bgfx::TextureHandle shadowMap,
+                                       const glm::mat4& lightMtx,
                                        const float camPos[4],
                                        const float lightDir[4],
                                        const float lightColorIntensity[4],
+                                       const float pointLightPos[][4],
+                                       const float pointLightColor[][4],
+                                       int pointLightCount,
+                                       const float spotLightPosRadius[][4],
+                                       const float spotLightDirInner[][4],
+                                       const float spotLightColorOuter[][4],
+                                       int spotLightCount,
                                        bgfx::ViewId viewId,
                                        uint16_t width, uint16_t height);
 

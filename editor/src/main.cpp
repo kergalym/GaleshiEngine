@@ -100,6 +100,8 @@ protected:
         m_render  = std::make_unique<Galeshi::RenderSystem>();
         m_render->Init(m_assets.get());
         m_postProcess.Init();
+        m_shadowMap = bgfx::createTexture2D(2048, 2048, false, 1, bgfx::TextureFormat::D24S8, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+        m_shadowFbo = bgfx::createFrameBuffer(1, &m_shadowMap, false);
 
         m_browser    = std::make_unique<Galeshi::ContentBrowser>("assets");
         m_serializer = std::make_unique<Galeshi::SceneSerializer>(m_scene, *m_assets);
@@ -404,10 +406,25 @@ if (ImGui::BeginMenu("File")) {
                     }
                     spdlog::info("[Editor] Build NavMesh menu done");
                 }
-                if (ImGui::MenuItem("Point Light")) {
+                if (ImGui::MenuItem("Directional Light")) {
+                auto e = m_scene.CreateEntity("DirectionalLight");
+                auto& dl = e.AddComponent<Galeshi::DirectionalLightComponent>();
+                dl.direction = glm::normalize(glm::vec3(-0.4f, -0.8f, -0.5f));
+                dl.intensity = 3.0f;
+                m_editor.Select(e);
+            }
+            if (ImGui::MenuItem("Point Light")) {
                 auto e = m_scene.CreateEntity("PointLight");
-                e.AddComponent<Galeshi::PointLightComponent>();
-                e.GetComponent<Galeshi::TransformComponent>().position = {0, 2, 0};
+                auto& pl = e.AddComponent<Galeshi::PointLightComponent>();
+                auto& tc = e.GetComponent<Galeshi::TransformComponent>();
+                tc.position = {0, 2, 0};
+                m_editor.Select(e);
+            }
+            if (ImGui::MenuItem("Spot Light")) {
+                auto e = m_scene.CreateEntity("SpotLight");
+                auto& sl = e.AddComponent<Galeshi::SpotLightComponent>();
+                auto& tc = e.GetComponent<Galeshi::TransformComponent>();
+                tc.position = {0, 3, 0};
                 m_editor.Select(e);
             }
             ImGui::EndMenu();
@@ -546,7 +563,26 @@ if (ImGui::BeginMenu("File")) {
         m_viewportH = h;
 
         if (m_framebuffer && m_framebuffer->Valid()) {
-            bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
+            
+            // --- SHADOW PASS ---
+            auto lview = m_scene.Registry().view<Galeshi::DirectionalLightComponent>();
+            glm::mat4 lightProj, lightView, lightMtx;
+            if (!lview.empty()) {
+                auto lh = *lview.begin();
+                auto& dl = lview.get<Galeshi::DirectionalLightComponent>(lh);
+                glm::vec3 center = m_editor.camTarget;
+                glm::vec3 eye = center - dl.direction * 20.0f;
+                lightView = glm::lookAt(eye, center, glm::vec3(0,1,0));
+                lightProj = glm::orthoZO(-15.0f, 15.0f, -15.0f, 15.0f, 0.1f, 50.0f);
+                lightMtx = lightProj * lightView;
+            } else {
+                lightView = glm::lookAt(glm::vec3(0,20,0), glm::vec3(0), glm::vec3(0,1,0));
+                lightProj = glm::orthoZO(-15.0f, 15.0f, -15.0f, 15.0f, 0.1f, 50.0f);
+                lightMtx = lightProj * lightView;
+            }
+            m_render->RenderShadowMap(m_scene, lightMtx, 6, m_shadowFbo);
+
+bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             m_render->Render(m_scene, m_camera, 1, w, h);
 
             if (m_render->DeferredEnabled()) {
@@ -565,11 +601,72 @@ if (ImGui::BeginMenu("File")) {
                 // Переводим направление света в пространство камеры (View Space)
                 float lDirA[4]  = {ldir.x, ldir.y, ldir.z, 0.0f};
                 float lColA[4]  = {lcol.r, lcol.g, lcol.b, lint};
+                
+                
+                
+                
+                
+
+                
+
+                
+                // Сбор Point Lights
+                float plPosA[8][4] = {};
+                float plColA[8][4] = {};
+                int plCount = 0;
+                auto plview = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::PointLightComponent>();
+                for (auto h : plview) {
+                    if (plCount >= 8) break;
+                    auto& tc = plview.get<Galeshi::TransformComponent>(h);
+                    auto& pl = plview.get<Galeshi::PointLightComponent>(h);
+                    plPosA[plCount][0] = tc.position.x;
+                    plPosA[plCount][1] = tc.position.y;
+                    plPosA[plCount][2] = tc.position.z;
+                    plPosA[plCount][3] = pl.radius;
+                    plColA[plCount][0] = pl.color.r;
+                    plColA[plCount][1] = pl.color.g;
+                    plColA[plCount][2] = pl.color.b;
+                    plColA[plCount][3] = pl.intensity;
+                    plCount++;
+                }
+
+                // Сбор Spot Lights
+                float slPos[4][4] = {};
+                float slDir[4][4] = {};
+                float slCol[4][4] = {};
+                int slCount = 0;
+                auto slview = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::SpotLightComponent>();
+                for (auto h : slview) {
+                    if (slCount >= 4) break;
+                    auto& tc = slview.get<Galeshi::TransformComponent>(h);
+                    auto& sl = slview.get<Galeshi::SpotLightComponent>(h);
+                    slPos[slCount][0] = tc.position.x;
+                    slPos[slCount][1] = tc.position.y;
+                    slPos[slCount][2] = tc.position.z;
+                    slPos[slCount][3] = sl.radius;
+                    
+                    glm::vec3 dir = glm::normalize(sl.direction);
+                    slDir[slCount][0] = dir.x;
+                    slDir[slCount][1] = dir.y;
+                    slDir[slCount][2] = dir.z;
+                    slDir[slCount][3] = cos(glm::radians(sl.innerConeAngle));
+                    
+                    slCol[slCount][0] = sl.color.r;
+                    slCol[slCount][1] = sl.color.g;
+                    slCol[slCount][2] = sl.color.b;
+                    slCol[slCount][3] = cos(glm::radians(sl.outerConeAngle));
+                    slCount++;
+                }
+
                 m_postProcess.RenderLighting(
                     m_framebuffer->Color(),
                     m_framebuffer->Normal(),
                     m_framebuffer->WorldPos(),
-                    camPos, lDirA, lColA, 2, w, h);
+                    m_shadowMap, lightMtx,
+                    camPos, lDirA, lColA,
+                    plPosA, plColA, plCount,
+                    slPos, slDir, slCol, slCount,
+                    2, w, h);
                 
             } else {
                 m_postProcess.Render(2, m_framebuffer->Color(), w, h);
@@ -881,6 +978,23 @@ void DrawDetails() {
             ImGui::SliderFloat("Intensity", &dl.intensity, 0.0f, 10.0f);
         }
 
+        if (selected[0].HasComponent<Galeshi::PointLightComponent>() && ImGui::CollapsingHeader("Point Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& pl = selected[0].GetComponent<Galeshi::PointLightComponent>();
+            ImGui::ColorEdit3("Point Color", glm::value_ptr(pl.color));
+            ImGui::SliderFloat("Point Intensity", &pl.intensity, 0.0f, 20.0f);
+            ImGui::DragFloat("Point Radius", &pl.radius, 0.1f, 0.1f, 100.0f);
+        }
+
+        if (selected[0].HasComponent<Galeshi::SpotLightComponent>() && ImGui::CollapsingHeader("Spot Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& sl = selected[0].GetComponent<Galeshi::SpotLightComponent>();
+            ImGui::DragFloat3("Spot Direction", glm::value_ptr(sl.direction), 0.05f, -1.0f, 1.0f);
+            ImGui::ColorEdit3("Spot Color", glm::value_ptr(sl.color));
+            ImGui::SliderFloat("Spot Intensity", &sl.intensity, 0.0f, 20.0f);
+            ImGui::DragFloat("Spot Radius", &sl.radius, 0.1f, 0.1f, 100.0f);
+            ImGui::SliderFloat("Inner Cone", &sl.innerConeAngle, 0.0f, 90.0f);
+            ImGui::SliderFloat("Outer Cone", &sl.outerConeAngle, 0.0f, 90.0f);
+        }
+
         ImGui::End();
     }
 
@@ -1021,6 +1135,12 @@ void DrawDetails() {
         auto& dl = sun.AddComponent<Galeshi::DirectionalLightComponent>();
         dl.direction = glm::normalize(glm::vec3(-0.4f, -0.8f, -0.5f));
         dl.color = {1.0f, 0.97f, 0.9f}; dl.intensity = 3.0f;
+        // Добавляем большой пол (чтобы тени падали на него)
+        auto ground = MakeCube("Ground", {0.0f, -0.5f, 0.0f});
+        ground.GetComponent<Galeshi::TransformComponent>().scale = { 50.0f, 1.0f, 50.0f };
+        ground.GetComponent<Galeshi::MaterialComponent>().material->albedoFactor = { 0.3f, 0.3f, 0.3f, 1.0f };
+        ground.GetComponent<Galeshi::MaterialComponent>().material->roughnessFactor = 0.8f;
+
 
         { auto e = MakeCube("Cube_Orange", { 0.0f, 0.0f, 0.0f}); auto& m = *e.GetComponent<Galeshi::MaterialComponent>().material; m.albedoFactor = {0.85f, 0.55f, 0.25f, 1.0f}; m.roughnessFactor = 0.4f; }
         { auto e = MakeCube("Cube_Metal",  {-2.5f, 0.0f, 0.0f}); auto& m = *e.GetComponent<Galeshi::MaterialComponent>().material; m.albedoFactor = {0.95f, 0.95f, 0.95f, 1.0f}; m.metallicFactor = 1.0f; m.roughnessFactor = 0.15f; }
@@ -1051,6 +1171,8 @@ void DrawDetails() {
     std::unique_ptr<Galeshi::EnginePhysicsSystem>   m_physics;
     std::unique_ptr<Galeshi::NavigationSystem> m_navSystem;
     std::unique_ptr<Galeshi::DebugRenderer> m_debug;
+    bgfx::TextureHandle m_shadowMap = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_shadowFbo = BGFX_INVALID_HANDLE;
 
     uint16_t    m_viewportW = 0, m_viewportH = 0;
     bool        m_viewportHovered = false;

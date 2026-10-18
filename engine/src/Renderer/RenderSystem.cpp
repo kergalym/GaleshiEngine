@@ -10,6 +10,8 @@
 #include <spdlog/spdlog.h>
 
 namespace Galeshi {
+
+
 namespace {
     bgfx::ShaderHandle LoadBinShader(const char* path) {
         FILE* f = fopen(path, "rb");
@@ -20,7 +22,6 @@ namespace {
         return bgfx::createShader(mem);
     }
 }
-
 
 RenderSystem::RenderSystem() = default;
 RenderSystem::~RenderSystem() { Shutdown(); }
@@ -47,43 +48,10 @@ void RenderSystem::Init(AssetManager* assets) {
     s_albedoMap = bgfx::createUniform("s_albedoMap", bgfx::UniformType::Sampler);
     s_metallicRoughnessMap = bgfx::createUniform("s_metallicRoughnessMap", bgfx::UniformType::Sampler);
     s_normalMap = bgfx::createUniform("s_normalMap", bgfx::UniformType::Sampler);
-    // Deferred G-Buffer program
-    {
-        FILE* f=fopen("shaders/vs_pbr.bin","rb"); if(f){
-            fseek(f,0,SEEK_END); long sz=ftell(f); fseek(f,0,SEEK_SET);
-            const bgfx::Memory* m=bgfx::alloc((uint32_t)sz);
-            fread(m->data,1,(size_t)sz,f); fclose(f);
-            bgfx::ShaderHandle vs=bgfx::createShader(m);
-            f=fopen("shaders/fs_gbuffer.bin","rb");
-            if(f){
-                fseek(f,0,SEEK_END); long sz2=ftell(f); fseek(f,0,SEEK_SET);
-                const bgfx::Memory* m2=bgfx::alloc((uint32_t)sz2);
-                fread(m2->data,1,(size_t)sz2,f); fclose(f);
-                bgfx::ShaderHandle fs=bgfx::createShader(m2);
-                if(bgfx::isValid(vs)&&bgfx::isValid(fs)){
-                    m_gbufferProg=bgfx::createProgram(vs,fs,true);
-                    spdlog::info("[RenderSystem] G-Buffer program loaded");
-        }
-        FILE* fg=fopen("shaders/fs_glass.bin","rb");
-        if(fg){
-            fseek(fg,0,SEEK_END); long szg=ftell(fg); fseek(fg,0,SEEK_SET);
-            const bgfx::Memory* mg=bgfx::alloc((uint32_t)szg);
-            fread(mg->data,1,(size_t)szg,fg); fclose(fg);
-            bgfx::ShaderHandle fsg=bgfx::createShader(mg);
-            bgfx::ShaderHandle vsg=LoadBinShader("shaders/vs_pbr.bin");
-            if(bgfx::isValid(vsg)&&bgfx::isValid(fsg)){
-                m_glassProg=bgfx::createProgram(vsg,fsg,true);
-                spdlog::info("[RenderSystem] Glass program loaded");
-            }
-                }
-            }
-        }
-    }
 }
 
 void RenderSystem::Shutdown() {
     if (bgfx::isValid(m_program)) bgfx::destroy(m_program);
-    if (bgfx::isValid(m_gbufferProg)) bgfx::destroy(m_gbufferProg);
     if (bgfx::isValid(u_albedoFactor)) bgfx::destroy(u_albedoFactor);
     if (bgfx::isValid(u_metallicFactor)) bgfx::destroy(u_metallicFactor);
     if (bgfx::isValid(u_roughnessFactor)) bgfx::destroy(u_roughnessFactor);
@@ -107,7 +75,6 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
 
     bgfx::setViewTransform(viewId, glm::value_ptr(camera.View()), glm::value_ptr(camera.Projection()));
     bgfx::setViewRect(viewId, 0, 0, width, height);
-    bgfx::setViewClear(viewId, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
     bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x232629ff, 1.0f, 0);
 
     glm::vec3 lightDir{-0.4f, -0.8f, -0.5f}, lightCol{1.0f}, p = camera.Position();
@@ -154,7 +121,6 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
     for (auto h : view) {
         const auto& mc = view.get<MeshComponent>(h); const auto& matc = view.get<MaterialComponent>(h);
         if (!mc.mesh || !mc.mesh->Valid() || !matc.material) continue;
-        if (m_skipGlass && matc.isGlass) continue;
 
         glm::mat4 model(1.0f);
         entt::entity curr = h;
@@ -214,11 +180,44 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
 
         bgfx::setVertexBuffer(0, mc.mesh->VB()); bgfx::setIndexBuffer(mc.mesh->IB());
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA);
-        bgfx::submit(viewId, (m_deferred && bgfx::isValid(m_gbufferProg)) ? m_gbufferProg : m_program);
+        bgfx::submit(viewId, m_program);
     }
 }
 
+void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo) {
+    if (!bgfx::isValid(m_shadowProg) || !bgfx::isValid(shadowFbo)) return;
+    bgfx::setViewFrameBuffer(viewId, shadowFbo);
+    bgfx::setViewRect(viewId, 0, 0, 2048, 2048);
+    bgfx::setViewClear(viewId, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
+    
+    // Identity для View, lightMtx для Projection (u_viewProj)
+    glm::mat4 view = glm::mat4(1.0f);
+    bgfx::setViewTransform(viewId, glm::value_ptr(view), glm::value_ptr(lightMtx));
 
+    auto viewIter = scene.Registry().view<TransformComponent, MeshComponent>();
+    for (auto h : viewIter) {
+        const auto& mc = viewIter.get<MeshComponent>(h);
+        if (!mc.mesh || !mc.mesh->Valid()) continue;
+
+        glm::mat4 model(1.0f);
+        entt::entity curr = h;
+        std::vector<entt::entity> chain;
+        while (curr != entt::null) {
+            chain.push_back(curr);
+            if (scene.Registry().all_of<ParentComponent>(curr)) curr = scene.Registry().get<ParentComponent>(curr).parent;
+            else break;
+        }
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            if (scene.Registry().all_of<TransformComponent>(*it)) model = model * scene.Registry().get<TransformComponent>(*it).LocalMatrix();
+        }
+
+        bgfx::setTransform(glm::value_ptr(model));
+        bgfx::setVertexBuffer(0, mc.mesh->VB());
+        bgfx::setIndexBuffer(mc.mesh->IB());
+        bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+        bgfx::submit(viewId, m_shadowProg);
+    }
+}
 
 void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
     if (!bgfx::isValid(m_glassProg)) return;
@@ -247,15 +246,13 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
 
         bgfx::setTransform(glm::value_ptr(model));
         
-        // Стеклу не нужны текстуры альбедо, только нормали и uniform камеры (из шейдера)
-        // Мы должны передать u_cameraPosition, чтобы Френель работал
         glm::vec3 cp = camera.Position();
         float camPos[4] = {cp.x, cp.y, cp.z, 1.0f};
         bgfx::setUniform(u_cameraPosition, camPos);
 
         bgfx::setVertexBuffer(0, mc.mesh->VB());
         bgfx::setIndexBuffer(mc.mesh->IB());
-        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_DEPTH_TEST_ALWAYS | BGFX_STATE_BLEND_ALPHA);
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_ALPHA);
         bgfx::submit(viewId, m_glassProg);
     }
 }

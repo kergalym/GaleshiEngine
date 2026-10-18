@@ -116,4 +116,13 @@ struct AudioSourceComponent {
 // Tag: entity was created by a Lua script and should be cleaned on hot-reload.
 struct LuaEntityComponent {};
 
+
+struct SpotLightComponent {
+    glm::vec3 direction = {0.0f, -1.0f, 0.0f}; // Направление взгляда прожектора
+    float innerConeAngle = 15.0f;  // Внутренний угол (градусы), где свет полный
+    float outerConeAngle = 30.0f;  // Внешний угол (градусы), где свет затухает до 0
+    float radius = 10.0f;          // Радиус действия
+    glm::vec3 color = {1.0f, 1.0f, 1.0f};      // Цвет
+    float intensity = 1.0f;        // Интенсивность
+};
 } // namespace Galeshi

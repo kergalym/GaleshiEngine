@@ -1,4 +1,5 @@
 #include "GaleshiEngine/Renderer/PostProcessManager.hpp"
+#include <glm/gtc/type_ptr.hpp>
 #include <spdlog/spdlog.h>
 #include <cstdio>
 
@@ -178,7 +179,10 @@ bgfx::TextureHandle PostProcessManager::Render(bgfx::ViewId viewId,
 
 bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::TextureHandle albedoMr, bgfx::TextureHandle normalRough, bgfx::TextureHandle worldPos,
-    const float camPos[4], const float lightDir[4], const float lightCol[4],
+    bgfx::TextureHandle shadowMap, const glm::mat4& lightMtx,
+    const float camPos[4], const float lightDir[4], const float lightColorIntensity[4], const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
+    const float spotLightPosRadius[][4], const float spotLightDirInner[][4],
+    const float spotLightColorOuter[][4], int spotLightCount,
     bgfx::ViewId viewId, uint16_t width, uint16_t height)
 {
     if (!bgfx::isValid(m_lightingProg) || width == 0 || height == 0) return BGFX_INVALID_HANDLE;
@@ -191,10 +195,36 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
 
     bgfx::setUniform(u_camPos,   camPos);
     bgfx::setUniform(u_lightDir, lightDir);
-    bgfx::setUniform(u_lightCol, lightCol);
+    bgfx::setUniform(u_lightCol, lightColorIntensity);
+    static bgfx::UniformHandle u_plPos = bgfx::createUniform("u_pointLightPosRadius", bgfx::UniformType::Vec4, 4);
+    static bgfx::UniformHandle u_plCol = bgfx::createUniform("u_pointLightColorInt", bgfx::UniformType::Vec4, 4);
+    static bgfx::UniformHandle u_plCnt = bgfx::createUniform("u_pointLightCount", bgfx::UniformType::Vec4);
+    static bgfx::UniformHandle u_slPos = bgfx::createUniform("u_spotLightPosRadius", bgfx::UniformType::Vec4, 4);
+    static bgfx::UniformHandle u_slDir = bgfx::createUniform("u_spotLightDirInner", bgfx::UniformType::Vec4, 4);
+    static bgfx::UniformHandle u_slCol = bgfx::createUniform("u_spotLightColorOuter", bgfx::UniformType::Vec4, 4);
+    static bgfx::UniformHandle u_slCnt = bgfx::createUniform("u_spotLightCount", bgfx::UniformType::Vec4);
+    if (pointLightCount > 0) {
+        bgfx::setUniform(u_plPos, pointLightPos, pointLightCount);
+        bgfx::setUniform(u_plCol, pointLightColor, pointLightCount);
+    }
+    float plCntArr[4] = {float(pointLightCount), 0, 0, 0};
+    bgfx::setUniform(u_plCnt, plCntArr);
+    if (spotLightCount > 0) {
+        bgfx::setUniform(u_slPos, spotLightPosRadius, spotLightCount);
+        bgfx::setUniform(u_slDir, spotLightDirInner, spotLightCount);
+        bgfx::setUniform(u_slCol, spotLightColorOuter, spotLightCount);
+    }
+    float slCntArr[4] = {float(spotLightCount), 0, 0, 0};
+    bgfx::setUniform(u_slCnt, slCntArr);
     bgfx::setTexture(0, s_albedoMr,    albedoMr);
     bgfx::setTexture(1, s_normalRough, normalRough);
     bgfx::setTexture(2, s_worldPos,    worldPos);
+
+    // Передаем карту теней
+    static bgfx::UniformHandle s_shadow = bgfx::createUniform("s_shadowMap", bgfx::UniformType::Sampler);
+    static bgfx::UniformHandle u_lightVP = bgfx::createUniform("u_lightViewProj", bgfx::UniformType::Mat4);
+    bgfx::setTexture(3, s_shadow, shadowMap);
+    bgfx::setUniform(u_lightVP, glm::value_ptr(lightMtx));
 
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);

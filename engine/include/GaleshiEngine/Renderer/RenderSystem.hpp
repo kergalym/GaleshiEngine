@@ -12,6 +12,7 @@ public:
     void Init(AssetManager* assets);
     void Shutdown();
     void Render(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height);
+    void RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo);
     void RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height);
     
     void SetSkipGlass(bool skip) { m_skipGlass = skip; }
@@ -27,8 +28,10 @@ private:
 
     bgfx::ProgramHandle m_program      = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_gbufferProg  = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_shadowProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_glassProg    = BGFX_INVALID_HANDLE;
 
+    bgfx::UniformHandle u_lightMtx = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_albedoFactor = BGFX_INVALID_HANDLE, u_metallicFactor = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_roughnessFactor = BGFX_INVALID_HANDLE, u_emissiveFactor = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_cameraPosition = BGFX_INVALID_HANDLE, u_lightDirection = BGFX_INVALID_HANDLE;
