@@ -11,6 +11,8 @@ class Texture;
 // PBR (metallic-roughness) материал.
 class Material {
 public:
+    bool isGlass = false;
+public:
     Material() = default;
     ~Material() = default;
 

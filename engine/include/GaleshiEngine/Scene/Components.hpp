@@ -51,6 +51,7 @@ struct SkeletalComponent {
 };
 
 struct MaterialComponent {
+    bool isGlass = false;
     std::shared_ptr<Material> material;
     MaterialComponent() = default;
     explicit MaterialComponent(std::shared_ptr<Material> m) : material(std::move(m)) {}

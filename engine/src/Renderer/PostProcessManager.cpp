@@ -89,6 +89,12 @@ void PostProcessManager::Init() {
             s_normalRough = bgfx::createUniform("s_normalRough", bgfx::UniformType::Sampler);
             s_worldPos    = bgfx::createUniform("s_worldPos",    bgfx::UniformType::Sampler);
             spdlog::info("[PP] lighting program loaded");
+        bgfx::ShaderHandle vsS = LoadBinShader("shaders/vs_fullscreen.bin");
+        bgfx::ShaderHandle fsS = LoadBinShader("shaders/fs_ssr.bin");
+        if (bgfx::isValid(vsS) && bgfx::isValid(fsS)) {
+            m_ssrProg = bgfx::createProgram(vsS, fsS, true);
+            spdlog::info("[PP] SSR program loaded");
+        }
         } else {
             spdlog::warn("[PP] fs_lighting.bin missing — deferred disabled");
         }
@@ -133,10 +139,13 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
     if (bgfx::isValid(m_outputFbo) && m_width == w && m_height == h) return;
     if (bgfx::isValid(m_outputFbo))   bgfx::destroy(m_outputFbo);
     if (bgfx::isValid(m_outputColor)) bgfx::destroy(m_outputColor);
+    if (bgfx::isValid(m_outputDepth)) bgfx::destroy(m_outputDepth);
 
     const uint64_t flags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
     m_outputColor = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
-    m_outputFbo   = bgfx::createFrameBuffer(1, &m_outputColor, false);
+    m_outputDepth = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::D24S8, flags);
+    bgfx::TextureHandle att[] = { m_outputColor, m_outputDepth };
+    m_outputFbo   = bgfx::createFrameBuffer(2, att, false);
     m_width = w; m_height = h;
 }
 
@@ -191,6 +200,29 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::setIndexBuffer(m_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId, m_lightingProg);
+    return m_outputColor;
+}
+
+bgfx::TextureHandle PostProcessManager::RenderSSR(bgfx::TextureHandle color, bgfx::TextureHandle normal, bgfx::TextureHandle depth, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
+    if (!bgfx::isValid(m_ssrProg)) return color;
+    EnsureOutputFbo(width, height);
+    
+    // Use a temporary FBO for SSR? For now, just render to main output.
+    bgfx::setViewFrameBuffer(viewId, m_outputFbo);
+    bgfx::setViewRect(viewId, 0, 0, width, height);
+    
+    static bgfx::UniformHandle s_c = bgfx::createUniform("s_color", bgfx::UniformType::Sampler);
+    static bgfx::UniformHandle s_n = bgfx::createUniform("s_normalRough", bgfx::UniformType::Sampler);
+    static bgfx::UniformHandle s_d = bgfx::createUniform("s_depth", bgfx::UniformType::Sampler);
+    
+    bgfx::setTexture(0, s_c, color);
+    bgfx::setTexture(1, s_n, normal);
+    bgfx::setTexture(2, s_d, depth);
+    
+    bgfx::setVertexBuffer(0, m_vbh);
+    bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+    bgfx::submit(viewId, m_ssrProg);
     return m_outputColor;
 }
 } // namespace Galeshi

@@ -192,6 +192,7 @@ protected:
             if (ImGui::IsKeyDown(ImGuiKey_DownArrow))  m_editor.camTarget += forward * panSpeed;
             if (ImGui::IsKeyDown(ImGuiKey_LeftArrow))  m_editor.camTarget -= right * panSpeed;
             if (ImGui::IsKeyDown(ImGuiKey_RightArrow)) m_editor.camTarget += right * panSpeed;
+            
         }
 
         const float aspect = m_viewportH ? static_cast<float>(m_viewportW) / m_viewportH : 16.0f / 9.0f;
@@ -299,7 +300,24 @@ private:
         ImGui::Text("|");
         ImGui::SameLine();
 
-        if (ImGui::BeginMenu("File")) {
+                if (ImGui::BeginMenu("Post-Process")) {
+            bool inv = m_postProcess.InvertEnabled();
+            if (ImGui::MenuItem("Invert Colors", nullptr, &inv)) m_postProcess.SetInvertEnabled(inv);
+            bool fxaa = m_postProcess.FxaaEnabled();
+            if (ImGui::MenuItem("FXAA", nullptr, &fxaa)) m_postProcess.SetFxaaEnabled(fxaa);
+            bool ssr = m_postProcess.SsrEnabled();
+            if (ImGui::MenuItem("SSR", nullptr, &ssr)) m_postProcess.SetSsrEnabled(ssr);
+            bool def = m_render->DeferredEnabled();
+            if (ImGui::MenuItem("Deferred", nullptr, &def)) m_render->SetDeferredEnabled(def);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Reset All Effects")) {
+                m_postProcess.SetInvertEnabled(false);
+                m_postProcess.SetFxaaEnabled(false);
+                m_postProcess.SetSsrEnabled(false);
+            }
+            ImGui::EndMenu();
+        }
+if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Import Model...", "Ctrl+I")) OpenFileDialog();
             if (ImGui::MenuItem("Load Scene", "Ctrl+O")) LoadScene();
                 if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveScene();
@@ -510,6 +528,8 @@ private:
     void DrawViewport() {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::Begin("Viewport");
+        m_viewportHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+        ImGui::PopStyleVar();
 
         const ImVec2 avail = ImGui::GetContentRegionAvail();
         const uint16_t w = static_cast<uint16_t>(avail.x);
@@ -542,6 +562,7 @@ private:
                 }
                 glm::vec3 cp = m_camera.Position();
                 float camPos[4] = {cp.x, cp.y, cp.z, 1.0f};
+                // Переводим направление света в пространство камеры (View Space)
                 float lDirA[4]  = {ldir.x, ldir.y, ldir.z, 0.0f};
                 float lColA[4]  = {lcol.r, lcol.g, lcol.b, lint};
                 m_postProcess.RenderLighting(
@@ -549,8 +570,16 @@ private:
                     m_framebuffer->Normal(),
                     m_framebuffer->WorldPos(),
                     camPos, lDirA, lColA, 2, w, h);
+                
             } else {
                 m_postProcess.Render(2, m_framebuffer->Color(), w, h);
+            }
+            
+            // Forward Pass для стекла (рисуется поверх)
+            if (m_postProcess.OutputFbo().idx != bgfx::kInvalidHandle) {
+                bgfx::setViewClear(4, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
+                bgfx::setViewFrameBuffer(4, m_postProcess.OutputFbo());
+                m_render->RenderGlass(m_scene, m_camera, 4, w, h);
             }
         }
 
@@ -585,7 +614,10 @@ private:
                 m_debug->AddBox(tc.position, tc.scale + glm::vec3(0.1f), {1, 1, 0, 1});
             }
             
-            m_debug->Render(m_camera, 1, w, h);
+            if (m_postProcess.OutputFbo().idx != bgfx::kInvalidHandle) {
+                bgfx::setViewFrameBuffer(5, m_postProcess.OutputFbo());
+                m_debug->Render(m_camera, 5, w, h);
+            }
         }
 
         if (m_framebuffer && bgfx::isValid(m_framebuffer->Color())) {
@@ -593,206 +625,96 @@ private:
             bgfx::TextureHandle __disp = bgfx::isValid(__ppTex)
                 ? __ppTex : m_framebuffer->Color();
             ImTextureID texId = static_cast<ImTextureID>(__disp.idx);
-            // P2: post-process toggle (inline, above viewport image)
-            {
-                bool __inv = m_postProcess.InvertEnabled();
-                if (ImGui::Checkbox("Invert Colors", &__inv))
-                    m_postProcess.SetInvertEnabled(__inv);
-                bool __def = m_render->DeferredEnabled();
-                if (ImGui::Checkbox("Deferred", &__def))
-                    m_render->SetDeferredEnabled(__def);
-                bool __fxaa = m_postProcess.FxaaEnabled();
-                if (ImGui::Checkbox("FXAA", &__fxaa))
-                    m_postProcess.SetFxaaEnabled(__fxaa);
-                ImGui::SameLine();
-                if (ImGui::Button("Reset Effects"))
-                    m_postProcess.SetInvertEnabled(false);
-                ImGui::Separator();
-            }
-            ImGui::Image(texId, ImVec2(static_cast<float>(w), static_cast<float>(h)),
-                         ImVec2(0, 0), ImVec2(1, 1));
-        }
+            ImGui::Image(texId, ImVec2(static_cast<float>(w), static_cast<float>(h)), ImVec2(0, 0), ImVec2(1, 1));
+            ImVec2 imgMin = ImGui::GetItemRectMin();
+            ImVec2 imgMax = ImGui::GetItemRectMax();
 
-        m_viewportHovered = ImGui::IsItemHovered();
-        const ImVec2 vpPos  = ImGui::GetItemRectMin();
-        const ImVec2 vpSize = ImGui::GetItemRectSize();
+            // --- 1. ЛКМ Выделение (Raycast по AABB) ---
+            if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsOver()) {
+                ImVec2 mouse = ImGui::GetMousePos();
+                float mx = mouse.x - imgMin.x;
+                float my = mouse.y - imgMin.y;
+                float ndcX = (mx / w) * 2.0f - 1.0f;
+                float ndcY = 1.0f - (my / h) * 2.0f;
 
-        // Left-click Picking / Sculpting
-        if (m_viewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !m_editor.GizmoLocked()) {
-            Galeshi::Entity sel = m_editor.Selected(&m_scene);
-            if (sel && sel.HasComponent<Galeshi::NavAgentComponent>()) {
-                const ImVec2 mouse = ImGui::GetIO().MousePos;
-                auto ray = Galeshi::ScreenPointToRay(m_camera, mouse.x, mouse.y, vpPos.x, vpPos.y, vpSize.x, vpSize.y);
-                glm::vec3 hit;
-                if (Galeshi::IntersectPlaneY(ray, 0.0f, hit)) {
-                    auto& agent = sel.GetComponent<Galeshi::NavAgentComponent>();
-                    m_navSystem->FindPath(sel.GetComponent<Galeshi::TransformComponent>().position, hit, agent.path);
-                    agent.currentWaypoint = 0;
-                }
-            }
-        }
+                glm::mat4 invVP = glm::inverse(m_camera.Projection() * m_camera.View());
+                glm::vec4 rayStart = invVP * glm::vec4(ndcX, ndcY, -1.0f, 1.0f);
+                glm::vec4 rayEnd   = invVP * glm::vec4(ndcX, ndcY,  1.0f, 1.0f);
+                rayStart /= rayStart.w; rayEnd /= rayEnd.w;
+                
+                glm::vec3 rayDir = glm::normalize(glm::vec3(rayEnd - rayStart));
+                glm::vec3 rayOrigin = glm::vec3(rayStart);
 
-        if (m_viewportHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_editor.GizmoLocked()) {
-            const ImVec2 mouse = ImGui::GetIO().MousePos;
-            auto ray = Galeshi::ScreenPointToRay(m_camera, mouse.x, mouse.y, vpPos.x, vpPos.y, vpSize.x, vpSize.y);
+                Galeshi::Entity bestHit;
+                float bestDist = 99999.0f;
 
-            if (m_editor.toolMode == Galeshi::EditorState::ToolMode::Raise) {
-                auto& reg = m_scene.Registry();
-                auto view = reg.view<Galeshi::LandscapeComponent>();
+                auto view = m_scene.Registry().view<Galeshi::TransformComponent>();
                 for (auto e : view) {
-                    auto& lc = view.get<Galeshi::LandscapeComponent>(e);
-                    auto& mc = reg.get<Galeshi::MeshComponent>(e);
+                    auto& tc = view.get<Galeshi::TransformComponent>(e);
+                    // Простейший Ray-AABB
+                    glm::vec3 minB = tc.position - tc.scale * 0.5f;
+                    glm::vec3 maxB = tc.position + tc.scale * 0.5f;
                     
-                    glm::vec3 hit;
-                    if (Galeshi::IntersectPlaneY(ray, 0.0f, hit)) {
-                        int gx = static_cast<int>((hit.x / lc.scale) + static_cast<float>(lc.sizeX) / 2.0f);
-                        int gz = static_cast<int>((hit.z / lc.scale) + static_cast<float>(lc.sizeZ) / 2.0f);
-                        for (int dz = -2; dz <= 2; ++dz) {
-                            for (int dx = -2; dx <= 2; ++dx) {
-                                int nx = gx + dx, nz = gz + dz;
-                                if (nx >= 0 && nx < lc.sizeX && nz >= 0 && nz < lc.sizeZ) {
-                                    lc.heights[nz * lc.sizeX + nx] += 0.5f;
-                                }
-                            }
-                        }
-                        Galeshi::LandscapeMesh::Rebuild(lc, *mc.mesh);
+                    float tmin = (minB.x - rayOrigin.x) / rayDir.x;
+                    float tmax = (maxB.x - rayOrigin.x) / rayDir.x;
+                    if (tmin > tmax) std::swap(tmin, tmax);
+                    
+                    float tymin = (minB.y - rayOrigin.y) / rayDir.y;
+                    float tymax = (maxB.y - rayOrigin.y) / rayDir.y;
+                    if (tymin > tymax) std::swap(tymin, tymax);
+                    
+                    if ((tmin > tymax) || (tymin > tmax)) continue;
+                    if (tymin > tmin) tmin = tymin;
+                    if (tymax < tmax) tmax = tymax;
+                    
+                    float tzmin = (minB.z - rayOrigin.z) / rayDir.z;
+                    float tzmax = (maxB.z - rayOrigin.z) / rayDir.z;
+                    if (tzmin > tzmax) std::swap(tzmin, tzmax);
+                    
+                    if ((tmin > tzmax) || (tzmin > tmax)) continue;
+                    if (tzmin > tmin) tmin = tzmin;
+                    if (tzmax < tmax) tmax = tzmax;
+
+                    if (tmax < 0) continue; // За спиной
+                    
+                    if (tmin < bestDist) {
+                        bestDist = tmin;
+                        bestHit = Galeshi::Entity(e, &m_scene);
                     }
                 }
-            } else {
-                auto picked = PickEntity(ray);
-                if (picked) {
-                    if (ImGui::GetIO().KeyCtrl) m_editor.AddToSelection(picked);
-                    else                        m_editor.Select(picked);
-                } else {
-                    if (!ImGui::GetIO().KeyCtrl) m_editor.ClearSelection();
+
+                if (bestHit) m_editor.Select(bestHit);
+                else m_editor.ClearSelection();
+            }
+
+            // --- 2. ImGuizmo (Манипулятор) ---
+            Galeshi::Entity sel = m_editor.Selected(&m_scene);
+            if (sel && sel.HasComponent<Galeshi::TransformComponent>()) {
+                ImGuizmo::SetDrawlist();
+                ImGuizmo::SetRect(imgMin.x, imgMin.y, w, h);
+                
+                glm::mat4 viewMat = m_camera.View();
+                glm::mat4 projMat = m_camera.Projection();
+                auto& tc = sel.GetComponent<Galeshi::TransformComponent>();
+                glm::mat4 model = tc.LocalMatrix();
+
+                ImGuizmo::OPERATION op = ImGuizmo::TRANSLATE;
+                if (m_editor.Mode() == Galeshi::GizmoMode::Rotate) op = ImGuizmo::ROTATE;
+                if (m_editor.Mode() == Galeshi::GizmoMode::Scale)  op = ImGuizmo::SCALE;
+
+                ImGuizmo::Manipulate(glm::value_ptr(viewMat), glm::value_ptr(projMat), op, ImGuizmo::LOCAL, glm::value_ptr(model));
+
+                if (ImGuizmo::IsUsing()) {
+                    float translation[3], rotation[3], scale[3];
+                    ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(model), translation, rotation, scale);
+                    tc.position = glm::vec3(translation[0], translation[1], translation[2]);
+                    tc.rotation = glm::quat(glm::radians(glm::vec3(rotation[0], rotation[1], rotation[2])));
+                    tc.scale = glm::vec3(scale[0], scale[1], scale[2]);
                 }
             }
-        }
 
-        // Drag-n-drop
-        if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
-                const char* assetPath = static_cast<const char*>(payload->Data);
-                const ImVec2 mouse = ImGui::GetIO().MousePos;
-                auto ray = Galeshi::ScreenPointToRay(m_camera, mouse.x, mouse.y, vpPos.x, vpPos.y, vpSize.x, vpSize.y);
-                glm::vec3 hit{0.0f};
-                if (!Galeshi::IntersectPlaneY(ray, 0.0f, hit)) hit = m_editor.camTarget;
-                OnAssetDropped(assetPath, hit);
-            }
-            ImGui::EndDragDropTarget();
-        }
+            
 
-        Galeshi::Entity sel = m_editor.Selected(&m_scene);
-        if (sel && sel.HasComponent<Galeshi::TransformComponent>()) DrawGizmo(sel, vpPos, vpSize);
-
-        ImGui::SetCursorPos(ImVec2(10, 10));
-        ImGui::Text("GaleshiEngine - Stage 4 | FPS: %.1f", static_cast<double>(ImGui::GetIO().Framerate));
-
-        ImGui::End();
-        ImGui::PopStyleVar();
-    }
-
-    void DrawGizmo(Galeshi::Entity sel, const ImVec2& vpPos, const ImVec2& vpSize) {
-        auto& tc = sel.GetComponent<Galeshi::TransformComponent>();
-        ImGuizmo::SetOrthographic(false);
-        ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
-        ImGuizmo::SetRect(vpPos.x, vpPos.y, vpSize.x, vpSize.y);
-        glm::mat4 model = tc.LocalMatrix();
-        
-        ImGuizmo::OPERATION op = ImGuizmo::TRANSLATE;
-        if (m_editor.Mode() == Galeshi::GizmoMode::Rotate) op = ImGuizmo::ROTATE;
-        else if (m_editor.Mode() == Galeshi::GizmoMode::Scale) op = ImGuizmo::SCALE;
-
-        ImGui::PushClipRect(ImVec2(vpPos.x, vpPos.y), ImVec2(vpPos.x + vpSize.x, vpPos.y + vpSize.y), true);
-        ImGuizmo::Manipulate(glm::value_ptr(m_camera.View()), glm::value_ptr(m_camera.Projection()), op, ImGuizmo::LOCAL, glm::value_ptr(model));
-        ImGui::PopClipRect();
-
-        m_editor.SetGizmoLocked(ImGuizmo::IsUsing() || ImGuizmo::IsOver());
-
-        if (ImGuizmo::IsUsing()) {
-            glm::vec3 t, r, s;
-            ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(model), glm::value_ptr(t), glm::value_ptr(r), glm::value_ptr(s));
-            const glm::vec3 deltaT = t - tc.position;
-            const glm::vec3 deltaS = s - tc.scale;
-
-            auto all = m_editor.SelectedAll(&m_scene);
-            for (auto e : all) {
-                if (!e.HasComponent<Galeshi::TransformComponent>()) continue;
-                auto& etc = e.GetComponent<Galeshi::TransformComponent>();
-                if (e == sel) {
-                    etc.position = t;
-                    etc.rotation = glm::quat(glm::radians(r));
-                    etc.scale    = s;
-                } else if (m_editor.Mode() == Galeshi::GizmoMode::Translate) {
-                    etc.position += deltaT;
-                } else if (m_editor.Mode() == Galeshi::GizmoMode::Scale) {
-                    etc.scale += deltaS;
-                }
-            }
-        }
-    }
-
-    Galeshi::Entity PickEntity(const Galeshi::Ray& worldRay) {
-        Galeshi::Entity best{};
-        float bestT = std::numeric_limits<float>::max();
-        auto view = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::MeshComponent>();
-        for (auto h : view) {
-            const auto& tc = view.get<Galeshi::TransformComponent>(h);
-            const auto& mc = view.get<Galeshi::MeshComponent>(h);
-            if (!mc.mesh || !mc.mesh->Valid()) continue;
-            const glm::mat4 M = tc.LocalMatrix();
-            const glm::mat4 Minv = glm::inverse(M);
-            const glm::vec3 localOrigin = glm::vec3(Minv * glm::vec4(worldRay.origin, 1.0f));
-            const glm::vec3 localDir    = glm::vec3(Minv * glm::vec4(worldRay.direction, 0.0f));
-            float tLocal = 0.0f;
-            if (!Galeshi::IntersectMesh(localOrigin, localDir, *mc.mesh, tLocal)) continue;
-            const glm::vec3 hitWorld = glm::vec3(M * glm::vec4(localOrigin + localDir * tLocal, 1.0f));
-            const float distWorld = glm::length(hitWorld - worldRay.origin);
-            if (distWorld < bestT) {
-                bestT = distWorld;
-                best  = Galeshi::Entity{ h, &m_scene };
-            }
-        }
-        if (best && best.HasComponent<Galeshi::ParentComponent>()) {
-            entt::entity p = best.GetComponent<Galeshi::ParentComponent>().parent;
-            if (p != entt::null) best = Galeshi::Entity{ p, &m_scene };
-        }
-        return best;
-    }
-
-    // -------------------------------------------------------------------
-    // Outliner
-    // -------------------------------------------------------------------
-    void DrawEntityNode(Galeshi::Entity e) {
-        bool isSelected = m_editor.IsSelected(e);
-        auto& nc = e.GetComponent<Galeshi::NameComponent>();
-        std::vector<Galeshi::Entity> children;
-        auto view = m_scene.Registry().view<Galeshi::ParentComponent>();
-        for (auto h : view) {
-            if (view.get<Galeshi::ParentComponent>(h).parent == e.Handle()) children.emplace_back(h, &m_scene);
-        }
-        ImGuiTreeNodeFlags flags = ((isSelected) ? ImGuiTreeNodeFlags_Selected : 0) | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
-        if (children.empty()) flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-
-        bool opened = ImGui::TreeNodeEx((void*)(uintptr_t)e.Handle(), flags, "%s", nc.name.c_str());
-        if (ImGui::IsItemClicked()) {
-            if (ImGui::GetIO().KeyCtrl) { if (isSelected) m_editor.RemoveFromSelection(e); else m_editor.AddToSelection(e); }
-            else { m_editor.Select(e); }
-        }
-        if (opened && !children.empty()) {
-            for (auto c : children) DrawEntityNode(c);
-            ImGui::TreePop();
-        }
-    }
-
-    void DrawOutliner() {
-        ImGui::Begin("World Outliner");
-        auto entities = m_scene.AllEntities();
-        for (auto& e : entities) if (!e.HasComponent<Galeshi::ParentComponent>()) DrawEntityNode(e);
-        if (ImGui::BeginPopupContextWindow("outliner_ctx")) {
-            if (ImGui::MenuItem("Create Empty")) m_editor.Select(m_scene.CreateEntity("New Entity"));
-            if (ImGui::MenuItem("Delete Selected") && m_editor.HasSelection()) DeleteSelected();
-            ImGui::EndPopup();
         }
         ImGui::End();
     }
@@ -839,7 +761,23 @@ private:
         ImGui::PopID();
     }
 
-    void DrawDetails() {
+        void DrawOutliner() {
+        ImGui::Begin("World Outliner");
+        auto entities = m_scene.AllEntities();
+        for (auto e : entities) {
+            std::string name = "Entity " + std::to_string((uint32_t)e.Handle());
+            if (e.HasComponent<Galeshi::NameComponent>()) {
+                name = e.GetComponent<Galeshi::NameComponent>().name;
+            }
+            bool isSelected = m_editor.IsSelected(e);
+            if (ImGui::Selectable(name.c_str(), isSelected)) {
+                m_editor.Select(e);
+            }
+        }
+        ImGui::End();
+    }
+
+void DrawDetails() {
         ImGui::Begin("Details");
         auto selected = m_editor.SelectedAll(&m_scene);
         if (selected.empty()) { ImGui::TextDisabled("No selection"); ImGui::End(); return; }
@@ -910,6 +848,7 @@ private:
                 auto& m = *matc.material;
                 ImGui::ColorEdit4("Albedo Factor", glm::value_ptr(m.albedoFactor));
                 ImGui::SliderFloat("Metallic Factor",  &m.metallicFactor,  0.0f, 1.0f);
+                ImGui::Checkbox("Glass (Transparent)", &matc.material->isGlass);
                 ImGui::SliderFloat("Roughness Factor", &m.roughnessFactor, 0.04f, 1.0f);
                 ImGui::ColorEdit3("Emissive", glm::value_ptr(m.emissiveFactor));
 

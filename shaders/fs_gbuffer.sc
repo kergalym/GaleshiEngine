@@ -5,6 +5,7 @@ SAMPLER2D(s_metallicRoughnessMap, 1);
 uniform vec4 u_albedoFactor;
 uniform vec4 u_metallicFactor;
 uniform vec4 u_roughnessFactor;
+
 void main()
 {
     vec4 a  = texture2D(s_albedoMap, v_uv);
@@ -14,8 +15,8 @@ void main()
     float rough    = mr.g * u_roughnessFactor.r;
     vec3 N = normalize(v_normal);
 
-    gl_FragData[0] = vec4(albedo, metallic);
-    gl_FragData[1] = vec4(N * 0.5 + 0.5, rough);
-    gl_FragData[2] = vec4(v_worldPos, 1.0);
-    gl_FragData[3] = vec4(0.0);   // some bgfx versions need explicit padding
+    gl_FragData[0] = vec4(albedo, metallic);           // RT0
+    gl_FragData[1] = vec4(N * 0.5 + 0.5, rough);       // RT1
+    gl_FragData[2] = vec4(v_worldPos, 1.0);            // RT2
+    gl_FragData[3] = vec4(0.0);                        // Padding
 }
