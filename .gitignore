@@ -25,6 +25,7 @@ imgui.ini
 *.log
 *.bak
 *.bak.*
+*.broken.*
 *.py
 *.chroma_db/
 .venv/
