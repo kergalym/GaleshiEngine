@@ -748,10 +748,27 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 auto view = m_scene.Registry().view<Galeshi::TransformComponent>();
                 for (auto e : view) {
                     auto& tc = view.get<Galeshi::TransformComponent>(e);
-                    // Простейший Ray-AABB
-                    glm::vec3 minB = tc.position - tc.scale * 0.5f;
-                    glm::vec3 maxB = tc.position + tc.scale * 0.5f;
                     
+                    // 1. Вычисляем МИРОВУЮ позицию (проходим вверх по родителям)
+                    glm::vec3 worldPos = tc.position;
+                    entt::entity curr = e;
+                    while (m_scene.Registry().all_of<Galeshi::ParentComponent>(curr)) {
+                        curr = m_scene.Registry().get<Galeshi::ParentComponent>(curr).parent;
+                        if (m_scene.Registry().all_of<Galeshi::TransformComponent>(curr)) {
+                            worldPos += m_scene.Registry().get<Galeshi::TransformComponent>(curr).position;
+                        }
+                    }
+
+                    // 2. Увеличиваем коробку для скелетных моделей
+                    float size = 0.5f;
+                    if (m_scene.Registry().all_of<Galeshi::SkeletalComponent>(curr)) {
+                        size = 1.5f; // Персонажи обычно больше кубов
+                    }
+
+                    glm::vec3 minB = worldPos - glm::vec3(size);
+                    glm::vec3 maxB = worldPos + glm::vec3(size);
+                    
+                    // 3. Ray-AABB
                     float tmin = (minB.x - rayOrigin.x) / rayDir.x;
                     float tmax = (maxB.x - rayOrigin.x) / rayDir.x;
                     if (tmin > tmax) std::swap(tmin, tmax);
@@ -776,7 +793,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     
                     if (tmin < bestDist) {
                         bestDist = tmin;
-                        bestHit = Galeshi::Entity(e, &m_scene);
+                        bestHit = Galeshi::Entity(curr, &m_scene); // Выделяем корень, а не кость
                     }
                 }
 
@@ -862,9 +879,14 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
         ImGui::Begin("World Outliner");
         auto entities = m_scene.AllEntities();
         for (auto e : entities) {
+            // Скрываем субмеши (объекты с родителем) из общего списка
+            if (e.HasComponent<Galeshi::ParentComponent>()) continue;
             std::string name = "Entity " + std::to_string((uint32_t)e.Handle());
             if (e.HasComponent<Galeshi::NameComponent>()) {
                 name = e.GetComponent<Galeshi::NameComponent>().name;
+            }
+            if (e.HasComponent<Galeshi::SkeletalComponent>()) {
+                name = "[Skeletal] " + name; // Пометка для скелетных моделей
             }
             bool isSelected = m_editor.IsSelected(e);
             if (ImGui::Selectable(name.c_str(), isSelected)) {
