@@ -308,6 +308,20 @@ void EnginePhysicsSystem::UpdateSoftBodies(Scene& scene) {
     (void)scene;
 }
 
+void EnginePhysicsSystem::SetBodyTransform(uint32_t bodyId, const glm::vec3& position, const glm::quat& rotation) {
+    if (!m_impl->initialized || bodyId == 0xFFFFFFFF) return;
+    JPH::BodyID id(bodyId);
+    if (!m_impl->bodyInterface->IsAdded(id)) return;
+    
+    // Jolt использует XYZW для quat, glm использует WXYZ.
+    JPH::Quat joltRot(rotation.x, rotation.y, rotation.z, rotation.w);
+    JPH::RVec3 joltPos(position.x, position.y, position.z);
+    
+    // Телепортируем тело (отключаем сон, чтобы оно не висело в воздухе, если его разбудили)
+    m_impl->bodyInterface->SetPositionAndRotation(id, joltPos, joltRot, JPH::EActivation::Activate);
+    m_impl->bodyInterface->SetLinearAndAngularVelocity(id, JPH::Vec3::sZero(), JPH::Vec3::sZero());
+}
+
 void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene) {
     if (!m_impl->initialized) return;
     auto& reg = scene.Registry();

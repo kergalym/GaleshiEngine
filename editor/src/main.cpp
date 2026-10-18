@@ -222,7 +222,7 @@ protected:
         DrawMainMenuBar();
 
         // Hotkeys
-        if (!ImGui::GetIO().WantTextInput) {
+        if (!ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive()) {
             if (ImGui::IsKeyPressed(ImGuiKey_W)) m_editor.SetMode(Galeshi::GizmoMode::Translate);
             if (ImGui::IsKeyPressed(ImGuiKey_E)) m_editor.SetMode(Galeshi::GizmoMode::Rotate);
             if (ImGui::IsKeyPressed(ImGuiKey_R)) m_editor.SetMode(Galeshi::GizmoMode::Scale);
@@ -761,8 +761,123 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             ImVec2 imgMin = ImGui::GetItemRectMin();
             ImVec2 imgMax = ImGui::GetItemRectMax();
 
-            // --- 1. ЛКМ Выделение (Raycast по AABB) ---
-            if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGuizmo::IsOver()) {
+            // --- 1. Drag (только ЛКМ, screen-space, без стрелок W/E/R) ---
+            Galeshi::Entity sel = m_editor.Selected(&m_scene);
+            const bool selHasTf = sel && sel.HasComponent<Galeshi::TransformComponent>();
+
+            // World position of the selected object (walk up parents)
+            glm::vec3 selWorldPos{0.0f};
+            if (selHasTf) {
+                selWorldPos = sel.GetComponent<Galeshi::TransformComponent>().position;
+                entt::entity curr = sel.Handle();
+                while (m_scene.Registry().all_of<Galeshi::ParentComponent>(curr)) {
+                    curr = m_scene.Registry().get<Galeshi::ParentComponent>(curr).parent;
+                    if (m_scene.Registry().all_of<Galeshi::TransformComponent>(curr))
+                        selWorldPos += m_scene.Registry().get<Galeshi::TransformComponent>(curr).position;
+                }
+            }
+
+            // Project selected object to screen (center hit-test)
+            glm::vec2 selScreen{0.0f, 0.0f};
+            bool selOnScreen = false;
+            if (selHasTf) {
+                glm::vec4 clip = m_camera.Projection() * m_camera.View() * glm::vec4(selWorldPos, 1.0f);
+                if (clip.w > 0.0001f) {
+                    glm::vec3 ndc = glm::vec3(clip) / clip.w;
+                    selScreen.x = imgMin.x + (ndc.x * 0.5f + 0.5f) * static_cast<float>(w);
+                    selScreen.y = imgMin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * static_cast<float>(h);
+                    selOnScreen = true;
+                }
+            }
+
+            // --- Visual gizmo: X/Y/Z arrows drawn, but result IGNORED. ---
+            // Only our LMB drag below is allowed to move the object.
+            // ImGuizmo is invoked purely to render the affordance; the
+            // transformed matrix is discarded and never written back to ECS.
+            if (selHasTf) {
+                ImGuizmo::SetDrawlist();
+                ImGuizmo::SetRect(imgMin.x, imgMin.y, w, h);
+                ImGuizmo::SetGizmoSizeClipSpace(0.12f);
+                glm::mat4 visView  = m_camera.View();
+                glm::mat4 visProj  = m_camera.Projection();
+                auto& tcVis = sel.GetComponent<Galeshi::TransformComponent>();
+                glm::mat4 visModel = tcVis.LocalMatrix();
+                ImGuizmo::Manipulate(glm::value_ptr(visView), glm::value_ptr(visProj),
+                                     ImGuizmo::TRANSLATE, ImGuizmo::LOCAL,
+                                     glm::value_ptr(visModel));
+                // visModel intentionally not applied.
+            }
+
+            const float centerRadiusPx = 24.0f;
+            ImVec2 mouse = ImGui::GetMousePos();
+            const bool overCenter = selOnScreen &&
+                std::hypot(mouse.x - selScreen.x, mouse.y - selScreen.y) < centerRadiusPx;
+
+            // Begin drag on LMB down over center
+            if (ImGui::IsItemHovered() && !m_isDragging &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Left) && overCenter) {
+                m_isDragging = true;
+                m_dragStartMouse = { mouse.x, mouse.y };
+                m_dragStartObjWorld = selWorldPos;
+            }
+
+            // Perform drag while LMB held
+            if (m_isDragging && ImGui::IsMouseDown(ImGuiMouseButton_Left) && selHasTf) {
+                const float dx = mouse.x - m_dragStartMouse.x;
+                const float dy = mouse.y - m_dragStartMouse.y;
+
+                glm::vec3 camPos = m_camera.Position();
+                float dist = glm::length(selWorldPos - camPos);
+                dist = std::max(dist, 0.5f);
+                const float fovY = glm::radians(60.0f);  // matches SetPerspective
+                const float worldPerPx = (2.0f * std::tan(fovY * 0.5f) * dist) /
+                                         static_cast<float>(h);
+
+                glm::mat4 v = m_camera.View();
+                glm::vec3 right = glm::vec3(v[0]);  // view column 0 = camera right (world)
+                glm::vec3 up    = glm::vec3(v[1]);  // view column 1 = camera up    (world)
+
+                glm::vec3 deltaWorld = right * ( dx * worldPerPx)
+                                     + up    * (-dy * worldPerPx);
+                glm::vec3 newWorld = m_dragStartObjWorld + deltaWorld;
+
+                // Convert to local if the object has a parent
+                glm::vec3 parentOffset{0.0f};
+                {
+                    entt::entity curr = sel.Handle();
+                    while (m_scene.Registry().all_of<Galeshi::ParentComponent>(curr)) {
+                        curr = m_scene.Registry().get<Galeshi::ParentComponent>(curr).parent;
+                        if (m_scene.Registry().all_of<Galeshi::TransformComponent>(curr))
+                            parentOffset += m_scene.Registry().get<Galeshi::TransformComponent>(curr).position;
+                    }
+                }
+
+                auto& tcSel = sel.GetComponent<Galeshi::TransformComponent>();
+                tcSel.position = newWorld - parentOffset;
+
+                if (sel.HasComponent<Galeshi::RigidBodyComponent>()) {
+                    auto& rb = sel.GetComponent<Galeshi::RigidBodyComponent>();
+                    if (rb.bodyId != 0xFFFFFFFF)
+                        m_physics->SetBodyTransform(rb.bodyId, tcSel.position, tcSel.rotation);
+                }
+            }
+
+            if (m_isDragging && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                m_isDragging = false;
+                PushHistory();
+            }
+
+            // Center hint circle (drag affordance)
+            if (selOnScreen) {
+                ImU32 hintColor = overCenter ? IM_COL32(255, 220, 40, 220)
+                                             : IM_COL32(255, 255, 255, 110);
+                ImGui::GetWindowDrawList()->AddCircle(
+                    ImVec2(selScreen.x, selScreen.y),
+                    centerRadiusPx * 0.5f, hintColor, 24, 2.0f);
+            }
+
+            // --- 2. ЛКМ Выделение (Raycast по AABB) ---
+            if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_isDragging && !overCenter && !ImGuizmo::IsOver()) {
                 ImVec2 mouse = ImGui::GetMousePos();
                 float mx = mouse.x - imgMin.x;
                 float my = mouse.y - imgMin.y;
@@ -836,35 +951,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 else m_editor.ClearSelection();
             }
 
-            // --- 2. ImGuizmo (Манипулятор) ---
-            Galeshi::Entity sel = m_editor.Selected(&m_scene);
-            if (sel && sel.HasComponent<Galeshi::TransformComponent>()) {
-                ImGuizmo::SetDrawlist();
-                ImGuizmo::SetRect(imgMin.x, imgMin.y, w, h);
-                
-                glm::mat4 viewMat = m_camera.View();
-                glm::mat4 projMat = m_camera.Projection();
-                auto& tc = sel.GetComponent<Galeshi::TransformComponent>();
-                glm::mat4 model = tc.LocalMatrix();
-
-                ImGuizmo::OPERATION op = ImGuizmo::TRANSLATE;
-                if (m_editor.Mode() == Galeshi::GizmoMode::Rotate) op = ImGuizmo::ROTATE;
-                if (m_editor.Mode() == Galeshi::GizmoMode::Scale)  op = ImGuizmo::SCALE;
-
-                ImGuizmo::Manipulate(glm::value_ptr(viewMat), glm::value_ptr(projMat), op, ImGuizmo::LOCAL, glm::value_ptr(model));
-
-                if (ImGuizmo::IsUsing()) {
-                    float translation[3], rotation[3], scale[3];
-                    ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(model), translation, rotation, scale);
-                    tc.position = glm::vec3(translation[0], translation[1], translation[2]);
-                    tc.rotation = glm::quat(glm::radians(glm::vec3(rotation[0], rotation[1], rotation[2])));
-                    tc.scale = glm::vec3(scale[0], scale[1], scale[2]);
-                }
-            }
-
-            
-
-        }
+                    }
         ImGui::End();
     }
 
@@ -1293,6 +1380,11 @@ void DrawDetails() {
     int  m_historyIndex = -1;
     bool m_isRestoringHistory = false;
     bool m_wasUsingGizmo = false;
+
+    // Screen-space translate drag (LMB-only, no W/E/R arrows)
+    bool      m_isDragging = false;
+    glm::vec2 m_dragStartMouse{0.0f, 0.0f};
+    glm::vec3 m_dragStartObjWorld{0.0f};
 };
 
 int main(int, char**) {
