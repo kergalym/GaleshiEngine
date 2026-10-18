@@ -47,9 +47,9 @@ class GaleshiEditorApp final : public Galeshi::Application {
     Galeshi::PostProcessManager m_postProcess;
 
 public:
-    GaleshiEditorApp()
+    explicit GaleshiEditorApp(bool debugMode)
         : Galeshi::Application({
-              .name = "GaleshiEditor", .width = 1600, .height = 900, .editor = true}) {}
+              .name = "GaleshiEditor", .width = 1600, .height = 900, .editor = true, .debug = debugMode}) {}
 
 protected:
     // -------------------------------------------------------------------
@@ -690,9 +690,22 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     2, w, h);
 
 
-// SSAO temporarily disabled
-
-                // SSR temporarily disabled
+                if (m_postProcess.SsaoEnabled()) {
+                    bgfx::TextureHandle depth = m_framebuffer->Depth();
+                    bgfx::TextureHandle normal = m_framebuffer->Normal();
+                    bgfx::TextureHandle color = m_postProcess.OutputTexture();
+                    m_postProcess.RenderSSAO(color, depth, normal,
+                        m_postProcess.PingFbo(), proj, invProj, 3, w, h);
+                    m_postProcess.SwapFbos();
+                }
+                if (m_postProcess.SsrEnabled()) {
+                    bgfx::TextureHandle depth = m_framebuffer->Depth();
+                    bgfx::TextureHandle normal = m_framebuffer->Normal();
+                    bgfx::TextureHandle color = m_postProcess.OutputTexture();
+                    m_postProcess.RenderSSR(color, normal, depth,
+                        m_postProcess.PingFbo(), invProj, camPos, 3, w, h);
+                    m_postProcess.SwapFbos();
+                }
 
                 if (m_postProcess.FxaaEnabled()) {
                     m_postProcess.RenderFxaa(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 3, w, h);
@@ -756,6 +769,11 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             bgfx::TextureHandle __ppTex = m_postProcess.OutputTexture();
             bgfx::TextureHandle __disp = bgfx::isValid(__ppTex)
                 ? __ppTex : m_framebuffer->Color();
+            // Force a blit to a BLIT_DST texture to ensure correct image layout for ImGui (Vulkan)
+            if (bgfx::isValid(__ppTex)) {
+                m_postProcess.BlitTexture(__ppTex, m_postProcess.BlitTextureA(), 3);
+                __disp = m_postProcess.BlitTextureA();
+            }
             ImTextureID texId = static_cast<ImTextureID>(__disp.idx);
             ImGui::Image(texId, ImVec2(static_cast<float>(w), static_cast<float>(h)), ImVec2(0, 0), ImVec2(1, 1));
             ImVec2 imgMin = ImGui::GetItemRectMin();
@@ -1387,7 +1405,14 @@ void DrawDetails() {
     glm::vec3 m_dragStartObjWorld{0.0f};
 };
 
-int main(int, char**) {
+int main(int argc, char** argv) {
+    bool debugMode = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--debug") debugMode = true;
+    }
+    if (debugMode) {
+        spdlog::set_level(spdlog::level::debug);
+    }
     // Принудительно небуферизированный stdout — чтобы логи
     // появлялись до любого crash.
     std::setvbuf(stdout, nullptr, _IONBF, 0);
@@ -1398,7 +1423,7 @@ int main(int, char**) {
     // которые падают в deadlock внутри libnvidia-glcore при dlclose.
     // OnShutdown() (в конце Run) уже сохраняет сцену и делает cleanup.
     // OS освободит GPU-ресурсы при завершении процесса.
-    GaleshiEditorApp* app = new GaleshiEditorApp();
+    GaleshiEditorApp* app = new GaleshiEditorApp(debugMode);
     int exitCode = app->Run();
 
     std::fflush(stdout);

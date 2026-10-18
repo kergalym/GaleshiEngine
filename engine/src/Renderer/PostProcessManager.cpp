@@ -165,6 +165,7 @@ void PostProcessManager::Shutdown() {
 
     destroyTex(m_outputColor); destroyTex(m_outputDepth); destroyFbo(m_outputFbo);
     destroyTex(m_pingColor); destroyFbo(m_pingFbo);
+    destroyTex(m_blitDepth);
     m_width = m_height = 0;
 }
 
@@ -177,6 +178,7 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
     if (bgfx::isValid(m_pingColor))   bgfx::destroy(m_pingColor);
     if (bgfx::isValid(m_blitTexA))    bgfx::destroy(m_blitTexA);
     if (bgfx::isValid(m_blitTexB))    bgfx::destroy(m_blitTexB);
+    if (bgfx::isValid(m_blitDepth))   bgfx::destroy(m_blitDepth);
 
     const uint64_t flags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
     m_outputColor = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
@@ -185,7 +187,8 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
     m_outputFbo = bgfx::createFrameBuffer(2, att, false);
 
     m_blitTexA = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags | BGFX_TEXTURE_BLIT_DST);
-    m_blitTexB = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags | BGFX_TEXTURE_BLIT_DST);
+    m_blitTexB = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags | BGFX_TEXTURE_BLIT_DST);
+    m_blitDepth = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::D32F, flags | BGFX_TEXTURE_BLIT_DST);
     m_pingColor = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
     bgfx::TextureHandle pingAtt[] = { m_pingColor };
     m_pingFbo = bgfx::createFrameBuffer(1, pingAtt, false);
@@ -266,9 +269,12 @@ bgfx::TextureHandle PostProcessManager::RenderSSAO(bgfx::TextureHandle color, bg
     if (!bgfx::isValid(m_ssaoProg)) return color;
     bgfx::setViewFrameBuffer(viewId, targetFbo);
     bgfx::setViewRect(viewId, 0, 0, width, height);
-    bgfx::setTexture(0, s_ssaoColor,  color);
-    bgfx::setTexture(1, s_ssaoDepth,  depth);
-    bgfx::setTexture(2, s_ssaoNormal, normal);
+    BlitTexture(color,  m_blitTexA, viewId);
+    BlitTexture(depth,  m_blitDepth, viewId);
+    BlitTexture(normal, m_blitTexB, viewId);
+    bgfx::setTexture(0, s_ssaoColor,  m_blitTexA);
+    bgfx::setTexture(1, s_ssaoDepth,  m_blitDepth);
+    bgfx::setTexture(2, s_ssaoNormal, m_blitTexB);
     bgfx::setUniform(u_ssaoProj,    glm::value_ptr(proj));
     bgfx::setUniform(u_ssaoInvProj, glm::value_ptr(invProj));
     float params[4] = { 0.5f, 0.02f, 1.0f, 0.0f };
@@ -284,9 +290,12 @@ bgfx::TextureHandle PostProcessManager::RenderSSR(bgfx::TextureHandle color, bgf
     if (!bgfx::isValid(m_ssrProg)) return color;
     bgfx::setViewFrameBuffer(viewId, targetFbo);
     bgfx::setViewRect(viewId, 0, 0, width, height);
-    bgfx::setTexture(0, s_ssrColor,  color);
-    bgfx::setTexture(1, s_ssrNormal, normal);
-    bgfx::setTexture(2, s_ssrDepth,  depth);
+    BlitTexture(color,  m_blitTexA, viewId);
+    BlitTexture(normal, m_blitTexB, viewId);
+    BlitTexture(depth,  m_blitDepth, viewId);
+    bgfx::setTexture(0, s_ssrColor,  m_blitTexA);
+    bgfx::setTexture(1, s_ssrNormal, m_blitTexB);
+    bgfx::setTexture(2, s_ssrDepth,  m_blitDepth);
     bgfx::setUniform(u_ssrInvProj, glm::value_ptr(invProj));
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);

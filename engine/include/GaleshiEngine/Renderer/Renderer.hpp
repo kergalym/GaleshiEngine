@@ -12,6 +12,7 @@ struct RendererSpec {
     uint32_t    width  = 1600;
     uint32_t    height = 900;
     bool        vsync  = true;
+    bool        debug  = false;
 };
 
 class Renderer {

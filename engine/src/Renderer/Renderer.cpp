@@ -5,11 +5,41 @@
 #include <bgfx/platform.h>
 #include <bx/math.h>
 #include <spdlog/spdlog.h>
+#include <cstdarg>
+#include <cstdio>
 
 namespace Galeshi {
 
+namespace {
+class EditorBgfxCallback : public bgfx::CallbackI {
+public:
+    bool debug = false;
+    void fatal(const char* _filePath, uint16_t _line, bgfx::Fatal::Enum _error, const char* _format) override {
+        spdlog::critical("[BGFX FATAL] {}:{} - {}", _filePath, _line, _format);
+        abort();
+    }
+    void traceVargs(const char* _filePath, uint16_t _line, const char* _format, va_list _argList) override {
+        if (!debug) return;
+        char buf[4096];
+        vsnprintf(buf, sizeof(buf), _format, _argList);
+        spdlog::debug("[BGFX] {}:{} - {}", _filePath, _line, buf);
+    }
+    void profilerBegin(const char*, uint32_t, const char*, uint16_t) override {}
+    void profilerBeginLiteral(const char*, uint32_t, const char*, uint16_t) override {}
+    void profilerEnd() override {}
+    uint32_t cacheReadSize(uint64_t) override { return 0; }
+    bool cacheRead(uint64_t, void*, uint32_t) override { return false; }
+    void cacheWrite(uint64_t, const void*, uint32_t) override {}
+    void screenShot(const char*, uint32_t, uint32_t, uint32_t, const void*, uint32_t, bool) override {}
+    void captureBegin(uint32_t, uint32_t, uint32_t, bgfx::TextureFormat::Enum, bool) override {}
+    void captureEnd() override {}
+    void captureFrame(const void*, uint32_t) override {}
+};
+} // namespace
+
 struct Renderer::Impl {
     RendererSpec spec{};
+    EditorBgfxCallback callback;
     uint32_t width  = 1600;
     uint32_t height = 900;
     uint32_t resetFlags = BGFX_RESET_NONE;
@@ -48,6 +78,10 @@ bool Renderer::Init(const RendererSpec& spec) {
     bgfx::setPlatformData(pd);
 
     bgfx::Init init{};
+    m_impl->callback.debug = spec.debug;
+    init.callback          = &m_impl->callback;
+    init.debug             = false;   // не загружать RenderDoc
+    init.profile           = false;   // не загружать профилировщик
     init.type              = bgfx::RendererType::Vulkan;
     init.vendorId          = BGFX_PCI_ID_NONE;
     init.platformData      = pd;

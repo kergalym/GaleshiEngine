@@ -12,6 +12,7 @@ struct ApplicationSpec {
     int         width  = 1600;
     int         height = 900;
     bool        editor = false;
+    bool        debug  = false;
 };
 
 class Application {

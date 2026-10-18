@@ -20,6 +20,7 @@ public:
     bgfx::TextureHandle PingTexture() const { return m_pingColor; }
     bgfx::TextureHandle BlitTextureA() const { return m_blitTexA; }
     bgfx::TextureHandle BlitTextureB() const { return m_blitTexB; }
+    bgfx::TextureHandle BlitDepth() const { return m_blitDepth; }
     void BlitTexture(bgfx::TextureHandle src, bgfx::TextureHandle dst, bgfx::ViewId viewId);
     bgfx::FrameBufferHandle PingFbo() const { return m_pingFbo; }
     void SwapFbos();
@@ -96,6 +97,7 @@ private:
     bgfx::TextureHandle     m_pingColor   = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle     m_blitTexA    = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle     m_blitTexB    = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle     m_blitDepth   = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_pingFbo     = BGFX_INVALID_HANDLE;
 
     uint16_t m_width = 0, m_height = 0;

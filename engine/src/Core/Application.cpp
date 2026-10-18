@@ -181,6 +181,7 @@ Application::Application(const ApplicationSpec& spec)
     rspec.window = m_impl->window;
     rspec.width  = static_cast<uint32_t>(spec.width);
     rspec.height = static_cast<uint32_t>(spec.height);
+    rspec.debug  = spec.debug;
     if (!m_impl->renderer->Init(rspec)) {
         spdlog::critical("[Galeshi] Renderer init failed");
         std::abort();
