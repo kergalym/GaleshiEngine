@@ -33,6 +33,7 @@
 #include <glm/gtx/quaternion.hpp>
 #include <bx/math.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -830,7 +831,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             
             // Selection box (вокруг выделенного)
             Galeshi::Entity sel = m_editor.Selected(&m_scene);
-            if (sel && sel.HasComponent<Galeshi::TransformComponent>()) {
+            if (sel && sel.HasComponent<Galeshi::TransformComponent>() && !sel.HasComponent<Galeshi::SkeletalComponent>()) {
                 auto& tc = sel.GetComponent<Galeshi::TransformComponent>();
                 m_debug->AddBox(tc.position, tc.scale + glm::vec3(0.1f), {1, 1, 0, 1});
             }
@@ -1309,7 +1310,15 @@ void DrawDetails() {
         const auto stem = fs::path(path).stem().string();
 
         auto root = m_scene.CreateEntity(stem);
-        root.GetComponent<Galeshi::TransformComponent>().position = pos;
+        auto& rootTf = root.GetComponent<Galeshi::TransformComponent>();
+        
+        // 1. Force clean TransformComponent (0,0,0) as requested
+        rootTf.position = glm::vec3(0.0f);
+        rootTf.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        rootTf.scale = glm::vec3(1.0f);
+        
+        // 2. If the model imports flipped (Z-up), uncomment the next line:
+        rootTf.rotation = glm::angleAxis(glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
 
         if (model.hasAnimation) {
             auto& skel = root.AddComponent<Galeshi::SkeletalComponent>();
@@ -1318,9 +1327,12 @@ void DrawDetails() {
 
         for (size_t i = 0; i < model.meshes.size(); ++i) {
             auto e = m_scene.CreateEntity(stem + "_" + std::to_string(i));
+            
+            // NOTE: We do NOT reset child transforms here. Assimp gives them local offsets.
+            
             e.AddComponent<Galeshi::ParentComponent>(Galeshi::ParentComponent{ root.Handle() });
             e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ model.meshes[i], path, "", static_cast<int>(i) });
-            // Правильный материал по индексу меша
+            
             std::shared_ptr<Galeshi::Material> mat;
             if (i < model.meshMaterialIndex.size()) {
                 int matIdx = model.meshMaterialIndex[i];
@@ -1331,6 +1343,7 @@ void DrawDetails() {
                 mat = model.materials[0];
             if (!mat)
                 mat = std::make_shared<Galeshi::Material>();
+            mat->isGlass = false; // Force opaque for characters
             e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
         }
         m_editor.Select(root);

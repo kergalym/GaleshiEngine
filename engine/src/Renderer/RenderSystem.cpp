@@ -29,8 +29,9 @@ RenderSystem::~RenderSystem() { Shutdown(); }
 void RenderSystem::Init(AssetManager* assets) {
     m_assets = assets;
     m_program = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_pbr.bin");
+    m_gbufferProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_gbuffer.bin");
     m_shadowProg = ShaderManager::LoadProgram("shaders/vs_shadow.bin", "shaders/fs_shadow.bin");
-    if (!bgfx::isValid(m_program)) return;
+    if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
 
     u_albedoFactor = bgfx::createUniform("u_albedoFactor", bgfx::UniformType::Vec4);
     u_metallicFactor = bgfx::createUniform("u_metallicFactor", bgfx::UniformType::Vec4);
@@ -53,6 +54,7 @@ void RenderSystem::Init(AssetManager* assets) {
 
 void RenderSystem::Shutdown() {
     if (bgfx::isValid(m_program)) bgfx::destroy(m_program);
+    if (bgfx::isValid(m_gbufferProg)) bgfx::destroy(m_gbufferProg);
     if (bgfx::isValid(m_shadowProg)) bgfx::destroy(m_shadowProg);
     if (bgfx::isValid(u_albedoFactor)) bgfx::destroy(u_albedoFactor);
     if (bgfx::isValid(u_metallicFactor)) bgfx::destroy(u_metallicFactor);
@@ -73,7 +75,7 @@ void RenderSystem::Shutdown() {
 }
 
 void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
-    if (!bgfx::isValid(m_program)) return;
+    if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
 
     bgfx::setViewTransform(viewId, glm::value_ptr(camera.View()), glm::value_ptr(camera.Projection()));
     bgfx::setViewRect(viewId, 0, 0, width, height);
@@ -182,7 +184,11 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
 
         bgfx::setVertexBuffer(0, mc.mesh->VB()); bgfx::setIndexBuffer(mc.mesh->IB());
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA);
-        bgfx::submit(viewId, m_program);
+        if (m_deferred && bgfx::isValid(m_gbufferProg)) {
+            bgfx::submit(viewId, m_gbufferProg);
+        } else {
+            bgfx::submit(viewId, m_program);
+        }
     }
 }
 
