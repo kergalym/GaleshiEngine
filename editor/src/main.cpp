@@ -137,8 +137,8 @@ protected:
         // --- Deferred effect enable (frame 2+) ---
         m_renderFrameCounter++;
         if (m_pendingEffectsEnable && m_renderFrameCounter >= 2) {
-            m_postProcess.SetSsaoEnabled(false);
-            m_postProcess.SetSsrEnabled(false);
+            m_postProcess.SetSsaoEnabled(true);
+            m_postProcess.SetSsrEnabled(true);
             m_pendingEffectsEnable = false;
             spdlog::info("[Effects] SSAO and SSR enabled on frame {}", m_renderFrameCounter);
         }
@@ -329,8 +329,8 @@ private:
             if (ImGui::MenuItem("Reset All Effects")) {
                 m_postProcess.SetInvertEnabled(false);
                 m_postProcess.SetFxaaEnabled(false);
-                m_postProcess.SetSsaoEnabled(false);
-                m_postProcess.SetSsrEnabled(false);
+                m_postProcess.SetSsaoEnabled(true);
+                m_postProcess.SetSsrEnabled(true);
             }
             ImGui::EndMenu();
         }
