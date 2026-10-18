@@ -25,6 +25,6 @@ imgui.ini
 *.log
 *.bak
 *.py
-*.chroma/
+*.chroma_db/
 .venv/
 build/**/shaders/*.bin
