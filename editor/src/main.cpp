@@ -311,8 +311,7 @@ private:
                 m_editor.Select(e);
             }
             if (ImGui::MenuItem("Physics Cube")) {
-                auto e = MakeCube("PhysicsCube", {0, 5, 0});
-                e.AddComponent<Galeshi::RigidBodyComponent>();
+                auto e = SpawnPhysicsCube("PhysicsCube", {0, 5, 0});
                 e.AddComponent<Galeshi::BoxColliderComponent>();
                 m_editor.Select(e);
             }
@@ -938,6 +937,27 @@ private:
         return e;
     }
 
+    // -------------------------------------------------------------------
+    // Spawn a cube with a Jolt rigid body attached.
+    // Always use this for physics cubes — it wires RigidBodyComponent,
+    // motionType, mass, AND the Jolt body (CreateBox), so SyncTransformsToECS
+    // will pick it up.
+    // -------------------------------------------------------------------
+    Galeshi::Entity SpawnPhysicsCube(const std::string& name, glm::vec3 pos,
+                                     glm::vec3 scale = glm::vec3(1.0f)) {
+        auto e = MakeCube(name, pos);
+        auto& tf = e.GetComponent<Galeshi::TransformComponent>();
+        tf.scale = scale;
+
+        auto& rb = e.AddComponent<Galeshi::RigidBodyComponent>();
+        rb.motionType = Galeshi::RigidBodyComponent::MotionType::Dynamic;
+        rb.mass = 1.0f;
+        rb.bodyId = m_physics->CreateBox(scale * 0.5f, pos);
+
+        spdlog::info("[Physics] Spawned {} bodyId=0x{:08x}", name, rb.bodyId);
+        return e;
+    }
+
     void BuildTestScene() {
         auto sun = m_scene.CreateEntity("Sun");
         auto& dl = sun.AddComponent<Galeshi::DirectionalLightComponent>();
@@ -950,14 +970,8 @@ private:
 
         // P0: physics test scene — 5 falling cubes (settle on ground plane)
         for (int i = 0; i < 5; ++i) {
-            glm::vec3 pos{ -4.0f + i * 2.0f, 5.0f + i * 0.5f, 0.0f };
-            auto e = MakeCube("PhysCube_" + std::to_string(i), pos);
-            auto& rb = e.AddComponent<Galeshi::RigidBodyComponent>();
-            rb.motionType = Galeshi::RigidBodyComponent::MotionType::Dynamic;
-            rb.mass = 1.0f;
-            auto& tf = e.GetComponent<Galeshi::TransformComponent>();
-            rb.bodyId = m_physics->CreateBox(tf.scale * 0.5f, pos);
-            spdlog::info("[Physics] Spawned PhysCube_{} bodyId=0x{:08x}", i, rb.bodyId);
+            SpawnPhysicsCube("PhysCube_" + std::to_string(i),
+                             { -4.0f + i * 2.0f, 5.0f + i * 0.5f, 0.0f });
         }
 
         auto pl = m_scene.CreateEntity("PointLight");
