@@ -36,10 +36,31 @@ void RenderSystem::Init(AssetManager* assets) {
     s_albedoMap = bgfx::createUniform("s_albedoMap", bgfx::UniformType::Sampler);
     s_metallicRoughnessMap = bgfx::createUniform("s_metallicRoughnessMap", bgfx::UniformType::Sampler);
     s_normalMap = bgfx::createUniform("s_normalMap", bgfx::UniformType::Sampler);
+    // Deferred G-Buffer program
+    {
+        FILE* f=fopen("shaders/vs_pbr.bin","rb"); if(f){
+            fseek(f,0,SEEK_END); long sz=ftell(f); fseek(f,0,SEEK_SET);
+            const bgfx::Memory* m=bgfx::alloc((uint32_t)sz);
+            fread(m->data,1,(size_t)sz,f); fclose(f);
+            bgfx::ShaderHandle vs=bgfx::createShader(m);
+            f=fopen("shaders/fs_gbuffer.bin","rb");
+            if(f){
+                fseek(f,0,SEEK_END); long sz2=ftell(f); fseek(f,0,SEEK_SET);
+                const bgfx::Memory* m2=bgfx::alloc((uint32_t)sz2);
+                fread(m2->data,1,(size_t)sz2,f); fclose(f);
+                bgfx::ShaderHandle fs=bgfx::createShader(m2);
+                if(bgfx::isValid(vs)&&bgfx::isValid(fs)){
+                    m_gbufferProg=bgfx::createProgram(vs,fs,true);
+                    spdlog::info("[RenderSystem] G-Buffer program loaded");
+                }
+            }
+        }
+    }
 }
 
 void RenderSystem::Shutdown() {
     if (bgfx::isValid(m_program)) bgfx::destroy(m_program);
+    if (bgfx::isValid(m_gbufferProg)) bgfx::destroy(m_gbufferProg);
     if (bgfx::isValid(u_albedoFactor)) bgfx::destroy(u_albedoFactor);
     if (bgfx::isValid(u_metallicFactor)) bgfx::destroy(u_metallicFactor);
     if (bgfx::isValid(u_roughnessFactor)) bgfx::destroy(u_roughnessFactor);
@@ -168,7 +189,7 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
 
         bgfx::setVertexBuffer(0, mc.mesh->VB()); bgfx::setIndexBuffer(mc.mesh->IB());
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA);
-        bgfx::submit(viewId, m_program);
+        bgfx::submit(viewId, (m_deferred && bgfx::isValid(m_gbufferProg)) ? m_gbufferProg : m_program);
     }
 }
 } // namespace Galeshi

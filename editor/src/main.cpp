@@ -528,7 +528,30 @@ private:
         if (m_framebuffer && m_framebuffer->Valid()) {
             bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             m_render->Render(m_scene, m_camera, 1, w, h);
-            m_postProcess.Render(2, m_framebuffer->Color(), w, h);
+
+            if (m_render->DeferredEnabled()) {
+                // Extract directional light + camera for lighting pass
+                glm::vec3 ldir{-0.4f,-0.8f,-0.5f}, lcol{1.0f};
+                float lint = 1.2f;
+                auto lview = m_scene.Registry().view<Galeshi::DirectionalLightComponent>();
+                if (!lview.empty()) {
+                    auto h = *lview.begin();
+                    ldir = lview.get<Galeshi::DirectionalLightComponent>(h).direction;
+                    lcol = lview.get<Galeshi::DirectionalLightComponent>(h).color;
+                    lint = lview.get<Galeshi::DirectionalLightComponent>(h).intensity;
+                }
+                glm::vec3 cp = m_camera.Position();
+                float camPos[4] = {cp.x, cp.y, cp.z, 1.0f};
+                float lDirA[4]  = {ldir.x, ldir.y, ldir.z, 0.0f};
+                float lColA[4]  = {lcol.r, lcol.g, lcol.b, lint};
+                m_postProcess.RenderLighting(
+                    m_framebuffer->Color(),
+                    m_framebuffer->Normal(),
+                    m_framebuffer->WorldPos(),
+                    camPos, lDirA, lColA, 2, w, h);
+            } else {
+                m_postProcess.Render(2, m_framebuffer->Color(), w, h);
+            }
         }
 
         // Debug rendering (grid, navmesh, selection box)
@@ -575,6 +598,12 @@ private:
                 bool __inv = m_postProcess.InvertEnabled();
                 if (ImGui::Checkbox("Invert Colors", &__inv))
                     m_postProcess.SetInvertEnabled(__inv);
+                bool __def = m_render->DeferredEnabled();
+                if (ImGui::Checkbox("Deferred", &__def))
+                    m_render->SetDeferredEnabled(__def);
+                bool __fxaa = m_postProcess.FxaaEnabled();
+                if (ImGui::Checkbox("FXAA", &__fxaa))
+                    m_postProcess.SetFxaaEnabled(__fxaa);
                 ImGui::SameLine();
                 if (ImGui::Button("Reset Effects"))
                     m_postProcess.SetInvertEnabled(false);

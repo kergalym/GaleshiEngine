@@ -10,11 +10,15 @@ public:
     RenderSystem(); ~RenderSystem();
     void Init(AssetManager* assets); void Shutdown();
     void Render(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height);
+    bool DeferredEnabled() const    { return m_deferred; }
+    void SetDeferredEnabled(bool v) { m_deferred = v; }
     static constexpr int kMaxPointLights = 4;
     static constexpr int kMaxBones = 256;
 private:
     AssetManager* m_assets = nullptr;
-    bgfx::ProgramHandle m_program = BGFX_INVALID_HANDLE;
+    bool m_deferred = false;
+    bgfx::ProgramHandle m_program      = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_gbufferProg  = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_albedoFactor = BGFX_INVALID_HANDLE, u_metallicFactor = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_roughnessFactor = BGFX_INVALID_HANDLE, u_emissiveFactor = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_cameraPosition = BGFX_INVALID_HANDLE, u_lightDirection = BGFX_INVALID_HANDLE;
