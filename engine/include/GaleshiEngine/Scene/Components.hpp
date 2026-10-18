@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <glm/glm.hpp>
 #include <entt/entt.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -80,6 +82,9 @@ struct RigidBodyComponent {
     float      friction   = 0.5f;
     float      restitution = 0.0f;
     bool       useGravity = true;
+
+    // Runtime handle to Jolt body; 0xFFFFFFFF = not created.
+    uint32_t   bodyId     = 0xFFFFFFFFu;
 };
 
 struct BoxColliderComponent {

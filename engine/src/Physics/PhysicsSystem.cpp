@@ -1,110 +1,179 @@
-// Jolt.h ДОЛЖЕН быть первым!
+// Jolt include order matters: Jolt/Jolt.h MUST be first.
 #include <Jolt/Jolt.h>
 #include <Jolt/RegisterTypes.h>
 #include <Jolt/Core/Factory.h>
+#include <Jolt/Core/TempAllocator.h>
+#include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Physics/PhysicsSystem.h>
-#include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
+#include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Body/BodyInterface.h>
+#include <Jolt/Physics/Body/BodyID.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
+#include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 
 #include "GaleshiEngine/Physics/PhysicsSystem.hpp"
+#include <spdlog/spdlog.h>
+#include "GaleshiEngine/Scene/Scene.hpp"
+#include "GaleshiEngine/Scene/Components.hpp"
+
+#include <algorithm>
+#include <thread>
+
+namespace {
+
+constexpr JPH::ObjectLayer LAYER_NON_MOVING = 0;
+constexpr JPH::ObjectLayer LAYER_MOVING     = 1;
+
+constexpr JPH::BroadPhaseLayer BP_NON_MOVING(0);
+constexpr JPH::BroadPhaseLayer BP_MOVING(1);
+
+class BPFilter final : public JPH::BroadPhaseLayerInterface {
+public:
+    JPH::uint GetNumBroadPhaseLayers() const override { return 2; }
+    JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer l) const override {
+        return l == LAYER_MOVING ? BP_MOVING : BP_NON_MOVING;
+    }
+#if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
+    const char* GetBroadPhaseLayerName(JPH::BroadPhaseLayer) const override { return "BP"; }
+#endif
+};
+
+class ObjVsBP final : public JPH::ObjectVsBroadPhaseLayerFilter {
+public:
+    bool ShouldCollide(JPH::ObjectLayer, JPH::BroadPhaseLayer) const override { return true; }
+};
+
+class ObjPair final : public JPH::ObjectLayerPairFilter {
+public:
+    bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override {
+        if (a == LAYER_NON_MOVING && b == LAYER_NON_MOVING) return false;
+        return true;
+    }
+};
+
+} // namespace
 
 namespace Galeshi {
 
-namespace Layers {
-    static constexpr JPH::ObjectLayer NON_MOVING = 0;
-    static constexpr JPH::ObjectLayer MOVING = 1;
-    static constexpr JPH::ObjectLayer NUM_LAYERS = 2;
-}
-
-namespace BroadPhaseLayers {
-    static constexpr JPH::BroadPhaseLayer NON_MOVING(0);
-    static constexpr JPH::BroadPhaseLayer MOVING(1);
-    static constexpr JPH::uint NUM_LAYERS = 2;
-}
-
-class BPLayerInterfaceImpl final : public JPH::BroadPhaseLayerInterface {
-public:
-    BPLayerInterfaceImpl() {
-        mObjectToBroadPhase[Layers::NON_MOVING] = BroadPhaseLayers::NON_MOVING;
-        mObjectToBroadPhase[Layers::MOVING] = BroadPhaseLayers::MOVING;
-    }
-
-    virtual JPH::uint GetNumBroadPhaseLayers() const override {
-        return BroadPhaseLayers::NUM_LAYERS;
-    }
-
-    virtual JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer inLayer) const override {
-        JPH_ASSERT(inLayer < Layers::NUM_LAYERS);
-        return mObjectToBroadPhase[inLayer];
-    }
-
-#if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
-    virtual const char * GetBroadPhaseLayerName(JPH::BroadPhaseLayer inLayer) const override {
-        switch ((JPH::BroadPhaseLayer::Type)inLayer) {
-            case (JPH::BroadPhaseLayer::Type)BroadPhaseLayers::NON_MOVING: return "NON_MOVING";
-            case (JPH::BroadPhaseLayer::Type)BroadPhaseLayers::MOVING: return "MOVING";
-            default: JPH_ASSERT(false); return "INVALID";
-        }
-    }
-#endif
-
-private:
-    JPH::BroadPhaseLayer mObjectToBroadPhase[Layers::NUM_LAYERS];
-};
-
-class ObjectVsBroadPhaseLayerFilterImpl : public JPH::ObjectVsBroadPhaseLayerFilter {
-public:
-    virtual bool ShouldCollide(JPH::ObjectLayer inLayer1, JPH::BroadPhaseLayer inLayer2) const override {
-        (void)inLayer1; (void)inLayer2;
-        return true;
-    }
-};
-
-class ObjectLayerPairFilterImpl : public JPH::ObjectLayerPairFilter {
-public:
-    virtual bool ShouldCollide(JPH::ObjectLayer inObject1, JPH::ObjectLayer inObject2) const override {
-        (void)inObject1; (void)inObject2;
-        return true;
-    }
-};
-
 struct EnginePhysicsSystem::Impl {
-    JPH::PhysicsSystem physicsSystem;
-    BPLayerInterfaceImpl broadPhaseLayerInterface;
-    ObjectVsBroadPhaseLayerFilterImpl objectVsBroadPhaseLayerFilter;
-    ObjectLayerPairFilterImpl objectLayerPairFilter;
+    std::unique_ptr<JPH::TempAllocatorImpl>   tempAllocator;
+    std::unique_ptr<JPH::JobSystemThreadPool> jobSystem;
+    std::unique_ptr<JPH::PhysicsSystem>       physicsSystem;
 
-    Impl() {
-        JPH::RegisterDefaultAllocator();
-        JPH::Factory::sInstance = new JPH::Factory();
-        JPH::RegisterTypes();
-    }
+    BPFilter  bpFilter;
+    ObjVsBP   objVsBp;
+    ObjPair   objPair;
 
-    ~Impl() {
-        JPH::UnregisterTypes();
-        delete JPH::Factory::sInstance;
-        JPH::Factory::sInstance = nullptr;
-    }
+    JPH::BodyInterface* bodyInterface = nullptr;
+    bool initialized = false;
 };
 
 EnginePhysicsSystem::EnginePhysicsSystem() : m_impl(std::make_unique<Impl>()) {}
-EnginePhysicsSystem::~EnginePhysicsSystem() = default;
+EnginePhysicsSystem::~EnginePhysicsSystem() { Shutdown(); }
 
 bool EnginePhysicsSystem::Init() {
-    m_impl->physicsSystem.Init(
-        1024, 0, 1024, 1024,
-        m_impl->broadPhaseLayerInterface,
-        m_impl->objectVsBroadPhaseLayerFilter,
-        m_impl->objectLayerPairFilter
-    );
+    if (m_impl->initialized) return true;
+
+    JPH::RegisterDefaultAllocator();
+    JPH::Factory::sInstance = new JPH::Factory();
+    JPH::RegisterTypes();
+
+
+
+    constexpr JPH::uint kMaxBodies            = 65536;
+    constexpr JPH::uint kMaxBodyPairs         = 65536;
+    constexpr JPH::uint kMaxContactConstraints= 16384;
+
+    m_impl->physicsSystem = std::make_unique<JPH::PhysicsSystem>();
+    m_impl->physicsSystem->Init(
+        kMaxBodies, 0, kMaxBodyPairs, kMaxContactConstraints,
+        m_impl->bpFilter, m_impl->objVsBp, m_impl->objPair);
+
+    m_impl->tempAllocator = std::make_unique<JPH::TempAllocatorImpl>(32 * 1024 * 1024);
+
+    const int hw = static_cast<int>(std::thread::hardware_concurrency());
+    const int threads = std::max(1, hw - 1);
+    m_impl->jobSystem = std::make_unique<JPH::JobSystemThreadPool>(2048, 8, threads);
+
+    m_impl->bodyInterface = &m_impl->physicsSystem->GetBodyInterface();
+
+    // Static ground plane: top surface at y=0.
+    JPH::BodyCreationSettings ground(
+        new JPH::BoxShape(JPH::Vec3(50.0f, 0.5f, 50.0f)),
+        JPH::RVec3(0.0f, -0.5f, 0.0f),
+        JPH::Quat::sIdentity(),
+        JPH::EMotionType::Static,
+        LAYER_NON_MOVING);
+    m_impl->bodyInterface->CreateAndAddBody(ground, JPH::EActivation::DontActivate);
+
+    m_impl->initialized = true;
     return true;
 }
 
-void EnginePhysicsSystem::Shutdown() {}
-void EnginePhysicsSystem::Reset() {}
+void EnginePhysicsSystem::Shutdown() {
+    if (!m_impl || !m_impl->initialized) return;
+    m_impl->bodyInterface = nullptr;
+    m_impl->physicsSystem.reset();
+    m_impl->jobSystem.reset();
+    m_impl->tempAllocator.reset();
+    JPH::UnregisterTypes();
+    delete JPH::Factory::sInstance;
+    JPH::Factory::sInstance = nullptr;
+    m_impl->initialized = false;
+}
 
-void EnginePhysicsSystem::Update(Scene& scene, float deltaTime) {
-    (void)scene; (void)deltaTime;
+void EnginePhysicsSystem::Reset() {
+    Shutdown();
+    Init();
+}
+
+void EnginePhysicsSystem::Update(Scene& /*scene*/, float dt) {
+    if (!m_impl->initialized) return;
+    constexpr int kCollisionSteps = 1;
+    m_impl->physicsSystem->Update(dt, kCollisionSteps,
+        m_impl->tempAllocator.get(), m_impl->jobSystem.get());
+}
+
+uint32_t EnginePhysicsSystem::CreateBox(const glm::vec3& halfExtents, const glm::vec3& position) {
+    if (!m_impl->initialized) return 0xFFFFFFFFu;
+
+    JPH::BodyCreationSettings s(
+        new JPH::BoxShape(JPH::Vec3(halfExtents.x, halfExtents.y, halfExtents.z)),
+        JPH::RVec3(position.x, position.y, position.z),
+        JPH::Quat::sIdentity(),
+        JPH::EMotionType::Dynamic,
+        LAYER_MOVING);
+    s.mAllowSleeping = true;
+    s.mFriction = 0.5f;
+    s.mRestitution = 0.0f;
+
+    JPH::BodyID id = m_impl->bodyInterface->CreateAndAddBody(s, JPH::EActivation::Activate);
+    if (id.IsInvalid()) return 0xFFFFFFFFu;
+    return id.GetIndexAndSequenceNumber();
+}
+
+void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene) {
+    if (!m_impl->initialized) return;
+    auto& reg = scene.Registry();
+    auto view = reg.view<RigidBodyComponent, TransformComponent>();
+
+    for (auto e : view) {
+        auto& rb = view.get<RigidBodyComponent>(e);
+        auto& tf = view.get<TransformComponent>(e);
+
+        if (rb.bodyId == 0xFFFFFFFFu) continue;
+        JPH::BodyID id(rb.bodyId);
+        if (!m_impl->bodyInterface->IsAdded(id)) continue;
+
+        const JPH::RVec3 p = m_impl->bodyInterface->GetPosition(id);
+        tf.position = glm::vec3(static_cast<float>(p.GetX()),
+                                static_cast<float>(p.GetY()),
+                                static_cast<float>(p.GetZ()));
+
+        const JPH::Quat q = m_impl->bodyInterface->GetRotation(id);
+        tf.rotation = glm::quat(q.GetW(), q.GetX(), q.GetY(), q.GetZ());
+    }
 }
 
 } // namespace Galeshi

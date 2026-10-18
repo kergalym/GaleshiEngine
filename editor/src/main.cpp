@@ -19,7 +19,6 @@
 #include "GaleshiEngine/AI/NavigationSystem.hpp"
 #include "GaleshiEngine/AI/AISystem.hpp"
 #include "GaleshiEngine/Audio/AudioSystem.hpp"
-#include "GaleshiEngine/Physics/PhysicsSystem.hpp"
 #include "GaleshiEngine/Scripting/ScriptEngine.hpp"
 #include "GaleshiEngine/Renderer/PostProcessManager.hpp"
 
@@ -110,7 +109,10 @@ protected:
 
     void OnUpdate(float dt) override {
         // --- Auto-inserted physics update ---
-        if (m_physics) m_physics->Update(m_scene, dt);
+        if (m_physics) {
+            m_physics->Update(m_scene, dt);
+            m_physics->SyncTransformsToECS(m_scene);
+        }
         // --- End auto-inserted ---
 
         m_time += dt;
@@ -945,6 +947,18 @@ private:
         { auto e = MakeCube("Cube_Orange", { 0.0f, 0.0f, 0.0f}); auto& m = *e.GetComponent<Galeshi::MaterialComponent>().material; m.albedoFactor = {0.85f, 0.55f, 0.25f, 1.0f}; m.roughnessFactor = 0.4f; }
         { auto e = MakeCube("Cube_Metal",  {-2.5f, 0.0f, 0.0f}); auto& m = *e.GetComponent<Galeshi::MaterialComponent>().material; m.albedoFactor = {0.95f, 0.95f, 0.95f, 1.0f}; m.metallicFactor = 1.0f; m.roughnessFactor = 0.15f; }
         { auto e = MakeCube("Cube_Rough",  { 2.5f, 0.0f, 0.0f}); auto& m = *e.GetComponent<Galeshi::MaterialComponent>().material; m.albedoFactor = {0.30f, 0.55f, 0.85f, 1.0f}; m.roughnessFactor = 0.9f; }
+
+        // P0: physics test scene — 5 falling cubes (settle on ground plane)
+        for (int i = 0; i < 5; ++i) {
+            glm::vec3 pos{ -4.0f + i * 2.0f, 5.0f + i * 0.5f, 0.0f };
+            auto e = MakeCube("PhysCube_" + std::to_string(i), pos);
+            auto& rb = e.AddComponent<Galeshi::RigidBodyComponent>();
+            rb.motionType = Galeshi::RigidBodyComponent::MotionType::Dynamic;
+            rb.mass = 1.0f;
+            auto& tf = e.GetComponent<Galeshi::TransformComponent>();
+            rb.bodyId = m_physics->CreateBox(tf.scale * 0.5f, pos);
+            spdlog::info("[Physics] Spawned PhysCube_{} bodyId=0x{:08x}", i, rb.bodyId);
+        }
 
         auto pl = m_scene.CreateEntity("PointLight");
         pl.AddComponent<Galeshi::PointLightComponent>();

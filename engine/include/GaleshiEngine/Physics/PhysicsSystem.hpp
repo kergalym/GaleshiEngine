@@ -1,18 +1,13 @@
 #pragma once
 
-#include <Jolt/Jolt.h>
-#include <Jolt/RegisterTypes.h>
-#include <Jolt/Core/Factory.h>
-#include <Jolt/Physics/PhysicsSystem.h>
-#include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
-#include <Jolt/Physics/Collision/ObjectLayer.h>
+#include <glm/glm.hpp>
+#include <cstdint>
 #include <memory>
 
 namespace Galeshi {
 
 class Scene;
 
-// Оставляем имя EnginePhysicsSystem, так как именно оно было вставлено в main.cpp
 class EnginePhysicsSystem {
 public:
     EnginePhysicsSystem();
@@ -22,6 +17,12 @@ public:
     void Shutdown();
     void Reset();
     void Update(Scene& scene, float deltaTime);
+
+    // P0: create dynamic box body; returns raw body index (0xFFFFFFFF on failure).
+    uint32_t CreateBox(const glm::vec3& halfExtents, const glm::vec3& position);
+
+    // P0: read body positions/rotations from Jolt, write into TransformComponent.
+    void SyncTransformsToECS(Scene& scene);
 
 private:
     struct Impl;

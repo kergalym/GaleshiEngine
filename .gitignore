@@ -24,4 +24,7 @@ CMakeFiles/
 imgui.ini
 *.log
 *.bak
+*.py
+*.chroma/
+.venv/
 build/**/shaders/*.bin
