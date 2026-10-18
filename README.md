@@ -64,10 +64,10 @@ All dependencies are pulled via FetchContent on the first configuration. The fir
 ## Roadmap
 
 ### P0 — Physics ↔ ECS
-- [ ] `PhysicsSystem::SyncTransformsToECS()` — read body positions from Jolt, write to `TransformComponent`
-- [ ] Call `SyncTransformsToECS()` from `OnUpdate()` after `PhysicsSystem::Update()`
-- [ ] Spawn test scene: 5 dynamic cubes (`CreateBox()` + `RigidBodyComponent`)
-- [ ] Verify cubes fall and settle on the floor
+- [✔] `PhysicsSystem::SyncTransformsToECS()` — read body positions from Jolt, write to `TransformComponent`
+- [✔] Call `SyncTransformsToECS()` from `OnUpdate()` after `PhysicsSystem::Update()`
+- [✔] Spawn test scene: 5 dynamic cubes (`CreateBox()` + `RigidBodyComponent`)
+- [✔] Verify cubes fall and settle on the floor
 
 ### P1 — Scripting & Audio
 - [ ] Lua ↔ ECS: pass entity IDs from C++ to Lua (`new_entity()`)
