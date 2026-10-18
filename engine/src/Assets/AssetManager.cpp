@@ -401,4 +401,178 @@ std::shared_ptr<Mesh> AssetManager::CreateCubeMesh() {
     m_cubeMesh->Upload(vs, is);
     return m_cubeMesh;
 }
+
+std::shared_ptr<Mesh> AssetManager::CreateSphereMesh() {
+    if (m_sphereMesh) return m_sphereMesh;
+
+    const int segments = 32;
+    const int rings = 16;
+    const float radius = 0.5f;  // unit sphere, diameter = 1.0
+
+    std::vector<Vertex> verts;
+    std::vector<uint32_t> indices;
+    verts.reserve((segments + 1) * (rings + 1));
+
+    for (int y = 0; y <= rings; ++y) {
+        float v = (float)y / (float)rings;
+        float phi = v * 3.14159265f;
+        for (int x = 0; x <= segments; ++x) {
+            float u = (float)x / (float)segments;
+            float theta = u * 2.0f * 3.14159265f;
+            Vertex vert{};
+            vert.position.x = radius * sinf(phi) * cosf(theta);
+            vert.position.y = radius * cosf(phi);
+            vert.position.z = radius * sinf(phi) * sinf(theta);
+            vert.normal = glm::normalize(vert.position);
+            vert.tangent = glm::vec3(-sinf(theta), 0.0f, cosf(theta));
+            vert.uv = { u, 1.0f - v };
+            vert.boneIDs = glm::vec4(255.0f, 0, 0, 0);
+            vert.boneWeights = glm::vec4(1.0f, 0, 0, 0);
+            verts.push_back(vert);
+        }
+    }
+
+    for (int y = 0; y < rings; ++y) {
+        for (int x = 0; x < segments; ++x) {
+            uint32_t i0 = y * (segments + 1) + x;
+            uint32_t i1 = i0 + 1;
+            uint32_t i2 = i0 + segments + 1;
+            uint32_t i3 = i2 + 1;
+            indices.push_back(i0); indices.push_back(i2); indices.push_back(i1);
+            indices.push_back(i1); indices.push_back(i2); indices.push_back(i3);
+        }
+    }
+
+    m_sphereMesh = std::make_shared<Mesh>();
+    m_sphereMesh->Upload(verts, indices);
+    return m_sphereMesh;
+}
+
+std::shared_ptr<Mesh> AssetManager::CreateCapsuleMesh(float halfHeight, float radius) {
+    // Baked mesh: halfHeight + radius are actual sizes, scale = 1.0
+    const int segments = 24;
+    const int rings = 8;
+
+    std::vector<Vertex> verts;
+    std::vector<uint32_t> indices;
+
+    // --- Top hemisphere (y from halfHeight to halfHeight + radius) ---
+    int topOffset = 0;
+    for (int y = 0; y <= rings; ++y) {
+        float v = (float)y / (float)rings;
+        float phi = v * 3.14159265f * 0.5f;  // 0..pi/2
+        for (int x = 0; x <= segments; ++x) {
+            float u = (float)x / (float)segments;
+            float theta = u * 2.0f * 3.14159265f;
+            Vertex vert{};
+            vert.position.x = radius * sinf(phi) * cosf(theta);
+            vert.position.y = halfHeight + radius * cosf(phi);
+            vert.position.z = radius * sinf(phi) * sinf(theta);
+            vert.normal = glm::normalize(glm::vec3(sinf(phi) * cosf(theta), cosf(phi), sinf(phi) * sinf(theta)));
+            vert.tangent = glm::vec3(-sinf(theta), 0.0f, cosf(theta));
+            vert.uv = { u, 1.0f - v * 0.25f };
+            vert.boneIDs = glm::vec4(255.0f, 0, 0, 0);
+            vert.boneWeights = glm::vec4(1.0f, 0, 0, 0);
+            verts.push_back(vert);
+        }
+    }
+
+    // --- Cylinder (y from -halfHeight to +halfHeight) ---
+    int cylOffset = (int)verts.size();
+    for (int y = 0; y <= 1; ++y) {
+        float yPos = (y == 0) ? halfHeight : -halfHeight;
+        for (int x = 0; x <= segments; ++x) {
+            float u = (float)x / (float)segments;
+            float theta = u * 2.0f * 3.14159265f;
+            Vertex vert{};
+            vert.position.x = radius * cosf(theta);
+            vert.position.y = yPos;
+            vert.position.z = radius * sinf(theta);
+            vert.normal = glm::normalize(glm::vec3(cosf(theta), 0.0f, sinf(theta)));
+            vert.tangent = glm::vec3(-sinf(theta), 0.0f, cosf(theta));
+            vert.uv = { u, 0.75f - y * 0.5f };
+            vert.boneIDs = glm::vec4(255.0f, 0, 0, 0);
+            vert.boneWeights = glm::vec4(1.0f, 0, 0, 0);
+            verts.push_back(vert);
+        }
+    }
+
+    // --- Bottom hemisphere (y from -halfHeight - radius to -halfHeight) ---
+    int botOffset = (int)verts.size();
+    for (int y = 0; y <= rings; ++y) {
+        float v = (float)y / (float)rings;
+        float phi = 3.14159265f * 0.5f + v * 3.14159265f * 0.5f;  // pi/2..pi
+        for (int x = 0; x <= segments; ++x) {
+            float u = (float)x / (float)segments;
+            float theta = u * 2.0f * 3.14159265f;
+            Vertex vert{};
+            vert.position.x = radius * sinf(phi) * cosf(theta);
+            vert.position.y = -halfHeight + radius * cosf(phi);
+            vert.position.z = radius * sinf(phi) * sinf(theta);
+            vert.normal = glm::normalize(glm::vec3(sinf(phi) * cosf(theta), cosf(phi), sinf(phi) * sinf(theta)));
+            vert.tangent = glm::vec3(-sinf(theta), 0.0f, cosf(theta));
+            vert.uv = { u, 0.25f - v * 0.25f };
+            vert.boneIDs = glm::vec4(255.0f, 0, 0, 0);
+            vert.boneWeights = glm::vec4(1.0f, 0, 0, 0);
+            verts.push_back(vert);
+        }
+    }
+
+    auto addQuad = [&](uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
+        indices.push_back(a); indices.push_back(c); indices.push_back(b);
+        indices.push_back(b); indices.push_back(c); indices.push_back(d);
+    };
+
+    // Top hemisphere triangles
+    for (int y = 0; y < rings; ++y) {
+        for (int x = 0; x < segments; ++x) {
+            uint32_t i0 = topOffset + y * (segments + 1) + x;
+            uint32_t i1 = i0 + 1;
+            uint32_t i2 = i0 + segments + 1;
+            uint32_t i3 = i2 + 1;
+            indices.push_back(i0); indices.push_back(i2); indices.push_back(i1);
+            indices.push_back(i1); indices.push_back(i2); indices.push_back(i3);
+        }
+    }
+    // Top hemisphere bottom edge -> cylinder top edge
+    for (int x = 0; x < segments; ++x) {
+        uint32_t i0 = topOffset + rings * (segments + 1) + x;
+        uint32_t i1 = i0 + 1;
+        uint32_t i2 = cylOffset + x;
+        uint32_t i3 = i2 + 1;
+        addQuad(i0, i1, i2, i3);
+    }
+    // Cylinder sides
+    for (int x = 0; x < segments; ++x) {
+        uint32_t i0 = cylOffset + x;
+        uint32_t i1 = i0 + 1;
+        uint32_t i2 = cylOffset + segments + 1 + x;
+        uint32_t i3 = i2 + 1;
+        addQuad(i0, i1, i2, i3);
+    }
+    // Cylinder bottom edge -> bottom hemisphere top edge
+    for (int x = 0; x < segments; ++x) {
+        uint32_t i0 = cylOffset + segments + 1 + x;
+        uint32_t i1 = i0 + 1;
+        uint32_t i2 = botOffset + x;
+        uint32_t i3 = i2 + 1;
+        addQuad(i0, i1, i2, i3);
+    }
+    // Bottom hemisphere triangles
+    for (int y = 0; y < rings; ++y) {
+        for (int x = 0; x < segments; ++x) {
+            uint32_t i0 = botOffset + y * (segments + 1) + x;
+            uint32_t i1 = i0 + 1;
+            uint32_t i2 = i0 + segments + 1;
+            uint32_t i3 = i2 + 1;
+            indices.push_back(i0); indices.push_back(i2); indices.push_back(i1);
+            indices.push_back(i1); indices.push_back(i2); indices.push_back(i3);
+        }
+    }
+
+    auto mesh = std::make_shared<Mesh>();
+    mesh->Upload(verts, indices);
+    return mesh;
+}
+
 } // namespace Galeshi

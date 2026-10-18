@@ -45,6 +45,8 @@ public:
     std::shared_ptr<Texture> FlatNormalTexture()  const { return m_flatNormal; }
 
     std::shared_ptr<Mesh> CreateCubeMesh();
+    std::shared_ptr<Mesh> CreateSphereMesh();  // unit sphere, radius 0.5
+    std::shared_ptr<Mesh> CreateCapsuleMesh(float halfHeight, float radius);
     void Clear();
 
 private:
@@ -52,6 +54,7 @@ private:
     std::unordered_map<std::string, LoadedModel>              m_models;
 
     std::shared_ptr<Mesh>    m_cubeMesh;
+    std::shared_ptr<Mesh> m_sphereMesh;
     std::shared_ptr<Texture> m_white;
     std::shared_ptr<Texture> m_black;
     std::shared_ptr<Texture> m_flatNormal;

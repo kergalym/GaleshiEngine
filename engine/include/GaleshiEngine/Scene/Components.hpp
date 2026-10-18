@@ -106,6 +106,17 @@ struct NavAgentComponent {
     float stoppingDistance = 0.5f;
 };
 
+struct SoftBodyComponent {
+    int gridX = 10;
+    int gridY = 10;
+    float spacing = 0.2f;
+    glm::vec3 origin = {0, 3, 0};
+    float stiffness = 0.8f;
+    std::vector<glm::vec3> vertices;
+    std::vector<uint32_t> indices;
+    uint32_t softBodyId = 0xFFFFFFFF;
+};
+
 struct AudioSourceComponent {
     std::string soundPath;
     bool        loop     = false;

@@ -385,6 +385,22 @@ if (ImGui::BeginMenu("File")) {
                 auto e = MakeCube("Cube", {0, 0, 0});
                 m_editor.Select(e);
             }
+            if (ImGui::MenuItem("Physics Sphere")) {
+                auto e = SpawnPhysicsSphere("PhysicsSphere", {0, 5, 0}, 0.5f);
+                m_editor.Select(e);
+            }
+            if (ImGui::MenuItem("Physics Capsule")) {
+                auto e = SpawnPhysicsCapsule("PhysicsCapsule", {0, 5, 0}, 0.5f, 0.5f);
+                m_editor.Select(e);
+            }
+            if (ImGui::MenuItem("Cloth (SoftBody)")) {
+                auto e = m_scene.CreateEntity("Cloth");
+                auto& sb = e.AddComponent<Galeshi::SoftBodyComponent>();
+                sb.gridX = 10; sb.gridY = 10;
+                sb.origin = {0, 5, 0};
+                sb.softBodyId = m_physics->CreateCloth(sb.gridX, sb.gridY, sb.spacing, sb.origin, static_cast<entt::entity>(e));
+                m_editor.Select(e);
+            }
             if (ImGui::MenuItem("Physics Cube")) {
                 auto e = SpawnPhysicsCube("PhysicsCube", {0, 5, 0});
                 e.AddComponent<Galeshi::BoxColliderComponent>();
@@ -1171,6 +1187,42 @@ void DrawDetails() {
         rb.mass = 1.0f;
         rb.bodyId = m_physics->CreateBox(scale * 0.5f, pos, static_cast<entt::entity>(e));
 
+        spdlog::info("[Physics] Spawned {} bodyId=0x{:08x}", name, rb.bodyId);
+        return e;
+    }
+
+    Galeshi::Entity SpawnPhysicsSphere(const std::string& name, glm::vec3 pos, float radius) {
+        auto e = m_scene.CreateEntity(name);
+        auto mat = std::make_shared<Galeshi::Material>();
+        mat->albedoFactor = {0.7f, 0.5f, 0.5f, 1.0f};
+        e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{mat});
+        auto mesh = m_assets->CreateSphereMesh();
+        e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ mesh, "", "sphere" });
+        auto& tf = e.GetComponent<Galeshi::TransformComponent>();
+        tf.position = pos;
+        tf.scale = glm::vec3(radius * 2.0f);  // unit sphere (r=0.5) * scale = diameter
+        auto& rb = e.AddComponent<Galeshi::RigidBodyComponent>();
+        rb.motionType = Galeshi::RigidBodyComponent::MotionType::Dynamic;
+        rb.mass = 1.0f;
+        rb.bodyId = m_physics->CreateSphere(radius, pos, static_cast<entt::entity>(e), false);
+        spdlog::info("[Physics] Spawned {} bodyId=0x{:08x}", name, rb.bodyId);
+        return e;
+    }
+
+    Galeshi::Entity SpawnPhysicsCapsule(const std::string& name, glm::vec3 pos, float halfHeight, float radius) {
+        auto e = m_scene.CreateEntity(name);
+        auto mat = std::make_shared<Galeshi::Material>();
+        mat->albedoFactor = {0.5f, 0.7f, 0.5f, 1.0f};
+        e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{mat});
+        auto mesh = m_assets->CreateCapsuleMesh(halfHeight, radius);
+        e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ mesh, "", "capsule" });
+        auto& tf = e.GetComponent<Galeshi::TransformComponent>();
+        tf.position = pos;
+        tf.scale = glm::vec3(1.0f);  // mesh baked with correct size
+        auto& rb = e.AddComponent<Galeshi::RigidBodyComponent>();
+        rb.motionType = Galeshi::RigidBodyComponent::MotionType::Dynamic;
+        rb.mass = 1.0f;
+        rb.bodyId = m_physics->CreateCapsule(halfHeight, radius, pos, static_cast<entt::entity>(e), false);
         spdlog::info("[Physics] Spawned {} bodyId=0x{:08x}", name, rb.bodyId);
         return e;
     }

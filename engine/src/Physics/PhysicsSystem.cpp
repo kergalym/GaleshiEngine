@@ -10,6 +10,10 @@
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Body/BodyID.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/SoftBody/SoftBodySharedSettings.h>
+#include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 
@@ -191,6 +195,117 @@ uint32_t EnginePhysicsSystem::CreateBox(const glm::vec3& halfExtents, const glm:
     uint32_t rawId = id.GetIndexAndSequenceNumber();
     if (entity != entt::null) m_impl->bodyToEntity[rawId] = entity;
     return rawId;
+}
+
+
+uint32_t EnginePhysicsSystem::CreateSphere(float radius, const glm::vec3& position, entt::entity entity, bool isStatic) {
+    if (!m_impl->initialized) return 0xFFFFFFFFu;
+    JPH::EMotionType motion = isStatic ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic;
+    JPH::ObjectLayer layer = isStatic ? LAYER_NON_MOVING : LAYER_MOVING;
+    JPH::BodyCreationSettings s(
+        new JPH::SphereShape(radius),
+        JPH::RVec3(position.x, position.y, position.z),
+        JPH::Quat::sIdentity(),
+        motion, layer);
+    JPH::BodyID id = m_impl->bodyInterface->CreateAndAddBody(s, JPH::EActivation::Activate);
+    if (id.IsInvalid()) return 0xFFFFFFFFu;
+    uint32_t rawId = id.GetIndexAndSequenceNumber();
+    if (entity != entt::null) m_impl->bodyToEntity[rawId] = entity;
+    return rawId;
+}
+
+uint32_t EnginePhysicsSystem::CreateCapsule(float halfHeight, float radius, const glm::vec3& position, entt::entity entity, bool isStatic) {
+    if (!m_impl->initialized) return 0xFFFFFFFFu;
+    JPH::EMotionType motion = isStatic ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic;
+    JPH::ObjectLayer layer = isStatic ? LAYER_NON_MOVING : LAYER_MOVING;
+    JPH::BodyCreationSettings s(
+        new JPH::CapsuleShape(halfHeight, radius),
+        JPH::RVec3(position.x, position.y, position.z),
+        JPH::Quat::sIdentity(),
+        motion, layer);
+    JPH::BodyID id = m_impl->bodyInterface->CreateAndAddBody(s, JPH::EActivation::Activate);
+    if (id.IsInvalid()) return 0xFFFFFFFFu;
+    uint32_t rawId = id.GetIndexAndSequenceNumber();
+    if (entity != entt::null) m_impl->bodyToEntity[rawId] = entity;
+    return rawId;
+}
+
+
+uint32_t EnginePhysicsSystem::CreateCloth(int gridX, int gridY, float spacing, const glm::vec3& origin, entt::entity entity) {
+    if (!m_impl->initialized) return 0xFFFFFFFFu;
+
+    // Правильный API Jolt 5.2: SoftBodySharedSettings + AddFace + CreateConstraints
+    JPH::Ref<JPH::SoftBodySharedSettings> settings = new JPH::SoftBodySharedSettings;
+
+    // 1. Вершины
+    for (int y = 0; y < gridY; ++y) {
+        for (int x = 0; x < gridX; ++x) {
+            JPH::SoftBodySharedSettings::Vertex v;
+            JPH::Vec3 pos(
+                origin.x + (x - gridX * 0.5f) * spacing,
+                origin.y,
+                origin.z + (y - gridY * 0.5f) * spacing
+            );
+            pos.StoreFloat3(&v.mPosition);
+            // Углы фиксированы (invMass = 0), остальные подвижны
+            bool isCorner = (x == 0 || x == gridX - 1) && (y == 0 || y == gridY - 1);
+            v.mInvMass = isCorner ? 0.0f : 1.0f;
+            settings->mVertices.push_back(v);
+        }
+    }
+
+    // 2. Треугольники (2 на каждый квадрат)
+    auto vidx = [gridX](int x, int y) { return x + y * gridX; };
+    for (int y = 0; y < gridY - 1; ++y) {
+        for (int x = 0; x < gridX - 1; ++x) {
+            JPH::SoftBodySharedSettings::Face f;
+            f.mVertex[0] = vidx(x, y);
+            f.mVertex[1] = vidx(x, y + 1);
+            f.mVertex[2] = vidx(x + 1, y + 1);
+            settings->AddFace(f);
+            f.mVertex[1] = vidx(x + 1, y + 1);
+            f.mVertex[2] = vidx(x + 1, y);
+            settings->AddFace(f);
+        }
+    }
+
+    // 3. Ограничения (пружины)
+    JPH::SoftBodySharedSettings::VertexAttributes attr;
+    attr.mCompliance = 1.0e-4f;
+    attr.mShearCompliance = 1.0e-4f;
+    attr.mBendCompliance = 1.0e-3f;
+    settings->CreateConstraints(&attr, 1, JPH::SoftBodySharedSettings::EBendType::Distance);
+    settings->Optimize();
+
+    // 4. Создание тела
+    JPH::SoftBodyCreationSettings sbSettings(
+        settings,
+        JPH::RVec3(origin.x, origin.y, origin.z),
+        JPH::Quat::sIdentity(),
+        LAYER_MOVING);
+    sbSettings.mFriction = 0.5f;
+    sbSettings.mRestitution = 0.0f;
+    sbSettings.mUpdatePosition = true;
+
+    JPH::BodyID id = m_impl->bodyInterface->CreateAndAddSoftBody(sbSettings, JPH::EActivation::Activate);
+    if (id.IsInvalid()) {
+        spdlog::error("[Physics] CreateCloth failed");
+        return 0xFFFFFFFFu;
+    }
+    uint32_t rawId = id.GetIndexAndSequenceNumber();
+    if (entity != entt::null) m_impl->bodyToEntity[rawId] = entity;
+    spdlog::info("[Physics] Cloth created: {}x{} grid, bodyId=0x{:08x}", gridX, gridY, rawId);
+    return rawId;
+}
+
+
+void EnginePhysicsSystem::UpdateSoftBodies(Scene& scene) {
+    // Заглушка: mesh обновляется отдельно в RenderSystem или SceneSerializer.
+    // Для полноценного обновления нужен доступ к SoftBodyMotionProperties:
+    //   JPH::Body* body = bodyInterface->TryGetBody(id);
+    //   auto* mp = static_cast<JPH::SoftBodyMotionProperties*>(body->GetMotionProperties());
+    //   for (auto& v : mp->GetVertices()) { ... }
+    (void)scene;
 }
 
 void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene) {
