@@ -4,10 +4,12 @@ $input v_texcoord0
 SAMPLER2D(s_albedoMr,    0);
 SAMPLER2D(s_normalRough, 1);
 SAMPLER2D(s_worldPos,    2);
+SAMPLER2D(s_shadowMap,   3);
 
 uniform vec4 u_cameraPosition;
 uniform vec4 u_lightDirection;
 uniform vec4 u_lightColorIntensity;
+uniform mat4 u_lightViewProj;
 
 uniform vec4 u_pointLightPosRadius[8];
 uniform vec4 u_pointLightColorInt[8];
@@ -40,9 +42,7 @@ vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, vec3 L,
     float NdotV = max(dot(N, V), 0.001);
     float NdotH = max(dot(N, H), 0.0);
     float VdotH = max(dot(V, H), 0.0);
-
     if (NdotL <= 0.0) return vec3(0.0);
-
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
     float D = D_GGX(NdotH, rough);
     float G = G_Smith(NdotV, NdotL, rough);
@@ -50,8 +50,31 @@ vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, vec3 L,
     vec3 specular = (D * G * F) / (4.0 * NdotV * NdotL + 0.001);
     vec3 kD = (1.0 - F) * (1.0 - metallic);
     vec3 diffuse = kD * albedo / PI;
-
     return (diffuse + specular) * radiance * NdotL;
+}
+
+float calculateShadow(vec4 lightSpacePos, float NdotL) {
+    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
+    projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    
+    if (projCoords.z > 1.0 || projCoords.z < 0.0 ||
+        projCoords.x < 0.0 || projCoords.x > 1.0 ||
+        projCoords.y < 0.0 || projCoords.y > 1.0) return 0.0;
+
+    float currentDepth = projCoords.z;
+    // Меньший bias, чтобы тени были чёткими, но без acne
+    float bias = max(0.005 * (1.0 - NdotL), 0.0005); 
+    float shadow = 0.0;
+    vec2 texelSize = vec2(1.0 / 2048.0, 1.0 / 2048.0);
+
+    // PCF 3x3 для мягких краев
+    for(int x = -1; x <= 1; ++x) {
+        for(int y = -1; y <= 1; ++y) {
+            float pcfDepth = texture2D(s_shadowMap, projCoords.xy + vec2(x, y) * texelSize).r;
+            shadow += currentDepth - bias > pcfDepth ? 1.0 : 0.0;
+        }
+    }
+    return shadow / 9.0;
 }
 
 void main()
@@ -59,7 +82,6 @@ void main()
     vec2 uv = v_texcoord0;
     vec4 wPos = texture2D(s_worldPos, uv);
     
-    // === СЕРЫЙ ФОН (как было до неба) ===
     if (length(wPos.xyz) < 0.001) {
         gl_FragColor = vec4(0.15, 0.15, 0.18, 1.0);
         return;
@@ -74,15 +96,23 @@ void main()
     float rough    = max(nR.a, 0.05);
     vec3 V         = normalize(u_cameraPosition.xyz - wPos.xyz);
 
-    // Простой ambient (без IBL)
-    vec3 finalColor = albedo * 0.15;
+    // 1. Ambient (Базовое освещение, чтобы не было абсолютно черных теней)
+    // Увеличено с 0.15 до 0.3 для лучшей видимости в тенях
+    vec3 finalColor = albedo * 0.3; 
 
-    // Directional Light
+    // 2. Directional Light с тенями
     vec3 L_dir = normalize(-u_lightDirection.xyz);
     vec3 radiance_dir = u_lightColorIntensity.rgb * u_lightColorIntensity.a;
-    finalColor += calcLight(N, V, albedo, metallic, rough, L_dir, radiance_dir);
+    float NdotL = max(dot(N, L_dir), 0.0);
 
-    // Point Lights
+    // Normal Offset: сдвигаем позицию пикселя по нормали, чтобы избежать acne
+    vec4 lightSpacePos = mul(u_lightViewProj, vec4(wPos.xyz + N * 0.1, 1.0));
+    float shadowFactor = calculateShadow(lightSpacePos, NdotL);
+    float visibility = 1.0 - shadowFactor;
+
+    finalColor += calcLight(N, V, albedo, metallic, rough, L_dir, radiance_dir) * visibility;
+
+    // 3. Point Lights
     int pCount = int(u_pointLightCount.x);
     for (int i = 0; i < 8; ++i) {
         if (i >= pCount) break;
@@ -91,17 +121,15 @@ void main()
         vec3 toLight = lightPos - wPos.xyz;
         float dist = length(toLight);
         if (dist > radius) continue;
-
         vec3 L = toLight / dist;
         float atten = 1.0 / (dist * dist + 1.0);
         float window = saturate(1.0 - pow(dist / radius, 4.0));
         atten *= window * window;
-
         vec3 radiance = u_pointLightColorInt[i].rgb * u_pointLightColorInt[i].a * atten;
         finalColor += calcLight(N, V, albedo, metallic, rough, L, radiance);
     }
 
-    // Tone Mapping + Gamma
+    // Tone Mapping
     finalColor = finalColor / (finalColor + vec3(1.0));
     finalColor = pow(finalColor, vec3(1.0 / 2.2));
 

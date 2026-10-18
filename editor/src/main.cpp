@@ -105,7 +105,7 @@ protected:
         // SSAO/SSR включим на 2-м кадре — чтобы первый кадр прошёл
         // без sampling render target (иначе Vulkan layout mismatch).
         m_pendingEffectsEnable = true;
-        m_shadowMap = bgfx::createTexture2D(2048, 2048, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+        m_shadowMap = bgfx::createTexture2D(4096, 4096, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
         m_shadowFbo = bgfx::createFrameBuffer(1, &m_shadowMap, false);
 
         m_browser    = std::make_unique<Galeshi::ContentBrowser>("assets");
@@ -1181,21 +1181,31 @@ void DrawDetails() {
         dl.direction = glm::normalize(glm::vec3(-0.4f, -0.8f, -0.5f));
         dl.color = {1.0f, 0.97f, 0.9f}; dl.intensity = 3.0f;
         // Добавляем большой пол (чтобы тени падали на него)
-        auto ground = MakeCube("Ground", {0.0f, -0.5f, 0.0f});
-        ground.GetComponent<Galeshi::TransformComponent>().scale = { 50.0f, 1.0f, 50.0f };
+        auto ground = MakeCube("Ground", {0.0f, -5.0f, 0.0f});
+        ground.GetComponent<Galeshi::TransformComponent>().scale = { 100.0f, 10.0f, 100.0f };
         ground.GetComponent<Galeshi::MaterialComponent>().material->albedoFactor = { 0.3f, 0.3f, 0.3f, 1.0f };
         ground.GetComponent<Galeshi::MaterialComponent>().material->roughnessFactor = 0.8f;
-
-
-        { auto e = MakeCube("Cube_Orange", { 0.0f, 0.0f, 0.0f}); auto& m = *e.GetComponent<Galeshi::MaterialComponent>().material; m.albedoFactor = {0.85f, 0.55f, 0.25f, 1.0f}; m.roughnessFactor = 0.4f; }
-        { auto e = MakeCube("Cube_Metal",  {-2.5f, 0.0f, 0.0f}); auto& m = *e.GetComponent<Galeshi::MaterialComponent>().material; m.albedoFactor = {0.95f, 0.95f, 0.95f, 1.0f}; m.metallicFactor = 1.0f; m.roughnessFactor = 0.15f; }
-        { auto e = MakeCube("Cube_Rough",  { 2.5f, 0.0f, 0.0f}); auto& m = *e.GetComponent<Galeshi::MaterialComponent>().material; m.albedoFactor = {0.30f, 0.55f, 0.85f, 1.0f}; m.roughnessFactor = 0.9f; }
-
-        // P0: physics test scene — 5 falling cubes (settle on ground plane)
-        for (int i = 0; i < 5; ++i) {
-            SpawnPhysicsCube("PhysCube_" + std::to_string(i),
-                             { -4.0f + i * 2.0f, 5.0f + i * 0.5f, 0.0f });
+        {
+            auto& rb = ground.AddComponent<Galeshi::RigidBodyComponent>();
+            rb.motionType = Galeshi::RigidBodyComponent::MotionType::Static;
+            rb.bodyId = m_physics->CreateBox(glm::vec3(100.0f, 10.0f, 100.0f) * 0.5f, ground.GetComponent<Galeshi::TransformComponent>().position, static_cast<entt::entity>(ground), true);
         }
+        // Кубки Dynamic (как PhysicsCube) — падают с y=3.0 на землю
+        auto spawnDynamicCube = [this](const std::string& name, glm::vec3 pos, glm::vec3 color) {
+            auto e = MakeCube(name, pos);
+            auto& mat = *e.GetComponent<Galeshi::MaterialComponent>().material;
+            mat.albedoFactor = glm::vec4(color, 1.0f);
+            auto& tf = e.GetComponent<Galeshi::TransformComponent>();
+            auto& rb = e.AddComponent<Galeshi::RigidBodyComponent>();
+            rb.motionType = Galeshi::RigidBodyComponent::MotionType::Dynamic;
+            rb.mass = 1.0f;
+            rb.bodyId = m_physics->CreateBox(tf.scale * 0.5f, pos, static_cast<entt::entity>(e), false);
+            return e;
+        };
+        spawnDynamicCube("Cube_Orange", { 0.0f, 3.0f, 0.0f}, {0.85f, 0.55f, 0.25f});
+        spawnDynamicCube("Cube_Metal",  {-2.5f, 3.5f, 0.0f}, {0.95f, 0.95f, 0.95f});
+        spawnDynamicCube("Cube_Rough",  { 2.5f, 4.0f, 0.0f}, {0.30f, 0.55f, 0.85f});
+
 
         auto pl = m_scene.CreateEntity("PointLight");
         pl.AddComponent<Galeshi::PointLightComponent>();

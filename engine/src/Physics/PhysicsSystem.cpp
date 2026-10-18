@@ -170,15 +170,18 @@ void EnginePhysicsSystem::Update(Scene& /*scene*/, float dt) {
         m_impl->tempAllocator.get(), m_impl->jobSystem.get());
 }
 
-uint32_t EnginePhysicsSystem::CreateBox(const glm::vec3& halfExtents, const glm::vec3& position, entt::entity entity) {
+uint32_t EnginePhysicsSystem::CreateBox(const glm::vec3& halfExtents, const glm::vec3& position, entt::entity entity, bool isStatic) {
     if (!m_impl->initialized) return 0xFFFFFFFFu;
+
+    JPH::EMotionType motion = isStatic ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic;
+    JPH::ObjectLayer layer = isStatic ? LAYER_NON_MOVING : LAYER_MOVING;
 
     JPH::BodyCreationSettings s(
         new JPH::BoxShape(JPH::Vec3(halfExtents.x, halfExtents.y, halfExtents.z)),
         JPH::RVec3(position.x, position.y, position.z),
         JPH::Quat::sIdentity(),
-        JPH::EMotionType::Dynamic,
-        LAYER_MOVING);
+        motion,
+        layer);
     s.mAllowSleeping = true;
     s.mFriction = 0.5f;
     s.mRestitution = 0.0f;

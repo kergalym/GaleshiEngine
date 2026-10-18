@@ -20,8 +20,7 @@ public:
     void Reset();
     void Update(Scene& scene, float deltaTime);
 
-    uint32_t CreateBox(const glm::vec3& halfExtents, const glm::vec3& position,
-                       entt::entity entity = entt::null);
+    uint32_t CreateBox(const glm::vec3& halfExtents, const glm::vec3& position, entt::entity entity = entt::null, bool isStatic = false);
 
     void SyncTransformsToECS(Scene& scene);
 
