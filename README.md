@@ -79,11 +79,11 @@ All dependencies are pulled via FetchContent on the first configuration. The fir
 - [✔] Trigger sound on keypress / collision / script event
 
 ### P2 — Post-processing
-- [ ] Off-screen FBO: color + depth + normal + position
-- [ ] `PostProcessManager::Render(fbo)` — takes scene textures
-- [ ] First effect: color inversion (pipeline smoke test)
-- [ ] SSAO from depth + normal
-- [ ] SSR as optional pass
+- [✔] Off-screen FBO: color + depth + normal + position
+- [✔] `PostProcessManager::Render(fbo)` — takes scene textures
+- [✔] First effect: color inversion (pipeline smoke test)
+- [✔] SSAO from depth + normal
+- [✔] SSR as optional pass
 - [ ] TAA / FXAA / SMAA selectable in UI
 
 ### P3 — Navigation, Editor, Serialization
