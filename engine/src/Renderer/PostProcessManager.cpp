@@ -2,11 +2,11 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <spdlog/spdlog.h>
 #include <cstdio>
+#include <utility>
 
 namespace Galeshi {
 
 namespace {
-
 struct PosTexVertex {
     float x, y, z;
     float u, v;
@@ -26,10 +26,7 @@ struct PosTexVertex {
 
 bgfx::ShaderHandle LoadBinShader(const char* path) {
     FILE* f = fopen(path, "rb");
-    if (!f) {
-        spdlog::error("[PP] shader not found: {}", path);
-        return BGFX_INVALID_HANDLE;
-    }
+    if (!f) return BGFX_INVALID_HANDLE;
     fseek(f, 0, SEEK_END);
     long sz = ftell(f);
     fseek(f, 0, SEEK_SET);
@@ -38,7 +35,6 @@ bgfx::ShaderHandle LoadBinShader(const char* path) {
     fclose(f);
     return bgfx::createShader(mem);
 }
-
 } // namespace
 
 PostProcessManager::PostProcessManager() = default;
@@ -47,60 +43,89 @@ PostProcessManager::~PostProcessManager() { Shutdown(); }
 void PostProcessManager::Init() {
     if (bgfx::isValid(m_program)) return;
 
-    bgfx::ShaderHandle vs = LoadBinShader("shaders/vs_fullscreen.bin");
-    bgfx::ShaderHandle fs = LoadBinShader("shaders/fs_passthrough.bin");
-    if (!bgfx::isValid(vs) || !bgfx::isValid(fs)) {
-        spdlog::error("[PP] failed to load passthrough shaders");
-        return;
-    }
-    m_program = bgfx::createProgram(vs, fs, true);
-    s_texColor = bgfx::createUniform("s_texColor", bgfx::UniformType::Sampler);
-
-    // Invert program: same VS, fs_invert
-    bgfx::ShaderHandle vs2 = LoadBinShader("shaders/vs_fullscreen.bin");
-    bgfx::ShaderHandle fs2 = LoadBinShader("shaders/fs_invert.bin");
-    if (bgfx::isValid(vs2) && bgfx::isValid(fs2)) {
-        m_invertProg = bgfx::createProgram(vs2, fs2, true);
-        spdlog::info("[PP] invert program loaded");
-    } else {
-        spdlog::warn("[PP] fs_invert.bin missing — inversion disabled");
-    }
-
-    // FXAA program (same VS)
-    bgfx::ShaderHandle vs3 = LoadBinShader("shaders/vs_fullscreen.bin");
-    bgfx::ShaderHandle fs3 = LoadBinShader("shaders/fs_fxaa.bin");
-    if (bgfx::isValid(vs3) && bgfx::isValid(fs3)) {
-        m_fxaaProg = bgfx::createProgram(vs3, fs3, true);
-        u_texelSize = bgfx::createUniform("u_texelSize", bgfx::UniformType::Vec4);
-        spdlog::info("[PP] FXAA program loaded");
-    } else {
-        spdlog::warn("[PP] fs_fxaa.bin missing — FXAA disabled");
-    }
-
-    // Lighting program (deferred)
+    // Passthrough
     {
-        bgfx::ShaderHandle vsL = LoadBinShader("shaders/vs_fullscreen.bin");
-        bgfx::ShaderHandle fsL = LoadBinShader("shaders/fs_lighting.bin");
-        if (bgfx::isValid(vsL) && bgfx::isValid(fsL)) {
-            m_lightingProg = bgfx::createProgram(vsL, fsL, true);
+        auto vs = LoadBinShader("shaders/vs_fullscreen.bin");
+        auto fs = LoadBinShader("shaders/fs_passthrough.bin");
+        if (bgfx::isValid(vs) && bgfx::isValid(fs)) {
+            m_program = bgfx::createProgram(vs, fs, true);
+        }
+    }
+
+    // Invert
+    {
+        auto vs = LoadBinShader("shaders/vs_fullscreen.bin");
+        auto fs = LoadBinShader("shaders/fs_invert.bin");
+        if (bgfx::isValid(vs) && bgfx::isValid(fs)) {
+            m_invertProg = bgfx::createProgram(vs, fs, true);
+        }
+    }
+
+    // FXAA
+    {
+        auto vs = LoadBinShader("shaders/vs_fullscreen.bin");
+        auto fs = LoadBinShader("shaders/fs_fxaa.bin");
+        if (bgfx::isValid(vs) && bgfx::isValid(fs)) {
+            m_fxaaProg = bgfx::createProgram(vs, fs, true);
+            u_texelSize = bgfx::createUniform("u_texelSize", bgfx::UniformType::Vec4);
+        }
+    }
+
+    // Lighting
+    {
+        auto vs = LoadBinShader("shaders/vs_fullscreen.bin");
+        auto fs = LoadBinShader("shaders/fs_lighting.bin");
+        if (bgfx::isValid(vs) && bgfx::isValid(fs)) {
+            m_lightingProg = bgfx::createProgram(vs, fs, true);
             u_camPos      = bgfx::createUniform("u_cameraPosition",     bgfx::UniformType::Vec4);
             u_lightDir    = bgfx::createUniform("u_lightDirection",     bgfx::UniformType::Vec4);
             u_lightCol    = bgfx::createUniform("u_lightColorIntensity",bgfx::UniformType::Vec4);
             s_albedoMr    = bgfx::createUniform("s_albedoMr",    bgfx::UniformType::Sampler);
             s_normalRough = bgfx::createUniform("s_normalRough", bgfx::UniformType::Sampler);
             s_worldPos    = bgfx::createUniform("s_worldPos",    bgfx::UniformType::Sampler);
-            spdlog::info("[PP] lighting program loaded");
-        bgfx::ShaderHandle vsS = LoadBinShader("shaders/vs_fullscreen.bin");
-        bgfx::ShaderHandle fsS = LoadBinShader("shaders/fs_ssr.bin");
-        if (bgfx::isValid(vsS) && bgfx::isValid(fsS)) {
-            m_ssrProg = bgfx::createProgram(vsS, fsS, true);
-            spdlog::info("[PP] SSR program loaded");
-        }
-        } else {
-            spdlog::warn("[PP] fs_lighting.bin missing — deferred disabled");
+            s_shadowMap   = bgfx::createUniform("s_shadowMap",   bgfx::UniformType::Sampler);
+            u_lightVP     = bgfx::createUniform("u_lightViewProj", bgfx::UniformType::Mat4);
+            u_plPos       = bgfx::createUniform("u_pointLightPosRadius", bgfx::UniformType::Vec4, 8);
+            u_plCol       = bgfx::createUniform("u_pointLightColorInt",  bgfx::UniformType::Vec4, 8);
+            u_plCnt       = bgfx::createUniform("u_pointLightCount",     bgfx::UniformType::Vec4);
+            u_slPos       = bgfx::createUniform("u_spotLightPosRadius",  bgfx::UniformType::Vec4, 4);
+            u_slDir       = bgfx::createUniform("u_spotLightDirInner",   bgfx::UniformType::Vec4, 4);
+            u_slCol       = bgfx::createUniform("u_spotLightColorOuter", bgfx::UniformType::Vec4, 4);
+            u_slCnt       = bgfx::createUniform("u_spotLightCount",      bgfx::UniformType::Vec4);
         }
     }
 
+    // SSAO
+    {
+        auto vs = LoadBinShader("shaders/vs_fullscreen.bin");
+        auto fs = LoadBinShader("shaders/fs_ssao.bin");
+        if (bgfx::isValid(vs) && bgfx::isValid(fs)) {
+            m_ssaoProg = bgfx::createProgram(vs, fs, true);
+            u_ssaoProj    = bgfx::createUniform("u_ssaoProj",    bgfx::UniformType::Mat4);
+            u_ssaoInvProj = bgfx::createUniform("u_ssaoInvProj", bgfx::UniformType::Mat4);
+            u_ssaoParams  = bgfx::createUniform("u_ssaoParams",  bgfx::UniformType::Vec4);
+            s_ssaoColor   = bgfx::createUniform("s_color",       bgfx::UniformType::Sampler);
+            s_ssaoDepth   = bgfx::createUniform("s_depth",       bgfx::UniformType::Sampler);
+            s_ssaoNormal  = bgfx::createUniform("s_normal",      bgfx::UniformType::Sampler);
+        }
+    }
+
+    // SSR
+    {
+        auto vs = LoadBinShader("shaders/vs_fullscreen.bin");
+        auto fs = LoadBinShader("shaders/fs_ssr.bin");
+        if (bgfx::isValid(vs) && bgfx::isValid(fs)) {
+            m_ssrProg = bgfx::createProgram(vs, fs, true);
+            u_ssrInvProj = bgfx::createUniform("u_ssrInvProj",    bgfx::UniformType::Mat4);
+            s_ssrColor   = bgfx::createUniform("s_color",         bgfx::UniformType::Sampler);
+            s_ssrNormal  = bgfx::createUniform("s_normalRough",   bgfx::UniformType::Sampler);
+            s_ssrDepth   = bgfx::createUniform("s_depth",         bgfx::UniformType::Sampler);
+        }
+    }
+
+    s_texColor = bgfx::createUniform("s_texColor", bgfx::UniformType::Sampler);
+
+    // Fullscreen quad
     static const PosTexVertex quad[4] = {
         {-1.0f, -1.0f, 0.0f,  0.0f, 1.0f},
         { 1.0f, -1.0f, 0.0f,  1.0f, 1.0f},
@@ -108,31 +133,36 @@ void PostProcessManager::Init() {
         { 1.0f,  1.0f, 0.0f,  1.0f, 0.0f},
     };
     static const uint16_t indices[6] = {0, 1, 2, 2, 1, 3};
-    m_vbh = bgfx::createVertexBuffer(
-        bgfx::makeRef(quad, sizeof(quad)), PosTexVertex::Layout());
-    m_ibh = bgfx::createIndexBuffer(
-        bgfx::makeRef(indices, sizeof(indices)));
+    m_vbh = bgfx::createVertexBuffer(bgfx::makeRef(quad, sizeof(quad)), PosTexVertex::Layout());
+    m_ibh = bgfx::createIndexBuffer(bgfx::makeRef(indices, sizeof(indices)));
 
-    spdlog::info("[PP] PostProcessManager initialized (passthrough)");
+    spdlog::info("[PP] PostProcessManager initialized");
 }
 
 void PostProcessManager::Shutdown() {
-    if (bgfx::isValid(m_program))     { bgfx::destroy(m_program);     m_program     = BGFX_INVALID_HANDLE; }
-    if (bgfx::isValid(m_invertProg))  { bgfx::destroy(m_invertProg);  m_invertProg  = BGFX_INVALID_HANDLE; }
-    if (bgfx::isValid(m_fxaaProg))    { bgfx::destroy(m_fxaaProg);    m_fxaaProg    = BGFX_INVALID_HANDLE; }
-    if (bgfx::isValid(m_lightingProg)){ bgfx::destroy(m_lightingProg);m_lightingProg= BGFX_INVALID_HANDLE; }
-    if (bgfx::isValid(u_camPos))      { bgfx::destroy(u_camPos);      u_camPos      = BGFX_INVALID_HANDLE; }
-    if (bgfx::isValid(u_lightDir))    { bgfx::destroy(u_lightDir);    u_lightDir    = BGFX_INVALID_HANDLE; }
-    if (bgfx::isValid(u_lightCol))    { bgfx::destroy(u_lightCol);    u_lightCol    = BGFX_INVALID_HANDLE; }
-    if (bgfx::isValid(s_albedoMr))    { bgfx::destroy(s_albedoMr);    s_albedoMr    = BGFX_INVALID_HANDLE; }
-    if (bgfx::isValid(s_normalRough)) { bgfx::destroy(s_normalRough); s_normalRough = BGFX_INVALID_HANDLE; }
-    if (bgfx::isValid(s_worldPos))    { bgfx::destroy(s_worldPos);    s_worldPos    = BGFX_INVALID_HANDLE; }
-    if (bgfx::isValid(u_texelSize))   { bgfx::destroy(u_texelSize);   u_texelSize   = BGFX_INVALID_HANDLE; }
-    if (bgfx::isValid(s_texColor))    { bgfx::destroy(s_texColor);    s_texColor    = BGFX_INVALID_HANDLE; }
-    if (bgfx::isValid(m_vbh))         { bgfx::destroy(m_vbh);         m_vbh         = BGFX_INVALID_HANDLE; }
-    if (bgfx::isValid(m_ibh))         { bgfx::destroy(m_ibh);         m_ibh         = BGFX_INVALID_HANDLE; }
-    if (bgfx::isValid(m_outputFbo))   { bgfx::destroy(m_outputFbo);   m_outputFbo   = BGFX_INVALID_HANDLE; }
-    if (bgfx::isValid(m_outputColor)) { bgfx::destroy(m_outputColor); m_outputColor = BGFX_INVALID_HANDLE; }
+    auto destroyProg = [](bgfx::ProgramHandle& h) { if (bgfx::isValid(h)) { bgfx::destroy(h); h = BGFX_INVALID_HANDLE; } };
+    auto destroyUni  = [](bgfx::UniformHandle& h) { if (bgfx::isValid(h)) { bgfx::destroy(h); h = BGFX_INVALID_HANDLE; } };
+    auto destroyTex  = [](bgfx::TextureHandle& h) { if (bgfx::isValid(h)) { bgfx::destroy(h); h = BGFX_INVALID_HANDLE; } };
+    auto destroyFbo  = [](bgfx::FrameBufferHandle& h) { if (bgfx::isValid(h)) { bgfx::destroy(h); h = BGFX_INVALID_HANDLE; } };
+
+    destroyProg(m_program); destroyProg(m_invertProg); destroyProg(m_fxaaProg);
+    destroyProg(m_lightingProg); destroyProg(m_ssaoProg); destroyProg(m_ssrProg);
+
+    destroyUni(s_texColor); destroyUni(u_texelSize);
+    destroyUni(u_camPos); destroyUni(u_lightDir); destroyUni(u_lightCol);
+    destroyUni(s_albedoMr); destroyUni(s_normalRough); destroyUni(s_worldPos);
+    destroyUni(s_shadowMap); destroyUni(u_lightVP);
+    destroyUni(u_plPos); destroyUni(u_plCol); destroyUni(u_plCnt);
+    destroyUni(u_slPos); destroyUni(u_slDir); destroyUni(u_slCol); destroyUni(u_slCnt);
+    destroyUni(u_ssaoProj); destroyUni(u_ssaoInvProj); destroyUni(u_ssaoParams);
+    destroyUni(s_ssaoColor); destroyUni(s_ssaoDepth); destroyUni(s_ssaoNormal);
+    destroyUni(u_ssrInvProj); destroyUni(s_ssrColor); destroyUni(s_ssrNormal); destroyUni(s_ssrDepth);
+
+    if (bgfx::isValid(m_vbh)) { bgfx::destroy(m_vbh); m_vbh = BGFX_INVALID_HANDLE; }
+    if (bgfx::isValid(m_ibh)) { bgfx::destroy(m_ibh); m_ibh = BGFX_INVALID_HANDLE; }
+
+    destroyTex(m_outputColor); destroyTex(m_outputDepth); destroyFbo(m_outputFbo);
+    destroyTex(m_pingColor); destroyFbo(m_pingFbo);
     m_width = m_height = 0;
 }
 
@@ -141,18 +171,32 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
     if (bgfx::isValid(m_outputFbo))   bgfx::destroy(m_outputFbo);
     if (bgfx::isValid(m_outputColor)) bgfx::destroy(m_outputColor);
     if (bgfx::isValid(m_outputDepth)) bgfx::destroy(m_outputDepth);
+    if (bgfx::isValid(m_pingFbo))     bgfx::destroy(m_pingFbo);
+    if (bgfx::isValid(m_pingColor))   bgfx::destroy(m_pingColor);
+    if (bgfx::isValid(m_blitTexA))    bgfx::destroy(m_blitTexA);
+    if (bgfx::isValid(m_blitTexB))    bgfx::destroy(m_blitTexB);
 
     const uint64_t flags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
     m_outputColor = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
     m_outputDepth = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::D24S8, flags);
     bgfx::TextureHandle att[] = { m_outputColor, m_outputDepth };
-    m_outputFbo   = bgfx::createFrameBuffer(2, att, false);
+    m_outputFbo = bgfx::createFrameBuffer(2, att, false);
+
+    m_blitTexA = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags | BGFX_TEXTURE_BLIT_DST);
+    m_blitTexB = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags | BGFX_TEXTURE_BLIT_DST);
+    m_pingColor = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
+    bgfx::TextureHandle pingAtt[] = { m_pingColor };
+    m_pingFbo = bgfx::createFrameBuffer(1, pingAtt, false);
+
     m_width = w; m_height = h;
 }
 
-bgfx::TextureHandle PostProcessManager::Render(bgfx::ViewId viewId,
-                                               bgfx::TextureHandle inputColor,
-                                               uint16_t width, uint16_t height) {
+void PostProcessManager::SwapFbos() {
+    std::swap(m_outputFbo, m_pingFbo);
+    std::swap(m_outputColor, m_pingColor);
+}
+
+bgfx::TextureHandle PostProcessManager::Render(bgfx::ViewId viewId, bgfx::TextureHandle inputColor, uint16_t width, uint16_t height) {
     if (!bgfx::isValid(m_program) || width == 0 || height == 0) return BGFX_INVALID_HANDLE;
     EnsureOutputFbo(width, height);
     if (!bgfx::isValid(m_outputFbo)) return BGFX_INVALID_HANDLE;
@@ -164,25 +208,17 @@ bgfx::TextureHandle PostProcessManager::Render(bgfx::ViewId viewId,
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
     bgfx::setTexture(0, s_texColor, inputColor);
-    if (bgfx::isValid(u_texelSize)) {
-        const float ts[4] = { 1.0f / float(width), 1.0f / float(height), 0.0f, 0.0f };
-        bgfx::setUniform(u_texelSize, ts);
-    }
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
-    bgfx::ProgramHandle use = m_program;
-    if (m_fxaaEnabled && bgfx::isValid(m_fxaaProg))          use = m_fxaaProg;
-    else if (m_invertEnabled && bgfx::isValid(m_invertProg)) use = m_invertProg;
-    bgfx::submit(viewId, use);
+    bgfx::submit(viewId, m_program);
     return m_outputColor;
 }
-
 
 bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::TextureHandle albedoMr, bgfx::TextureHandle normalRough, bgfx::TextureHandle worldPos,
     bgfx::TextureHandle shadowMap, const glm::mat4& lightMtx,
-    const float camPos[4], const float lightDir[4], const float lightColorIntensity[4], const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
-    const float spotLightPosRadius[][4], const float spotLightDirInner[][4],
-    const float spotLightColorOuter[][4], int spotLightCount,
+    const float camPos[4], const float lightDir[4], const float lightColorIntensity[4],
+    const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
+    const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], int spotLightCount,
     bgfx::ViewId viewId, uint16_t width, uint16_t height)
 {
     if (!bgfx::isValid(m_lightingProg) || width == 0 || height == 0) return BGFX_INVALID_HANDLE;
@@ -196,35 +232,26 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::setUniform(u_camPos,   camPos);
     bgfx::setUniform(u_lightDir, lightDir);
     bgfx::setUniform(u_lightCol, lightColorIntensity);
-    static bgfx::UniformHandle u_plPos = bgfx::createUniform("u_pointLightPosRadius", bgfx::UniformType::Vec4, 4);
-    static bgfx::UniformHandle u_plCol = bgfx::createUniform("u_pointLightColorInt", bgfx::UniformType::Vec4, 4);
-    static bgfx::UniformHandle u_plCnt = bgfx::createUniform("u_pointLightCount", bgfx::UniformType::Vec4);
-    static bgfx::UniformHandle u_slPos = bgfx::createUniform("u_spotLightPosRadius", bgfx::UniformType::Vec4, 4);
-    static bgfx::UniformHandle u_slDir = bgfx::createUniform("u_spotLightDirInner", bgfx::UniformType::Vec4, 4);
-    static bgfx::UniformHandle u_slCol = bgfx::createUniform("u_spotLightColorOuter", bgfx::UniformType::Vec4, 4);
-    static bgfx::UniformHandle u_slCnt = bgfx::createUniform("u_spotLightCount", bgfx::UniformType::Vec4);
-    if (pointLightCount > 0) {
-        bgfx::setUniform(u_plPos, pointLightPos, pointLightCount);
-        bgfx::setUniform(u_plCol, pointLightColor, pointLightCount);
-    }
-    float plCntArr[4] = {float(pointLightCount), 0, 0, 0};
-    bgfx::setUniform(u_plCnt, plCntArr);
-    if (spotLightCount > 0) {
-        bgfx::setUniform(u_slPos, spotLightPosRadius, spotLightCount);
-        bgfx::setUniform(u_slDir, spotLightDirInner, spotLightCount);
-        bgfx::setUniform(u_slCol, spotLightColorOuter, spotLightCount);
-    }
-    float slCntArr[4] = {float(spotLightCount), 0, 0, 0};
-    bgfx::setUniform(u_slCnt, slCntArr);
     bgfx::setTexture(0, s_albedoMr,    albedoMr);
     bgfx::setTexture(1, s_normalRough, normalRough);
     bgfx::setTexture(2, s_worldPos,    worldPos);
-
-    // Передаем карту теней
-    static bgfx::UniformHandle s_shadow = bgfx::createUniform("s_shadowMap", bgfx::UniformType::Sampler);
-    static bgfx::UniformHandle u_lightVP = bgfx::createUniform("u_lightViewProj", bgfx::UniformType::Mat4);
-    bgfx::setTexture(3, s_shadow, shadowMap);
+    bgfx::setTexture(3, s_shadowMap,   shadowMap);
     bgfx::setUniform(u_lightVP, glm::value_ptr(lightMtx));
+
+    if (pointLightCount > 0) {
+        bgfx::setUniform(u_plPos, pointLightPos, 8);
+        bgfx::setUniform(u_plCol, pointLightColor, 8);
+    }
+    float plArr[4] = { float(pointLightCount), 0, 0, 0 };
+    bgfx::setUniform(u_plCnt, plArr);
+
+    if (spotLightCount > 0) {
+        bgfx::setUniform(u_slPos, spotLightPosRadius, 4);
+        bgfx::setUniform(u_slDir, spotLightDirInner, 4);
+        bgfx::setUniform(u_slCol, spotLightColorOuter, 4);
+    }
+    float slArr[4] = { float(spotLightCount), 0, 0, 0 };
+    bgfx::setUniform(u_slCnt, slArr);
 
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
@@ -233,26 +260,74 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     return m_outputColor;
 }
 
-bgfx::TextureHandle PostProcessManager::RenderSSR(bgfx::TextureHandle color, bgfx::TextureHandle normal, bgfx::TextureHandle depth, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
-    if (!bgfx::isValid(m_ssrProg)) return color;
-    EnsureOutputFbo(width, height);
-    
-    // Use a temporary FBO for SSR? For now, just render to main output.
-    bgfx::setViewFrameBuffer(viewId, m_outputFbo);
+bgfx::TextureHandle PostProcessManager::RenderSSAO(bgfx::TextureHandle color, bgfx::TextureHandle depth, bgfx::TextureHandle normal, bgfx::FrameBufferHandle targetFbo, const glm::mat4& proj, const glm::mat4& invProj, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
+    if (!bgfx::isValid(m_ssaoProg)) return color;
+    bgfx::setViewFrameBuffer(viewId, targetFbo);
     bgfx::setViewRect(viewId, 0, 0, width, height);
-    
-    static bgfx::UniformHandle s_c = bgfx::createUniform("s_color", bgfx::UniformType::Sampler);
-    static bgfx::UniformHandle s_n = bgfx::createUniform("s_normalRough", bgfx::UniformType::Sampler);
-    static bgfx::UniformHandle s_d = bgfx::createUniform("s_depth", bgfx::UniformType::Sampler);
-    
-    bgfx::setTexture(0, s_c, color);
-    bgfx::setTexture(1, s_n, normal);
-    bgfx::setTexture(2, s_d, depth);
-    
+    bgfx::setTexture(0, s_ssaoColor,  color);
+    bgfx::setTexture(1, s_ssaoDepth,  depth);
+    bgfx::setTexture(2, s_ssaoNormal, normal);
+    bgfx::setUniform(u_ssaoProj,    glm::value_ptr(proj));
+    bgfx::setUniform(u_ssaoInvProj, glm::value_ptr(invProj));
+    float params[4] = { 0.5f, 0.02f, 1.0f, 0.0f };
+    bgfx::setUniform(u_ssaoParams, params);
+    bgfx::setVertexBuffer(0, m_vbh);
+    bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+    bgfx::submit(viewId, m_ssaoProg);
+    return m_pingColor;
+}
+
+bgfx::TextureHandle PostProcessManager::RenderSSR(bgfx::TextureHandle color, bgfx::TextureHandle normal, bgfx::TextureHandle depth, bgfx::FrameBufferHandle targetFbo, const glm::mat4& invProj, const float camPos[4], bgfx::ViewId viewId, uint16_t width, uint16_t height) {
+    if (!bgfx::isValid(m_ssrProg)) return color;
+    bgfx::setViewFrameBuffer(viewId, targetFbo);
+    bgfx::setViewRect(viewId, 0, 0, width, height);
+    bgfx::setTexture(0, s_ssrColor,  color);
+    bgfx::setTexture(1, s_ssrNormal, normal);
+    bgfx::setTexture(2, s_ssrDepth,  depth);
+    bgfx::setUniform(u_ssrInvProj, glm::value_ptr(invProj));
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId, m_ssrProg);
-    return m_outputColor;
+    return m_pingColor;
+}
+
+bgfx::TextureHandle PostProcessManager::RenderFxaa(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
+    if (!bgfx::isValid(m_fxaaProg)) return color;
+    bgfx::setViewFrameBuffer(viewId, targetFbo);
+    bgfx::setViewRect(viewId, 0, 0, width, height);
+    bgfx::setTexture(0, s_texColor, color);
+    if (bgfx::isValid(u_texelSize)) {
+        float ts[4] = { 1.0f / float(width), 1.0f / float(height), 0.0f, 0.0f };
+        bgfx::setUniform(u_texelSize, ts);
+    }
+    bgfx::setVertexBuffer(0, m_vbh);
+    bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+    bgfx::submit(viewId, m_fxaaProg);
+    return m_pingColor;
+}
+
+bgfx::TextureHandle PostProcessManager::RenderInvert(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
+    if (!bgfx::isValid(m_invertProg)) return color;
+    bgfx::setViewFrameBuffer(viewId, targetFbo);
+    bgfx::setViewRect(viewId, 0, 0, width, height);
+    bgfx::setTexture(0, s_texColor, color);
+    bgfx::setVertexBuffer(0, m_vbh);
+    bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+    bgfx::submit(viewId, m_invertProg);
+    return m_pingColor;
+}
+
+
+void PostProcessManager::BlitTexture(bgfx::TextureHandle src, bgfx::TextureHandle dst, bgfx::ViewId viewId) {
+    if (!bgfx::isValid(src) || !bgfx::isValid(dst)) return;
+    if (!bgfx::getCaps()->supported & BGFX_CAPS_TEXTURE_BLIT) {
+        spdlog::warn("[PP] Texture blit not supported on this backend");
+        return;
+    }
+    bgfx::blit(viewId, dst, 0, 0, src);
 }
 } // namespace Galeshi

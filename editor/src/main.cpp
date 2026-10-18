@@ -31,6 +31,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <bx/math.h>
 
 #include <cctype>
 #include <cmath>
@@ -100,7 +101,11 @@ protected:
         m_render  = std::make_unique<Galeshi::RenderSystem>();
         m_render->Init(m_assets.get());
         m_postProcess.Init();
-        m_shadowMap = bgfx::createTexture2D(2048, 2048, false, 1, bgfx::TextureFormat::D24S8, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+        m_render->SetDeferredEnabled(true);
+        // SSAO/SSR включим на 2-м кадре — чтобы первый кадр прошёл
+        // без sampling render target (иначе Vulkan layout mismatch).
+        m_pendingEffectsEnable = true;
+        m_shadowMap = bgfx::createTexture2D(2048, 2048, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
         m_shadowFbo = bgfx::createFrameBuffer(1, &m_shadowMap, false);
 
         m_browser    = std::make_unique<Galeshi::ContentBrowser>("assets");
@@ -129,6 +134,15 @@ protected:
     }
 
     void OnUpdate(float dt) override {
+        // --- Deferred effect enable (frame 2+) ---
+        m_renderFrameCounter++;
+        if (m_pendingEffectsEnable && m_renderFrameCounter >= 2) {
+            m_postProcess.SetSsaoEnabled(true);
+            m_postProcess.SetSsrEnabled(true);
+            m_pendingEffectsEnable = false;
+            spdlog::info("[Effects] SSAO and SSR enabled on frame {}", m_renderFrameCounter);
+        }
+
         // --- Auto-inserted physics update ---
         if (m_physics) {
             m_physics->Update(m_scene, dt);
@@ -307,14 +321,15 @@ private:
             if (ImGui::MenuItem("Invert Colors", nullptr, &inv)) m_postProcess.SetInvertEnabled(inv);
             bool fxaa = m_postProcess.FxaaEnabled();
             if (ImGui::MenuItem("FXAA", nullptr, &fxaa)) m_postProcess.SetFxaaEnabled(fxaa);
+            bool ssao = m_postProcess.SsaoEnabled();
+            if (ImGui::MenuItem("SSAO", nullptr, &ssao)) m_postProcess.SetSsaoEnabled(ssao);
             bool ssr = m_postProcess.SsrEnabled();
             if (ImGui::MenuItem("SSR", nullptr, &ssr)) m_postProcess.SetSsrEnabled(ssr);
-            bool def = m_render->DeferredEnabled();
-            if (ImGui::MenuItem("Deferred", nullptr, &def)) m_render->SetDeferredEnabled(def);
             ImGui::Separator();
             if (ImGui::MenuItem("Reset All Effects")) {
                 m_postProcess.SetInvertEnabled(false);
                 m_postProcess.SetFxaaEnabled(false);
+                m_postProcess.SetSsaoEnabled(false);
                 m_postProcess.SetSsrEnabled(false);
             }
             ImGui::EndMenu();
@@ -573,11 +588,11 @@ if (ImGui::BeginMenu("File")) {
                 glm::vec3 center = m_editor.camTarget;
                 glm::vec3 eye = center - dl.direction * 20.0f;
                 lightView = glm::lookAt(eye, center, glm::vec3(0,1,0));
-                lightProj = glm::orthoZO(-15.0f, 15.0f, -15.0f, 15.0f, 0.1f, 50.0f);
+                bx::mtxOrtho(glm::value_ptr(lightProj), -15.0f, 15.0f, -15.0f, 15.0f, 0.1f, 50.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
                 lightMtx = lightProj * lightView;
             } else {
                 lightView = glm::lookAt(glm::vec3(0,20,0), glm::vec3(0), glm::vec3(0,1,0));
-                lightProj = glm::orthoZO(-15.0f, 15.0f, -15.0f, 15.0f, 0.1f, 50.0f);
+                bx::mtxOrtho(glm::value_ptr(lightProj), -15.0f, 15.0f, -15.0f, 15.0f, 0.1f, 50.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
                 lightMtx = lightProj * lightView;
             }
             m_render->RenderShadowMap(m_scene, lightMtx, 6, m_shadowFbo);
@@ -586,7 +601,6 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             m_render->Render(m_scene, m_camera, 1, w, h);
 
             if (m_render->DeferredEnabled()) {
-                // Extract directional light + camera for lighting pass
                 glm::vec3 ldir{-0.4f,-0.8f,-0.5f}, lcol{1.0f};
                 float lint = 1.2f;
                 auto lview = m_scene.Registry().view<Galeshi::DirectionalLightComponent>();
@@ -598,19 +612,9 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 }
                 glm::vec3 cp = m_camera.Position();
                 float camPos[4] = {cp.x, cp.y, cp.z, 1.0f};
-                // Переводим направление света в пространство камеры (View Space)
                 float lDirA[4]  = {ldir.x, ldir.y, ldir.z, 0.0f};
                 float lColA[4]  = {lcol.r, lcol.g, lcol.b, lint};
                 
-                
-                
-                
-                
-
-                
-
-                
-                // Сбор Point Lights
                 float plPosA[8][4] = {};
                 float plColA[8][4] = {};
                 int plCount = 0;
@@ -630,7 +634,6 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     plCount++;
                 }
 
-                // Сбор Spot Lights
                 float slPos[4][4] = {};
                 float slDir[4][4] = {};
                 float slCol[4][4] = {};
@@ -644,13 +647,11 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     slPos[slCount][1] = tc.position.y;
                     slPos[slCount][2] = tc.position.z;
                     slPos[slCount][3] = sl.radius;
-                    
                     glm::vec3 dir = glm::normalize(sl.direction);
                     slDir[slCount][0] = dir.x;
                     slDir[slCount][1] = dir.y;
                     slDir[slCount][2] = dir.z;
                     slDir[slCount][3] = cos(glm::radians(sl.innerConeAngle));
-                    
                     slCol[slCount][0] = sl.color.r;
                     slCol[slCount][1] = sl.color.g;
                     slCol[slCount][2] = sl.color.b;
@@ -667,7 +668,29 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     plPosA, plColA, plCount,
                     slPos, slDir, slCol, slCount,
                     2, w, h);
-                
+
+                glm::mat4 proj = m_camera.Projection();
+                glm::mat4 invProj = glm::inverse(proj);
+
+if (m_postProcess.SsaoEnabled()) {
+                    m_postProcess.RenderSSAO(m_postProcess.OutputTexture(), m_framebuffer->Depth(), m_framebuffer->Normal(), m_postProcess.PingFbo(), proj, invProj, 3, w, h);
+                    m_postProcess.SwapFbos();
+                }
+
+                if (m_postProcess.SsrEnabled()) {
+                    m_postProcess.RenderSSR(m_postProcess.OutputTexture(), m_framebuffer->Normal(), m_framebuffer->Depth(), m_postProcess.PingFbo(), invProj, camPos, 3, w, h);
+                    m_postProcess.SwapFbos();
+                }
+
+                if (m_postProcess.FxaaEnabled()) {
+                    m_postProcess.RenderFxaa(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 3, w, h);
+                    m_postProcess.SwapFbos();
+                }
+
+                if (m_postProcess.InvertEnabled()) {
+                    m_postProcess.RenderInvert(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 3, w, h);
+                    m_postProcess.SwapFbos();
+                }
             } else {
                 m_postProcess.Render(2, m_framebuffer->Color(), w, h);
             }
@@ -1001,14 +1024,18 @@ void DrawDetails() {
         }
 
         if (selected[0].HasComponent<Galeshi::PointLightComponent>() && ImGui::CollapsingHeader("Point Light", ImGuiTreeNodeFlags_DefaultOpen)) {
-            auto& pl = selected[0].GetComponent<Galeshi::PointLightComponent>();
+            auto& pl = m_scene.Registry().get<Galeshi::PointLightComponent>(selected[0].Handle());
             ImGui::ColorEdit3("Point Color", glm::value_ptr(pl.color));
-            ImGui::SliderFloat("Point Intensity", &pl.intensity, 0.0f, 20.0f);
+            {
+                float oldInt = pl.intensity;
+                if (ImGui::DragFloat("Point Intensity", &pl.intensity, 0.1f, 0.0f, 100.0f)) {
+                }
+            }
             ImGui::DragFloat("Point Radius", &pl.radius, 0.1f, 0.1f, 100.0f);
         }
 
         if (selected[0].HasComponent<Galeshi::SpotLightComponent>() && ImGui::CollapsingHeader("Spot Light", ImGuiTreeNodeFlags_DefaultOpen)) {
-            auto& sl = selected[0].GetComponent<Galeshi::SpotLightComponent>();
+            auto& sl = m_scene.Registry().get<Galeshi::SpotLightComponent>(selected[0].Handle());
             ImGui::DragFloat3("Spot Direction", glm::value_ptr(sl.direction), 0.05f, -1.0f, 1.0f);
             ImGui::ColorEdit3("Spot Color", glm::value_ptr(sl.color));
             ImGui::SliderFloat("Spot Intensity", &sl.intensity, 0.0f, 20.0f);
@@ -1184,6 +1211,8 @@ void DrawDetails() {
     Galeshi::Camera         m_camera;
     Galeshi::EditorState    m_editor;
     float                   m_time = 0.0f;
+    int                     m_renderFrameCounter = 0;
+    bool                    m_pendingEffectsEnable = false;
 
     std::unique_ptr<Galeshi::AssetManager>    m_assets;
     std::unique_ptr<Galeshi::RenderSystem>    m_render;
