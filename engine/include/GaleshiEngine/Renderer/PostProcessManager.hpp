@@ -27,7 +27,7 @@ public:
     bgfx::TextureHandle Render(bgfx::ViewId viewId, bgfx::TextureHandle inputColor, uint16_t width, uint16_t height);
 
     bgfx::TextureHandle RenderLighting(bgfx::TextureHandle albedoMr, bgfx::TextureHandle normalRough, bgfx::TextureHandle worldPos,
-                                       bgfx::TextureHandle shadowMap, const glm::mat4& lightMtx, const glm::mat4& invViewProj,
+                                       bgfx::TextureHandle shadowMap, const glm::mat4& lightMtx, 
                                        const float camPos[4], const float lightDir[4], const float lightColorIntensity[4],
                                        const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
                                        const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], int spotLightCount,
@@ -67,7 +67,6 @@ private:
     bgfx::UniformHandle s_worldPos    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_shadowMap   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lightVP     = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle u_invVP       = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_plPos       = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_plCol       = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_plCnt       = BGFX_INVALID_HANDLE;

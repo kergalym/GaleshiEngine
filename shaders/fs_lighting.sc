@@ -4,44 +4,21 @@ $input v_texcoord0
 SAMPLER2D(s_albedoMr,    0);
 SAMPLER2D(s_normalRough, 1);
 SAMPLER2D(s_worldPos,    2);
-SAMPLER2D(s_shadowMap,   3);
 
 uniform vec4 u_cameraPosition;
 uniform vec4 u_lightDirection;
 uniform vec4 u_lightColorIntensity;
-uniform mat4 u_lightViewProj;
-uniform mat4 u_invViewProj;
 
 uniform vec4 u_pointLightPosRadius[8];
 uniform vec4 u_pointLightColorInt[8];
 uniform vec4 u_pointLightCount;
+
 uniform vec4 u_spotLightPosRadius[4];
 uniform vec4 u_spotLightDirInner[4];
 uniform vec4 u_spotLightColorOuter[4];
 uniform vec4 u_spotLightCount;
 
 const float PI = 3.14159265359;
-
-// --- IBL: Процедурное небо ---
-vec3 ProceduralSky(vec3 dir, vec3 sunDir) {
-    float y = dir.y;
-    vec3 skyColor     = vec3(0.2, 0.5, 0.9); 
-    vec3 horizonColor = vec3(0.7, 0.8, 1.0); 
-    vec3 groundColor  = vec3(0.15, 0.15, 0.15); 
-    
-    vec3 color;
-    if (y > 0.0) {
-        color = mix(horizonColor, skyColor, pow(y, 0.6));
-    } else {
-        color = mix(horizonColor, groundColor, pow(-y, 0.3));
-    }
-    
-    // Солнце
-    float sun = max(dot(dir, -sunDir), 0.0);
-    color += vec3(1.0, 0.8, 0.6) * pow(sun, 128.0) * 5.0; // Диск солнца
-    color += vec3(1.0, 0.6, 0.3) * pow(sun, 8.0) * 0.5;   // Ореол
-    return color;
-}
 
 float D_GGX(float NdotH, float roughness) {
     float a = roughness * roughness;
@@ -63,6 +40,7 @@ vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, vec3 L,
     float NdotV = max(dot(N, V), 0.001);
     float NdotH = max(dot(N, H), 0.0);
     float VdotH = max(dot(V, H), 0.0);
+
     if (NdotL <= 0.0) return vec3(0.0);
 
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
@@ -72,6 +50,7 @@ vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, vec3 L,
     vec3 specular = (D * G * F) / (4.0 * NdotV * NdotL + 0.001);
     vec3 kD = (1.0 - F) * (1.0 - metallic);
     vec3 diffuse = kD * albedo / PI;
+
     return (diffuse + specular) * radiance * NdotL;
 }
 
@@ -80,12 +59,9 @@ void main()
     vec2 uv = v_texcoord0;
     vec4 wPos = texture2D(s_worldPos, uv);
     
-    // --- SKYBOX: Если пиксель фоновый, рисуем небо ---
+    // === СЕРЫЙ ФОН (как было до неба) ===
     if (length(wPos.xyz) < 0.001) {
-        vec2 ndc = uv * 2.0 - 1.0;
-        vec4 world = mul(u_invViewProj, vec4(ndc, 1.0, 1.0));
-        vec3 ray = normalize(world.xyz / world.w);
-        gl_FragColor = vec4(ProceduralSky(ray, u_lightDirection.xyz), 1.0);
+        gl_FragColor = vec4(0.15, 0.15, 0.18, 1.0);
         return;
     }
 
@@ -98,24 +74,15 @@ void main()
     float rough    = max(nR.a, 0.05);
     vec3 V         = normalize(u_cameraPosition.xyz - wPos.xyz);
 
-    // --- IBL: Окружающий свет и отражения ---
-    vec3 R = reflect(-V, N);
-    vec3 envColor = ProceduralSky(R, u_lightDirection.xyz);
-    vec3 F0 = mix(vec3(0.04), albedo, metallic);
-    
-    // Диффузный ambient (только для диэлектриков)
-    vec3 ambientDiffuse = albedo * envColor * 0.2 * (1.0 - metallic);
-    // Зеркальный ambient (для металла)
-    vec3 ambientSpecular = envColor * F0 * (1.0 - rough);
-    
-    vec3 finalColor = ambientDiffuse + ambientSpecular;
+    // Простой ambient (без IBL)
+    vec3 finalColor = albedo * 0.15;
 
-    // 1. Directional Light (с тенями)
+    // Directional Light
     vec3 L_dir = normalize(-u_lightDirection.xyz);
     vec3 radiance_dir = u_lightColorIntensity.rgb * u_lightColorIntensity.a;
     finalColor += calcLight(N, V, albedo, metallic, rough, L_dir, radiance_dir);
 
-    // 2. Point Lights
+    // Point Lights
     int pCount = int(u_pointLightCount.x);
     for (int i = 0; i < 8; ++i) {
         if (i >= pCount) break;
@@ -130,34 +97,7 @@ void main()
         float window = saturate(1.0 - pow(dist / radius, 4.0));
         atten *= window * window;
 
-        vec3 radiance = u_pointLightColorInt[i].rgb * u_pointLightColorInt[i].a * atten * 20.0;
-        finalColor += calcLight(N, V, albedo, metallic, rough, L, radiance);
-    }
-
-    // 3. Spot Lights
-    int sCount = int(u_spotLightCount.x);
-    for (int i = 0; i < 4; ++i) {
-        if (i >= sCount) break;
-        vec3 lightPos = u_spotLightPosRadius[i].xyz;
-        float radius = u_spotLightPosRadius[i].w;
-        vec3 spotDir = normalize(u_spotLightDirInner[i].xyz);
-        float cosInner = u_spotLightDirInner[i].w;
-        float cosOuter = u_spotLightColorOuter[i].a;
-
-        vec3 toLight = lightPos - wPos.xyz;
-        float dist = length(toLight);
-        if (dist > radius) continue;
-
-        vec3 L = toLight / dist;
-        float cosAngle = dot(-L, spotDir);
-        float spotAtten = clamp((cosAngle - cosOuter) / (cosInner - cosOuter), 0.0, 1.0);
-        if (spotAtten <= 0.0) continue;
-
-        float atten = 1.0 / (dist * dist + 1.0);
-        float window = saturate(1.0 - pow(dist / radius, 4.0));
-        atten *= window * window * spotAtten;
-
-        vec3 radiance = u_spotLightColorOuter[i].rgb * atten * 20.0;
+        vec3 radiance = u_pointLightColorInt[i].rgb * u_pointLightColorInt[i].a * atten;
         finalColor += calcLight(N, V, albedo, metallic, rough, L, radiance);
     }
 

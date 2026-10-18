@@ -138,6 +138,31 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
             const std::string mPath = jm.value("mrMapPath", ""); if (!mPath.empty()) mat->metallicRoughnessMap = m_assets.LoadTexture(mPath);
             e.AddComponent<MaterialComponent>(MaterialComponent{ mat });
         }
+        // Point Light
+        if (je.contains("pointLight")) {
+            auto& pl = m_scene.Registry().emplace_or_replace<PointLightComponent>(e);
+            pl.color = Vec3FromJson(je["pointLight"]["color"]);
+            pl.intensity = je["pointLight"]["intensity"].get<float>();
+            pl.radius = je["pointLight"]["radius"].get<float>();
+        }
+        // Spot Light
+        if (je.contains("spotLight")) {
+            auto& sl = m_scene.Registry().emplace_or_replace<SpotLightComponent>(e);
+            sl.direction = Vec3FromJson(je["spotLight"]["direction"]);
+            sl.innerConeAngle = je["spotLight"]["innerConeAngle"].get<float>();
+            sl.outerConeAngle = je["spotLight"]["outerConeAngle"].get<float>();
+            sl.radius = je["spotLight"]["radius"].get<float>();
+            sl.color = Vec3FromJson(je["spotLight"]["color"]);
+            sl.intensity = je["spotLight"]["intensity"].get<float>();
+        }
+        // Audio Source
+        if (je.contains("audioSource")) {
+            auto& a = m_scene.Registry().emplace_or_replace<AudioSourceComponent>(e);
+            a.soundPath = je["audioSource"]["soundPath"].get<std::string>();
+            a.loop = je["audioSource"]["loop"].get<bool>();
+            a.autoplay = je["audioSource"]["autoplay"].get<bool>();
+        }
+
         if (je.contains("skeletal")) {
             const auto& js = je["skeletal"];
             std::string src = js.value("sourcePath", "");

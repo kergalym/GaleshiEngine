@@ -26,13 +26,13 @@ bool Framebuffer::Create(uint16_t w, uint16_t h) {
     const uint64_t flags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
 
     // RT0: albedo.rgb + metallic.a
-    m_color = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
+    m_color = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags);
     // RT1: normal.xyz encoded + roughness.a
-    m_normal = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
+    m_normal = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags);
     // RT2: worldPos.xyz (F16 for precision)
-    m_worldPos = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
+    m_worldPos = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags);
     // Depth
-    m_depth = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::D24S8, flags);
+    m_depth = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::D32F, flags);
 
     if (!bgfx::isValid(m_color) || !bgfx::isValid(m_normal) ||
         !bgfx::isValid(m_worldPos) || !bgfx::isValid(m_depth)) {

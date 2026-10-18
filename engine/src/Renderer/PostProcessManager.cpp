@@ -85,8 +85,8 @@ void PostProcessManager::Init() {
             s_worldPos    = bgfx::createUniform("s_worldPos",    bgfx::UniformType::Sampler);
             s_shadowMap   = bgfx::createUniform("s_shadowMap",   bgfx::UniformType::Sampler);
             u_lightVP     = bgfx::createUniform("u_lightViewProj", bgfx::UniformType::Mat4);
-            u_invVP       = bgfx::createUniform("u_invViewProj",    bgfx::UniformType::Mat4);
             u_plPos       = bgfx::createUniform("u_pointLightPosRadius", bgfx::UniformType::Vec4, 8);
+            spdlog::info("[PP] u_plPos valid: {}", bgfx::isValid(u_plPos));
             u_plCol       = bgfx::createUniform("u_pointLightColorInt",  bgfx::UniformType::Vec4, 8);
             u_plCnt       = bgfx::createUniform("u_pointLightCount",     bgfx::UniformType::Vec4);
             u_slPos       = bgfx::createUniform("u_spotLightPosRadius",  bgfx::UniformType::Vec4, 4);
@@ -137,6 +137,7 @@ void PostProcessManager::Init() {
     m_vbh = bgfx::createVertexBuffer(bgfx::makeRef(quad, sizeof(quad)), PosTexVertex::Layout());
     m_ibh = bgfx::createIndexBuffer(bgfx::makeRef(indices, sizeof(indices)));
 
+    spdlog::info("[PP] === BUILD_MARKER_V2 ===");
     spdlog::info("[PP] PostProcessManager initialized");
 }
 
@@ -152,7 +153,7 @@ void PostProcessManager::Shutdown() {
     destroyUni(s_texColor); destroyUni(u_texelSize);
     destroyUni(u_camPos); destroyUni(u_lightDir); destroyUni(u_lightCol);
     destroyUni(s_albedoMr); destroyUni(s_normalRough); destroyUni(s_worldPos);
-    destroyUni(s_shadowMap); destroyUni(u_lightVP); destroyUni(u_invVP);
+    destroyUni(s_shadowMap); destroyUni(u_lightVP); 
     destroyUni(u_plPos); destroyUni(u_plCol); destroyUni(u_plCnt);
     destroyUni(u_slPos); destroyUni(u_slDir); destroyUni(u_slCol); destroyUni(u_slCnt);
     destroyUni(u_ssaoProj); destroyUni(u_ssaoInvProj); destroyUni(u_ssaoParams);
@@ -179,7 +180,7 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
 
     const uint64_t flags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
     m_outputColor = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
-    m_outputDepth = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::D24S8, flags);
+    m_outputDepth = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::D32F, flags);
     bgfx::TextureHandle att[] = { m_outputColor, m_outputDepth };
     m_outputFbo = bgfx::createFrameBuffer(2, att, false);
 
@@ -216,7 +217,7 @@ bgfx::TextureHandle PostProcessManager::Render(bgfx::ViewId viewId, bgfx::Textur
 
 bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::TextureHandle albedoMr, bgfx::TextureHandle normalRough, bgfx::TextureHandle worldPos,
-    bgfx::TextureHandle shadowMap, const glm::mat4& lightMtx, const glm::mat4& invViewProj,
+    bgfx::TextureHandle shadowMap, const glm::mat4& lightMtx, 
     const float camPos[4], const float lightDir[4], const float lightColorIntensity[4],
     const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
     const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], int spotLightCount,
@@ -238,7 +239,7 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::setTexture(2, s_worldPos,    worldPos);
     bgfx::setTexture(3, s_shadowMap,   shadowMap);
     bgfx::setUniform(u_lightVP, glm::value_ptr(lightMtx));
-    bgfx::setUniform(u_invVP, glm::value_ptr(invViewProj));
+    
 
     if (pointLightCount > 0) {
         bgfx::setUniform(u_plPos, pointLightPos, 8);
@@ -246,7 +247,6 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     }
     float plArr[4] = { float(pointLightCount), 0, 0, 0 };
     bgfx::setUniform(u_plCnt, plArr);
-
     if (spotLightCount > 0) {
         bgfx::setUniform(u_slPos, spotLightPosRadius, 4);
         bgfx::setUniform(u_slDir, spotLightDirInner, 4);
@@ -323,10 +323,9 @@ bgfx::TextureHandle PostProcessManager::RenderInvert(bgfx::TextureHandle color, 
     return m_pingColor;
 }
 
-
 void PostProcessManager::BlitTexture(bgfx::TextureHandle src, bgfx::TextureHandle dst, bgfx::ViewId viewId) {
     if (!bgfx::isValid(src) || !bgfx::isValid(dst)) return;
-    if (!bgfx::getCaps()->supported & BGFX_CAPS_TEXTURE_BLIT) {
+    if ((bgfx::getCaps()->supported & BGFX_CAPS_TEXTURE_BLIT) == 0) {
         spdlog::warn("[PP] Texture blit not supported on this backend");
         return;
     }

@@ -137,8 +137,8 @@ protected:
         // --- Deferred effect enable (frame 2+) ---
         m_renderFrameCounter++;
         if (m_pendingEffectsEnable && m_renderFrameCounter >= 2) {
-            m_postProcess.SetSsaoEnabled(true);
-            m_postProcess.SetSsrEnabled(true);
+            m_postProcess.SetSsaoEnabled(false);
+            m_postProcess.SetSsrEnabled(false);
             m_pendingEffectsEnable = false;
             spdlog::info("[Effects] SSAO and SSR enabled on frame {}", m_renderFrameCounter);
         }
@@ -659,28 +659,24 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     slCount++;
                 }
 
+                glm::mat4 proj = m_camera.Projection();
+                glm::mat4 invProj = glm::inverse(proj);
+                
+
                 m_postProcess.RenderLighting(
                     m_framebuffer->Color(),
                     m_framebuffer->Normal(),
                     m_framebuffer->WorldPos(),
-                    m_shadowMap, lightMtx, invProj,
+                    m_shadowMap, lightMtx,
                     camPos, lDirA, lColA,
                     plPosA, plColA, plCount,
                     slPos, slDir, slCol, slCount,
                     2, w, h);
 
-                glm::mat4 proj = m_camera.Projection();
-                glm::mat4 invProj = glm::inverse(proj);
 
-if (m_postProcess.SsaoEnabled()) {
-                    m_postProcess.RenderSSAO(m_postProcess.OutputTexture(), m_framebuffer->Depth(), m_framebuffer->Normal(), m_postProcess.PingFbo(), proj, invProj, 3, w, h);
-                    m_postProcess.SwapFbos();
-                }
+// SSAO temporarily disabled
 
-                if (m_postProcess.SsrEnabled()) {
-                    m_postProcess.RenderSSR(m_postProcess.OutputTexture(), m_framebuffer->Normal(), m_framebuffer->Depth(), m_postProcess.PingFbo(), invProj, camPos, 3, w, h);
-                    m_postProcess.SwapFbos();
-                }
+                // SSR temporarily disabled
 
                 if (m_postProcess.FxaaEnabled()) {
                     m_postProcess.RenderFxaa(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 3, w, h);
