@@ -24,6 +24,7 @@ CMakeFiles/
 imgui.ini
 *.log
 *.bak
+*.bak.*
 *.py
 *.chroma_db/
 .venv/

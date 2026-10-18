@@ -105,4 +105,14 @@ struct NavAgentComponent {
     float stoppingDistance = 0.5f;
 };
 
+struct AudioSourceComponent {
+    std::string soundPath;
+    bool        loop     = false;
+    bool        autoplay = false;
+    bool        playing  = false;
+};
+
+// Tag: entity was created by a Lua script and should be cleaned on hot-reload.
+struct LuaEntityComponent {};
+
 } // namespace Galeshi

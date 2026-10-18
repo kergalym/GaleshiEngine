@@ -3,6 +3,8 @@
 #include <glm/glm.hpp>
 #include <cstdint>
 #include <memory>
+#include <functional>
+#include <entt/entt.hpp>
 
 namespace Galeshi {
 
@@ -18,11 +20,13 @@ public:
     void Reset();
     void Update(Scene& scene, float deltaTime);
 
-    // P0: create dynamic box body; returns raw body index (0xFFFFFFFF on failure).
-    uint32_t CreateBox(const glm::vec3& halfExtents, const glm::vec3& position);
+    uint32_t CreateBox(const glm::vec3& halfExtents, const glm::vec3& position,
+                       entt::entity entity = entt::null);
 
-    // P0: read body positions/rotations from Jolt, write into TransformComponent.
     void SyncTransformsToECS(Scene& scene);
+
+    // Callback receives (entityA, entityB) for each ContactAdded event.
+    void SetOnContactCallback(std::function<void(entt::entity, entt::entity)> cb);
 
 private:
     struct Impl;

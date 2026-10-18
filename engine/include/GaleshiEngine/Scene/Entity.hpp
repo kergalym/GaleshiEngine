@@ -3,6 +3,7 @@
 #include <entt/entt.hpp>
 #include <string>
 #include <utility>
+#include <type_traits>
 
 namespace Galeshi {
 
@@ -13,10 +14,16 @@ public:
     Entity() = default;
     Entity(entt::entity handle, Scene* scene) : m_handle(handle), m_scene(scene) {}
 
-    template<typename T, typename... Args>
+        template<typename T, typename... Args>
     T& AddComponent(Args&&... args) {
-        return m_scene->Registry().template emplace<T>(
-            m_handle, std::forward<Args>(args)...);
+        auto& reg = m_scene->Registry();
+        if constexpr (std::is_empty_v<T>) {
+            reg.template emplace<T>(m_handle);
+            static T s_dummy{};
+            return s_dummy;
+        } else {
+            return reg.template emplace<T>(m_handle, std::forward<Args>(args)...);
+        }
     }
 
     template<typename T>

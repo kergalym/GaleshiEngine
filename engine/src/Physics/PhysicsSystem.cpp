@@ -5,6 +5,7 @@
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Body/BodyID.h>
@@ -18,6 +19,9 @@
 #include "GaleshiEngine/Scene/Components.hpp"
 
 #include <algorithm>
+#include <unordered_map>
+#include <entt/entt.hpp>
+#include <functional>
 #include <thread>
 
 namespace {
@@ -56,6 +60,33 @@ public:
 
 namespace Galeshi {
 
+class ContactListenerImpl final : public JPH::ContactListener {
+public:
+    std::function<void(entt::entity, entt::entity)> onContact;
+    std::unordered_map<uint32_t, entt::entity>* bodyToEntity = nullptr;
+
+    JPH::ValidateResult OnContactValidate(const JPH::Body&, const JPH::Body&,
+                                          JPH::RVec3Arg,
+                                          const JPH::CollideShapeResult&) override {
+        return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
+    }
+
+    void OnContactAdded(const JPH::Body& b1, const JPH::Body& b2,
+                        const JPH::ContactManifold&, JPH::ContactSettings&) override {
+        if (!bodyToEntity || !onContact) return;
+        uint32_t id1 = b1.GetID().GetIndexAndSequenceNumber();
+        uint32_t id2 = b2.GetID().GetIndexAndSequenceNumber();
+        auto it1 = bodyToEntity->find(id1);
+        auto it2 = bodyToEntity->find(id2);
+        if (it1 != bodyToEntity->end() && it2 != bodyToEntity->end())
+            onContact(it1->second, it2->second);
+    }
+
+    void OnContactPersisted(const JPH::Body&, const JPH::Body&,
+                            const JPH::ContactManifold&, JPH::ContactSettings&) override {}
+    void OnContactRemoved(const JPH::SubShapeIDPair&) override {}
+};
+
 struct EnginePhysicsSystem::Impl {
     std::unique_ptr<JPH::TempAllocatorImpl>   tempAllocator;
     std::unique_ptr<JPH::JobSystemThreadPool> jobSystem;
@@ -66,6 +97,8 @@ struct EnginePhysicsSystem::Impl {
     ObjPair   objPair;
 
     JPH::BodyInterface* bodyInterface = nullptr;
+    ContactListenerImpl contactListener;
+    std::unordered_map<uint32_t, entt::entity> bodyToEntity;
     bool initialized = false;
 };
 
@@ -97,6 +130,8 @@ bool EnginePhysicsSystem::Init() {
     m_impl->jobSystem = std::make_unique<JPH::JobSystemThreadPool>(2048, 8, threads);
 
     m_impl->bodyInterface = &m_impl->physicsSystem->GetBodyInterface();
+    m_impl->contactListener.bodyToEntity = &m_impl->bodyToEntity;
+    m_impl->physicsSystem->SetContactListener(&m_impl->contactListener);
 
     // Static ground plane: top surface at y=0.
     JPH::BodyCreationSettings ground(
@@ -135,7 +170,7 @@ void EnginePhysicsSystem::Update(Scene& /*scene*/, float dt) {
         m_impl->tempAllocator.get(), m_impl->jobSystem.get());
 }
 
-uint32_t EnginePhysicsSystem::CreateBox(const glm::vec3& halfExtents, const glm::vec3& position) {
+uint32_t EnginePhysicsSystem::CreateBox(const glm::vec3& halfExtents, const glm::vec3& position, entt::entity entity) {
     if (!m_impl->initialized) return 0xFFFFFFFFu;
 
     JPH::BodyCreationSettings s(
@@ -150,7 +185,9 @@ uint32_t EnginePhysicsSystem::CreateBox(const glm::vec3& halfExtents, const glm:
 
     JPH::BodyID id = m_impl->bodyInterface->CreateAndAddBody(s, JPH::EActivation::Activate);
     if (id.IsInvalid()) return 0xFFFFFFFFu;
-    return id.GetIndexAndSequenceNumber();
+    uint32_t rawId = id.GetIndexAndSequenceNumber();
+    if (entity != entt::null) m_impl->bodyToEntity[rawId] = entity;
+    return rawId;
 }
 
 void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene) {
@@ -174,6 +211,10 @@ void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene) {
         const JPH::Quat q = m_impl->bodyInterface->GetRotation(id);
         tf.rotation = glm::quat(q.GetW(), q.GetX(), q.GetY(), q.GetZ());
     }
+}
+
+void EnginePhysicsSystem::SetOnContactCallback(std::function<void(entt::entity, entt::entity)> cb) {
+    m_impl->contactListener.onContact = std::move(cb);
 }
 
 } // namespace Galeshi

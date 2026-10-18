@@ -64,6 +64,11 @@ protected:
         if (!m_physics->Init()) spdlog::error("[Subsystem] m_physics->Init() failed");
         else spdlog::info("[Subsystem] m_physics->Init() done");
         m_scripts.BindFunctions();
+        m_scripts.BindECS(m_scene);
+        m_scripts.BindAudio([this](const std::string& p){ m_audio.PlaySound(p); });
+        m_scripts.BindPhysics([this](const glm::vec3& he, const glm::vec3& pos, entt::entity e) {
+            return m_physics->CreateBox(he, pos, e);
+        });
         spdlog::info("[Subsystem] m_scripts.RunScript(init.lua) begin");
         if (!m_scripts.RunScript("assets/scripts/init.lua"))
             spdlog::error("[Subsystem] m_scripts.RunScript(init.lua) failed");
@@ -74,6 +79,19 @@ protected:
         m_assets  = std::make_unique<Galeshi::AssetManager>();
         m_physics = std::make_unique<Galeshi::EnginePhysicsSystem>();
         m_physics->Init();
+        m_physics->SetOnContactCallback([this](entt::entity e1, entt::entity e2) {
+            // Simple demo: play beep on any collision involving an AudioSource entity
+            auto& reg = m_scene.Registry();
+            for (entt::entity e : { e1, e2 }) {
+                if (reg.valid(e) && reg.all_of<Galeshi::AudioSourceComponent>(e)) {
+                    auto& a = reg.get<Galeshi::AudioSourceComponent>(e);
+                    if (!a.soundPath.empty()) {
+                        m_audio.PlaySound(a.soundPath, a.loop);
+                        a.playing = true;
+                    }
+                }
+            }
+        });
         m_navSystem = std::make_unique<Galeshi::NavigationSystem>();
         m_navSystem->Init();
         m_debug = std::make_unique<Galeshi::DebugRenderer>();
@@ -112,6 +130,20 @@ protected:
         if (m_physics) {
             m_physics->Update(m_scene, dt);
             m_physics->SyncTransformsToECS(m_scene);
+        }
+
+        // Audio: auto-play & state sync
+        {
+            auto view = m_scene.Registry().view<Galeshi::AudioSourceComponent>();
+            for (auto e : view) {
+                auto& a = view.get<Galeshi::AudioSourceComponent>(e);
+                bool playingNow = !a.soundPath.empty() && m_audio.IsSoundPlaying(a.soundPath);
+                if (a.playing != playingNow) a.playing = playingNow;
+                if (a.autoplay && !a.playing && !a.soundPath.empty()) {
+                    m_audio.PlaySound(a.soundPath, a.loop);
+                    a.playing = true;
+                }
+            }
         }
         // --- End auto-inserted ---
 
@@ -177,6 +209,13 @@ protected:
             if (ImGui::IsKeyPressed(ImGuiKey_E)) m_editor.SetMode(Galeshi::GizmoMode::Rotate);
             if (ImGui::IsKeyPressed(ImGuiKey_R)) m_editor.SetMode(Galeshi::GizmoMode::Scale);
             if (ImGui::IsKeyPressed(ImGuiKey_Delete)) DeleteSelected();
+            if (ImGui::IsKeyPressed(ImGuiKey_F5)) {
+                spdlog::info("[Lua] Hot-reload init.lua");
+                m_scripts.HotReload("assets/scripts/init.lua");
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Space)) {
+                m_audio.PlaySound("assets/sounds/beep.wav");
+            }
 
             if (ImGui::GetIO().KeyCtrl) {
                 if (ImGui::IsKeyPressed(ImGuiKey_I)) OpenFileDialog();
@@ -773,8 +812,44 @@ private:
             glm::vec3 rot = selected[0].HasComponent<Galeshi::TransformComponent>() ? glm::degrees(glm::eulerAngles(selected[0].GetComponent<Galeshi::TransformComponent>().rotation)) : glm::vec3(0.0f);
 
             if (ImGui::DragFloat3("Position", glm::value_ptr(pos), 0.05f)) { for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().position = pos; }
+
+
+        
             if (ImGui::DragFloat3("Scale", glm::value_ptr(scl), 0.05f, 0.01f, 100.0f)) { for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().scale = scl; }
             if (ImGui::DragFloat3("Rotation", glm::value_ptr(rot), 1.0f)) { glm::quat q = glm::quat(glm::radians(rot)); for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().rotation = q; }
+        }
+
+        if (auto sel = m_editor.Selected(&m_scene); sel) {
+            if (!sel.HasComponent<Galeshi::AudioSourceComponent>()) {
+                if (ImGui::Button("+ Add Audio Source")) {
+                    sel.AddComponent<Galeshi::AudioSourceComponent>();
+                }
+            } else {
+                auto& audio = sel.GetComponent<Galeshi::AudioSourceComponent>();
+                if (ImGui::CollapsingHeader("Audio Source")) {
+                    char buf[256];
+                    snprintf(buf, sizeof buf, "%s", audio.soundPath.c_str());
+                    if (ImGui::InputText("Sound Path", buf, sizeof buf)) {
+                        audio.soundPath = buf;
+                    }
+                    ImGui::Checkbox("Autoplay", &audio.autoplay);
+                    ImGui::Checkbox("Loop", &audio.loop);
+                    if (ImGui::Button(audio.playing ? "Stop" : "Play")) {
+                        if (audio.playing) {
+                            m_audio.StopSound(audio.soundPath);
+                            audio.playing = false;
+                        } else {
+                            m_audio.PlaySound(audio.soundPath, audio.loop);
+                            audio.playing = true;
+                        }
+                    }
+                    ImGui::SameLine();
+                    ImGui::Text("State: %s", audio.playing ? "playing" : "idle");
+                    if (ImGui::Button("Remove Audio Source")) {
+                        sel.RemoveComponent<Galeshi::AudioSourceComponent>();
+                    }
+                }
+            }
         }
 
         if (selected[0].HasComponent<Galeshi::LandscapeComponent>() && ImGui::CollapsingHeader("Landscape (Sculpting)", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -952,7 +1027,7 @@ private:
         auto& rb = e.AddComponent<Galeshi::RigidBodyComponent>();
         rb.motionType = Galeshi::RigidBodyComponent::MotionType::Dynamic;
         rb.mass = 1.0f;
-        rb.bodyId = m_physics->CreateBox(scale * 0.5f, pos);
+        rb.bodyId = m_physics->CreateBox(scale * 0.5f, pos, static_cast<entt::entity>(e));
 
         spdlog::info("[Physics] Spawned {} bodyId=0x{:08x}", name, rb.bodyId);
         return e;
