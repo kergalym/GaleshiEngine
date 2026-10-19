@@ -4,7 +4,7 @@ SAMPLER2D(s_color, 0);
 SAMPLER2D(s_history, 1);
 SAMPLER2D(s_depth, 2);
 uniform mat4 u_prevViewProj;
-uniform mat4 u_invViewProj;
+uniform mat4 u_taaInvViewProj;
 uniform vec4 u_taaParams; // x = blend factor
 void main() {
     vec2 uv = v_texcoord0;
@@ -15,7 +15,7 @@ void main() {
     
     // Reproject using depth
     vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
-    vec4 world = mul(u_invViewProj, clip);
+    vec4 world = mul(u_taaInvViewProj, clip);
     world.xyz /= world.w;
     vec4 prevClip = mul(u_prevViewProj, world);
     vec2 prevUV = (prevClip.xy / prevClip.w) * 0.5 + 0.5;

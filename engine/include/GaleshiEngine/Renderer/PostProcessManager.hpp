@@ -109,6 +109,7 @@ private:
     bgfx::UniformHandle s_pointShadowMap = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_pointLightFarPlane = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_pointShadowMap = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_pointShadowDepth = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_spotShadowMaps[4] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
     bgfx::FrameBufferHandle m_spotShadowFbos[4] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
     bgfx::UniformHandle s_spotShadowMap0 = BGFX_INVALID_HANDLE;

@@ -1,22 +1,44 @@
 $input v_texcoord0
 #include <bgfx_shader.sh>
 
-SAMPLER2D(s_color, 0);
-uniform vec4 u_texelSize;
+SAMPLER2D(s_ssaoTex, 0);
+SAMPLER2D(s_depthTex, 1);
 
-void main() {
-    vec2 t = u_texelSize.xy;
-    vec4 center = texture2D(s_color, v_texcoord0);
-    vec4 result = center;
-    float totalW = 1.0;
+uniform vec4 u_texelSize; // x: 1/width, y: 1/height
 
-    // 3x3 box blur (билатеральный здесь избыточен, так как AO уже сглажен range check'ом)
-    for (int x = -1; x <= 1; ++x) {
-        for (int y = -1; y <= 1; ++y) {
-            if (x == 0 && y == 0) continue;
-            result.rgb += texture2D(s_color, v_texcoord0 + vec2(x, y) * t).rgb;
-            totalW += 1.0;
+void main()
+{
+    vec2 texelSize = u_texelSize.xy;
+    vec2 uv = v_texcoord0;
+    
+    float result = 0.0;
+    float totalWeight = 0.0;
+    
+    float centerDepth = texture2D(s_depthTex, uv).r;
+    
+    // Защита фона (нет SSAO на небе)
+    if (centerDepth >= 0.9999) {
+        gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+        return;
+    }
+
+    for (int x = -2; x <= 2; ++x)
+    {
+        for (int y = -2; y <= 2; ++y)
+        {
+            vec2 offset = vec2(float(x), float(y)) * texelSize;
+            float neighborDepth = texture2D(s_depthTex, uv + offset).r;
+            float neighborSSAO  = texture2D(s_ssaoTex, uv + offset).r;
+            
+            // Плавная защита от перетекания (без жестких обрывов, чтобы не мерцало)
+            float depthDiff = abs(centerDepth - neighborDepth);
+            float depthWeight = 1.0 / (1.0 + depthDiff * 10000.0);
+            
+            result += neighborSSAO * depthWeight;
+            totalWeight += depthWeight;
         }
     }
-    gl_FragColor = vec4(result.rgb / totalW, center.a);
+    
+    float finalSSAO = result / max(totalWeight, 0.0001);
+    gl_FragColor = vec4(finalSSAO, finalSSAO, finalSSAO, 1.0);
 }

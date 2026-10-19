@@ -52,6 +52,10 @@ vec3 F_Schlick(float VdotH, vec3 F0) {
     return F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
 }
 
+vec3 F_SchlickRoughness(float NdotV, vec3 F0, float roughness) {
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - NdotV, 0.0, 1.0), 5.0);
+}
+
 vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, vec3 L, vec3 radiance) {
     vec3 H = normalize(L + V);
     float NdotL = max(dot(N, L), 0.0);
@@ -78,7 +82,7 @@ float calculateShadow(vec4 lightSpacePos, float NdotL, int cascadeIdx) {
         projCoords.y < 0.0 || projCoords.y > 1.0) return 0.0;
 
     float currentDepth = projCoords.z;
-    float bias = max(0.00005 * (1.0 - NdotL), 0.00001);
+    float bias = max(0.002 * (1.0 - NdotL), 0.0005);
     float shadow = 0.0;
     vec2 texelSize = vec2(1.0 / 2048.0, 1.0 / 2048.0);
 
@@ -105,7 +109,7 @@ float calcSpotShadow0(vec4 lightSpacePos, float NdotL) {
     if (projCoords.z > 1.0 || projCoords.z < 0.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 0.0;
 
     float currentDepth = projCoords.z;
-    float bias = max(0.00001 * (1.0 - NdotL), 0.000001);
+    float bias = max(0.0005 * (1.0 - NdotL), 0.00005);
     float shadow = 0.0;
     vec2 texelSize = vec2(1.0 / 1024.0, 1.0 / 1024.0);
     float pcfDepth;
@@ -140,7 +144,7 @@ float calcSpotShadow1(vec4 lightSpacePos, float NdotL) {
     if (projCoords.z > 1.0 || projCoords.z < 0.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 0.0;
 
     float currentDepth = projCoords.z;
-    float bias = max(0.00001 * (1.0 - NdotL), 0.000001);
+    float bias = max(0.0005 * (1.0 - NdotL), 0.00005);
     float shadow = 0.0;
     vec2 texelSize = vec2(1.0 / 1024.0, 1.0 / 1024.0);
     float pcfDepth;
@@ -175,7 +179,7 @@ float calcSpotShadow2(vec4 lightSpacePos, float NdotL) {
     if (projCoords.z > 1.0 || projCoords.z < 0.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 0.0;
 
     float currentDepth = projCoords.z;
-    float bias = max(0.00001 * (1.0 - NdotL), 0.000001);
+    float bias = max(0.0005 * (1.0 - NdotL), 0.00005);
     float shadow = 0.0;
     vec2 texelSize = vec2(1.0 / 1024.0, 1.0 / 1024.0);
     float pcfDepth;
@@ -210,7 +214,7 @@ float calcSpotShadow3(vec4 lightSpacePos, float NdotL) {
     if (projCoords.z > 1.0 || projCoords.z < 0.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 0.0;
 
     float currentDepth = projCoords.z;
-    float bias = max(0.00001 * (1.0 - NdotL), 0.000001);
+    float bias = max(0.0005 * (1.0 - NdotL), 0.00005);
     float shadow = 0.0;
     vec2 texelSize = vec2(1.0 / 1024.0, 1.0 / 1024.0);
     float pcfDepth;
@@ -266,20 +270,28 @@ void main()
 
     // 1. Ambient (Базовое освещение, чтобы не было абсолютно черных теней)
     // Увеличено с 0.15 до 0.3 для лучшей видимости в тенях
-        // Simple IBL (safe)
+        // Physically correct IBL (Split-Sum)
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    float NdotV = max(dot(N, V), 0.001);
+    
+    vec3 F = F_SchlickRoughness(NdotV, F0, rough);
+    vec3 kS = F;
+    vec3 kD = vec3(1.0) - kS;
+    kD *= 1.0 - metallic;
+
+    // Diffuse IBL
     vec2 envUV = N.xy * 0.5 + 0.5;
     vec3 irradiance = texture2D(s_irradianceMap, envUV).rgb;
     vec3 diffuseIBL = irradiance * albedo;
     
+    // Specular IBL
     vec3 R = reflect(-V, N);
     vec2 specUV = R.xy * 0.5 + 0.5;
     vec3 prefilteredColor = texture2D(s_envMap, specUV).rgb;
-    float NdotV = max(dot(N, V), 0.0);
     vec2 brdf = texture2D(s_brdfLUT, vec2(NdotV, rough)).xy;
-    vec3 specularIBL = prefilteredColor * (F0 * brdf.x + brdf.y);
+    vec3 specularIBL = prefilteredColor * (F * brdf.x + brdf.y);
     
-    vec3 finalColor = diffuseIBL * (1.0 - metallic) + specularIBL + (albedo * 0.05); 
+    vec3 finalColor = (kD * diffuseIBL + specularIBL) + (albedo * 0.05); 
 
     // 2. Directional Light с тенями
     vec3 L_dir = normalize(-u_lightDirection.xyz);

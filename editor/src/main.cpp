@@ -103,18 +103,13 @@ protected:
         m_render  = std::make_unique<Galeshi::RenderSystem>();
         m_render->Init(m_assets.get());
         m_postProcess.Init();
-        m_render->SetBrdfLUT(m_postProcess.BrdfLUT());
         m_render->SetDeferredEnabled(true);
         // SSAO/SSR включим на 2-м кадре — чтобы первый кадр прошёл
         // без sampling render target (иначе Vulkan layout mismatch).
         m_pendingEffectsEnable = true;
         for (int i = 0; i < 3; ++i) {
-            // Depth texture (D32F) + dummy color (RGBA8) so BGFX creates a proper render pass on Vulkan
-            bgfx::TextureHandle shadowCol = bgfx::createTexture2D(2048, 2048, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_RT);
             m_shadowMaps[i] = bgfx::createTexture2D(2048, 2048, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
-            bgfx::TextureHandle att[2] = { shadowCol, m_shadowMaps[i] };
-            m_shadowFbos[i] = bgfx::createFrameBuffer(2, att, false);
-            spdlog::info("[Shadow] FBO[{}] created (color+depth)", i);
+            m_shadowFbos[i] = bgfx::createFrameBuffer(1, &m_shadowMaps[i], false);
         }
         
 
@@ -132,7 +127,7 @@ protected:
                 for (auto e : lview) {
                     auto& dl = lview.get<Galeshi::DirectionalLightComponent>(e);
                     if (dl.direction.y > 0.0f || true) {
-                        dl.direction = glm::normalize(glm::vec3(0.4f, -0.8f, 0.5f));
+                        dl.direction = glm::normalize(glm::vec3(-0.4f, -0.8f, -0.5f));
                         spdlog::warn("[Editor] Sun was pointing up, flipped downwards for shadows");
                     }
                 }
@@ -492,7 +487,7 @@ if (ImGui::BeginMenu("File")) {
                 auto& dl = e.HasComponent<Galeshi::DirectionalLightComponent>()
                            ? e.GetComponent<Galeshi::DirectionalLightComponent>()
                            : e.AddComponent<Galeshi::DirectionalLightComponent>();
-                dl.direction = glm::normalize(glm::vec3(0.4f, -0.8f, 0.5f));
+                dl.direction = glm::normalize(glm::vec3(-0.4f, -0.8f, -0.5f));
                 dl.intensity = 3.0f;
                 m_editor.Select(e);
             }
@@ -662,6 +657,8 @@ if (ImGui::BeginMenu("File")) {
                 float extents[3] = { 15.0f, 40.0f, 100.0f };
                 for (int i = 0; i < 3; ++i) {
                     glm::vec3 eye = center - dl.direction * (extents[i] * 2.0f);
+                // Ensure eye is above ground
+                if (eye.y < center.y + 1.0f) eye.y = center.y + 1.0f;
                     glm::mat4 lightView = glm::lookAt(eye, center, glm::vec3(0,1,0));
                     glm::mat4 lightProj;
                     bx::mtxOrtho(glm::value_ptr(lightProj), -extents[i], extents[i], -extents[i], extents[i], 0.1f, 500.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
@@ -1443,7 +1440,7 @@ void DrawDetails() {
 
 
         
-            if (ImGui::DragFloat3("Scale", glm::value_ptr(scl), 0.05f, 0.01f, 100.0f)) { for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().scale = scl; }
+            if (ImGui::DragFloat3("Scale", glm::value_ptr(scl), 0.05f)) { for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().scale = scl; }
             if (ImGui::DragFloat3("Rotation", glm::value_ptr(rot), 1.0f)) { glm::quat q = glm::quat(glm::radians(rot)); for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().rotation = q; }
         }
 

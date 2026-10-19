@@ -33,7 +33,7 @@ void RenderSystem::Init(AssetManager* assets) {
     m_gbufferProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_gbuffer.bin");
     m_shadowProg = ShaderManager::LoadProgram("shaders/vs_shadow.bin", "shaders/fs_shadow.bin");
     m_shadowPointProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_shadow_point.bin");
-    u_shadowLightPos = bgfx::createUniform("u_lightPos", bgfx::UniformType::Vec4);
+    u_shadowLightPos = bgfx::createUniform("u_shadowLightPos", bgfx::UniformType::Vec4);
     if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
 
     u_albedoFactor = bgfx::createUniform("u_albedoFactor", bgfx::UniformType::Vec4);
@@ -249,7 +249,7 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
     if (!bgfx::isValid(m_shadowPointProg) || !bgfx::isValid(shadowFbo)) return;
     bgfx::setViewFrameBuffer(viewId, shadowFbo);
     bgfx::setViewRect(viewId, 0, 0, 1024, 1024);
-    bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x000000ff, 1.0f, 0);
+    bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
     
     float lp[4] = { lightPos.x, lightPos.y, lightPos.z, 1.0f };
     bgfx::setUniform(u_shadowLightPos, lp);

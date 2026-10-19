@@ -1,5 +1,4 @@
 #include "GaleshiEngine/Renderer/PostProcessManager.hpp"
-#include "GaleshiEngine/Assets/Texture.hpp"
 #include <glm/gtc/type_ptr.hpp>
 #include <spdlog/spdlog.h>
 #include <cstdio>
@@ -235,32 +234,11 @@ void PostProcessManager::Init() {
 
         m_envMap = bgfx::createTexture2D(1024, 512, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
         m_irradianceMap = bgfx::createTexture2D(64, 32, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
-        {
-            const char* candidates[] = {
-                "engine/assets/textures/brdf_lut.png",
-                "../../../engine/assets/textures/brdf_lut.png",
-                "assets/textures/brdf_lut.png"
-            };
-            bool loaded = false;
-            for (const char* cand : candidates) {
-                m_brdfTexture = std::shared_ptr<Texture>(Texture::LoadFromFile(cand));
-                if (m_brdfTexture && bgfx::isValid(m_brdfTexture->Handle())) {
-                    m_brdfLut = m_brdfTexture->Handle();
-                    spdlog::info("[PP] BRDF LUT loaded from '{}'", cand);
-                    loaded = true;
-                    break;
-                }
-            }
-            if (!loaded) {
-                spdlog::error("[PP] BRDF LUT not found in any candidate path, using 1x1 fallback");
-                uint32_t fallback = 0xFFFFFFFF;
-                m_brdfLut = bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE, bgfx::copy(&fallback, 4));
-            }
-        }
+        m_brdfLut = bgfx::createTexture2D(256, 256, false, 1, bgfx::TextureFormat::RG16F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
 
         m_envFbo = bgfx::createFrameBuffer(1, &m_envMap, false);
         m_irradianceFbo = bgfx::createFrameBuffer(1, &m_irradianceMap, false);
-        // BRDF LUT is loaded from disk; FBO not needed
+        m_brdfFbo = bgfx::createFrameBuffer(1, &m_brdfLut, false);
 
         s_iblIrradiance = bgfx::createUniform("s_irradianceMap", bgfx::UniformType::Sampler);
         s_iblEnv        = bgfx::createUniform("s_envMap",        bgfx::UniformType::Sampler);
@@ -294,7 +272,11 @@ void PostProcessManager::GenerateIBL(const float sunDir[4]) {
     bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
     bgfx::submit(21, m_iblGenProg);
 
-    // BRDF LUT is loaded from disk (no generation needed)
+    // BRDF LUT
+    bgfx::setViewFrameBuffer(22, m_brdfFbo);
+    bgfx::setViewRect(22, 0, 0, 256, 256);
+    bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
+    bgfx::submit(22, m_brdfProg);
     spdlog::info("[PP] IBL generation submitted");
 }
 
@@ -313,7 +295,7 @@ void PostProcessManager::Shutdown() {
     if (bgfx::isValid(s_iblBrdf))       bgfx::destroy(s_iblBrdf);
     if (bgfx::isValid(m_envFbo)) bgfx::destroy(m_envFbo); if (bgfx::isValid(m_envMap)) bgfx::destroy(m_envMap);
     if (bgfx::isValid(m_irradianceFbo)) bgfx::destroy(m_irradianceFbo); if (bgfx::isValid(m_irradianceMap)) bgfx::destroy(m_irradianceMap);
-    // m_brdfFbo not used (BRDF LUT from disk) // m_brdfLut is owned by m_brdfTexture, destroyed by shared_ptr
+    if (bgfx::isValid(m_brdfFbo)) bgfx::destroy(m_brdfFbo); if (bgfx::isValid(m_brdfLut)) bgfx::destroy(m_brdfLut);
     destroyUni(u_skyInvVP); destroyUni(u_skySun); destroyUni(u_iblParams); destroyUni(u_iblLightDir); destroyProg(m_smaaEdgeProg); destroyProg(m_smaaBlendProg);
     if(bgfx::isValid(m_smaaEdgeTex)) bgfx::destroy(m_smaaEdgeTex);
 
