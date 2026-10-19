@@ -18,10 +18,16 @@ public:
     T& AddComponent(Args&&... args) {
         auto& reg = m_scene->Registry();
         if constexpr (std::is_empty_v<T>) {
-            reg.template emplace<T>(m_handle);
+            // Empty types (tags) don't store data; get<T> returns void.
+            if (!reg.template all_of<T>(m_handle)) {
+                reg.template emplace<T>(m_handle);
+            }
             static T s_dummy{};
             return s_dummy;
         } else {
+            if (reg.template all_of<T>(m_handle)) {
+                return reg.template get<T>(m_handle);
+            }
             return reg.template emplace<T>(m_handle, std::forward<Args>(args)...);
         }
     }

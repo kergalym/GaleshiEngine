@@ -33,6 +33,7 @@ public:
         std::unordered_map<std::string, int>   boneMap;
         int                                    totalBones = 0;
     bool hasAnimation = false;
+        float scale = 1.0f;
         glm::mat4                              rootTransform{1.0f}; // Трансформация Armature
     };
     

@@ -8,6 +8,7 @@
 #include "GaleshiEngine/Assets/Texture.hpp"
 #include <glm/gtc/type_ptr.hpp>
 #include <spdlog/spdlog.h>
+#include <algorithm>
 
 namespace Galeshi {
 
@@ -129,7 +130,7 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         glm::mat4 model(1.0f);
         entt::entity curr = h;
         std::vector<entt::entity> chain;
-        while (curr != entt::null) {
+        int __depth = 0; while (curr != entt::null && __depth++ < 128) {
             chain.push_back(curr);
             if (scene.Registry().all_of<ParentComponent>(curr))
                 curr = scene.Registry().get<ParentComponent>(curr).parent;
@@ -210,7 +211,7 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
         glm::mat4 model(1.0f);
         entt::entity curr = h;
         std::vector<entt::entity> chain;
-        while (curr != entt::null) {
+        int __depth = 0; while (curr != entt::null && __depth++ < 128) {
             chain.push_back(curr);
             if (scene.Registry().all_of<ParentComponent>(curr)) curr = scene.Registry().get<ParentComponent>(curr).parent;
             else break;
@@ -241,7 +242,7 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
         glm::mat4 model(1.0f);
         entt::entity curr = h;
         std::vector<entt::entity> chain;
-        while (curr != entt::null) {
+        int __depth = 0; while (curr != entt::null && __depth++ < 128) {
             chain.push_back(curr);
             if (scene.Registry().all_of<ParentComponent>(curr))
                 curr = scene.Registry().get<ParentComponent>(curr).parent;

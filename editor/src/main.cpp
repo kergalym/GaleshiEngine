@@ -146,6 +146,7 @@ protected:
     }
 
     void OnUpdate(float dt) override {
+        spdlog::trace("[Main] OnUpdate");
         // --- Deferred effect enable (frame 2+) ---
         m_renderFrameCounter++;
         if (m_pendingEffectsEnable && m_renderFrameCounter >= 2) {
@@ -484,21 +485,27 @@ if (ImGui::BeginMenu("File")) {
                 }
                 if (ImGui::MenuItem("Directional Light")) {
                 auto e = m_scene.CreateEntity("DirectionalLight");
-                auto& dl = e.AddComponent<Galeshi::DirectionalLightComponent>();
+                auto& dl = e.HasComponent<Galeshi::DirectionalLightComponent>()
+                           ? e.GetComponent<Galeshi::DirectionalLightComponent>()
+                           : e.AddComponent<Galeshi::DirectionalLightComponent>();
                 dl.direction = glm::normalize(glm::vec3(-0.4f, -0.8f, -0.5f));
                 dl.intensity = 3.0f;
                 m_editor.Select(e);
             }
             if (ImGui::MenuItem("Point Light")) {
                 auto e = m_scene.CreateEntity("PointLight");
-                auto& pl = e.AddComponent<Galeshi::PointLightComponent>();
+                auto& pl = e.HasComponent<Galeshi::PointLightComponent>()
+                           ? e.GetComponent<Galeshi::PointLightComponent>()
+                           : e.AddComponent<Galeshi::PointLightComponent>();
                 auto& tc = e.GetComponent<Galeshi::TransformComponent>();
                 tc.position = {0, 2, 0};
                 m_editor.Select(e);
             }
             if (ImGui::MenuItem("Spot Light")) {
                 auto e = m_scene.CreateEntity("SpotLight");
-                auto& sl = e.AddComponent<Galeshi::SpotLightComponent>();
+                auto& sl = e.HasComponent<Galeshi::SpotLightComponent>()
+                           ? e.GetComponent<Galeshi::SpotLightComponent>()
+                           : e.AddComponent<Galeshi::SpotLightComponent>();
                 auto& tc = e.GetComponent<Galeshi::TransformComponent>();
                 tc.position = {0, 3, 0};
                 m_editor.Select(e);
@@ -619,6 +626,7 @@ if (ImGui::BeginMenu("File")) {
     // Viewport & Picking & Sculpting
     // -------------------------------------------------------------------
     void DrawViewport() {
+        spdlog::trace("[Main] DrawViewport");
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         ImGui::Begin("Viewport");
         m_viewportHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
@@ -865,7 +873,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             if (selHasTf) {
                 selWorldPos = sel.GetComponent<Galeshi::TransformComponent>().position;
                 entt::entity curr = sel.Handle();
-                while (m_scene.Registry().all_of<Galeshi::ParentComponent>(curr)) {
+                int __depth = 0; while (__depth++ < 128 && m_scene.Registry().all_of<Galeshi::ParentComponent>(curr)) {
                     curr = m_scene.Registry().get<Galeshi::ParentComponent>(curr).parent;
                     if (m_scene.Registry().all_of<Galeshi::TransformComponent>(curr))
                         selWorldPos += m_scene.Registry().get<Galeshi::TransformComponent>(curr).position;
@@ -940,7 +948,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 glm::vec3 parentOffset{0.0f};
                 {
                     entt::entity curr = sel.Handle();
-                    while (m_scene.Registry().all_of<Galeshi::ParentComponent>(curr)) {
+                    int __depth = 0; while (__depth++ < 128 && m_scene.Registry().all_of<Galeshi::ParentComponent>(curr)) {
                         curr = m_scene.Registry().get<Galeshi::ParentComponent>(curr).parent;
                         if (m_scene.Registry().all_of<Galeshi::TransformComponent>(curr))
                             parentOffset += m_scene.Registry().get<Galeshi::TransformComponent>(curr).position;
@@ -997,7 +1005,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     // 1. Вычисляем МИРОВУЮ позицию (проходим вверх по родителям)
                     glm::vec3 worldPos = tc.position;
                     entt::entity curr = e;
-                    while (m_scene.Registry().all_of<Galeshi::ParentComponent>(curr)) {
+                    int __depth = 0; while (__depth++ < 128 && m_scene.Registry().all_of<Galeshi::ParentComponent>(curr)) {
                         curr = m_scene.Registry().get<Galeshi::ParentComponent>(curr).parent;
                         if (m_scene.Registry().all_of<Galeshi::TransformComponent>(curr)) {
                             worldPos += m_scene.Registry().get<Galeshi::TransformComponent>(curr).position;
@@ -1178,13 +1186,15 @@ void DrawDetails() {
             ImGui::Text("Current Tool: %s", m_editor.toolMode == Galeshi::EditorState::ToolMode::Raise ? "Raise" : "Select");
         }
 
-        if (selected[0].HasComponent<Galeshi::MaterialComponent>() && ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
-            auto& matc = selected[0].GetComponent<Galeshi::MaterialComponent>();
-            if (matc.material) {
-                auto& m = *matc.material;
+        // Helper lambda to draw material UI safely
+        auto DrawMaterialUI = [&](const char* label, Galeshi::MaterialComponent& matc, uint32_t eid) {
+            if (!matc.material) return;
+            auto& m = *matc.material;
+            ImGui::PushID(eid);
+            if (ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::ColorEdit4("Albedo Factor", glm::value_ptr(m.albedoFactor));
                 ImGui::SliderFloat("Metallic Factor",  &m.metallicFactor,  0.0f, 1.0f);
-                ImGui::Checkbox("Glass (Transparent)", &matc.material->isGlass);
+                ImGui::Checkbox("Glass (Transparent)", &m.isGlass);
                 ImGui::SliderFloat("Roughness Factor", &m.roughnessFactor, 0.04f, 1.0f);
                 ImGui::ColorEdit3("Emissive", glm::value_ptr(m.emissiveFactor));
 
@@ -1194,6 +1204,25 @@ void DrawDetails() {
                 DrawTextureSlot("Albedo Map",           m.albedoMap);
                 DrawTextureSlot("Normal Map",           m.normalMap);
                 DrawTextureSlot("Metallic/Roughness",   m.metallicRoughnessMap);
+            }
+            ImGui::PopID();
+        };
+
+        // 1. Draw material for the selected entity itself (if any)
+        if (selected[0].HasComponent<Galeshi::MaterialComponent>()) {
+            DrawMaterialUI("Material", selected[0].GetComponent<Galeshi::MaterialComponent>(), (uint32_t)selected[0].Handle());
+        }
+
+        // 2. Draw materials for all children (e.g., skeletal mesh sub-meshes)
+        for (auto e : m_scene.AllEntities()) {
+            if (e.HasComponent<Galeshi::ParentComponent>() && e.GetComponent<Galeshi::ParentComponent>().parent == selected[0].Handle()) {
+                if (e.HasComponent<Galeshi::MaterialComponent>()) {
+                    std::string label = "Material Slot [" + std::to_string((uint32_t)e.Handle()) + "]";
+                    if (e.HasComponent<Galeshi::NameComponent>()) {
+                        label = e.GetComponent<Galeshi::NameComponent>().name;
+                    }
+                    DrawMaterialUI(label.c_str(), e.GetComponent<Galeshi::MaterialComponent>(), (uint32_t)e.Handle());
+                }
             }
         }
 
@@ -1423,7 +1452,9 @@ void DrawDetails() {
 
     void BuildTestScene() {
         auto sun = m_scene.CreateEntity("Sun");
-        auto& dl = sun.AddComponent<Galeshi::DirectionalLightComponent>();
+        auto& dl = sun.HasComponent<Galeshi::DirectionalLightComponent>()
+                   ? sun.GetComponent<Galeshi::DirectionalLightComponent>()
+                   : sun.AddComponent<Galeshi::DirectionalLightComponent>();
         dl.direction = glm::normalize(glm::vec3(-0.4f, -0.8f, -0.5f));
         dl.color = {1.0f, 0.97f, 0.9f}; dl.intensity = 3.0f;
         // Добавляем большой пол (чтобы тени падали на него)
@@ -1454,7 +1485,8 @@ void DrawDetails() {
 
 
         auto pl = m_scene.CreateEntity("PointLight");
-        pl.AddComponent<Galeshi::PointLightComponent>();
+        if (!pl.HasComponent<Galeshi::PointLightComponent>())
+            pl.AddComponent<Galeshi::PointLightComponent>();
         pl.GetComponent<Galeshi::TransformComponent>().position = {0.0f, 2.0f, 0.0f};
     }
 

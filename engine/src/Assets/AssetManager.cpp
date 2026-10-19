@@ -53,7 +53,8 @@ glm::mat4 aiToGlm(const aiMatrix4x4& from) {
     return to;
 }
 
-void ReadNodeHeirarchy(const aiScene* scene, float time, const aiNode* node, const glm::mat4& parentTransform, std::vector<glm::mat4>& boneMatrices, const std::unordered_map<std::string, int>& boneMap) {
+void ReadNodeHeirarchy(const aiScene* scene, float time, const aiNode* node, const glm::mat4& parentTransform, std::vector<glm::mat4>& boneMatrices, const std::unordered_map<std::string, int>& boneMap, int depth = 0) {
+    if (depth > 128) { return; }
     std::string nodeName(node->mName.data);
     glm::mat4 nodeTransform = aiToGlm(node->mTransformation);
 
@@ -121,7 +122,7 @@ void ReadNodeHeirarchy(const aiScene* scene, float time, const aiNode* node, con
     }
 
     for (unsigned int i = 0; i < node->mNumChildren; ++i) {
-        ReadNodeHeirarchy(scene, time, node->mChildren[i], globalTransform, boneMatrices, boneMap);
+        ReadNodeHeirarchy(scene, time, node->mChildren[i], globalTransform, boneMatrices, boneMap, depth + 1);
     }
 }
 } // namespace
@@ -272,16 +273,17 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
     // === МЕШИ ===
     // Build mesh node transform map to apply correct offsets
     std::unordered_map<unsigned, glm::mat4> meshToNodeTransform;
-    std::function<void(aiNode*, const glm::mat4&)> processNode = [&](aiNode* node, const glm::mat4& parentTransform) {
+    std::function<void(aiNode*, const glm::mat4&, int)> processNode = [&](aiNode* node, const glm::mat4& parentTransform, int depth) {
+        if (depth > 128) return;
         glm::mat4 globalTransform = parentTransform * aiToGlm(node->mTransformation);
         for (unsigned i = 0; i < node->mNumMeshes; ++i) {
             meshToNodeTransform[node->mMeshes[i]] = globalTransform;
         }
         for (unsigned i = 0; i < node->mNumChildren; ++i) {
-            processNode(node->mChildren[i], globalTransform);
+            processNode(node->mChildren[i], globalTransform, depth + 1);
         }
     };
-    processNode(scene->mRootNode, glm::mat4(1.0f));
+    processNode(scene->mRootNode, glm::mat4(1.0f), 0);
 
     for (unsigned i = 0; i < scene->mNumMeshes; ++i) {
         const aiMesh* am = scene->mMeshes[i];

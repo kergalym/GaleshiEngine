@@ -61,7 +61,7 @@ void FilePickerDialog::Refresh() {
         e.isDirectory = p.is_directory();
         e.name        = p.path().filename().string();
 
-        if (!e.isDirectory && !m_saveMode) {
+        if (!e.isDirectory) {
             std::string ext = ToLower(e.path.extension().string());
             bool ok = false;
             for (const auto& a : m_allowedExts)
