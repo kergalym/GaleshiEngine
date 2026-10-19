@@ -1318,7 +1318,7 @@ void DrawDetails() {
         rootTf.scale = glm::vec3(1.0f);
         
         // 2. If the model imports flipped (Z-up), uncomment the next line:
-        rootTf.rotation = glm::angleAxis(glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+        rootTf.rotation = glm::angleAxis(glm::radians(0.0f), glm::vec3(1.0f, 0.0f, 0.0f));
 
         if (model.hasAnimation) {
             auto& skel = root.AddComponent<Galeshi::SkeletalComponent>();
