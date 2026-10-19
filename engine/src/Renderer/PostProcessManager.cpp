@@ -1,4 +1,5 @@
 #include "GaleshiEngine/Renderer/PostProcessManager.hpp"
+#include "GaleshiEngine/Assets/Texture.hpp"
 #include <glm/gtc/type_ptr.hpp>
 #include <spdlog/spdlog.h>
 #include <cstdio>
@@ -86,7 +87,9 @@ void PostProcessManager::Init() {
             s_shadowMap0  = bgfx::createUniform("s_shadowMap0",  bgfx::UniformType::Sampler);
             s_shadowMap1  = bgfx::createUniform("s_shadowMap1",  bgfx::UniformType::Sampler);
             s_shadowMap2  = bgfx::createUniform("s_shadowMap2",  bgfx::UniformType::Sampler);
-            u_lightVP     = bgfx::createUniform("u_lightViewProj", bgfx::UniformType::Mat4, 3);
+            u_lightVP0    = bgfx::createUniform("u_lightViewProj0", bgfx::UniformType::Mat4);
+            u_lightVP1    = bgfx::createUniform("u_lightViewProj1", bgfx::UniformType::Mat4);
+            u_lightVP2    = bgfx::createUniform("u_lightViewProj2", bgfx::UniformType::Mat4);
             u_plPos       = bgfx::createUniform("u_pointLightPosRadius", bgfx::UniformType::Vec4, 8);
             spdlog::info("[PP] u_plPos valid: {}", bgfx::isValid(u_plPos));
             u_plCol       = bgfx::createUniform("u_pointLightColorInt",  bgfx::UniformType::Vec4, 8);
@@ -95,6 +98,31 @@ void PostProcessManager::Init() {
             u_slDir       = bgfx::createUniform("u_spotLightDirInner",   bgfx::UniformType::Vec4, 4);
             u_slCol       = bgfx::createUniform("u_spotLightColorOuter", bgfx::UniformType::Vec4, 4);
             u_slCnt       = bgfx::createUniform("u_spotLightCount",      bgfx::UniformType::Vec4);
+            
+            s_spotShadowMap0 = bgfx::createUniform("s_spotShadowMap0", bgfx::UniformType::Sampler);
+            s_spotShadowMap1 = bgfx::createUniform("s_spotShadowMap1", bgfx::UniformType::Sampler);
+            s_spotShadowMap2 = bgfx::createUniform("s_spotShadowMap2", bgfx::UniformType::Sampler);
+            s_spotShadowMap3 = bgfx::createUniform("s_spotShadowMap3", bgfx::UniformType::Sampler);
+            u_spotLightVP0    = bgfx::createUniform("u_spotLightVP0",    bgfx::UniformType::Mat4);
+            u_spotLightVP1    = bgfx::createUniform("u_spotLightVP1",    bgfx::UniformType::Mat4);
+            u_spotLightVP2    = bgfx::createUniform("u_spotLightVP2",    bgfx::UniformType::Mat4);
+            u_spotLightVP3    = bgfx::createUniform("u_spotLightVP3",    bgfx::UniformType::Mat4);
+
+            for (int i = 0; i < 4; ++i) {
+                m_spotShadowMaps[i] = bgfx::createTexture2D(1024, 1024, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT);
+                m_spotShadowFbos[i] = bgfx::createFrameBuffer(1, &m_spotShadowMaps[i], false);
+            }
+            s_pointShadowMap = bgfx::createUniform("s_pointShadowMap", bgfx::UniformType::Sampler);
+            u_pointLightFarPlane = bgfx::createUniform("u_pointLightFarPlane", bgfx::UniformType::Vec4);
+            
+            uint64_t cubeFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_W_CLAMP | BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT;
+            m_pointShadowMap = bgfx::createTextureCube(1024, false, 1, bgfx::TextureFormat::R32F, cubeFlags);
+            for (int i = 0; i < 6; ++i) {
+                bgfx::Attachment att;
+                att.init(m_pointShadowMap, bgfx::Access::Write, i);
+                m_pointShadowFbos[i] = bgfx::createFrameBuffer(1, &att, false);
+            }
+            u_pointLightFarPlane = bgfx::createUniform("u_pointLightFarPlane", bgfx::UniformType::Vec4);
         }
     }
 
@@ -207,11 +235,32 @@ void PostProcessManager::Init() {
 
         m_envMap = bgfx::createTexture2D(1024, 512, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
         m_irradianceMap = bgfx::createTexture2D(64, 32, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
-        m_brdfLut = bgfx::createTexture2D(256, 256, false, 1, bgfx::TextureFormat::RG16F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+        {
+            const char* candidates[] = {
+                "engine/assets/textures/brdf_lut.png",
+                "../../../engine/assets/textures/brdf_lut.png",
+                "assets/textures/brdf_lut.png"
+            };
+            bool loaded = false;
+            for (const char* cand : candidates) {
+                m_brdfTexture = std::shared_ptr<Texture>(Texture::LoadFromFile(cand));
+                if (m_brdfTexture && bgfx::isValid(m_brdfTexture->Handle())) {
+                    m_brdfLut = m_brdfTexture->Handle();
+                    spdlog::info("[PP] BRDF LUT loaded from '{}'", cand);
+                    loaded = true;
+                    break;
+                }
+            }
+            if (!loaded) {
+                spdlog::error("[PP] BRDF LUT not found in any candidate path, using 1x1 fallback");
+                uint32_t fallback = 0xFFFFFFFF;
+                m_brdfLut = bgfx::createTexture2D(1, 1, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE, bgfx::copy(&fallback, 4));
+            }
+        }
 
         m_envFbo = bgfx::createFrameBuffer(1, &m_envMap, false);
         m_irradianceFbo = bgfx::createFrameBuffer(1, &m_irradianceMap, false);
-        m_brdfFbo = bgfx::createFrameBuffer(1, &m_brdfLut, false);
+        // BRDF LUT is loaded from disk; FBO not needed
 
         s_iblIrradiance = bgfx::createUniform("s_irradianceMap", bgfx::UniformType::Sampler);
         s_iblEnv        = bgfx::createUniform("s_envMap",        bgfx::UniformType::Sampler);
@@ -245,11 +294,7 @@ void PostProcessManager::GenerateIBL(const float sunDir[4]) {
     bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
     bgfx::submit(21, m_iblGenProg);
 
-    // BRDF LUT
-    bgfx::setViewFrameBuffer(22, m_brdfFbo);
-    bgfx::setViewRect(22, 0, 0, 256, 256);
-    bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
-    bgfx::submit(22, m_brdfProg);
+    // BRDF LUT is loaded from disk (no generation needed)
     spdlog::info("[PP] IBL generation submitted");
 }
 
@@ -268,16 +313,32 @@ void PostProcessManager::Shutdown() {
     if (bgfx::isValid(s_iblBrdf))       bgfx::destroy(s_iblBrdf);
     if (bgfx::isValid(m_envFbo)) bgfx::destroy(m_envFbo); if (bgfx::isValid(m_envMap)) bgfx::destroy(m_envMap);
     if (bgfx::isValid(m_irradianceFbo)) bgfx::destroy(m_irradianceFbo); if (bgfx::isValid(m_irradianceMap)) bgfx::destroy(m_irradianceMap);
-    if (bgfx::isValid(m_brdfFbo)) bgfx::destroy(m_brdfFbo); if (bgfx::isValid(m_brdfLut)) bgfx::destroy(m_brdfLut);
+    // m_brdfFbo not used (BRDF LUT from disk) // m_brdfLut is owned by m_brdfTexture, destroyed by shared_ptr
     destroyUni(u_skyInvVP); destroyUni(u_skySun); destroyUni(u_iblParams); destroyUni(u_iblLightDir); destroyProg(m_smaaEdgeProg); destroyProg(m_smaaBlendProg);
     if(bgfx::isValid(m_smaaEdgeTex)) bgfx::destroy(m_smaaEdgeTex);
 
     destroyUni(s_texColor); destroyUni(u_texelSize);
     destroyUni(u_camPos); destroyUni(u_lightDir); destroyUni(u_lightCol);
     destroyUni(s_albedoMr); destroyUni(s_normalRough); destroyUni(s_worldPos);
-    destroyUni(s_shadowMap0); destroyUni(s_shadowMap1); destroyUni(s_shadowMap2); destroyUni(u_lightVP); 
+    destroyUni(s_shadowMap0); destroyUni(s_shadowMap1); destroyUni(s_shadowMap2); destroyUni(u_lightVP0); destroyUni(u_lightVP1); destroyUni(u_lightVP2); 
     destroyUni(u_plPos); destroyUni(u_plCol); destroyUni(u_plCnt);
-    destroyUni(u_slPos); destroyUni(u_slDir); destroyUni(u_slCol); destroyUni(u_slCnt);
+    destroyUni(u_slPos); destroyUni(u_slDir); destroyUni(u_slCol); destroyUni(u_slCnt); if (bgfx::isValid(m_pointShadowFbos[0])) {
+        for(int i=0; i<6; ++i) { bgfx::destroy(m_pointShadowFbos[i]); }
+    }
+    for(int i=0; i<4; ++i) { 
+        if(bgfx::isValid(m_spotShadowFbos[i])) bgfx::destroy(m_spotShadowFbos[i]); 
+        if(bgfx::isValid(m_spotShadowMaps[i])) bgfx::destroy(m_spotShadowMaps[i]); 
+    }
+    if (bgfx::isValid(s_spotShadowMap0)) bgfx::destroy(s_spotShadowMap0);
+    if (bgfx::isValid(s_spotShadowMap1)) bgfx::destroy(s_spotShadowMap1);
+    if (bgfx::isValid(s_spotShadowMap2)) bgfx::destroy(s_spotShadowMap2);
+    if (bgfx::isValid(s_spotShadowMap3)) bgfx::destroy(s_spotShadowMap3);
+    if (bgfx::isValid(u_spotLightVP0)) bgfx::destroy(u_spotLightVP0);
+    if (bgfx::isValid(u_spotLightVP1)) bgfx::destroy(u_spotLightVP1);
+    if (bgfx::isValid(u_spotLightVP2)) bgfx::destroy(u_spotLightVP2);
+    if (bgfx::isValid(u_spotLightVP3)) bgfx::destroy(u_spotLightVP3);
+    if (bgfx::isValid(m_pointShadowMap)) bgfx::destroy(m_pointShadowMap);
+    destroyUni(s_pointShadowMap); destroyUni(u_pointLightFarPlane);
     destroyUni(u_ssaoProj); destroyUni(u_ssaoInvProj); destroyUni(u_ssaoParams);
     destroyUni(s_ssaoColor); destroyUni(s_ssaoDepth); destroyUni(s_ssaoNormal);
     destroyUni(u_ssrInvProj); destroyUni(s_ssrColor); destroyUni(s_ssrNormal); destroyUni(s_ssrDepth);
@@ -378,7 +439,9 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::setTexture(4, s_shadowMap1,  shadowMap1);
     bgfx::setTexture(5, s_shadowMap2,  shadowMap2);
     glm::mat4 lightMtcs[3] = { lightMtx0, lightMtx1, lightMtx2 };
-    bgfx::setUniform(u_lightVP, glm::value_ptr(lightMtcs[0]), 3);
+    bgfx::setUniform(u_lightVP0, glm::value_ptr(lightMtx0));
+    bgfx::setUniform(u_lightVP1, glm::value_ptr(lightMtx1));
+    bgfx::setUniform(u_lightVP2, glm::value_ptr(lightMtx2));
     bgfx::setUniform(u_skyInvVP, glm::value_ptr(invViewProj));
     
     if (bgfx::isValid(m_irradianceMap)) bgfx::setTexture(6, s_iblIrradiance, m_irradianceMap);
@@ -392,6 +455,18 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     }
     float plArr[4] = { float(pointLightCount), 0, 0, 0 };
     bgfx::setUniform(u_plCnt, plArr);
+    if (bgfx::isValid(m_pointShadowMap)) {
+        bgfx::setTexture(9, s_pointShadowMap, m_pointShadowMap);
+        float farPlane[4] = { 50.0f, 0, 0, 0 };
+        bgfx::setUniform(u_pointLightFarPlane, farPlane);
+    }
+    if (spotLightCount > 0) {
+        bgfx::setTexture(10, s_spotShadowMap0, m_spotShadowMaps[0]);
+        bgfx::setTexture(11, s_spotShadowMap1, m_spotShadowMaps[1]);
+        bgfx::setTexture(12, s_spotShadowMap2, m_spotShadowMaps[2]);
+        bgfx::setTexture(13, s_spotShadowMap3, m_spotShadowMaps[3]);
+        // VP matrices are passed in main.cpp via u_spotLightVP
+    }
     if (spotLightCount > 0) {
         bgfx::setUniform(u_slPos, spotLightPosRadius, 4);
         bgfx::setUniform(u_slDir, spotLightDirInner, 4);

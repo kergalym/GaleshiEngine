@@ -1,5 +1,6 @@
 #pragma once
 #include <bgfx/bgfx.h>
+#include <memory>
 #include <glm/glm.hpp>
 #include <cstdint>
 
@@ -19,6 +20,9 @@ public:
     bgfx::TextureHandle EnvMap() const { return m_envMap; }
     bgfx::TextureHandle BrdfLUT() const { return m_brdfLut; }
     bgfx::TextureHandle OutputTexture() const { return m_outputColor; }
+    bgfx::TextureHandle PointShadowMap() const { return m_pointShadowMap; }
+    bgfx::FrameBufferHandle PointShadowFbo(int face) const { return m_pointShadowFbos[face]; }
+    bgfx::FrameBufferHandle SpotShadowFbo(int idx) const { return m_spotShadowFbos[idx]; }
     bgfx::FrameBufferHandle OutputFbo() const { return m_outputFbo; }
     bgfx::TextureHandle PingTexture() const { return m_pingColor; }
     bgfx::TextureHandle BlitTextureA() const { return m_blitTexA; }
@@ -64,6 +68,10 @@ public:
     bgfx::TextureHandle RenderSmaa(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h);
     void SetSsrEnabled(bool v) { m_ssrEnabled = v; }
 
+    bgfx::UniformHandle u_spotLightVP0 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_spotLightVP1 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_spotLightVP2 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_spotLightVP3 = BGFX_INVALID_HANDLE;
     glm::mat4 GetPrevViewProj() const { return m_prevViewProj; }
     void SetPrevViewProj(const glm::mat4& m) { m_prevViewProj = m; }
 
@@ -88,7 +96,9 @@ private:
     bgfx::UniformHandle s_shadowMap0  = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_shadowMap1  = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_shadowMap2  = BGFX_INVALID_HANDLE;
-    bgfx::UniformHandle u_lightVP     = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lightVP0    = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lightVP1    = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lightVP2    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_plPos       = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_plCol       = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_plCnt       = BGFX_INVALID_HANDLE;
@@ -96,6 +106,17 @@ private:
     bgfx::UniformHandle u_slDir       = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_slCol       = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_slCnt       = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_pointShadowMap = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_pointLightFarPlane = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_pointShadowMap = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_spotShadowMaps[4] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
+    bgfx::FrameBufferHandle m_spotShadowFbos[4] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
+    bgfx::UniformHandle s_spotShadowMap0 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_spotShadowMap1 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_spotShadowMap2 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_spotShadowMap3 = BGFX_INVALID_HANDLE;
+    
+    bgfx::FrameBufferHandle m_pointShadowFbos[6] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
 
     bgfx::UniformHandle u_ssaoProj    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_ssaoInvProj = BGFX_INVALID_HANDLE;
@@ -155,6 +176,7 @@ private:
     bgfx::TextureHandle m_envMap = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_irradianceMap = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_brdfLut = BGFX_INVALID_HANDLE;
+    std::shared_ptr<class Texture> m_brdfTexture;
     bgfx::FrameBufferHandle m_envFbo = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_irradianceFbo = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_brdfFbo = BGFX_INVALID_HANDLE;

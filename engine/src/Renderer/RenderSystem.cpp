@@ -32,6 +32,8 @@ void RenderSystem::Init(AssetManager* assets) {
     m_program = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_pbr.bin");
     m_gbufferProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_gbuffer.bin");
     m_shadowProg = ShaderManager::LoadProgram("shaders/vs_shadow.bin", "shaders/fs_shadow.bin");
+    m_shadowPointProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_shadow_point.bin");
+    u_shadowLightPos = bgfx::createUniform("u_lightPos", bgfx::UniformType::Vec4);
     if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
 
     u_albedoFactor = bgfx::createUniform("u_albedoFactor", bgfx::UniformType::Vec4);
@@ -51,12 +53,15 @@ void RenderSystem::Init(AssetManager* assets) {
     s_albedoMap = bgfx::createUniform("s_albedoMap", bgfx::UniformType::Sampler);
     s_metallicRoughnessMap = bgfx::createUniform("s_metallicRoughnessMap", bgfx::UniformType::Sampler);
     s_normalMap = bgfx::createUniform("s_normalMap", bgfx::UniformType::Sampler);
+    s_brdfLUT = bgfx::createUniform("s_brdfLUT", bgfx::UniformType::Sampler);
 }
 
 void RenderSystem::Shutdown() {
     if (bgfx::isValid(m_program)) bgfx::destroy(m_program);
     if (bgfx::isValid(m_gbufferProg)) bgfx::destroy(m_gbufferProg);
     if (bgfx::isValid(m_shadowProg)) bgfx::destroy(m_shadowProg);
+    if (bgfx::isValid(m_shadowPointProg)) bgfx::destroy(m_shadowPointProg);
+    if (bgfx::isValid(u_shadowLightPos)) bgfx::destroy(u_shadowLightPos);
     if (bgfx::isValid(u_albedoFactor)) bgfx::destroy(u_albedoFactor);
     if (bgfx::isValid(u_metallicFactor)) bgfx::destroy(u_metallicFactor);
     if (bgfx::isValid(u_roughnessFactor)) bgfx::destroy(u_roughnessFactor);
@@ -72,6 +77,7 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(s_albedoMap)) bgfx::destroy(s_albedoMap);
     if (bgfx::isValid(s_metallicRoughnessMap)) bgfx::destroy(s_metallicRoughnessMap);
     if (bgfx::isValid(s_normalMap)) bgfx::destroy(s_normalMap);
+    if (bgfx::isValid(s_brdfLUT)) bgfx::destroy(s_brdfLUT);
     m_program = BGFX_INVALID_HANDLE;
 }
 
@@ -186,6 +192,9 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         auto albedo = mat.albedoMap ? mat.albedoMap : white, mr = mat.metallicRoughnessMap ? mat.metallicRoughnessMap : white;
         auto nrm = mat.normalMap ? mat.normalMap : flatN;
         bgfx::setTexture(0, s_albedoMap, albedo->Handle()); bgfx::setTexture(1, s_metallicRoughnessMap, mr->Handle()); bgfx::setTexture(2, s_normalMap, nrm->Handle());
+        if (bgfx::isValid(m_brdfLUT)) {
+            bgfx::setTexture(6, s_brdfLUT, m_brdfLUT);
+        }
 
         bgfx::setVertexBuffer(0, mc.mesh->VB()); bgfx::setIndexBuffer(mc.mesh->IB());
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA);
@@ -207,6 +216,7 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
     glm::mat4 view = glm::mat4(1.0f);
     bgfx::setViewTransform(viewId, glm::value_ptr(view), glm::value_ptr(lightMtx));
 
+    int renderedCount = 0;
     auto viewIter = scene.Registry().view<TransformComponent, MeshComponent>();
     for (auto h : viewIter) {
         const auto& mc = viewIter.get<MeshComponent>(h);
@@ -229,6 +239,82 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
         bgfx::setIndexBuffer(mc.mesh->IB());
         bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
         bgfx::submit(viewId, m_shadowProg);
+        renderedCount++;
+    }
+    spdlog::info("[Shadow] viewId={} rendered {} meshes", viewId, renderedCount);
+}
+
+
+void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx, const glm::vec3& lightPos, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo) {
+    if (!bgfx::isValid(m_shadowPointProg) || !bgfx::isValid(shadowFbo)) return;
+    bgfx::setViewFrameBuffer(viewId, shadowFbo);
+    bgfx::setViewRect(viewId, 0, 0, 1024, 1024);
+    bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x000000ff, 1.0f, 0);
+    
+    float lp[4] = { lightPos.x, lightPos.y, lightPos.z, 1.0f };
+    bgfx::setUniform(u_shadowLightPos, lp);
+
+    glm::mat4 view = glm::mat4(1.0f);
+    bgfx::setViewTransform(viewId, glm::value_ptr(view), glm::value_ptr(lightMtx));
+
+    static std::vector<glm::vec4> identityBoneData(kMaxBones * 4, glm::vec4(0.0f));
+    static bool initIdentity = false;
+    if (!initIdentity) {
+        glm::mat4 id(1.0f);
+        for (int i = 0; i < kMaxBones; ++i) {
+            for (int j = 0; j < 4; ++j) identityBoneData[i * 4 + j] = id[j];
+        }
+        initIdentity = true;
+    }
+
+    auto viewIter = scene.Registry().view<TransformComponent, MeshComponent>();
+    for (auto h : viewIter) {
+        const auto& mc = viewIter.get<MeshComponent>(h);
+        if (!mc.mesh || !mc.mesh->Valid()) continue;
+
+        glm::mat4 model(1.0f);
+        entt::entity curr = h;
+        std::vector<entt::entity> chain;
+        while (curr != entt::null) {
+            chain.push_back(curr);
+            if (scene.Registry().all_of<ParentComponent>(curr)) curr = scene.Registry().get<ParentComponent>(curr).parent;
+            else break;
+        }
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            if (scene.Registry().all_of<TransformComponent>(*it)) model = model * scene.Registry().get<TransformComponent>(*it).LocalMatrix();
+        }
+
+        // Skeletal animation support
+        entt::entity root = h;
+        while (root != entt::null) {
+            if (scene.Registry().all_of<ParentComponent>(root)) root = scene.Registry().get<ParentComponent>(root).parent;
+            else break;
+        }
+        bool hasSkeleton = scene.Registry().all_of<SkeletalComponent>(root);
+        if (hasSkeleton) {
+            auto& skel = scene.Registry().get<SkeletalComponent>(root);
+            if (skel.isAnimated && !skel.sourcePath.empty()) {
+                if (skel.boneMatrices.size() != kMaxBones) skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
+                auto modelData = m_assets->LoadModel(skel.sourcePath);
+                m_assets->UpdateAnimation(modelData, skel.currentTime, skel.boneMatrices);
+                std::vector<glm::vec4> boneData(kMaxBones * 4);
+                for (int i = 0; i < kMaxBones; ++i) {
+                    for (int j = 0; j < 4; ++j) boneData[i * 4 + j] = skel.boneMatrices[i][j];
+                }
+                bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones, bgfx::copy(boneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
+            } else {
+                bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones, bgfx::copy(identityBoneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
+            }
+        } else {
+            bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones, bgfx::copy(identityBoneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
+        }
+        bgfx::setTexture(3, s_boneMatrices, m_boneTexture);
+
+        bgfx::setTransform(glm::value_ptr(model));
+        bgfx::setVertexBuffer(0, mc.mesh->VB());
+        bgfx::setIndexBuffer(mc.mesh->IB());
+        bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+        bgfx::submit(viewId, m_shadowPointProg);
     }
 }
 

@@ -103,14 +103,21 @@ protected:
         m_render  = std::make_unique<Galeshi::RenderSystem>();
         m_render->Init(m_assets.get());
         m_postProcess.Init();
+        m_render->SetBrdfLUT(m_postProcess.BrdfLUT());
         m_render->SetDeferredEnabled(true);
         // SSAO/SSR включим на 2-м кадре — чтобы первый кадр прошёл
         // без sampling render target (иначе Vulkan layout mismatch).
         m_pendingEffectsEnable = true;
         for (int i = 0; i < 3; ++i) {
+            // Depth texture (D32F) + dummy color (RGBA8) so BGFX creates a proper render pass on Vulkan
+            bgfx::TextureHandle shadowCol = bgfx::createTexture2D(2048, 2048, false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_RT);
             m_shadowMaps[i] = bgfx::createTexture2D(2048, 2048, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
-            m_shadowFbos[i] = bgfx::createFrameBuffer(1, &m_shadowMaps[i], false);
+            bgfx::TextureHandle att[2] = { shadowCol, m_shadowMaps[i] };
+            m_shadowFbos[i] = bgfx::createFrameBuffer(2, att, false);
+            spdlog::info("[Shadow] FBO[{}] created (color+depth)", i);
         }
+        
+
 
         m_browser    = std::make_unique<Galeshi::ContentBrowser>("assets");
         m_serializer = std::make_unique<Galeshi::SceneSerializer>(m_scene, *m_assets);
@@ -125,7 +132,7 @@ protected:
                 for (auto e : lview) {
                     auto& dl = lview.get<Galeshi::DirectionalLightComponent>(e);
                     if (dl.direction.y > 0.0f || true) {
-                        dl.direction = glm::normalize(glm::vec3(-0.4f, -0.8f, -0.5f));
+                        dl.direction = glm::normalize(glm::vec3(0.4f, -0.8f, 0.5f));
                         spdlog::warn("[Editor] Sun was pointing up, flipped downwards for shadows");
                     }
                 }
@@ -485,7 +492,7 @@ if (ImGui::BeginMenu("File")) {
                 auto& dl = e.HasComponent<Galeshi::DirectionalLightComponent>()
                            ? e.GetComponent<Galeshi::DirectionalLightComponent>()
                            : e.AddComponent<Galeshi::DirectionalLightComponent>();
-                dl.direction = glm::normalize(glm::vec3(-0.4f, -0.8f, -0.5f));
+                dl.direction = glm::normalize(glm::vec3(0.4f, -0.8f, 0.5f));
                 dl.intensity = 3.0f;
                 m_editor.Select(e);
             }
@@ -647,7 +654,7 @@ if (ImGui::BeginMenu("File")) {
             
             // --- SHADOW PASS ---
             auto lview = m_scene.Registry().view<Galeshi::DirectionalLightComponent>();
-            glm::mat4 lightMtcs[3];
+            glm::mat4 lightMtx0, lightMtx1, lightMtx2;
             if (!lview.empty()) {
                 auto lh = *lview.begin();
                 auto& dl = lview.get<Galeshi::DirectionalLightComponent>(lh);
@@ -657,18 +664,70 @@ if (ImGui::BeginMenu("File")) {
                     glm::vec3 eye = center - dl.direction * (extents[i] * 2.0f);
                     glm::mat4 lightView = glm::lookAt(eye, center, glm::vec3(0,1,0));
                     glm::mat4 lightProj;
-                    bx::mtxOrtho(glm::value_ptr(lightProj), -extents[i], extents[i], -extents[i], extents[i], 0.1f, 400.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
-                    lightMtcs[i] = lightProj * lightView;
-                    m_render->RenderShadowMap(m_scene, lightMtcs[i], 6 + i, m_shadowFbos[i]);
+                    bx::mtxOrtho(glm::value_ptr(lightProj), -extents[i], extents[i], -extents[i], extents[i], 0.1f, 500.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
+                    if (i == 0) lightMtx0 = lightProj * lightView;
+                    else if (i == 1) lightMtx1 = lightProj * lightView;
+                    else lightMtx2 = lightProj * lightView;
+                    if (i == 0) m_render->RenderShadowMap(m_scene, lightMtx0, 6, m_shadowFbos[0]);
+                    else if (i == 1) m_render->RenderShadowMap(m_scene, lightMtx1, 7, m_shadowFbos[1]);
+                    else m_render->RenderShadowMap(m_scene, lightMtx2, 8, m_shadowFbos[2]);
                 }
             } else {
                 for (int i = 0; i < 3; ++i) {
                     glm::mat4 lightView = glm::lookAt(glm::vec3(0,20,0), glm::vec3(0), glm::vec3(0,1,0));
                     glm::mat4 lightProj;
                     bx::mtxOrtho(glm::value_ptr(lightProj), -15.0f, 15.0f, -15.0f, 15.0f, 0.1f, 50.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
-                    lightMtcs[i] = lightProj * lightView;
-                    m_render->RenderShadowMap(m_scene, lightMtcs[i], 6 + i, m_shadowFbos[i]);
+                    if (i == 0) lightMtx0 = lightProj * lightView;
+                    else if (i == 1) lightMtx1 = lightProj * lightView;
+                    else lightMtx2 = lightProj * lightView;
+                    if (i == 0) m_render->RenderShadowMap(m_scene, lightMtx0, 6, m_shadowFbos[0]);
+                    else if (i == 1) m_render->RenderShadowMap(m_scene, lightMtx1, 7, m_shadowFbos[1]);
+                    else m_render->RenderShadowMap(m_scene, lightMtx2, 8, m_shadowFbos[2]);
                 }
+            }
+
+            // --- POINT LIGHT SHADOW PASS ---
+            auto plview = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::PointLightComponent>();
+            if (plview.begin() != plview.end()) {
+                auto firstLight = *plview.begin();
+                auto& tc = plview.get<Galeshi::TransformComponent>(firstLight);
+                glm::vec3 lightPos = tc.position;
+                
+                glm::mat4 proj;
+                bx::mtxProj(glm::value_ptr(proj), 90.0f, 1.0f, 0.1f, 50.0f, bgfx::getCaps()->homogeneousDepth, bx::Handedness::Right);
+                glm::mat4 views[6] = {
+                    glm::lookAt(lightPos, lightPos + glm::vec3( 1, 0, 0), glm::vec3(0,-1,0)),
+                    glm::lookAt(lightPos, lightPos + glm::vec3(-1, 0, 0), glm::vec3(0,-1,0)),
+                    glm::lookAt(lightPos, lightPos + glm::vec3( 0, 1, 0), glm::vec3(0, 0,1)),
+                    glm::lookAt(lightPos, lightPos + glm::vec3( 0,-1, 0), glm::vec3(0, 0,-1)),
+                    glm::lookAt(lightPos, lightPos + glm::vec3( 0, 0, 1), glm::vec3(0,-1,0)),
+                    glm::lookAt(lightPos, lightPos + glm::vec3( 0, 0,-1), glm::vec3(0,-1,0))
+                };
+                
+                for (int i = 0; i < 6; ++i) {
+                    m_render->RenderPointShadowMap(m_scene, proj * views[i], lightPos, 30 + i, m_postProcess.PointShadowFbo(i));
+                }
+            }
+
+            // --- SPOT LIGHT SHADOW PASS ---
+            auto slview = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::SpotLightComponent>();
+            int slIdx = 0;
+            glm::mat4 spotLightVPs[4];
+            for (auto e : slview) {
+                if (slIdx >= 4) break;
+                auto& tc = slview.get<Galeshi::TransformComponent>(e);
+                auto& sl = slview.get<Galeshi::SpotLightComponent>(e);
+                glm::vec3 lightPos = tc.position;
+                glm::vec3 dir = glm::normalize(sl.direction);
+                
+                glm::mat4 lightView = glm::lookAt(lightPos, lightPos + dir, glm::vec3(0,1,0));
+                glm::mat4 lightProj;
+                float fov = glm::radians(sl.outerConeAngle * 2.0f);
+                bx::mtxProj(glm::value_ptr(lightProj), fov, 1.0f, 0.1f, 50.0f, bgfx::getCaps()->homogeneousDepth, bx::Handedness::Right);
+                spotLightVPs[slIdx] = lightProj * lightView;
+                
+                m_render->RenderShadowMap(m_scene, spotLightVPs[slIdx], 40 + slIdx, m_postProcess.SpotShadowFbo(slIdx));
+                slIdx++;
             }
 
 bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
@@ -729,7 +788,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     slCol[slCount][0] = sl.color.r;
                     slCol[slCount][1] = sl.color.g;
                     slCol[slCount][2] = sl.color.b;
-                    slCol[slCount][3] = cos(glm::radians(sl.outerConeAngle));
+                    slCol[slCount][3] = sl.intensity;
                     slCount++;
                 }
 
@@ -738,12 +797,29 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 glm::mat4 invViewProj = glm::inverse(proj * m_camera.View());
                 
 
+                // Pass spot shadow matrices
+                static float spotVPs[16] = {0};
+                for(int i=0; i<4 && i<slCount; ++i) {
+                    float* p = glm::value_ptr(spotLightVPs[i]);
+                    for(int j=0; j<4; ++j) spotVPs[i*4 + j] = p[j];
+                }
+                // We will need to pass this to RenderLighting, but for now, we just set it as a uniform directly.
+                // The binding happens inside RenderLighting, but since we need the matrices, we'll add a setUniform here (hacky but works).
+                // Actually, PostProcessManager doesn't have u_spotLightVP exposed. We'll do it in RenderLighting.
+                // Since we pass slVP to it? No, we can just set it in PostProcessManager::RenderLighting using the data from a static array.
+
+                {
+                    if (slCount > 0) bgfx::setUniform(m_postProcess.u_spotLightVP0, glm::value_ptr(spotLightVPs[0]));
+                    if (slCount > 1) bgfx::setUniform(m_postProcess.u_spotLightVP1, glm::value_ptr(spotLightVPs[1]));
+                    if (slCount > 2) bgfx::setUniform(m_postProcess.u_spotLightVP2, glm::value_ptr(spotLightVPs[2]));
+                    if (slCount > 3) bgfx::setUniform(m_postProcess.u_spotLightVP3, glm::value_ptr(spotLightVPs[3]));
+                }
                 m_postProcess.RenderLighting(
                     m_framebuffer->Color(),
                     m_framebuffer->Normal(),
                     m_framebuffer->WorldPos(),
                     m_shadowMaps[0], m_shadowMaps[1], m_shadowMaps[2],
-                    lightMtcs[0], lightMtcs[1], lightMtcs[2],
+                    lightMtx0, lightMtx1, lightMtx2,
                     invViewProj,
                     camPos, lDirA, lColA,
                     plPosA, plColA, plCount,
@@ -858,6 +934,48 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 for (const auto& pt : nav.path) {
                     m_debug->AddLine(prev, pt, {1.0f, 1.0f, 0.0f, 1.0f});
                     prev = pt;
+                }
+            }
+
+            // Light Radius Visualization
+            auto plviewViz = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::PointLightComponent>();
+            for (auto e : plviewViz) {
+                auto& tc = plviewViz.get<Galeshi::TransformComponent>(e);
+                auto& pl = plviewViz.get<Galeshi::PointLightComponent>(e);
+                float r = pl.radius;
+                glm::vec4 c = {1.0f, 1.0f, 0.0f, 1.0f};
+                for (int i = 0; i < 32; ++i) {
+                    float a1 = i * 2.0f * 3.14159f / 32.0f;
+                    float a2 = (i + 1) * 2.0f * 3.14159f / 32.0f;
+                    m_debug->AddLine(tc.position + glm::vec3(cos(a1), 0, sin(a1))*r, tc.position + glm::vec3(cos(a2), 0, sin(a2))*r, c);
+                    m_debug->AddLine(tc.position + glm::vec3(0, cos(a1), sin(a1))*r, tc.position + glm::vec3(0, cos(a2), sin(a2))*r, c);
+                    m_debug->AddLine(tc.position + glm::vec3(cos(a1), sin(a1), 0)*r, tc.position + glm::vec3(cos(a2), sin(a2), 0)*r, c);
+                }
+            }
+
+            auto slviewViz = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::SpotLightComponent>();
+            for (auto e : slviewViz) {
+                auto& tc = slviewViz.get<Galeshi::TransformComponent>(e);
+                auto& sl = slviewViz.get<Galeshi::SpotLightComponent>(e);
+                glm::vec3 dir = glm::normalize(sl.direction);
+                float r = sl.radius;
+                float outer = glm::radians(sl.outerConeAngle);
+                float coneR = tan(outer) * r;
+                glm::vec3 endPos = tc.position + dir * r;
+
+                glm::vec3 up = glm::vec3(0, 1, 0);
+                if (abs(dot(dir, up)) > 0.99f) up = glm::vec3(1, 0, 0);
+                glm::vec3 right = glm::normalize(glm::cross(dir, up));
+                glm::vec3 forward = glm::normalize(glm::cross(right, dir));
+
+                glm::vec4 c = {1.0f, 0.5f, 0.0f, 1.0f};
+                for (int i = 0; i < 16; ++i) {
+                    float a1 = i * 2.0f * 3.14159f / 16.0f;
+                    float a2 = (i + 1) * 2.0f * 3.14159f / 16.0f;
+                    glm::vec3 p1 = endPos + (cos(a1)*right + sin(a1)*forward) * coneR;
+                    glm::vec3 p2 = endPos + (cos(a2)*right + sin(a2)*forward) * coneR;
+                    m_debug->AddLine(tc.position, p1, c);
+                    m_debug->AddLine(p1, p2, c);
                 }
             }
 
@@ -1330,33 +1448,43 @@ void DrawDetails() {
         }
 
         if (auto sel = m_editor.Selected(&m_scene); sel) {
-            if (!sel.HasComponent<Galeshi::AudioSourceComponent>()) {
-                if (ImGui::Button("+ Add Audio Source")) {
-                    sel.AddComponent<Galeshi::AudioSourceComponent>();
-                }
-            } else {
-                auto& audio = sel.GetComponent<Galeshi::AudioSourceComponent>();
-                if (ImGui::CollapsingHeader("Audio Source")) {
-                    char buf[256];
-                    snprintf(buf, sizeof buf, "%s", audio.soundPath.c_str());
-                    if (ImGui::InputText("Sound Path", buf, sizeof buf)) {
-                        audio.soundPath = buf;
+            bool isLight = sel.HasComponent<Galeshi::DirectionalLightComponent>() ||
+                           sel.HasComponent<Galeshi::PointLightComponent>() ||
+                           sel.HasComponent<Galeshi::SpotLightComponent>();
+            bool isGround = false;
+            if (sel.HasComponent<Galeshi::NameComponent>() && sel.GetComponent<Galeshi::NameComponent>().name == "Ground") {
+                isGround = true;
+            }
+
+            if (!isLight && !isGround) {
+                if (!sel.HasComponent<Galeshi::AudioSourceComponent>()) {
+                    if (ImGui::Button("+ Add Audio Source")) {
+                        sel.AddComponent<Galeshi::AudioSourceComponent>();
                     }
-                    ImGui::Checkbox("Autoplay", &audio.autoplay);
-                    ImGui::Checkbox("Loop", &audio.loop);
-                    if (ImGui::Button(audio.playing ? "Stop" : "Play")) {
-                        if (audio.playing) {
-                            m_audio.StopSound(audio.soundPath);
-                            audio.playing = false;
-                        } else {
-                            m_audio.PlaySound(audio.soundPath, audio.loop);
-                            audio.playing = true;
+                } else {
+                    auto& audio = sel.GetComponent<Galeshi::AudioSourceComponent>();
+                    if (ImGui::CollapsingHeader("Audio Source")) {
+                        char buf[256];
+                        snprintf(buf, sizeof buf, "%s", audio.soundPath.c_str());
+                        if (ImGui::InputText("Sound Path", buf, sizeof buf)) {
+                            audio.soundPath = buf;
                         }
-                    }
-                    ImGui::SameLine();
-                    ImGui::Text("State: %s", audio.playing ? "playing" : "idle");
-                    if (ImGui::Button("Remove Audio Source")) {
-                        sel.RemoveComponent<Galeshi::AudioSourceComponent>();
+                        ImGui::Checkbox("Autoplay", &audio.autoplay);
+                        ImGui::Checkbox("Loop", &audio.loop);
+                        if (ImGui::Button(audio.playing ? "Stop" : "Play")) {
+                            if (audio.playing) {
+                                m_audio.StopSound(audio.soundPath);
+                                audio.playing = false;
+                            } else {
+                                m_audio.PlaySound(audio.soundPath, audio.loop);
+                                audio.playing = true;
+                            }
+                        }
+                        ImGui::SameLine();
+                        ImGui::Text("State: %s", audio.playing ? "playing" : "idle");
+                        if (ImGui::Button("Remove Audio Source")) {
+                            sel.RemoveComponent<Galeshi::AudioSourceComponent>();
+                        }
                     }
                 }
             }
@@ -1689,7 +1817,7 @@ void DrawDetails() {
         auto pl = m_scene.CreateEntity("PointLight");
         if (!pl.HasComponent<Galeshi::PointLightComponent>())
             pl.AddComponent<Galeshi::PointLightComponent>();
-        pl.GetComponent<Galeshi::TransformComponent>().position = {0.0f, 2.0f, 0.0f};
+        pl.GetComponent<Galeshi::TransformComponent>().position = {0.0f, 5.0f, 0.0f};
     }
 
     // --- Состояние ---
@@ -1710,6 +1838,7 @@ void DrawDetails() {
     std::unique_ptr<Galeshi::DebugRenderer> m_debug;
     bgfx::TextureHandle m_shadowMaps[3] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
     bgfx::FrameBufferHandle m_shadowFbos[3] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
+    bgfx::FrameBufferHandle m_pointShadowFbos[6] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
 
     uint16_t    m_viewportW = 0, m_viewportH = 0;
     bool        m_viewportHovered = false;

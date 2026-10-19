@@ -12,12 +12,14 @@ public:
     void Init(AssetManager* assets);
     void Shutdown();
     void Render(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height);
+    void RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx, const glm::vec3& lightPos, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo);
     void RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo);
     void RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height);
     
     void SetSkipGlass(bool skip) { m_skipGlass = skip; }
     bool DeferredEnabled() const { return m_deferred; }
     void SetDeferredEnabled(bool v) { m_deferred = v; }
+    void SetBrdfLUT(bgfx::TextureHandle tex) { m_brdfLUT = tex; }
 
     static constexpr int kMaxPointLights = 4;
     static constexpr int kMaxBones = 256;
@@ -25,10 +27,14 @@ private:
     AssetManager* m_assets = nullptr;
     bool m_deferred = false;
     bool m_skipGlass = false;
+    bgfx::TextureHandle m_brdfLUT = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_brdfLUT = BGFX_INVALID_HANDLE;
 
     bgfx::ProgramHandle m_program      = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_gbufferProg  = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_shadowProg = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_shadowPointProg = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_shadowLightPos = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_glassProg    = BGFX_INVALID_HANDLE;
 
     bgfx::UniformHandle u_lightMtx = BGFX_INVALID_HANDLE;

@@ -88,25 +88,24 @@ void main()
     vec3 radiance = u_lightColorIntensity.rgb * u_lightColorIntensity.a;
 
     vec3 direct = (kD * albedo / PI + specular) * radiance * NdL;
-        // Proper IBL (spherical projection)
-    float PI_CONST = 3.14159265;
-    vec2 envUV = vec2(atan2(N.z, N.x) / (2.0 * PI_CONST) + 0.5, acos(clamp(N.y, -1.0, 1.0)) / PI_CONST);
+        // Simple IBL (safe)
+    vec2 envUV = N.xy * 0.5 + 0.5;
     vec3 irradiance = texture2D(s_irradianceMap, envUV).rgb;
     vec3 diffuseIBL = irradiance * albedo;
     
     vec3 R = reflect(-V, N);
-    vec2 specUV = vec2(atan2(R.z, R.x) / (2.0 * PI_CONST) + 0.5, acos(clamp(R.y, -1.0, 1.0)) / PI_CONST);
+    vec2 specUV = R.xy * 0.5 + 0.5;
     vec3 prefilteredColor = texture2D(s_envMap, specUV).rgb;
     float NdotV = max(dot(N, V), 0.0);
     vec2 brdf = texture2D(s_brdfLUT, vec2(NdotV, rough)).xy;
     vec3 specularIBL = prefilteredColor * (F0 * brdf.x + brdf.y);
     
-    vec3 ambient = diffuseIBL * (1.0 - metallic) + specularIBL;
+    vec3 ambient = diffuseIBL * (1.0 - metallic) + specularIBL + (albedo * 0.05);
 
     vec3 color = ambient + direct + u_emissiveFactor.rgb;
 
-    color = color / (color + vec3_splat(1.0));
-    color = pow(color, vec3_splat(1.0 / 2.2));
+    // Tonemapping and Gamma are handled by the post-process pass (RenderTonemap).
+    // Output HDR directly to avoid double gamma.
 
     gl_FragColor = vec4(color, u_albedoFactor.a);
 }
