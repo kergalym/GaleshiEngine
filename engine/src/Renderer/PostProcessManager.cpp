@@ -193,7 +193,64 @@ void PostProcessManager::Init() {
       }
     }
 
+        // IBL
+    {
+        auto vs = LoadBinShader("shaders/vs_fullscreen.bin");
+        auto fs = LoadBinShader("shaders/fs_ibl_gen.bin");
+        if (bgfx::isValid(vs) && bgfx::isValid(fs)) {
+            m_iblGenProg = bgfx::createProgram(vs, fs, true);
+            u_iblParams = bgfx::createUniform("u_iblParams", bgfx::UniformType::Vec4);
+            u_iblLightDir = bgfx::createUniform("u_lightDirection", bgfx::UniformType::Vec4);
+        }
+        fs = LoadBinShader("shaders/fs_brdf.bin");
+        if (bgfx::isValid(vs) && bgfx::isValid(fs)) m_brdfProg = bgfx::createProgram(vs, fs, true);
+
+        m_envMap = bgfx::createTexture2D(1024, 512, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+        m_irradianceMap = bgfx::createTexture2D(64, 32, false, 1, bgfx::TextureFormat::RGBA16F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+        m_brdfLut = bgfx::createTexture2D(256, 256, false, 1, bgfx::TextureFormat::RG16F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+
+        m_envFbo = bgfx::createFrameBuffer(1, &m_envMap, false);
+        m_irradianceFbo = bgfx::createFrameBuffer(1, &m_irradianceMap, false);
+        m_brdfFbo = bgfx::createFrameBuffer(1, &m_brdfLut, false);
+
+        s_iblIrradiance = bgfx::createUniform("s_irradianceMap", bgfx::UniformType::Sampler);
+        s_iblEnv        = bgfx::createUniform("s_envMap",        bgfx::UniformType::Sampler);
+        s_iblBrdf       = bgfx::createUniform("s_brdfLUT",       bgfx::UniformType::Sampler);
+        spdlog::info("[PP] IBL uniforms: irr={} env={} brdf={}",
+            bgfx::isValid(s_iblIrradiance), bgfx::isValid(s_iblEnv), bgfx::isValid(s_iblBrdf));
+    }
+
     spdlog::info("[PP] PostProcessManager initialized");
+}
+
+void PostProcessManager::GenerateIBL(const float sunDir[4]) {
+    if (!bgfx::isValid(m_iblGenProg) || !bgfx::isValid(m_brdfProg)) return;
+
+    bgfx::setUniform(u_iblLightDir, sunDir);
+
+    // Env Map
+    bgfx::setViewFrameBuffer(20, m_envFbo);
+    bgfx::setViewRect(20, 0, 0, 1024, 512);
+    float p0[4] = {0.0f, 0, 0, 0};
+    bgfx::setUniform(u_iblParams, p0);
+    bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+    bgfx::submit(20, m_iblGenProg);
+
+    // Irradiance Map
+    bgfx::setViewFrameBuffer(21, m_irradianceFbo);
+    bgfx::setViewRect(21, 0, 0, 64, 32);
+    float p1[4] = {1.0f, 0, 0, 0};
+    bgfx::setUniform(u_iblParams, p1);
+    bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
+    bgfx::submit(21, m_iblGenProg);
+
+    // BRDF LUT
+    bgfx::setViewFrameBuffer(22, m_brdfFbo);
+    bgfx::setViewRect(22, 0, 0, 256, 256);
+    bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
+    bgfx::submit(22, m_brdfProg);
+    spdlog::info("[PP] IBL generation submitted");
 }
 
 void PostProcessManager::Shutdown() {
@@ -205,8 +262,14 @@ void PostProcessManager::Shutdown() {
     destroyProg(m_program); destroyProg(m_invertProg); destroyProg(m_fxaaProg);
     destroyProg(m_lightingProg); destroyProg(m_ssaoProg); destroyProg(m_ssrProg); destroyProg(m_taaProg);
     destroyUni(u_taaPrevVP); destroyUni(u_taaInvVP); destroyUni(u_taaParams); destroyUni(s_taaHistory); destroyUni(s_taaDepth);
-    if(bgfx::isValid(m_historyColor)) bgfx::destroy(m_historyColor); if(bgfx::isValid(m_historyFbo)) bgfx::destroy(m_historyFbo); destroyProg(m_skyProg);
-    destroyUni(u_skyInvVP); destroyUni(u_skySun); destroyProg(m_smaaEdgeProg); destroyProg(m_smaaBlendProg);
+    if(bgfx::isValid(m_historyColor)) bgfx::destroy(m_historyColor); if(bgfx::isValid(m_historyFbo)) bgfx::destroy(m_historyFbo); destroyProg(m_skyProg); destroyProg(m_iblGenProg); destroyProg(m_brdfProg);
+    if (bgfx::isValid(s_iblIrradiance)) bgfx::destroy(s_iblIrradiance);
+    if (bgfx::isValid(s_iblEnv))        bgfx::destroy(s_iblEnv);
+    if (bgfx::isValid(s_iblBrdf))       bgfx::destroy(s_iblBrdf);
+    if (bgfx::isValid(m_envFbo)) bgfx::destroy(m_envFbo); if (bgfx::isValid(m_envMap)) bgfx::destroy(m_envMap);
+    if (bgfx::isValid(m_irradianceFbo)) bgfx::destroy(m_irradianceFbo); if (bgfx::isValid(m_irradianceMap)) bgfx::destroy(m_irradianceMap);
+    if (bgfx::isValid(m_brdfFbo)) bgfx::destroy(m_brdfFbo); if (bgfx::isValid(m_brdfLut)) bgfx::destroy(m_brdfLut);
+    destroyUni(u_skyInvVP); destroyUni(u_skySun); destroyUni(u_iblParams); destroyUni(u_iblLightDir); destroyProg(m_smaaEdgeProg); destroyProg(m_smaaBlendProg);
     if(bgfx::isValid(m_smaaEdgeTex)) bgfx::destroy(m_smaaEdgeTex);
 
     destroyUni(s_texColor); destroyUni(u_texelSize);
@@ -317,6 +380,10 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     glm::mat4 lightMtcs[3] = { lightMtx0, lightMtx1, lightMtx2 };
     bgfx::setUniform(u_lightVP, glm::value_ptr(lightMtcs[0]), 3);
     bgfx::setUniform(u_skyInvVP, glm::value_ptr(invViewProj));
+    
+    if (bgfx::isValid(m_irradianceMap)) bgfx::setTexture(6, s_iblIrradiance, m_irradianceMap);
+    if (bgfx::isValid(m_envMap))        bgfx::setTexture(7, s_iblEnv,        m_envMap);
+    if (bgfx::isValid(m_brdfLut))       bgfx::setTexture(8, s_iblBrdf,       m_brdfLut);
     
 
     if (pointLightCount > 0) {

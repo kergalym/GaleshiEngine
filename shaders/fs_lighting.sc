@@ -7,6 +7,9 @@ SAMPLER2D(s_worldPos,    2);
 SAMPLER2D(s_shadowMap0,  3);
 SAMPLER2D(s_shadowMap1,  4);
 SAMPLER2D(s_shadowMap2,  5);
+SAMPLER2D(s_irradianceMap, 6);
+SAMPLER2D(s_envMap,        7);
+SAMPLER2D(s_brdfLUT,       8);
 
 uniform vec4 u_cameraPosition;
 uniform vec4 u_lightDirection;
@@ -110,7 +113,21 @@ void main()
 
     // 1. Ambient (Базовое освещение, чтобы не было абсолютно черных теней)
     // Увеличено с 0.15 до 0.3 для лучшей видимости в тенях
-    vec3 finalColor = albedo * 0.3; 
+        // Proper IBL (spherical projection)
+    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    float PI_CONST = 3.14159265;
+    vec2 envUV = vec2(atan2(N.z, N.x) / (2.0 * PI_CONST) + 0.5, acos(clamp(N.y, -1.0, 1.0)) / PI_CONST);
+    vec3 irradiance = texture2D(s_irradianceMap, envUV).rgb;
+    vec3 diffuseIBL = irradiance * albedo;
+    
+    vec3 R = reflect(-V, N);
+    vec2 specUV = vec2(atan2(R.z, R.x) / (2.0 * PI_CONST) + 0.5, acos(clamp(R.y, -1.0, 1.0)) / PI_CONST);
+    vec3 prefilteredColor = texture2D(s_envMap, specUV).rgb;
+    float NdotV = max(dot(N, V), 0.0);
+    vec2 brdf = texture2D(s_brdfLUT, vec2(NdotV, rough)).xy;
+    vec3 specularIBL = prefilteredColor * (F0 * brdf.x + brdf.y);
+    
+    vec3 finalColor = diffuseIBL * (1.0 - metallic) + specularIBL; 
 
     // 2. Directional Light с тенями
     vec3 L_dir = normalize(-u_lightDirection.xyz);

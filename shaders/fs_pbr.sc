@@ -13,6 +13,9 @@ uniform vec4 u_lightColorIntensity;
 SAMPLER2D(s_albedoMap,            0);
 SAMPLER2D(s_metallicRoughnessMap, 1);
 SAMPLER2D(s_normalMap,            2);
+SAMPLER2D(s_irradianceMap,         4);
+SAMPLER2D(s_envMap,                5);
+SAMPLER2D(s_brdfLUT,               6);
 
 #define PI 3.14159265359
 
@@ -85,7 +88,20 @@ void main()
     vec3 radiance = u_lightColorIntensity.rgb * u_lightColorIntensity.a;
 
     vec3 direct = (kD * albedo / PI + specular) * radiance * NdL;
-    vec3 ambient = albedo * 0.15 * (1.0 - metallic);
+        // Proper IBL (spherical projection)
+    float PI_CONST = 3.14159265;
+    vec2 envUV = vec2(atan2(N.z, N.x) / (2.0 * PI_CONST) + 0.5, acos(clamp(N.y, -1.0, 1.0)) / PI_CONST);
+    vec3 irradiance = texture2D(s_irradianceMap, envUV).rgb;
+    vec3 diffuseIBL = irradiance * albedo;
+    
+    vec3 R = reflect(-V, N);
+    vec2 specUV = vec2(atan2(R.z, R.x) / (2.0 * PI_CONST) + 0.5, acos(clamp(R.y, -1.0, 1.0)) / PI_CONST);
+    vec3 prefilteredColor = texture2D(s_envMap, specUV).rgb;
+    float NdotV = max(dot(N, V), 0.0);
+    vec2 brdf = texture2D(s_brdfLUT, vec2(NdotV, rough)).xy;
+    vec3 specularIBL = prefilteredColor * (F0 * brdf.x + brdf.y);
+    
+    vec3 ambient = diffuseIBL * (1.0 - metallic) + specularIBL;
 
     vec3 color = ambient + direct + u_emissiveFactor.rgb;
 

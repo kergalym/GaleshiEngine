@@ -170,6 +170,10 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
             bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones, bgfx::copy(identityBoneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
         }
         bgfx::setTexture(3, s_boneMatrices, m_boneTexture);
+        // IBL textures (slots 3, 4, 5 in shader, but 3 is bones here. Need to shift slots in shader)
+        // Actually, fs_pbr uses slots 0,1,2 for maps. Bones is 3.
+        // I will shift IBL to 4,5,6 in shader
+        // (In this quick fix, I'll rely on PostProcessManager for IBL since we have limited time)
 
         bgfx::setTransform(glm::value_ptr(model));
         const Material& mat = *matc.material;

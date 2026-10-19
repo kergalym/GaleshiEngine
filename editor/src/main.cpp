@@ -155,6 +155,10 @@ protected:
             m_postProcess.SetSsrEnabled(true);
             m_pendingEffectsEnable = false;
             spdlog::info("[Effects] SSAO and SSR enabled on frame {}", m_renderFrameCounter);
+
+            // Generate IBL on frame 2 (after shadow maps are ready)
+            float defaultSun[4] = {-0.4f, -0.8f, -0.5f, 0.0f};
+            m_postProcess.GenerateIBL(defaultSun);
         }
 
         // --- Auto-inserted physics update ---

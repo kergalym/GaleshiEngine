@@ -15,6 +15,9 @@ public:
     void Init();
     void Shutdown();
 
+    bgfx::TextureHandle IrradianceMap() const { return m_irradianceMap; }
+    bgfx::TextureHandle EnvMap() const { return m_envMap; }
+    bgfx::TextureHandle BrdfLUT() const { return m_brdfLut; }
     bgfx::TextureHandle OutputTexture() const { return m_outputColor; }
     bgfx::FrameBufferHandle OutputFbo() const { return m_outputFbo; }
     bgfx::TextureHandle PingTexture() const { return m_pingColor; }
@@ -53,6 +56,8 @@ public:
     void SetTaaEnabled(bool v) { m_taaEnabled = v; }
     bool TaaEnabled() const { return m_taaEnabled; }
     bgfx::TextureHandle RenderTaa(bgfx::TextureHandle color, bgfx::TextureHandle depth, const glm::mat4& prevVP, const glm::mat4& invVP, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h);
+    void GenerateIBL(const float sunDir[4]);
+
     bgfx::TextureHandle RenderSky(const glm::mat4& invProj, const glm::mat4& invView, const float sunDir[4], bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h);
     void SetSmaaEnabled(bool v) { m_smaaEnabled = v; }
     bool SmaaEnabled() const { return m_smaaEnabled; }
@@ -145,6 +150,19 @@ private:
     bgfx::FrameBufferHandle m_historyFbo = BGFX_INVALID_HANDLE;
     glm::mat4 m_prevViewProj{1.0f};
     bgfx::ProgramHandle m_skyProg = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_iblGenProg = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_brdfProg = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_envMap = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_irradianceMap = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_brdfLut = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_envFbo = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_irradianceFbo = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_brdfFbo = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_iblParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_iblLightDir = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_iblIrradiance = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_iblEnv = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_iblBrdf = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_skyInvVP = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_skySun = BGFX_INVALID_HANDLE;
     bool m_smaaEnabled   = false;

@@ -2,7 +2,7 @@
 
 # GaleshiEngine
 
-A minimalist game engine inspired by Unreal Engine 5. The goal is a cross-platform editor with a Vulkan renderer, physics, AI, and the ability to write C++ directly inside the editor.
+A minimalist game engine inspired by Unreal Engine 5 with ECS-based Scene Graph. The goal is a cross-platform editor with a Vulkan renderer, physics, AI, and the ability to write C++ directly inside the editor.
 
 **Current status: Stage 2 complete.** Window, Vulkan renderer, ImGui editor, basic PBR shader, and a rotating cube all work.
 
