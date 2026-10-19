@@ -1,6 +1,8 @@
 #include "GaleshiEngine/AI/NavigationSystem.hpp"
 #include "GaleshiEngine/Scene/Scene.hpp"
+#include "GaleshiEngine/Scene/Components.hpp"
 #include "GaleshiEngine/Assets/Mesh.hpp"
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <Recast.h>
 #include <DetourNavMesh.h>
@@ -55,7 +57,33 @@ bool NavigationSystem::BuildFromScene(Scene& scene) {
     for (auto e : view) {
         const auto& mc = view.get<Galeshi::MeshComponent>(e);
         if (!mc.mesh) continue;
-        if (mc.primitiveType != "landscape") continue;
+
+        // Skip skeletal meshes (characters)
+        if (scene.Registry().all_of<Galeshi::SkeletalComponent>(e)) continue;
+        // Skip cloth
+        if (mc.primitiveType == "cloth") continue;
+        // Skip dynamic physics objects (falling cubes)
+        if (scene.Registry().all_of<Galeshi::RigidBodyComponent>(e)) {
+            const auto& rb = scene.Registry().get<Galeshi::RigidBodyComponent>(e);
+            if (rb.motionType == Galeshi::RigidBodyComponent::MotionType::Dynamic) continue;
+        }
+
+        // Build world matrix
+        glm::mat4 model(1.0f);
+        entt::entity curr = e;
+        std::vector<entt::entity> chain;
+        int depth = 0;
+        while (curr != entt::null && depth++ < 128) {
+            chain.push_back(curr);
+            if (scene.Registry().all_of<Galeshi::ParentComponent>(curr))
+                curr = scene.Registry().get<Galeshi::ParentComponent>(curr).parent;
+            else
+                break;
+        }
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            if (scene.Registry().all_of<Galeshi::TransformComponent>(*it))
+                model = model * scene.Registry().get<Galeshi::TransformComponent>(*it).LocalMatrix();
+        }
 
         const auto& v   = mc.mesh->Vertices();
         const auto& idx = mc.mesh->Indices();
@@ -63,14 +91,15 @@ bool NavigationSystem::BuildFromScene(Scene& scene) {
 
         int baseIndex = static_cast<int>(verts.size() / 3);
         for (const auto& vert : v) {
-            verts.push_back(vert.position.x);
-            verts.push_back(vert.position.y);
-            verts.push_back(vert.position.z);
+            glm::vec4 worldPos = model * glm::vec4(vert.position, 1.0f);
+            verts.push_back(worldPos.x);
+            verts.push_back(worldPos.y);
+            verts.push_back(worldPos.z);
         }
         for (auto i : idx) {
             tris.push_back(baseIndex + static_cast<int>(i));
         }
-        spdlog::info("[NavMesh] Landscape mesh: {} verts, {} tris", v.size(), idx.size() / 3);
+        spdlog::info("[NavMesh] Added mesh ({} verts, {} tris)", v.size(), idx.size() / 3);
     }
 
     if (verts.empty() || tris.empty()) {

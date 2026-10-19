@@ -89,13 +89,13 @@ All dependencies are pulled via FetchContent on the first configuration. The fir
 - [✔] TAA / FXAA / SMAA selectable in UI
 
 ### P3 — Navigation, Editor, Serialization
-- [ ] Recast NavMesh generation from `MeshComponent` scene
+- [✔] Recast NavMesh generation from `MeshComponent` scene
 - [ ] `NavAgentComponent` + Detour pathfinding
 - [ ] Scene hierarchy panel (drag & drop)
-- [ ] Inspector: edit `Transform`, `RigidBody`, `Mesh`
+- [✔] Inspector: edit `Transform`, `RigidBody`, `Mesh`
 - [ ] ImGuizmo translate/rotate/scale
-- [ ] Undo/Redo (`m_history`, `m_historyIndex`)
-- [ ] `Scene::Save/Load(path)` via nlohmann/json (`*.gscn`)
+- [✔] Undo/Redo (`m_history`, `m_historyIndex`)
+- [✔] `Scene::Save/Load(path)` via nlohmann/json (`*.gscn`)
 
 ### P4 — Long-term
 - [ ] Multi-threaded ECS job system (integrated with `JPH::JobSystemThreadPool`)
