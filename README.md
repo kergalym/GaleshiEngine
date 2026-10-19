@@ -15,13 +15,13 @@ A minimalist game engine inspired by Unreal Engine 5. The goal is a cross-platfo
 | Window and input   | Done    | SDL3                                 |
 | Renderer (Vulkan)  | Done    | bgfx + bimg + bx                     |
 | Editor UI          | Done    | Dear ImGui (docking)                 |
-| Gizmo              | WIP     | ImGuizmo (linked, not wired)         |
-| PBR shader         | Partial | Basic model (Lambert + Blinn-Phong)  |
-| FBX/glTF import    | WIP     | Assimp (linked)                      |
-| Scene / ECS        | WIP     | EnTT (linked)                        |
-| Physics            | WIP     | Jolt Physics (rigid + soft)          |
+| Gizmo              | Done    | ImGuizmo (linked, not wired)         |
+| PBR shader         | Done    | Basic model (Lambert + Blinn-Phong)  |
+| FBX/glTF import    | Done    | Assimp (linked)                      |
+| Scene / ECS        | Done    | EnTT (linked)                        |
+| Physics            | Done    | Jolt Physics (rigid + soft)          |
 | AI / NavMesh       | WIP     | Recast and Detour                    |
-| C++ scripting      | Planned | Cling                                |
+| Scripting          | Planned | Lua                                      |
 
 ---
 
