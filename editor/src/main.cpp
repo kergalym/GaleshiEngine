@@ -34,6 +34,7 @@
 #include <bx/math.h>
 
 #include <algorithm>
+#include <functional>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -178,7 +179,7 @@ protected:
         // --- End auto-inserted ---
 
         m_time += dt;
-        Galeshi::AISystem::Update(m_scene, dt);
+        Galeshi::AISystem::Update(m_scene, dt, m_navSystem.get());
 
         // Анимация скелета
         auto animView = m_scene.Registry().view<Galeshi::SkeletalComponent>();
@@ -453,23 +454,15 @@ if (ImGui::BeginMenu("File")) {
                 m_editor.Select(e);
             }
             if (ImGui::MenuItem("AI Agent")) {
-                    auto e = m_scene.CreateEntity("AI_Agent");
-                    auto mesh = std::make_shared<Galeshi::Mesh>();
-                    auto cube = m_assets->CreateCubeMesh();
-                    // Переиспользуем куб
-                    e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ cube, "", "cube" });
-                    
-                    auto mat = std::make_shared<Galeshi::Material>();
-                    mat->albedoFactor = {0.2f, 0.8f, 0.2f, 1.0f}; // Зеленый
-                    e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
-                    
-                    auto& tc = e.GetComponent<Galeshi::TransformComponent>();
-                    tc.position = {0, 1, 0}; // Над землей
-                    tc.scale = {0.5f, 0.5f, 0.5f};
-                    
-                    e.AddComponent<Galeshi::NavAgentComponent>();
-                    m_editor.Select(e);
-                }
+                auto e = m_scene.CreateEntity("AI_Agent");
+                auto& tc = e.GetComponent<Galeshi::TransformComponent>();
+                tc.position = {0, 0, 0};
+                tc.scale = {1.0f, 1.0f, 1.0f};
+                
+                e.AddComponent<Galeshi::NavAgentComponent>();
+                e.AddComponent<Galeshi::AIControllerComponent>();
+                m_editor.Select(e);
+            }
                 if (ImGui::MenuItem("Build NavMesh")) {
                     spdlog::info("[Editor] Build NavMesh menu clicked");
                     if (!m_navSystem) {
@@ -837,6 +830,33 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 }
             }
             
+            // Debug render for AI Agents
+            auto navView = m_scene.Registry().view<Galeshi::NavAgentComponent, Galeshi::TransformComponent>();
+            for (auto e : navView) {
+                auto& tc = navView.get<Galeshi::TransformComponent>(e);
+                auto& nav = navView.get<Galeshi::NavAgentComponent>(e);
+                
+                // Compute world position (walk up parents)
+                glm::vec3 worldPos = tc.position;
+                entt::entity curr = e;
+                int depth = 0;
+                while (depth++ < 128 && m_scene.Registry().all_of<Galeshi::ParentComponent>(curr)) {
+                    curr = m_scene.Registry().get<Galeshi::ParentComponent>(curr).parent;
+                    if (m_scene.Registry().all_of<Galeshi::TransformComponent>(curr))
+                        worldPos += m_scene.Registry().get<Galeshi::TransformComponent>(curr).position;
+                }
+                
+                // Draw green box for agent (at world position)
+                m_debug->AddBox(worldPos, glm::vec3(0.5f), {0.2f, 1.0f, 0.2f, 1.0f});
+                
+                // Draw yellow path lines
+                glm::vec3 prev = worldPos;
+                for (const auto& pt : nav.path) {
+                    m_debug->AddLine(prev, pt, {1.0f, 1.0f, 0.0f, 1.0f});
+                    prev = pt;
+                }
+            }
+
             // Selection box (вокруг выделенного)
             Galeshi::Entity sel = m_editor.Selected(&m_scene);
             if (sel && sel.HasComponent<Galeshi::TransformComponent>() && !sel.HasComponent<Galeshi::SkeletalComponent>()) {
@@ -894,19 +914,33 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             }
 
             // --- Visual gizmo: X/Y/Z arrows drawn, but result IGNORED. ---
-            // Only our LMB drag below is allowed to move the object.
-            // ImGuizmo is invoked purely to render the affordance; the
-            // transformed matrix is discarded and never written back to ECS.
             if (selHasTf) {
                 ImGuizmo::SetDrawlist();
                 ImGuizmo::SetRect(imgMin.x, imgMin.y, w, h);
                 ImGuizmo::SetGizmoSizeClipSpace(0.12f);
                 glm::mat4 visView  = m_camera.View();
                 glm::mat4 visProj  = m_camera.Projection();
-                auto& tcVis = sel.GetComponent<Galeshi::TransformComponent>();
-                glm::mat4 visModel = tcVis.LocalMatrix();
+                
+                // Compute World Matrix for Gizmo
+                glm::mat4 worldMatrix(1.0f);
+                entt::entity curr = sel.Handle();
+                std::vector<entt::entity> chain;
+                int depth = 0;
+                while (curr != entt::null && depth++ < 128) {
+                    chain.push_back(curr);
+                    if (m_scene.Registry().all_of<Galeshi::ParentComponent>(curr))
+                        curr = m_scene.Registry().get<Galeshi::ParentComponent>(curr).parent;
+                    else
+                        break;
+                }
+                for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+                    if (m_scene.Registry().all_of<Galeshi::TransformComponent>(*it))
+                        worldMatrix = worldMatrix * m_scene.Registry().get<Galeshi::TransformComponent>(*it).LocalMatrix();
+                }
+                
+                glm::mat4 visModel = worldMatrix;
                 ImGuizmo::Manipulate(glm::value_ptr(visView), glm::value_ptr(visProj),
-                                     ImGuizmo::TRANSLATE, ImGuizmo::LOCAL,
+                                     ImGuizmo::TRANSLATE, ImGuizmo::WORLD, // Use WORLD mode
                                      glm::value_ptr(visModel));
                 // visModel intentionally not applied.
             }
@@ -1052,6 +1086,8 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
 
                 if (bestHit) m_editor.Select(bestHit);
                 else m_editor.ClearSelection();
+
+
             }
 
                     }
@@ -1102,22 +1138,166 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
 
         void DrawOutliner() {
         ImGui::Begin("World Outliner");
-        auto entities = m_scene.AllEntities();
-        for (auto e : entities) {
-            // Скрываем субмеши (объекты с родителем) из общего списка
-            if (e.HasComponent<Galeshi::ParentComponent>()) continue;
-            std::string name = "Entity " + std::to_string((uint32_t)e.Handle());
-            if (e.HasComponent<Galeshi::NameComponent>()) {
-                name = e.GetComponent<Galeshi::NameComponent>().name;
+        auto& reg = m_scene.Registry();
+
+        // ── Helper: compute world matrix by walking up the parent chain ──
+        auto GetWorldMatrix = [&](entt::entity ent) -> glm::mat4 {
+            glm::mat4 world(1.0f);
+            std::vector<entt::entity> chain;
+            entt::entity curr = ent;
+            int depth = 0;
+            while (curr != entt::null && depth++ < 128) {
+                chain.push_back(curr);
+                if (reg.all_of<Galeshi::ParentComponent>(curr))
+                    curr = reg.get<Galeshi::ParentComponent>(curr).parent;
+                else
+                    break;
             }
-            if (e.HasComponent<Galeshi::SkeletalComponent>()) {
-                name = "[Skeletal] " + name; // Пометка для скелетных моделей
+            for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+                if (reg.all_of<Galeshi::TransformComponent>(*it))
+                    world = world * reg.get<Galeshi::TransformComponent>(*it).LocalMatrix();
             }
-            bool isSelected = m_editor.IsSelected(e);
-            if (ImGui::Selectable(name.c_str(), isSelected)) {
-                m_editor.Select(e);
+            return world;
+        };
+
+        // ── Helper: decompose matrix into TRS and write to TransformComponent ──
+        auto SetLocalFromMatrix = [&](entt::entity ent, const glm::mat4& m) {
+            if (!reg.all_of<Galeshi::TransformComponent>(ent)) return;
+            auto& tf = reg.get<Galeshi::TransformComponent>(ent);
+
+            glm::vec3 pos(m[3]);
+            glm::vec3 c0(m[0]), c1(m[1]), c2(m[2]);
+            glm::vec3 scl(glm::length(c0), glm::length(c1), glm::length(c2));
+
+            // Avoid divide-by-zero
+            float sx = (scl.x > 1e-6f) ? scl.x : 1.0f;
+            float sy = (scl.y > 1e-6f) ? scl.y : 1.0f;
+            float sz = (scl.z > 1e-6f) ? scl.z : 1.0f;
+
+            glm::mat3 rotMat(c0 / sx, c1 / sy, c2 / sz);
+            glm::quat rot = glm::quat_cast(rotMat);
+
+            tf.position = pos;
+            tf.rotation = rot;
+            tf.scale    = scl;
+        };
+
+        std::function<void(entt::entity, int)> DrawNode = [&](entt::entity e, int depth) {
+            if (!reg.valid(e)) return;
+
+            std::string name = "Entity " + std::to_string((uint32_t)e);
+            if (reg.all_of<Galeshi::NameComponent>(e))
+                name = reg.get<Galeshi::NameComponent>(e).name;
+            if (reg.all_of<Galeshi::SkeletalComponent>(e))
+                name = "[Skeletal] " + name;
+
+            ImGui::PushID((uint32_t)e);
+
+            // Snapshot children before drawing (avoids iterator invalidation during drag&drop)
+            std::vector<entt::entity> children;
+            reg.view<Galeshi::ParentComponent>().each([&](auto child, auto& pc) {
+                if (pc.parent == e) children.push_back(child);
+            });
+            bool hasChildren = !children.empty();
+
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen;
+            if (m_editor.IsSelected(Galeshi::Entity(e, &m_scene))) flags |= ImGuiTreeNodeFlags_Selected;
+            if (!hasChildren) flags |= ImGuiTreeNodeFlags_Leaf;
+
+            bool open = ImGui::TreeNodeEx("##node", flags, "%s", name.c_str());
+
+            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+                m_editor.Select(Galeshi::Entity(e, &m_scene));
+
+            if (ImGui::BeginDragDropSource()) {
+                ImGui::SetDragDropPayload("ENTITY", &e, sizeof(entt::entity));
+                ImGui::Text("Move %s", name.c_str());
+                ImGui::EndDragDropSource();
             }
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ENTITY")) {
+                    entt::entity dragged = *(const entt::entity*)payload->Data;
+                    if (dragged != e) {
+                        // Cycle detection: check if 'e' is a descendant of 'dragged'
+                        bool isCycle = false;
+                        entt::entity curr = e;
+                        int depth = 0;
+                        while (curr != entt::null && depth++ < 128) {
+                            if (curr == dragged) { isCycle = true; break; }
+                            if (reg.all_of<Galeshi::ParentComponent>(curr))
+                                curr = reg.get<Galeshi::ParentComponent>(curr).parent;
+                            else
+                                break;
+                        }
+
+                        if (!isCycle) {
+                            PushHistory();
+
+                            // 1) Detach from old parent
+                            if (reg.all_of<Galeshi::ParentComponent>(dragged))
+                                reg.remove<Galeshi::ParentComponent>(dragged);
+
+                            // 2) Attach to new parent
+                            reg.emplace_or_replace<Galeshi::ParentComponent>(
+                                dragged, Galeshi::ParentComponent{ e });
+
+                            // 3) Snap to Parent's origin (Local Transform = Identity)
+                            // The agent will now visually be at the same position as the parent.
+                            if (reg.all_of<Galeshi::TransformComponent>(dragged)) {
+                                auto& tf = reg.get<Galeshi::TransformComponent>(dragged);
+                                tf.position = glm::vec3(0.0f);
+                                tf.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+                                tf.scale = glm::vec3(1.0f);
+                            }
+                        } else {
+                            spdlog::warn("[Outliner] Cannot reparent: would create a cycle.");
+                        }
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+
+            if (open) {
+                if (hasChildren) {
+                    for (auto child : children) {
+                        DrawNode(child, depth + 1);
+                    }
+                }
+                ImGui::TreePop(); // MUST be called if TreeNodeEx returned true
+            }
+            ImGui::PopID();
+        };
+
+        // Snapshot roots
+        std::vector<entt::entity> roots;
+        for (auto e : m_scene.AllEntities()) {
+            if (!reg.all_of<Galeshi::ParentComponent>(e))
+                roots.push_back(e);
         }
+        for (auto e : roots) {
+            DrawNode(e, 0);
+        }
+
+        // Background drop zone: unparent
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        if (avail.y < 10.0f) avail.y = 10.0f;
+        ImGui::InvisibleButton("##outliner_bg", avail);
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ENTITY")) {
+                entt::entity dragged = *(const entt::entity*)payload->Data;
+                if (reg.all_of<Galeshi::ParentComponent>(dragged)) {
+                    PushHistory();
+                    // 1) Remember world matrix BEFORE unparent
+                    glm::mat4 worldA_old = GetWorldMatrix(dragged);
+                    // 2) Detach
+                    reg.remove<Galeshi::ParentComponent>(dragged);
+                    // 3) World matrix becomes local matrix
+                    SetLocalFromMatrix(dragged, worldA_old);
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
+
         ImGui::End();
     }
 
@@ -1230,7 +1410,25 @@ void DrawDetails() {
             auto& agent = selected[0].GetComponent<Galeshi::NavAgentComponent>();
             ImGui::DragFloat("Speed", &agent.speed, 0.1f, 0.1f, 20.0f);
             ImGui::Text("Path Waypoints: %zu", agent.path.size());
-            ImGui::Text("Use RMB in viewport to set target");
+            ImGui::Text("Target: (%.1f, %.1f, %.1f)", agent.targetPosition.x, agent.targetPosition.y, agent.targetPosition.z);
+        }
+
+        if (selected[0].HasComponent<Galeshi::AIControllerComponent>() && ImGui::CollapsingHeader("AI Controller", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& ctrl = selected[0].GetComponent<Galeshi::AIControllerComponent>();
+            char buf[256]; std::snprintf(buf, sizeof(buf), "%s", ctrl.scriptPath.c_str());
+            if (ImGui::InputText("Script Path", buf, sizeof(buf))) ctrl.scriptPath = buf;
+            
+            // Drag & Drop support for scripts
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
+                    const char* path = static_cast<const char*>(payload->Data);
+                    std::string p = path;
+                    if (p.find(".lua") != std::string::npos) {
+                        ctrl.scriptPath = p;
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
         }
 
         if (selected[0].HasComponent<Galeshi::SkeletalComponent>() && ImGui::CollapsingHeader("Skeletal Animation", ImGuiTreeNodeFlags_DefaultOpen)) {

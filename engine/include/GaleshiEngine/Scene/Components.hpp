@@ -104,6 +104,10 @@ struct NavAgentComponent {
     size_t currentWaypoint = 0;
     float speed = 3.0f;
     float stoppingDistance = 0.5f;
+
+    // AI pathfinding
+    glm::vec3 targetPosition{0.0f};
+    bool hasTarget = false;
 };
 
 struct SoftBodyComponent {
@@ -115,6 +119,11 @@ struct SoftBodyComponent {
     std::vector<glm::vec3> vertices;
     std::vector<uint32_t> indices;
     uint32_t softBodyId = 0xFFFFFFFF;
+};
+
+
+struct AIControllerComponent {
+    std::string scriptPath = "assets/scripts/ai_controller.lua";
 };
 
 struct AudioSourceComponent {

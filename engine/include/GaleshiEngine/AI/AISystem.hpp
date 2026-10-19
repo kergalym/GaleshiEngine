@@ -3,6 +3,6 @@ namespace Galeshi {
 class Scene;
 class AISystem {
 public:
-    static void Update(Scene& scene, float dt);
+    static void Update(Scene& scene, float dt, class NavigationSystem* navSystem = nullptr);
 };
 }
