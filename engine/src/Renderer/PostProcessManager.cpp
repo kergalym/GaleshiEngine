@@ -470,7 +470,7 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
 }
 
 bgfx::TextureHandle PostProcessManager::RenderSSAO(bgfx::TextureHandle color, bgfx::TextureHandle depth, bgfx::TextureHandle normal, bgfx::FrameBufferHandle targetFbo, const glm::mat4& proj, const glm::mat4& invProj, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
-    if (!bgfx::isValid(m_ssaoProg)) return color;
+    if (!bgfx::isValid(m_ssaoProg) || !bgfx::isValid(u_ssaoParams)) return color;
     bgfx::setViewFrameBuffer(viewId, targetFbo);
     bgfx::setViewRect(viewId, 0, 0, width, height);
     BlitTexture(color,  m_blitTexA, viewId);
@@ -491,7 +491,7 @@ bgfx::TextureHandle PostProcessManager::RenderSSAO(bgfx::TextureHandle color, bg
 }
 
 bgfx::TextureHandle PostProcessManager::RenderSSR(bgfx::TextureHandle color, bgfx::TextureHandle normal, bgfx::TextureHandle depth, bgfx::FrameBufferHandle targetFbo, const glm::mat4& invProj, const float camPos[4], bgfx::ViewId viewId, uint16_t width, uint16_t height) {
-    if (!bgfx::isValid(m_ssrProg)) return color;
+    if (!bgfx::isValid(m_ssrProg) || !bgfx::isValid(u_ssrInvProj)) return color;
     bgfx::setViewFrameBuffer(viewId, targetFbo);
     bgfx::setViewRect(viewId, 0, 0, width, height);
     BlitTexture(color,  m_blitTexA, viewId);
@@ -564,7 +564,7 @@ bgfx::TextureHandle PostProcessManager::RenderBloom(bgfx::TextureHandle color, b
 }
 
 bgfx::TextureHandle PostProcessManager::RenderTonemap(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float exposure, float contrast, float saturation) {
-    if (!bgfx::isValid(m_tonemapProg)) return color;
+    if (!bgfx::isValid(m_tonemapProg) || !bgfx::isValid(u_colorParams)) return color;
     bgfx::setViewFrameBuffer(viewId, target);
     bgfx::setViewRect(viewId, 0, 0, w, h);
     bgfx::setTexture(0, s_texColor, color);
@@ -577,7 +577,7 @@ bgfx::TextureHandle PostProcessManager::RenderTonemap(bgfx::TextureHandle color,
 }
 
 bgfx::TextureHandle PostProcessManager::RenderFxaa(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
-    if (!bgfx::isValid(m_fxaaProg)) return color;
+    if (!bgfx::isValid(m_fxaaProg) || !bgfx::isValid(u_texelSize)) return color;
     bgfx::setViewFrameBuffer(viewId, targetFbo);
     bgfx::setViewRect(viewId, 0, 0, width, height);
     bgfx::setTexture(0, s_texColor, color);
@@ -606,7 +606,7 @@ bgfx::TextureHandle PostProcessManager::RenderInvert(bgfx::TextureHandle color, 
 
 
 bgfx::TextureHandle PostProcessManager::RenderSmaa(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h) {
-    if (!bgfx::isValid(m_smaaEdgeProg) || !bgfx::isValid(m_smaaBlendProg)) return color;
+    if (!bgfx::isValid(m_smaaEdgeProg) || !bgfx::isValid(m_smaaBlendProg) || !bgfx::isValid(s_smaaEdges)) return color;
     EnsureOutputFbo(w, h);
 
     // View [viewId]: Edge Detection (рендерим в m_blitFboA)
@@ -648,7 +648,7 @@ bgfx::TextureHandle PostProcessManager::RenderSky(const glm::mat4& invProj, cons
 
 
 bgfx::TextureHandle PostProcessManager::RenderTaa(bgfx::TextureHandle color, bgfx::TextureHandle depth, const glm::mat4& prevVP, const glm::mat4& invVP, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h) {
-    if (!bgfx::isValid(m_taaProg)) return color;
+    if (!bgfx::isValid(m_taaProg) || !bgfx::isValid(u_taaParams)) return color;
     EnsureOutputFbo(w, h);
 
     if (!m_historyValid) {

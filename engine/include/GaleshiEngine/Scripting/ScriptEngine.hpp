@@ -94,7 +94,23 @@ public:
     }
 
     // Dependency-injected so we don't drag miniaudio.h into this header.
-    void BindAudio(std::function<void(const std::string&)> playSound) {
+    void BindInput(std::function<bool(const std::string&)> isKeyDown) {
+        m_lua.set_function("is_key_down", isKeyDown);
+    }
+
+        void BindVelocity(std::function<glm::vec3(uint32_t)> getVel, std::function<void(uint32_t, const glm::vec3&)> setVel) {
+        m_lua.set_function("get_velocity", [this, getVel](uint32_t eid) -> sol::table {
+            sol::table t = m_lua.create_table();
+            glm::vec3 v = getVel(eid);
+            t["x"] = v.x; t["y"] = v.y; t["z"] = v.z;
+            return t;
+        });
+        m_lua.set_function("set_velocity", [setVel](uint32_t eid, float x, float y, float z) {
+            setVel(eid, glm::vec3(x, y, z));
+        });
+    }
+
+void BindAudio(std::function<void(const std::string&)> playSound) {
         m_playSound = std::move(playSound);
         m_lua.set_function("play_sound", [this](const std::string& path) {
             if (m_playSound) m_playSound(path);
@@ -124,6 +140,12 @@ public:
             });
     }
 
+    void BindImpulse(std::function<void(uint32_t, const glm::vec3&)> applyImpulse) {
+        m_lua.set_function("apply_impulse", [applyImpulse](uint32_t eid, float x, float y, float z) {
+            applyImpulse(eid, glm::vec3(x, y, z));
+        });
+    }
+
     // Destroy all entities created by previous script runs.
     void ClearLuaEntities() {
         if (!m_scene) return;
@@ -138,6 +160,17 @@ public:
     bool HotReload(const std::string& path = "assets/scripts/init.lua") {
         ClearLuaEntities();
         return RunScript(path);
+    }
+
+    void Update(float dt) {
+        auto updateFunc = m_lua["update"];
+        if (updateFunc.valid()) {
+            try {
+                updateFunc(dt);
+            } catch (const sol::error& e) {
+                spdlog::error("[Lua Update Error] {}", e.what());
+            }
+        }
     }
 
     sol::state& GetState() { return m_lua; }

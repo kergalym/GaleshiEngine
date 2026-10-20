@@ -1,15 +1,44 @@
--- P1 test script: exercises new_entity / set_position / get_position / translate
-log("init.lua: hello from Lua")
+log("init.lua: starting player controller")
 
-local eid = new_entity("LuaCube")
-log("init.lua: created LuaCube eid=" .. tostring(eid))
+local player = new_physics_cube("Player", 0.0, 5.0, 0.0, 2.0)
+log("init.lua: created player eid=" .. tostring(player))
 
-set_position(eid, 0.0, 8.0, 0.0)
-local p = get_position(eid)
-log("init.lua: position = (" .. p.x .. ", " .. p.y .. ", " .. p.z .. ")")
+local log_timer = 0
 
-translate(eid, 1.0, 0.0, 0.0)
-p = get_position(eid)
-log("init.lua: after translate = (" .. p.x .. ", " .. p.y .. ", " .. p.z .. ")")
-
-log("init.lua: done")
+function update(dt)
+    local speed = 10.0
+    local jump_force = 1000.0
+    
+    local vel = get_velocity(player)
+    local vx = 0
+    local vy = vel.y -- сохраняем гравитацию
+    local vz = 0
+    
+    if is_key_down("W") then vz = speed end
+    if is_key_down("S") then vz = -speed end
+    if is_key_down("A") then vx = -speed end
+    if is_key_down("D") then vx = speed end
+    
+    -- Применяем скорость только если двигаемся по X или Z
+    if vx ~= 0 or vz ~= 0 then
+        set_velocity(player, vx, vy, vz)
+    end
+    
+    -- Прыжок
+    if is_key_down("Space") then
+        if math.abs(vy) < 0.5 then
+            log("JUMP!")
+            apply_impulse(player, 0, jump_force, 0)
+        end
+    end
+    
+    -- Логируем раз в секунду, чтобы увидеть состояние
+    log_timer = log_timer + dt
+    if log_timer > 1.0 then
+        log_timer = 0
+        local pos = get_position(player)
+        log("Status: W=" .. tostring(is_key_down("W")) .. 
+            " Space=" .. tostring(is_key_down("Space")) .. 
+            " PosY=" .. string.format("%.2f", pos.y))
+    end
+end

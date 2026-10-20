@@ -347,6 +347,26 @@ void EnginePhysicsSystem::SetBodyTransform(uint32_t bodyId, const glm::vec3& pos
     m_impl->bodyInterface->SetPositionAndRotation(id, joltPos, joltRot, JPH::EActivation::Activate);
     m_impl->bodyInterface->SetLinearAndAngularVelocity(id, JPH::Vec3::sZero(), JPH::Vec3::sZero());
 }
+void EnginePhysicsSystem::AddImpulse(uint32_t bodyId, const glm::vec3& impulse) {
+    if (!m_impl->initialized) return;
+    JPH::BodyID id(bodyId);
+    if (m_impl->bodyInterface->IsAdded(id)) {
+        m_impl->bodyInterface->ActivateBody(id);
+        m_impl->bodyInterface->AddImpulse(id, JPH::Vec3(impulse.x, impulse.y, impulse.z));
+        m_impl->bodyInterface->ActivateBody(id);
+    }
+}
+
+void EnginePhysicsSystem::SetLinearVelocity(uint32_t bodyId, const glm::vec3& velocity) {
+    if (!m_impl->initialized) return;
+    JPH::BodyID id(bodyId);
+    if (m_impl->bodyInterface->IsAdded(id)) {
+        m_impl->bodyInterface->ActivateBody(id);
+        m_impl->bodyInterface->SetLinearVelocity(id, JPH::Vec3(velocity.x, velocity.y, velocity.z));
+        m_impl->bodyInterface->ActivateBody(id);
+    }
+}
+
 
 void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene) {
     if (!m_impl->initialized) return;

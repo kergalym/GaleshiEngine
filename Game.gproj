@@ -1,0 +1,5 @@
+{
+    "name": "MyGame",
+    "startScene": "scene.json",
+    "version": "1.0.0"
+}

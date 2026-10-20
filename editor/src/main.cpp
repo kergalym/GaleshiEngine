@@ -23,6 +23,7 @@
 #include "GaleshiEngine/Scripting/ScriptEngine.hpp"
 #include "GaleshiEngine/Renderer/PostProcessManager.hpp"
 
+#include <SDL3/SDL.h>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <spdlog/spdlog.h>
@@ -43,6 +44,8 @@
 #include <filesystem>
 #include <limits>
 #include <vector>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
 class GaleshiEditorApp final : public Galeshi::Application {
     Galeshi::AudioSystem m_audio;
@@ -50,9 +53,16 @@ class GaleshiEditorApp final : public Galeshi::Application {
     Galeshi::PostProcessManager m_postProcess;
 
 public:
-    explicit GaleshiEditorApp(bool debugMode)
+    bool m_isGameMode = false;
+
+    explicit GaleshiEditorApp(bool debugMode, bool isGameMode = false)
         : Galeshi::Application({
-              .name = "GaleshiEditor", .width = 1600, .height = 900, .editor = true, .debug = debugMode}) {}
+              .name = isGameMode ? "GaleshiGame" : "GaleshiEditor", 
+              .width = 1600, .height = 900, 
+              .editor = true, // ImGui всегда включен
+              .debug = debugMode}) {
+        m_isGameMode = isGameMode;
+    }
 
 protected:
     // -------------------------------------------------------------------
@@ -69,6 +79,37 @@ protected:
         else spdlog::info("[Subsystem] m_physics->Init() done");
         m_scripts.BindFunctions();
         m_scripts.BindECS(m_scene);
+        m_scripts.BindInput([](const std::string& key) -> bool {
+            const bool* state = SDL_GetKeyboardState(nullptr);
+            if (!state) return false;
+            if (key == "W") return state[SDL_SCANCODE_W];
+            if (key == "A") return state[SDL_SCANCODE_A];
+            if (key == "S") return state[SDL_SCANCODE_S];
+            if (key == "D") return state[SDL_SCANCODE_D];
+            if (key == "Space") return state[SDL_SCANCODE_SPACE];
+            if (key == "Shift") return state[SDL_SCANCODE_LSHIFT];
+            return false;
+        });
+        m_scripts.BindImpulse([this](uint32_t eid, const glm::vec3& impulse) {
+            entt::entity e = static_cast<entt::entity>(eid);
+            auto& reg = m_scene.Registry();
+            if (reg.valid(e) && reg.all_of<Galeshi::RigidBodyComponent>(e)) {
+                auto& rb = reg.get<Galeshi::RigidBodyComponent>(e);
+                if (rb.bodyId != 0xFFFFFFFF) {
+                    m_physics->AddImpulse(rb.bodyId, impulse);
+                }
+            }
+        });
+                m_scripts.GetState().set_function("set_velocity", [this](uint32_t eid, float vx, float vy, float vz) {
+            entt::entity e = static_cast<entt::entity>(eid);
+            auto& reg = m_scene.Registry();
+            if (reg.valid(e) && reg.all_of<Galeshi::RigidBodyComponent>(e)) {
+                auto& rb = reg.get<Galeshi::RigidBodyComponent>(e);
+                if (rb.bodyId != 0xFFFFFFFF) {
+                    m_physics->SetLinearVelocity(rb.bodyId, glm::vec3(vx, vy, vz));
+                }
+            }
+        });
         m_scripts.BindAudio([this](const std::string& p){ m_audio.PlaySound(p); });
         m_scripts.BindPhysics([this](const glm::vec3& he, const glm::vec3& pos, entt::entity e) {
             return m_physics->CreateBox(he, pos, e);
@@ -187,6 +228,7 @@ protected:
 
         m_time += dt;
         Galeshi::AISystem::Update(m_scene, dt, m_navSystem.get());
+        m_scripts.Update(dt);
 
         // Анимация скелета (Многопоточно)
         auto animView = m_scene.Registry().view<Galeshi::SkeletalComponent>();
@@ -257,9 +299,26 @@ protected:
     void OnRender() override {} // Всё во Viewport
 
     void OnImGui() override {
+        if (m_isGameMode) {
+            DrawViewport();
+            return;
+        }
         DrawMainMenuBar();
 
         // Hotkeys
+        // Focus Camera on F (works even if some widget is active)
+        if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F)) {
+            Galeshi::Entity sel = m_editor.Selected(&m_scene);
+            if (sel && sel.HasComponent<Galeshi::TransformComponent>()) {
+                m_editor.camTarget = sel.GetComponent<Galeshi::TransformComponent>().position;
+                m_editor.camRadius = 10.0f;
+                spdlog::info("[Editor] Focused camera on entity at ({}, {}, {})", 
+                    m_editor.camTarget.x, m_editor.camTarget.y, m_editor.camTarget.z);
+            } else {
+                spdlog::warn("[Editor] F pressed but nothing selected");
+            }
+        }
+        
         if (!ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive()) {
             if (ImGui::IsKeyPressed(ImGuiKey_W)) m_editor.SetMode(Galeshi::GizmoMode::Translate);
             if (ImGui::IsKeyPressed(ImGuiKey_E)) m_editor.SetMode(Galeshi::GizmoMode::Rotate);
@@ -269,9 +328,7 @@ protected:
                 spdlog::info("[Lua] Hot-reload init.lua");
                 m_scripts.HotReload("assets/scripts/init.lua");
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_Space)) {
-                m_audio.PlaySound("assets/sounds/beep.wav");
-            }
+            // Space is now used by Lua (Jump)
 
             if (ImGui::GetIO().KeyCtrl) {
                 if (ImGui::IsKeyPressed(ImGuiKey_I)) OpenFileDialog();
@@ -645,8 +702,15 @@ if (ImGui::BeginMenu("File")) {
     void DrawViewport() {
         spdlog::trace("[Main] DrawViewport");
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-        ImGui::Begin("Viewport");
-        m_viewportHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+        if (m_isGameMode) {
+            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->Pos);
+            ImGui::SetNextWindowSize(ImGui::GetMainViewport()->Size);
+            ImGui::Begin("Game", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings);
+            m_viewportHovered = true;
+        } else {
+            ImGui::Begin("Viewport");
+            m_viewportHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+        }
         ImGui::PopStyleVar();
 
         const ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -902,7 +966,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
         }
 
         // Debug rendering (grid, navmesh, selection box)
-        if (m_debug) {
+        if (m_debug && !m_isGameMode) {
             m_debug->Begin();
             
             // Grid (100x100 на полу)
@@ -1018,6 +1082,12 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             }
             ImTextureID texId = static_cast<ImTextureID>(__disp.idx);
             ImGui::Image(texId, ImVec2(static_cast<float>(w), static_cast<float>(h)), ImVec2(0, 0), ImVec2(1, 1));
+            
+            if (m_isGameMode) {
+                ImGui::End();
+                return; // Пропускаем гизмо и выделение мышью
+            }
+
             ImVec2 imgMin = ImGui::GetItemRectMin();
             ImVec2 imgMax = ImGui::GetItemRectMax();
 
@@ -1898,10 +1968,149 @@ void DrawDetails() {
     glm::vec3 m_dragStartObjWorld{0.0f};
 };
 
+
+namespace fs = std::filesystem;
+
+int PackageProject(const std::string& projectPath) {
+    spdlog::info("[Package] Starting packaging for: {}", projectPath);
+
+    const char* homeEnv = std::getenv("HOME");
+    fs::path homeDir = homeEnv ? homeEnv : "";
+
+    fs::path projPath = fs::absolute(projectPath);
+    if (!fs::exists(projPath)) {
+        projPath = fs::current_path() / fs::path(projectPath).filename();
+    }
+    if (!fs::exists(projPath) && !homeDir.empty()) {
+        projPath = homeDir / fs::path(projectPath).filename();
+    }
+
+    if (!fs::exists(projPath)) {
+        spdlog::error("[Package] Project file not found: {}", projPath.string());
+        return 1;
+    }
+
+    std::ifstream f(projPath);
+    if (!f.is_open()) return 1;
+    nlohmann::json proj;
+    try {
+        f >> proj;
+    } catch (const std::exception& e) {
+        spdlog::error("[Package] Invalid JSON: {}", e.what());
+        return 1;
+    }
+    
+    std::string gameName = proj.value("name", "GaleshiGame");
+    std::string startScene = proj.value("startScene", "scene.json");
+
+    fs::path outDir = fs::current_path() / "build" / "package" / gameName;
+    fs::create_directories(outDir);
+
+    // 1. Копируем exe как <name>.bin и ставим права
+    fs::path exePath = fs::current_path() / "GaleshiEditor";
+    if (!fs::exists(exePath)) exePath = fs::current_path() / "build" / "debug" / "bin" / "GaleshiEditor";
+    
+    if (fs::exists(exePath)) {
+        fs::path destExe = outDir / (gameName + ".bin");
+        fs::copy_file(exePath, destExe, fs::copy_options::overwrite_existing);
+        // Явно ставим права на выполнение для всех
+        fs::permissions(destExe, 
+            fs::perms::owner_all | fs::perms::group_all | fs::perms::others_all,
+            fs::perm_options::replace);
+        spdlog::info("[Package] Copied executable to {} (chmod +x)", destExe.filename().string());
+    } else {
+        spdlog::error("[Package] Executable not found at {}", exePath.string());
+        return 1;
+    }
+
+    // 2. Копируем assets и shaders
+    fs::path projectRoot = projPath.parent_path();
+    auto copyDir = [&](const std::string& dirName) {
+        fs::path srcDir = projectRoot / dirName;
+        if (!fs::exists(srcDir)) srcDir = fs::current_path() / dirName;
+        if (fs::exists(srcDir)) {
+            fs::copy(srcDir, outDir / dirName, fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+            spdlog::info("[Package] Copied directory: {}", dirName);
+        } else {
+            spdlog::warn("[Package] Directory not found: {}", srcDir.string());
+        }
+    };
+    copyDir("assets");
+    
+    // Копируем СКОМПИЛИРОВАННЫЕ шейдеры из build/debug/bin/shaders
+    fs::path compiledShaders = fs::current_path() / "build" / "debug" / "bin" / "shaders";
+    if (!fs::exists(compiledShaders)) {
+        // Если запускаем из build/debug/bin, то текущая папка уже содержит shaders
+        compiledShaders = fs::current_path() / "shaders";
+    }
+    if (fs::exists(compiledShaders)) {
+        fs::copy(compiledShaders, outDir / "shaders", fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+        spdlog::info("[Package] Copied compiled shaders from {}", compiledShaders.string());
+    } else {
+        spdlog::error("[Package] Compiled shaders not found at {}", compiledShaders.string());
+    }
+
+    // 3. Копируем scene.json (из $HOME или из корня)
+    fs::path scenePath = "";
+    if (!homeDir.empty() && fs::exists(homeDir / startScene)) {
+        scenePath = homeDir / startScene;
+    } else if (fs::exists(projectRoot / startScene)) {
+        scenePath = projectRoot / startScene;
+    }
+
+    if (!scenePath.empty()) {
+        fs::copy_file(scenePath, outDir / startScene, fs::copy_options::overwrite_existing);
+        spdlog::info("[Package] Copied start scene from {}", scenePath.string());
+    } else {
+        spdlog::error("[Package] Could not find start scene {} anywhere!", startScene);
+    }
+
+    // 4. Сохраняем .gproj
+    proj["startScene"] = startScene;
+    std::ofstream outProj(outDir / (gameName + ".gproj"));
+    outProj << proj.dump(4);
+    outProj.close();
+
+    // 5. Создаем run.sh (переходит в папку игры и запускает .bin)
+    std::ofstream runScript(outDir / "run.sh");
+    runScript << "#!/bin/bash\n";
+    runScript << "SCRIPT_DIR=\"$( cd \"$( dirname \"${BASH_SOURCE[0]}\" )\" &> /dev/null && pwd )\"\n";
+    runScript << "cd \"$SCRIPT_DIR\"\n";
+    runScript << "./" << gameName << ".bin --game " << gameName << ".gproj\n";
+    runScript.close();
+    fs::permissions(outDir / "run.sh",
+        fs::perms::owner_all | fs::perms::group_all | fs::perms::others_all,
+        fs::perm_options::replace);
+
+    spdlog::info("[Package] Packaging complete! Output: {}", outDir.string());
+    return 0;
+}
+
 int main(int argc, char** argv) {
-    bool debugMode = false;
+    // Парсинг аргументов
+    std::string packagePath = "";
     for (int i = 1; i < argc; ++i) {
-        if (std::string(argv[i]) == "--debug") debugMode = true;
+        std::string arg = argv[i];
+        if (arg == "--package" && i + 1 < argc) {
+            packagePath = argv[i + 1];
+        }
+    }
+
+    if (!packagePath.empty()) {
+        // Принудительно небуферизированный вывод
+        std::setvbuf(stdout, nullptr, _IONBF, 0);
+        std::setvbuf(stderr, nullptr, _IONBF, 0);
+        return PackageProject(packagePath);
+    }
+
+    // Стандартный запуск редактора
+
+    bool debugMode = false;
+    bool gameMode = false;
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--debug") debugMode = true;
+        if (arg == "--game") gameMode = true;
     }
     if (debugMode) {
         spdlog::set_level(spdlog::level::debug);
@@ -1916,7 +2125,7 @@ int main(int argc, char** argv) {
     // которые падают в deadlock внутри libnvidia-glcore при dlclose.
     // OnShutdown() (в конце Run) уже сохраняет сцену и делает cleanup.
     // OS освободит GPU-ресурсы при завершении процесса.
-    GaleshiEditorApp* app = new GaleshiEditorApp(debugMode);
+    GaleshiEditorApp* app = new GaleshiEditorApp(debugMode, gameMode);
     int exitCode = app->Run();
 
     std::fflush(stdout);

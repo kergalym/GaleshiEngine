@@ -1,0 +1,270 @@
+{
+  "entities": [
+    {
+      "name": "PointLight",
+      "pointLight": {
+        "color": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "intensity": 1.0,
+        "radius": 10.0
+      },
+      "transform": {
+        "position": [
+          0.0,
+          5.0,
+          0.0
+        ],
+        "rotation": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "material": {
+        "albedoFactor": [
+          0.30000001192092896,
+          0.550000011920929,
+          0.8500000238418579,
+          1.0
+        ],
+        "albedoMapPath": "",
+        "emissiveFactor": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "metallicFactor": 0.0,
+        "mrMapPath": "",
+        "name": "Material",
+        "normalMapPath": "",
+        "roughnessFactor": 0.5
+      },
+      "mesh": {
+        "meshIndex": 0,
+        "primitiveType": "cube",
+        "sourceAssetPath": ""
+      },
+      "name": "Cube_Rough",
+      "transform": {
+        "position": [
+          2.500004291534424,
+          0.4999998211860657,
+          -2.4097053028526716e-06
+        ],
+        "rotation": [
+          1.0,
+          -4.1242445014688656e-09,
+          -7.009849127825873e-07,
+          -1.808501366440396e-07
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "material": {
+        "albedoFactor": [
+          0.949999988079071,
+          0.949999988079071,
+          0.949999988079071,
+          1.0
+        ],
+        "albedoMapPath": "",
+        "emissiveFactor": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "metallicFactor": 0.0,
+        "mrMapPath": "",
+        "name": "Material",
+        "normalMapPath": "",
+        "roughnessFactor": 0.5
+      },
+      "mesh": {
+        "meshIndex": 0,
+        "primitiveType": "cube",
+        "sourceAssetPath": ""
+      },
+      "name": "Cube_Metal",
+      "transform": {
+        "position": [
+          -2.4999988079071045,
+          0.4799997806549072,
+          -1.237945753018721e-06
+        ],
+        "rotation": [
+          0.9999999403953552,
+          1.583282660533314e-08,
+          -0.0003840819117613137,
+          1.371677171846386e-08
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "material": {
+        "albedoFactor": [
+          0.8500000238418579,
+          0.550000011920929,
+          0.25,
+          1.0
+        ],
+        "albedoMapPath": "",
+        "emissiveFactor": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "metallicFactor": 0.0,
+        "mrMapPath": "",
+        "name": "Material",
+        "normalMapPath": "",
+        "roughnessFactor": 0.5
+      },
+      "mesh": {
+        "meshIndex": 0,
+        "primitiveType": "cube",
+        "sourceAssetPath": ""
+      },
+      "name": "Cube_Orange",
+      "transform": {
+        "position": [
+          -3.5928615034208633e-06,
+          0.4999999701976776,
+          5.67717461308348e-06
+        ],
+        "rotation": [
+          1.0,
+          -4.268984277189247e-09,
+          6.762589919162565e-07,
+          -4.569877987137261e-08
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "material": {
+        "albedoFactor": [
+          0.30000001192092896,
+          0.30000001192092896,
+          0.30000001192092896,
+          1.0
+        ],
+        "albedoMapPath": "",
+        "emissiveFactor": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "metallicFactor": 0.0,
+        "mrMapPath": "",
+        "name": "Material",
+        "normalMapPath": "",
+        "roughnessFactor": 0.800000011920929
+      },
+      "mesh": {
+        "meshIndex": 0,
+        "primitiveType": "cube",
+        "sourceAssetPath": ""
+      },
+      "name": "Ground",
+      "transform": {
+        "position": [
+          0.0,
+          -5.0,
+          0.0
+        ],
+        "rotation": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          100.0,
+          10.0,
+          100.0
+        ]
+      }
+    },
+    {
+      "directionalLight": {
+        "color": [
+          1.0,
+          0.9700000286102295,
+          0.8999999761581421
+        ],
+        "direction": [
+          -0.3903599977493286,
+          -0.7807199954986572,
+          -0.48794999718666077
+        ],
+        "intensity": 3.0
+      },
+      "name": "Sun",
+      "transform": {
+        "position": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "rotation": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "name": "Player",
+      "transform": {
+        "position": [
+          0.0,
+          -5.0,
+          0.0
+        ],
+        "rotation": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          2.0,
+          2.0,
+          2.0
+        ]
+      }
+    }
+  ],
+  "version": 1
+}
