@@ -105,60 +105,6 @@ All dependencies are pulled via FetchContent on the first configuration. The fir
 - [✔] Packaging: `GaleshiEditor --package Game.gproj`
 - [✔] CLI: `galeshi build`, `galeshi run`, `galeshi package`
 
-    ☑
-
-    Stage 1. Framework: CMake, SDL3, ImGui, logging
-    ☑
-
-    Stage 2. Renderer: bgfx/Vulkan, shaders, PBR cube, ImGui docking
-    □
-
-    Stage 3. Scene and assets:
-        □
-
-        Scene on EnTT (Transform, Mesh, Material, Camera, Light)
-        □
-
-        AssetManager with FBX/glTF/OBJ loading through Assimp
-        □
-
-        Full PBR (metallic/roughness/normal map)
-        □
-
-        Content Browser with files and drag-n-drop
-        □
-
-        Working Outliner and Details panels
-        □
-
-        ImGuizmo for translate/rotate/scale
-    □
-
-    Stage 4. World and physics:
-        □
-
-        Landscape (heightmap) and sculpting tools
-        □
-
-        Jolt Physics: rigid and soft body
-        □
-
-        ECS to physics synchronization
-    □
-
-    Stage 5. AI and scripting:
-        □
-
-        Recast/Detour: NavMesh, pathfinding
-        □
-
-        AI Perception (sight/hearing via raycasts)
-        □
-
-        State Machines, Events, Ticks
-        □
-
-        Embedded C++ via Cling
 
 Known limitations
 
@@ -189,5 +135,4 @@ Credits
 
     All library authors listed above
 
-
-
+    
