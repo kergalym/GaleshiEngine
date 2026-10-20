@@ -161,8 +161,9 @@ void PostProcessManager::Init() {
       if(bgfx::isValid(vs) && bgfx::isValid(fs)) {
           m_taaProg = bgfx::createProgram(vs, fs, true);
           u_taaPrevVP = bgfx::createUniform("u_prevViewProj", bgfx::UniformType::Mat4);
-          u_taaInvVP = bgfx::createUniform("u_invViewProj", bgfx::UniformType::Mat4);
+          u_taaInvVP = bgfx::createUniform("u_taaInvViewProj", bgfx::UniformType::Mat4);
           u_taaParams = bgfx::createUniform("u_taaParams", bgfx::UniformType::Vec4);
+          u_taaTexelSize = bgfx::createUniform("u_taaTexelSize", bgfx::UniformType::Vec4);
           s_taaHistory = bgfx::createUniform("s_history", bgfx::UniformType::Sampler);
           s_taaDepth = bgfx::createUniform("s_depth", bgfx::UniformType::Sampler);
       } }
@@ -170,7 +171,7 @@ void PostProcessManager::Init() {
       auto fs = LoadBinShader("shaders/fs_sky.bin");
       if(bgfx::isValid(vs) && bgfx::isValid(fs)) {
           m_skyProg = bgfx::createProgram(vs, fs, true);
-          u_skyInvVP = bgfx::createUniform("u_skyInvViewProj", bgfx::UniformType::Mat4);
+          u_skyInvVP = bgfx::createUniform("u_skyCustomInvVP", bgfx::UniformType::Mat4);
           u_skySun = bgfx::createUniform("u_skySunDir", bgfx::UniformType::Vec4);
           spdlog::info("[PP] Sky shader loaded successfully");
       } else {
@@ -256,27 +257,27 @@ void PostProcessManager::GenerateIBL(const float sunDir[4]) {
     bgfx::setUniform(u_iblLightDir, sunDir);
 
     // Env Map
-    bgfx::setViewFrameBuffer(20, m_envFbo);
-    bgfx::setViewRect(20, 0, 0, 1024, 512);
+    bgfx::setViewFrameBuffer(30, m_envFbo);
+    bgfx::setViewRect(30, 0, 0, 1024, 512);
     float p0[4] = {0.0f, 0, 0, 0};
     bgfx::setUniform(u_iblParams, p0);
     bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
-    bgfx::submit(20, m_iblGenProg);
+    bgfx::submit(30, m_iblGenProg);
 
     // Irradiance Map
-    bgfx::setViewFrameBuffer(21, m_irradianceFbo);
-    bgfx::setViewRect(21, 0, 0, 64, 32);
+    bgfx::setViewFrameBuffer(31, m_irradianceFbo);
+    bgfx::setViewRect(31, 0, 0, 64, 32);
     float p1[4] = {1.0f, 0, 0, 0};
     bgfx::setUniform(u_iblParams, p1);
     bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
-    bgfx::submit(21, m_iblGenProg);
+    bgfx::submit(31, m_iblGenProg);
 
     // BRDF LUT
-    bgfx::setViewFrameBuffer(22, m_brdfFbo);
-    bgfx::setViewRect(22, 0, 0, 256, 256);
+    bgfx::setViewFrameBuffer(32, m_brdfFbo);
+    bgfx::setViewRect(32, 0, 0, 256, 256);
     bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
-    bgfx::submit(22, m_brdfProg);
+    bgfx::submit(32, m_brdfProg);
     spdlog::info("[PP] IBL generation submitted");
 }
 
@@ -288,8 +289,10 @@ void PostProcessManager::Shutdown() {
 
     destroyProg(m_program); destroyProg(m_invertProg); destroyProg(m_fxaaProg);
     destroyProg(m_lightingProg); destroyProg(m_ssaoProg); destroyProg(m_ssrProg); destroyProg(m_taaProg);
-    destroyUni(u_taaPrevVP); destroyUni(u_taaInvVP); destroyUni(u_taaParams); destroyUni(s_taaHistory); destroyUni(s_taaDepth);
-    if(bgfx::isValid(m_historyColor)) bgfx::destroy(m_historyColor); if(bgfx::isValid(m_historyFbo)) bgfx::destroy(m_historyFbo); destroyProg(m_skyProg); destroyProg(m_iblGenProg); destroyProg(m_brdfProg);
+    destroyUni(u_taaPrevVP); destroyUni(u_taaInvVP); destroyUni(u_taaParams); destroyUni(u_taaTexelSize); destroyUni(s_taaHistory); destroyUni(s_taaDepth);
+    if (bgfx::isValid(m_historyFbo)) bgfx::destroy(m_historyFbo);
+    if(bgfx::isValid(m_historyColor)) bgfx::destroy(m_historyColor);
+    destroyProg(m_skyProg); destroyProg(m_iblGenProg); destroyProg(m_brdfProg);
     if (bgfx::isValid(s_iblIrradiance)) bgfx::destroy(s_iblIrradiance);
     if (bgfx::isValid(s_iblEnv))        bgfx::destroy(s_iblEnv);
     if (bgfx::isValid(s_iblBrdf))       bgfx::destroy(s_iblBrdf);
@@ -297,7 +300,7 @@ void PostProcessManager::Shutdown() {
     if (bgfx::isValid(m_irradianceFbo)) bgfx::destroy(m_irradianceFbo); if (bgfx::isValid(m_irradianceMap)) bgfx::destroy(m_irradianceMap);
     if (bgfx::isValid(m_brdfFbo)) bgfx::destroy(m_brdfFbo); if (bgfx::isValid(m_brdfLut)) bgfx::destroy(m_brdfLut);
     destroyUni(u_skyInvVP); destroyUni(u_skySun); destroyUni(u_iblParams); destroyUni(u_iblLightDir); destroyProg(m_smaaEdgeProg); destroyProg(m_smaaBlendProg);
-    if(bgfx::isValid(m_smaaEdgeTex)) bgfx::destroy(m_smaaEdgeTex);
+    
 
     destroyUni(s_texColor); destroyUni(u_texelSize);
     destroyUni(u_camPos); destroyUni(u_lightDir); destroyUni(u_lightCol);
@@ -344,7 +347,8 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
     if (bgfx::isValid(m_outputDepth)) bgfx::destroy(m_outputDepth);
     if (bgfx::isValid(m_pingFbo))     bgfx::destroy(m_pingFbo);
     if (bgfx::isValid(m_pingColor))   bgfx::destroy(m_pingColor);
-    if (bgfx::isValid(m_blitTexA))    bgfx::destroy(m_blitTexA);
+        if (bgfx::isValid(m_blitTexA))    bgfx::destroy(m_blitTexA);
+    if (bgfx::isValid(m_smaaColorTex)) bgfx::destroy(m_smaaColorTex);
     if (bgfx::isValid(m_blitTexB))    bgfx::destroy(m_blitTexB);
     if (bgfx::isValid(m_blitDepth))   bgfx::destroy(m_blitDepth);
 
@@ -355,20 +359,21 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
     m_outputFbo = bgfx::createFrameBuffer(2, att, false);
 
     m_blitTexA = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags | BGFX_TEXTURE_BLIT_DST);
+        m_smaaColorTex = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags | BGFX_TEXTURE_BLIT_DST);
     m_blitTexB = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags | BGFX_TEXTURE_BLIT_DST);
-    m_blitDepth = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::D32F, flags | BGFX_TEXTURE_BLIT_DST);
+    m_blitDepth = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_BLIT_DST | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
     m_pingColor = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
     bgfx::TextureHandle pingAtt[] = { m_pingColor };
     m_pingFbo = bgfx::createFrameBuffer(1, pingAtt, false);
 
-    if(bgfx::isValid(m_historyFbo)) bgfx::destroy(m_historyFbo);
+        if(bgfx::isValid(m_historyFbo)) bgfx::destroy(m_historyFbo);
     if(bgfx::isValid(m_historyColor)) bgfx::destroy(m_historyColor);
-    m_historyColor = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags | BGFX_TEXTURE_BLIT_DST);
+    m_historyColor = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
     m_historyFbo = bgfx::createFrameBuffer(1, &m_historyColor, false);
-    m_historyValid = false;
+        m_historyValid = false;
     if (bgfx::isValid(m_blitFboA)) bgfx::destroy(m_blitFboA);
     m_blitFboA = bgfx::createFrameBuffer(1, &m_blitTexA, false);
-    m_width = w; m_height = h;
+        m_width = w; m_height = h;
 }
 
 void PostProcessManager::SwapFbos() {
@@ -603,26 +608,21 @@ bgfx::TextureHandle PostProcessManager::RenderInvert(bgfx::TextureHandle color, 
 bgfx::TextureHandle PostProcessManager::RenderSmaa(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h) {
     if (!bgfx::isValid(m_smaaEdgeProg) || !bgfx::isValid(m_smaaBlendProg)) return color;
     EnsureOutputFbo(w, h);
-    if (!bgfx::isValid(m_blitFboA)) return color;
 
-    float ts[4] = { 1.0f / float(w), 1.0f / float(h), 0.0f, 0.0f };
-
-    // Pass 1: Edge detection into m_blitFboA
+    // View [viewId]: Edge Detection (рендерим в m_blitFboA)
     bgfx::setViewFrameBuffer(viewId, m_blitFboA);
     bgfx::setViewRect(viewId, 0, 0, w, h);
-    bgfx::setTexture(0, s_texColor, color);
-    bgfx::setUniform(u_texelSize, ts);
+    bgfx::setTexture(0, s_texColor, color); // Сэмплируем напрямую
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId, m_smaaEdgeProg);
 
-    // Pass 2: Blend into target
+    // View [viewId + 1]: Blend
     bgfx::setViewFrameBuffer(viewId + 1, target);
     bgfx::setViewRect(viewId + 1, 0, 0, w, h);
-    bgfx::setTexture(0, s_texColor, color);
+    bgfx::setTexture(0, s_texColor, color); // Сэмплируем напрямую
     bgfx::setTexture(1, s_smaaEdges, m_blitTexA);
-    bgfx::setUniform(u_texelSize, ts);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
@@ -650,36 +650,53 @@ bgfx::TextureHandle PostProcessManager::RenderSky(const glm::mat4& invProj, cons
 bgfx::TextureHandle PostProcessManager::RenderTaa(bgfx::TextureHandle color, bgfx::TextureHandle depth, const glm::mat4& prevVP, const glm::mat4& invVP, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h) {
     if (!bgfx::isValid(m_taaProg)) return color;
     EnsureOutputFbo(w, h);
-    if (!bgfx::isValid(m_historyColor)) return color;
 
     if (!m_historyValid) {
-        BlitTexture(color, m_historyColor, viewId);
-        bgfx::setViewFrameBuffer(viewId, target);
+        // View [viewId]: Копируем цвет в историю
+        bgfx::setViewFrameBuffer(viewId, m_historyFbo);
         bgfx::setViewRect(viewId, 0, 0, w, h);
         bgfx::setTexture(0, s_texColor, color);
         bgfx::setVertexBuffer(0, m_vbh);
         bgfx::setIndexBuffer(m_ibh);
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
         bgfx::submit(viewId, m_program);
+
+        // View [viewId + 1]: Passthrough в target
+        bgfx::setViewFrameBuffer(viewId + 1, target);
+        bgfx::setViewRect(viewId + 1, 0, 0, w, h);
+        bgfx::setTexture(0, s_texColor, color);
+        bgfx::setVertexBuffer(0, m_vbh);
+        bgfx::setIndexBuffer(m_ibh);
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+        bgfx::submit(viewId + 1, m_program);
+        
         m_historyValid = true;
         return m_pingColor;
     }
 
+    // View [viewId]: TAA Pass
     bgfx::setViewFrameBuffer(viewId, target);
     bgfx::setViewRect(viewId, 0, 0, w, h);
-    bgfx::setTexture(0, s_taaColor, color);
+    bgfx::setTexture(0, s_taaColor, color); // Сэмплируем напрямую
     bgfx::setTexture(1, s_taaHistory, m_historyColor);
-    bgfx::setTexture(2, s_taaDepth, depth);
+    bgfx::setTexture(2, s_taaDepth, depth); // Сэмплируем глубину напрямую
     bgfx::setUniform(u_taaPrevVP, glm::value_ptr(prevVP));
     bgfx::setUniform(u_taaInvVP, glm::value_ptr(invVP));
-    float params[4] = { 0.1f, 0, 0, 0 };
+    float params[4] = { 0.05f, 0, 0, 0 };
     bgfx::setUniform(u_taaParams, params);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId, m_taaProg);
 
-    BlitTexture(m_pingColor, m_historyColor, viewId + 1);
+    // View [viewId + 1]: Копируем результат в историю
+    bgfx::setViewFrameBuffer(viewId + 1, m_historyFbo);
+    bgfx::setViewRect(viewId + 1, 0, 0, w, h);
+    bgfx::setTexture(0, s_texColor, m_pingColor);
+    bgfx::setVertexBuffer(0, m_vbh);
+    bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+    bgfx::submit(viewId + 1, m_program);
 
     return m_pingColor;
 }

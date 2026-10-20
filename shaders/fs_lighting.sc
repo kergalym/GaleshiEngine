@@ -42,11 +42,11 @@ float D_GGX(float NdotH, float roughness) {
     float a = roughness * roughness;
     float a2 = a * a;
     float d = NdotH * NdotH * (a2 - 1.0) + 1.0;
-    return a2 / (PI * d * d);
+    return a2 / max(PI * d * d, 0.000001);
 }
 float G_Smith(float NdotV, float NdotL, float roughness) {
     float r = roughness + 1.0; float k = (r * r) / 8.0;
-    return (NdotV / (NdotV * (1.0 - k) + k)) * (NdotL / (NdotL * (1.0 - k) + k));
+    return (NdotV / max(NdotV * (1.0 - k) + k, 0.000001)) * (NdotL / max(NdotL * (1.0 - k) + k, 0.000001));
 }
 vec3 F_Schlick(float VdotH, vec3 F0) {
     return F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
@@ -59,7 +59,7 @@ vec3 F_SchlickRoughness(float NdotV, vec3 F0, float roughness) {
 vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, vec3 L, vec3 radiance) {
     vec3 H = normalize(L + V);
     float NdotL = max(dot(N, L), 0.0);
-    float NdotV = max(dot(N, V), 0.001);
+    float NdotV = max(dot(N, V), 0.000001);
     float NdotH = max(dot(N, H), 0.0);
     float VdotH = max(dot(V, H), 0.0);
     if (NdotL <= 0.0) return vec3(0.0);
@@ -67,7 +67,7 @@ vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, vec3 L,
     float D = D_GGX(NdotH, rough);
     float G = G_Smith(NdotV, NdotL, rough);
     vec3 F  = F_Schlick(VdotH, F0);
-    vec3 specular = (D * G * F) / (4.0 * NdotV * NdotL + 0.001);
+    vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.000001);
     vec3 kD = (1.0 - F) * (1.0 - metallic);
     vec3 diffuse = kD * albedo / PI;
     return (diffuse + specular) * radiance * NdotL;
@@ -272,7 +272,7 @@ void main()
     // Увеличено с 0.15 до 0.3 для лучшей видимости в тенях
         // Physically correct IBL (Split-Sum)
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
-    float NdotV = max(dot(N, V), 0.001);
+    float NdotV = max(dot(N, V), 0.000001);
     
     vec3 F = F_SchlickRoughness(NdotV, F0, rough);
     vec3 kS = F;

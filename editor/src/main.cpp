@@ -827,9 +827,9 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
 
 
                 // Bloom + Tonemap (applied before SSAO/SSR to keep color space linear)
-                // m_postProcess.RenderBloom(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 3, w, h, 1.0f, 0.5f);
+                // m_postProcess.RenderBloom(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 25, w, h, 1.0f, 0.5f);
                 // m_postProcess.SwapFbos();
-                m_postProcess.RenderTonemap(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 3, w, h, 0.0f, 1.0f, 1.0f);
+                m_postProcess.RenderTonemap(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 16, w, h, 0.0f, 1.0f, 1.0f);
                 m_postProcess.SwapFbos();
 
                 if (m_postProcess.SsaoEnabled()) {
@@ -850,25 +850,25 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 }
 
                 if (m_postProcess.SmaaEnabled()) {
-                    m_postProcess.RenderSmaa(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 3, w, h);
+                    m_postProcess.RenderSmaa(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 19, w, h);
                     m_postProcess.SwapFbos();
                 }
 
                 if (m_postProcess.TaaEnabled()) {
                     glm::mat4 prevVP = m_postProcess.GetPrevViewProj(); // Need to expose this
                     glm::mat4 currVP = m_camera.Projection() * m_camera.View();
-                    m_postProcess.RenderTaa(m_postProcess.OutputTexture(), m_framebuffer->Depth(), prevVP, glm::inverse(currVP), m_postProcess.PingFbo(), 3, w, h);
+                    m_postProcess.RenderTaa(m_postProcess.OutputTexture(), m_framebuffer->Depth(), prevVP, glm::inverse(currVP), m_postProcess.PingFbo(), 20, w, h);
                     m_postProcess.SwapFbos();
                     m_postProcess.SetPrevViewProj(currVP);
                 }
 
                 if (m_postProcess.FxaaEnabled()) {
-                    m_postProcess.RenderFxaa(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 3, w, h);
+                    m_postProcess.RenderFxaa(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 25, w, h);
                     m_postProcess.SwapFbos();
                 }
 
                 if (m_postProcess.InvertEnabled()) {
-                    m_postProcess.RenderInvert(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 3, w, h);
+                    m_postProcess.RenderInvert(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 25, w, h);
                     m_postProcess.SwapFbos();
                 }
             } else {
@@ -877,9 +877,9 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             
             // Forward Pass для стекла (рисуется поверх)
             if (m_postProcess.OutputFbo().idx != bgfx::kInvalidHandle) {
-                bgfx::setViewClear(4, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
-                bgfx::setViewFrameBuffer(4, m_postProcess.OutputFbo());
-                m_render->RenderGlass(m_scene, m_camera, 4, w, h);
+                bgfx::setViewClear(23, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
+                bgfx::setViewFrameBuffer(23, m_postProcess.OutputFbo());
+                m_render->RenderGlass(m_scene, m_camera, 23, w, h);
             }
         }
 
@@ -984,8 +984,8 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             }
             
             if (m_postProcess.OutputFbo().idx != bgfx::kInvalidHandle) {
-                bgfx::setViewFrameBuffer(5, m_postProcess.OutputFbo());
-                m_debug->Render(m_camera, 5, w, h);
+                bgfx::setViewFrameBuffer(24, m_postProcess.OutputFbo());
+                m_debug->Render(m_camera, 24, w, h);
             }
         }
 
@@ -995,7 +995,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 ? __ppTex : m_framebuffer->Color();
             // Force a blit to a BLIT_DST texture to ensure correct image layout for ImGui (Vulkan)
             if (bgfx::isValid(__ppTex)) {
-                m_postProcess.BlitTexture(__ppTex, m_postProcess.BlitTextureA(), 3);
+                m_postProcess.BlitTexture(__ppTex, m_postProcess.BlitTextureA(), 25);
                 __disp = m_postProcess.BlitTextureA();
             }
             ImTextureID texId = static_cast<ImTextureID>(__disp.idx);

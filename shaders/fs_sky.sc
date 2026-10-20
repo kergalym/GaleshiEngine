@@ -1,12 +1,12 @@
 $input v_texcoord0
 #include <bgfx_shader.sh>
-uniform mat4 u_skyInvViewProj; // Renamed to avoid BGFX reserved names
+uniform mat4 u_skyCustomInvVP; // Renamed to avoid BGFX reserved names
 uniform vec4 u_skySunDir;
 void main() {
     vec2 ndc = v_texcoord0 * 2.0 - 1.0;
     vec4 clip = vec4(ndc, 1.0, 1.0);
-    vec4 world = mul(u_skyInvViewProj, clip);
-    vec3 dir = normalize(world.xyz / world.w);
+    vec4 world = mul(u_skyCustomInvVP, clip);
+    vec3 dir = normalize(world.xyz / max(world.w, 0.000001));
     // Procedural sky: horizon color
     vec3 skyColor = mix(vec3(0.4, 0.6, 1.0), vec3(0.05, 0.1, 0.3), clamp(dir.y, 0.0, 1.0));
     // Sun

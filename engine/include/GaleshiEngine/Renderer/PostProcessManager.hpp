@@ -166,6 +166,7 @@ private:
     bgfx::UniformHandle u_taaPrevVP = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_taaInvVP = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_taaParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_taaTexelSize = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_taaHistory = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_taaDepth = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_historyColor = BGFX_INVALID_HANDLE;
@@ -192,6 +193,9 @@ private:
     bgfx::ProgramHandle m_smaaEdgeProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_smaaBlendProg = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_smaaEdgeTex = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_smaaColorTex = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_smaaColorFbo = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_smaaEdgeFbo = BGFX_INVALID_HANDLE;
 };
 
 } // namespace Galeshi

@@ -1,42 +1,57 @@
 $input v_texcoord0
 #include <bgfx_shader.sh>
+
 SAMPLER2D(s_color, 0);
 SAMPLER2D(s_history, 1);
 SAMPLER2D(s_depth, 2);
+
 uniform mat4 u_prevViewProj;
 uniform mat4 u_taaInvViewProj;
-uniform vec4 u_taaParams; // x = blend factor
+uniform vec4 u_taaParams;    // x = blend factor
+uniform vec4 u_taaTexelSize; // xy = 1/width, 1/height
+
 void main() {
     vec2 uv = v_texcoord0;
     vec4 current = texture2D(s_color, uv);
     float depth = texture2D(s_depth, uv).r;
     
-    if (depth >= 0.9999) { gl_FragData[0] = current; return; }
+    // Фон (небо) не нужно сглаживать, отдаем как есть
+    if (depth >= 0.9999) { 
+        gl_FragColor = current; 
+        return; 
+    }
     
-    // Reproject using depth
+    // Reproject using depth (Vulkan: Z in [0,1], so we don't flip Y)
     vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
     vec4 world = mul(u_taaInvViewProj, clip);
-    world.xyz /= world.w;
+    world.xyz /= max(world.w, 0.000001);
     vec4 prevClip = mul(u_prevViewProj, world);
-    vec2 prevUV = (prevClip.xy / prevClip.w) * 0.5 + 0.5;
+    vec2 prevUV = (prevClip.xy / max(prevClip.w, 0.000001)) * 0.5 + 0.5;
     
+    // Если точка вышла за экран, отдаем текущий кадр
     if (prevUV.x < 0.0 || prevUV.x > 1.0 || prevUV.y < 0.0 || prevUV.y > 1.0) {
-        gl_FragData[0] = current; return;
+        gl_FragColor = current; 
+        return;
     }
     
     vec4 history = texture2D(s_history, prevUV);
     
-    // Neighborhood clamping to reduce ghosting
+    // --- AABB VARIANCE CLIPPING (Устранение Ghosting) ---
+    // Вычисляем минимальный и максимальный цвет в окрестности 3x3
     vec3 minC = current.rgb, maxC = current.rgb;
+    vec2 texel = u_taaTexelSize.xy;
     for(int i = -1; i <= 1; ++i) {
         for(int j = -1; j <= 1; ++j) {
-            vec3 c = texture2D(s_color, uv + vec2(i, j) * 0.001).rgb;
+            vec3 c = texture2D(s_color, uv + vec2(float(i), float(j)) * texel).rgb;
             minC = min(minC, c);
             maxC = max(maxC, c);
         }
     }
+    
+    // Ограничиваем историю цветом текущей сцены (защита от размазывания)
     history.rgb = clamp(history.rgb, minC, maxC);
     
+    // Смешиваем с историей (Adjusted blend)
     float blend = u_taaParams.x;
-    gl_FragData[0] = mix(current, history, blend);
+    gl_FragColor = mix(current, history, blend);
 }
