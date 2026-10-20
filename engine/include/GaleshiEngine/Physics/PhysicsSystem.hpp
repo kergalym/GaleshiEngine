@@ -32,6 +32,8 @@ public:
     // Callback receives (entityA, entityB) for each ContactAdded event.
     void SetOnContactCallback(std::function<void(entt::entity, entt::entity)> cb);
 
+JPH::JobSystem* GetJobSystem() const;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m_impl;

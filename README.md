@@ -98,10 +98,10 @@ All dependencies are pulled via FetchContent on the first configuration. The fir
 - [✔] `Scene::Save/Load(path)` via nlohmann/json (`*.gscn`)
 
 ### P4 — Long-term
-- [ ] Multi-threaded ECS job system (integrated with `JPH::JobSystemThreadPool`)
-- [ ] Asset pipeline: `.fbx` / `.gltf` → `.gasset` with cache
-- [ ] Node-based material editor
-- [ ] Blueprint-like visual scripting over Lua
+- [✔] Multi-threaded ECS job system (integrated with `JPH::JobSystemThreadPool`)
+- [✔] Asset pipeline: `.fbx` / `.gltf` 
+- [ ] Material editor
+- [ ] Scripting over Lua
 - [ ] Packaging: `GaleshiEditor --package Game.gproj`
 - [ ] CLI: `galeshi build`, `galeshi run`, `galeshi package`
 

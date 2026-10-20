@@ -69,6 +69,8 @@ std::string SceneSerializer::SaveToString() const {
                     {"normalMapPath", m.normalMap ? m.normalMap->Path() : std::string{}},
                     {"mrMapPath", m.metallicRoughnessMap ? m.metallicRoughnessMap->Path() : std::string{}}
                 };
+
+                
             }
         }
         if (m_scene.Registry().all_of<SkeletalComponent>(h)) {
@@ -136,6 +138,9 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
             const std::string aPath = jm.value("albedoMapPath", ""); if (!aPath.empty()) mat->albedoMap = m_assets.LoadTexture(aPath);
             const std::string nPath = jm.value("normalMapPath", ""); if (!nPath.empty()) mat->normalMap = m_assets.LoadTexture(nPath);
             const std::string mPath = jm.value("mrMapPath", ""); if (!mPath.empty()) mat->metallicRoughnessMap = m_assets.LoadTexture(mPath);
+            
+            
+
             e.AddComponent<MaterialComponent>(MaterialComponent{ mat });
         }
         // Point Light

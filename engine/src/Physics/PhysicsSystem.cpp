@@ -153,6 +153,10 @@ bool EnginePhysicsSystem::Init() {
     m_impl->initialized = true;
     return true;
 }
+JPH::JobSystem* EnginePhysicsSystem::GetJobSystem() const {
+    return m_impl->jobSystem.get();
+}
+
 
 void EnginePhysicsSystem::Shutdown() {
     if (!m_impl || !m_impl->initialized) return;

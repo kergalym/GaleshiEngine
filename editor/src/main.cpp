@@ -1,4 +1,5 @@
 #include "GaleshiEngine/Core/Application.hpp"
+#include "GaleshiEngine/Core/JobSystem.hpp"
 #include "GaleshiEngine/Renderer/Renderer.hpp"
 #include "GaleshiEngine/Renderer/Camera.hpp"
 #include "GaleshiEngine/Renderer/RenderSystem.hpp"
@@ -187,13 +188,30 @@ protected:
         m_time += dt;
         Galeshi::AISystem::Update(m_scene, dt, m_navSystem.get());
 
-        // Анимация скелета
+        // Анимация скелета (Многопоточно)
         auto animView = m_scene.Registry().view<Galeshi::SkeletalComponent>();
-        for (auto h : animView) {
-            auto& skel = animView.get<Galeshi::SkeletalComponent>(h);
-            if (skel.isAnimated) {
-                skel.currentTime += dt * skel.animationSpeed;
-                if (skel.currentTime > 10.0f) skel.currentTime = 0.0f;
+        std::vector<entt::entity> animEntities;
+        for (auto h : animView) animEntities.push_back(h);
+
+        if (m_physics && !animEntities.empty()) {
+            JPH::JobSystem* js = m_physics->GetJobSystem();
+            Galeshi::ParallelFor(js, static_cast<uint32_t>(animEntities.size()), [&](uint32_t start, uint32_t end) {
+                for (uint32_t i = start; i < end; ++i) {
+                    auto h = animEntities[i];
+                    auto& skel = animView.get<Galeshi::SkeletalComponent>(h);
+                    if (skel.isAnimated) {
+                        skel.currentTime += dt * skel.animationSpeed;
+                        if (skel.currentTime > 10.0f) skel.currentTime = 0.0f;
+                    }
+                }
+            });
+        } else {
+            for (auto h : animEntities) {
+                auto& skel = animView.get<Galeshi::SkeletalComponent>(h);
+                if (skel.isAnimated) {
+                    skel.currentTime += dt * skel.animationSpeed;
+                    if (skel.currentTime > 10.0f) skel.currentTime = 0.0f;
+                }
             }
         }
 
@@ -1501,18 +1519,44 @@ void DrawDetails() {
             auto& m = *matc.material;
             ImGui::PushID(eid);
             if (ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_DefaultOpen)) {
+                // --- Пресеты ---
+                ImGui::Text("Presets:");
+                if (ImGui::Button("Metal")) {
+                    m.metallicFactor = 1.0f; m.roughnessFactor = 0.1f;
+                    m.albedoFactor = glm::vec4(0.8f, 0.8f, 0.8f, 1.0f);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Plastic")) {
+                    m.metallicFactor = 0.0f; m.roughnessFactor = 0.5f;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Rubber")) {
+                    m.metallicFactor = 0.0f; m.roughnessFactor = 0.9f;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Gold")) {
+                    m.metallicFactor = 1.0f; m.roughnessFactor = 0.2f;
+                    m.albedoFactor = glm::vec4(1.0f, 0.766f, 0.336f, 1.0f);
+                }
+
+                ImGui::Separator();
+
+                // --- Основные параметры ---
                 ImGui::ColorEdit4("Albedo Factor", glm::value_ptr(m.albedoFactor));
                 ImGui::SliderFloat("Metallic Factor",  &m.metallicFactor,  0.0f, 1.0f);
                 ImGui::Checkbox("Glass (Transparent)", &m.isGlass);
                 ImGui::SliderFloat("Roughness Factor", &m.roughnessFactor, 0.04f, 1.0f);
-                ImGui::ColorEdit3("Emissive", glm::value_ptr(m.emissiveFactor));
+                ImGui::SliderFloat("Normal Strength",  &m.normalStrength,  0.0f, 2.0f);
+                ImGui::ColorEdit3("Emissive Color", glm::value_ptr(m.emissiveFactor));
 
                 ImGui::Separator();
                 ImGui::Text("Texture Maps (drag from Content Browser):");
 
+                // --- Текстурные слоты ---
                 DrawTextureSlot("Albedo Map",           m.albedoMap);
                 DrawTextureSlot("Normal Map",           m.normalMap);
                 DrawTextureSlot("Metallic/Roughness",   m.metallicRoughnessMap);
+                DrawTextureSlot("Emissive Map",         m.emissiveMap);
             }
             ImGui::PopID();
         };

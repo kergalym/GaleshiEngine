@@ -161,8 +161,7 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
                 if (skel.boneMatrices.size() != kMaxBones) {
                     skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
                 }
-                auto modelData = m_assets->LoadModel(skel.sourcePath);
-                m_assets->UpdateAnimation(modelData, skel.currentTime, skel.boneMatrices);
+                // Animation updated in OnUpdate (Parallel)
                 
                 std::vector<glm::vec4> boneData(kMaxBones * 4);
                 for (int i = 0; i < kMaxBones; ++i) {
@@ -294,9 +293,8 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
         if (hasSkeleton) {
             auto& skel = scene.Registry().get<SkeletalComponent>(root);
             if (skel.isAnimated && !skel.sourcePath.empty()) {
-                if (skel.boneMatrices.size() != kMaxBones) skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
-                auto modelData = m_assets->LoadModel(skel.sourcePath);
-                m_assets->UpdateAnimation(modelData, skel.currentTime, skel.boneMatrices);
+                if (skel.boneMatrices.size() != kMaxBones) skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f)); // Should be handled in OnUpdate
+                // Animation updated in OnUpdate (Parallel)
                 std::vector<glm::vec4> boneData(kMaxBones * 4);
                 for (int i = 0; i < kMaxBones; ++i) {
                     for (int j = 0; j < 4; ++j) boneData[i * 4 + j] = skel.boneMatrices[i][j];
