@@ -732,29 +732,88 @@ if (ImGui::BeginMenu("File")) {
 
         if (m_framebuffer && m_framebuffer->Valid()) {
             
-            // --- SHADOW PASS ---
+            // --- PSSM SHADOW PASS ---
             auto lview = m_scene.Registry().view<Galeshi::DirectionalLightComponent>();
             glm::mat4 lightMtx0, lightMtx1, lightMtx2;
+            float cascadeSplits[4] = {15.0f, 40.0f, 100.0f, 0.0f}; // Fallback
+
             if (!lview.empty()) {
                 auto lh = *lview.begin();
                 auto& dl = lview.get<Galeshi::DirectionalLightComponent>(lh);
-                glm::vec3 center = m_editor.camTarget;
-                float extents[3] = { 15.0f, 40.0f, 100.0f };
+                glm::vec3 lightDir = glm::normalize(dl.direction);
+
+                // 1. Calculate Cascade Splits (Practical Split Scheme)
+                float nearPlane = 0.1f;
+                float farPlane = 1000.0f;
+                float lambda = 0.5f;
+                float splits[3];
                 for (int i = 0; i < 3; ++i) {
-                    glm::vec3 eye = center - dl.direction * (extents[i] * 2.0f);
-                // Ensure eye is above ground
-                if (eye.y < center.y + 1.0f) eye.y = center.y + 1.0f;
-                    glm::mat4 lightView = glm::lookAt(eye, center, glm::vec3(0,1,0));
+                    float p = (i + 1) / 3.0f;
+                    float logSplit = nearPlane * std::pow(farPlane / nearPlane, p);
+                    float uniformSplit = nearPlane + (farPlane - nearPlane) * p;
+                    splits[i] = lambda * logSplit + (1.0f - lambda) * uniformSplit;
+                }
+                cascadeSplits[0] = splits[0];
+                cascadeSplits[1] = splits[1];
+                cascadeSplits[2] = splits[2];
+
+                // 2. Extract Frustum Corners
+                glm::vec3 camPos = m_camera.Position();
+                glm::mat4 invViewProj = glm::inverse(m_camera.Projection() * m_camera.View());
+                glm::vec3 rays[4];
+                for (int i = 0; i < 4; ++i) {
+                    float x = (i == 0 || i == 3) ? -1.0f : 1.0f;
+                    float y = (i < 2) ? -1.0f : 1.0f;
+                    glm::vec4 pt = invViewProj * glm::vec4(x, y, 1.0f, 1.0f);
+                    glm::vec3 farWorld = glm::vec3(pt) / pt.w;
+                    rays[i] = glm::normalize(farWorld - camPos);
+                }
+
+                // 3. Render Cascades
+                for (int i = 0; i < 3; ++i) {
+                    float prevSplit = (i == 0) ? nearPlane : splits[i-1];
+                    float currSplit = splits[i];
+
+                    glm::vec3 corners[8];
+                    for (int j = 0; j < 4; ++j) {
+                        corners[j] = camPos + rays[j] * prevSplit;
+                        corners[j+4] = camPos + rays[j] * currSplit;
+                    }
+
+                    glm::vec3 center = glm::vec3(0.0f);
+                    for (int j = 0; j < 8; ++j) center += corners[j];
+                    center /= 8.0f;
+
+                    glm::vec3 eye = center - lightDir * (farPlane * 0.5f);
+                    glm::vec3 up = (std::abs(glm::dot(lightDir, glm::vec3(0,1,0))) > 0.99f) ? glm::vec3(1,0,0) : glm::vec3(0,1,0);
+                    glm::mat4 lightView = glm::lookAt(eye, center, up);
+
+                    float minX = std::numeric_limits<float>::max();
+                    float maxX = std::numeric_limits<float>::lowest();
+                    float minY = std::numeric_limits<float>::max();
+                    float maxY = std::numeric_limits<float>::lowest();
+                    float minZ = std::numeric_limits<float>::max();
+                    float maxZ = std::numeric_limits<float>::lowest();
+
+                    for (int j = 0; j < 8; ++j) {
+                        glm::vec4 trf = lightView * glm::vec4(corners[j], 1.0f);
+                        minX = std::min(minX, trf.x); maxX = std::max(maxX, trf.x);
+                        minY = std::min(minY, trf.y); maxY = std::max(maxY, trf.y);
+                        minZ = std::min(minZ, trf.z); maxZ = std::max(maxZ, trf.z);
+                    }
+
                     glm::mat4 lightProj;
-                    bx::mtxOrtho(glm::value_ptr(lightProj), -extents[i], extents[i], -extents[i], extents[i], 0.1f, 500.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
+                    bx::mtxOrtho(glm::value_ptr(lightProj), minX, maxX, minY, maxY, -maxZ - 10.0f, -minZ + 10.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
+                    
                     if (i == 0) lightMtx0 = lightProj * lightView;
                     else if (i == 1) lightMtx1 = lightProj * lightView;
                     else lightMtx2 = lightProj * lightView;
-                    if (i == 0) m_render->RenderShadowMap(m_scene, lightMtx0, 6, m_shadowFbos[0]);
-                    else if (i == 1) m_render->RenderShadowMap(m_scene, lightMtx1, 7, m_shadowFbos[1]);
-                    else m_render->RenderShadowMap(m_scene, lightMtx2, 8, m_shadowFbos[2]);
+
+                    m_render->RenderShadowMap(m_scene, lightMtx0, 6 + i, m_shadowFbos[i]);
                 }
             } else {
+                // Fallback (без света)
+                cascadeSplits[0] = 15.0f; cascadeSplits[1] = 40.0f; cascadeSplits[2] = 100.0f;
                 for (int i = 0; i < 3; ++i) {
                     glm::mat4 lightView = glm::lookAt(glm::vec3(0,20,0), glm::vec3(0), glm::vec3(0,1,0));
                     glm::mat4 lightProj;
@@ -762,9 +821,7 @@ if (ImGui::BeginMenu("File")) {
                     if (i == 0) lightMtx0 = lightProj * lightView;
                     else if (i == 1) lightMtx1 = lightProj * lightView;
                     else lightMtx2 = lightProj * lightView;
-                    if (i == 0) m_render->RenderShadowMap(m_scene, lightMtx0, 6, m_shadowFbos[0]);
-                    else if (i == 1) m_render->RenderShadowMap(m_scene, lightMtx1, 7, m_shadowFbos[1]);
-                    else m_render->RenderShadowMap(m_scene, lightMtx2, 8, m_shadowFbos[2]);
+                    m_render->RenderShadowMap(m_scene, lightMtx0, 6 + i, m_shadowFbos[i]);
                 }
             }
 
@@ -903,6 +960,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     m_shadowMaps[0], m_shadowMaps[1], m_shadowMaps[2],
                     lightMtx0, lightMtx1, lightMtx2,
                     invViewProj,
+                    cascadeSplits,
                     camPos, lDirA, lColA,
                     plPosA, plColA, plCount,
                     slPos, slDir, slCol, slCount,

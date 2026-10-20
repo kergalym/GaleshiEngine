@@ -1,4 +1,5 @@
 #include "GaleshiEngine/Renderer/RenderSystem.hpp"
+#include "GaleshiEngine/Renderer/Frustum.hpp"
 #include "GaleshiEngine/Renderer/ShaderManager.hpp"
 #include "GaleshiEngine/Renderer/Camera.hpp"
 #include "GaleshiEngine/Scene/Scene.hpp"
@@ -84,6 +85,8 @@ void RenderSystem::Shutdown() {
 void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
     if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
 
+    Galeshi::Frustum frustum(camera.Projection() * camera.View());
+
     bgfx::setViewTransform(viewId, glm::value_ptr(camera.View()), glm::value_ptr(camera.Projection()));
     bgfx::setViewRect(viewId, 0, 0, width, height);
     bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x232629ff, 1.0f, 0);
@@ -147,6 +150,19 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
                 model = model * scene.Registry().get<TransformComponent>(*it).LocalMatrix();
         }
 
+        // Frustum Culling (before any bindings!)
+        {
+            glm::vec3 localMin, localMax;
+            mc.mesh->LocalAABB(localMin, localMax);
+            glm::vec3 localCenter = (localMin + localMax) * 0.5f;
+            float localRadius = glm::length(localMax - localMin) * 0.5f;
+            glm::vec3 worldCenter = glm::vec3(model * glm::vec4(localCenter, 1.0f));
+            float maxScale = std::max(std::max(glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1]))), glm::length(glm::vec3(model[2])));
+            if (!frustum.TestSphere(worldCenter, localRadius * maxScale)) {
+                continue; // Skip culled object BEFORE any texture/uniform binding
+            }
+        }
+
         // Ищем SkeletalComponent вверх по иерархии (на корне)
         entt::entity root = h;
         while (root != entt::null) {
@@ -180,6 +196,7 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         // I will shift IBL to 4,5,6 in shader
         // (In this quick fix, I'll rely on PostProcessManager for IBL since we have limited time)
 
+        
         bgfx::setTransform(glm::value_ptr(model));
         const Material& mat = *matc.material;
         const float alb[4] = {mat.albedoFactor.r, mat.albedoFactor.g, mat.albedoFactor.b, mat.albedoFactor.a};

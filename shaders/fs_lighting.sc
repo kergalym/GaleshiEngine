@@ -16,6 +16,7 @@ SAMPLER2D(s_spotShadowMap2, 12);
 SAMPLER2D(s_spotShadowMap3, 13);
 
 uniform vec4 u_cameraPosition;
+uniform vec4 u_cascadeSplits;
 uniform vec4 u_lightDirection;
 uniform vec4 u_lightColorIntensity;
 uniform mat4 u_lightViewProj0;
@@ -300,8 +301,8 @@ void main()
 
     float camDist = length(wPos.xyz - u_cameraPosition.xyz);
     int cascadeIdx = 0;
-    if (camDist > 40.0) cascadeIdx = 2;
-    else if (camDist > 15.0) cascadeIdx = 1;
+    if (camDist > u_cascadeSplits.y) cascadeIdx = 2;
+    else if (camDist > u_cascadeSplits.x) cascadeIdx = 1;
 
     // Normal Offset: сдвигаем позицию пикселя по нормали, чтобы избежать acne
     vec4 lightSpacePos;

@@ -38,6 +38,7 @@ public:
                                        bgfx::TextureHandle shadowMap0, bgfx::TextureHandle shadowMap1, bgfx::TextureHandle shadowMap2,
                                        const glm::mat4& lightMtx0, const glm::mat4& lightMtx1, const glm::mat4& lightMtx2,
                                        const glm::mat4& invViewProj, 
+                                       const float cascadeSplits[4],
                                        const float camPos[4], const float lightDir[4], const float lightColorIntensity[4],
                                        const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
                                        const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], int spotLightCount,
@@ -119,6 +120,7 @@ private:
     
     bgfx::FrameBufferHandle m_pointShadowFbos[6] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
 
+    bgfx::UniformHandle u_cascadeSplits = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_ssaoProj    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_ssaoInvProj = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_ssaoParams  = BGFX_INVALID_HANDLE;

@@ -78,6 +78,7 @@ void PostProcessManager::Init() {
         if (bgfx::isValid(vs) && bgfx::isValid(fs)) {
             m_lightingProg = bgfx::createProgram(vs, fs, true);
             u_camPos      = bgfx::createUniform("u_cameraPosition",     bgfx::UniformType::Vec4);
+            u_cascadeSplits = bgfx::createUniform("u_cascadeSplits", bgfx::UniformType::Vec4);
             u_lightDir    = bgfx::createUniform("u_lightDirection",     bgfx::UniformType::Vec4);
             u_lightCol    = bgfx::createUniform("u_lightColorIntensity",bgfx::UniformType::Vec4);
             s_albedoMr    = bgfx::createUniform("s_albedoMr",    bgfx::UniformType::Sampler);
@@ -303,7 +304,7 @@ void PostProcessManager::Shutdown() {
     
 
     destroyUni(s_texColor); destroyUni(u_texelSize);
-    destroyUni(u_camPos); destroyUni(u_lightDir); destroyUni(u_lightCol);
+    destroyUni(u_camPos); destroyUni(u_cascadeSplits); destroyUni(u_lightDir); destroyUni(u_lightCol);
     destroyUni(s_albedoMr); destroyUni(s_normalRough); destroyUni(s_worldPos);
     destroyUni(s_shadowMap0); destroyUni(s_shadowMap1); destroyUni(s_shadowMap2); destroyUni(u_lightVP0); destroyUni(u_lightVP1); destroyUni(u_lightVP2); 
     destroyUni(u_plPos); destroyUni(u_plCol); destroyUni(u_plCnt);
@@ -403,6 +404,7 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::TextureHandle shadowMap0, bgfx::TextureHandle shadowMap1, bgfx::TextureHandle shadowMap2,
     const glm::mat4& lightMtx0, const glm::mat4& lightMtx1, const glm::mat4& lightMtx2,
     const glm::mat4& invViewProj, 
+    const float cascadeSplits[4],
     const float camPos[4], const float lightDir[4], const float lightColorIntensity[4],
     const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
     const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], int spotLightCount,
@@ -417,6 +419,7 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR, 0x000000ff);
 
     bgfx::setUniform(u_camPos,   camPos);
+    bgfx::setUniform(u_cascadeSplits, cascadeSplits);
     bgfx::setUniform(u_lightDir, lightDir);
     bgfx::setUniform(u_lightCol, lightColorIntensity);
     bgfx::setTexture(0, s_albedoMr,    albedoMr);
