@@ -346,7 +346,7 @@ bool NavigationSystem::FindPath(const glm::vec3& start, const glm::vec3& end,
         outPath.emplace_back(straightPath[i*3+0], straightPath[i*3+1], straightPath[i*3+2]);
     }
 
-    spdlog::info("[NavMesh] Path found: {} waypoints", straightPathCount);
+    // spdlog::info("[NavMesh] Path found: {} waypoints", straightPathCount);
     return !outPath.empty();
 }
 

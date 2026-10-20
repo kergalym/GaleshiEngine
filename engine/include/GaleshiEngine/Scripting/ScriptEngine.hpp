@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <vector>
+#include <unordered_map>
 #include <spdlog/spdlog.h>
 #include <glm/glm.hpp>
 
@@ -37,6 +38,78 @@ public:
         m_lua.set_function("log", [](const std::string& msg) {
             spdlog::info("[Lua] {}", msg);
         });
+    }
+
+    void BindAI() {
+        m_lua.set_function("set_ai_target", [this](uint32_t eid, float x, float y, float z) {
+            if (!m_scene) return;
+            auto& reg = m_scene->Registry();
+            entt::entity e = static_cast<entt::entity>(eid);
+            if (reg.valid(e) && reg.all_of<NavAgentComponent>(e)) {
+                auto& agent = reg.get<NavAgentComponent>(e);
+                agent.targetPosition = glm::vec3(x, y, z);
+                agent.hasTarget = true;
+            }
+        });
+        
+        m_lua.set_function("is_path_done", [this](uint32_t eid) -> bool {
+            if (!m_scene) return true;
+            auto& reg = m_scene->Registry();
+            entt::entity e = static_cast<entt::entity>(eid);
+            if (reg.valid(e) && reg.all_of<NavAgentComponent>(e)) {
+                return reg.get<NavAgentComponent>(e).path.empty();
+            }
+            return true;
+        });
+        
+        m_lua.set_function("set_ai_speed", [this](uint32_t eid, float speed) {
+            if (!m_scene) return;
+            auto& reg = m_scene->Registry();
+            entt::entity e = static_cast<entt::entity>(eid);
+            if (reg.valid(e) && reg.all_of<NavAgentComponent>(e)) {
+                reg.get<NavAgentComponent>(e).speed = speed;
+            }
+        });
+    }
+
+    struct AIControllerInstance {
+        sol::environment env;
+        sol::protected_function updateFunc;
+        std::string loadedPath;
+    };
+    std::unordered_map<uint32_t, AIControllerInstance> m_aiControllers;
+
+    void RunAIScripts(Scene& scene, float dt) {
+        auto& reg = scene.Registry();
+        auto view = reg.view<AIControllerComponent>();
+        for (auto e : view) {
+            auto& aic = view.get<AIControllerComponent>(e);
+            if (aic.scriptPath.empty()) continue;
+            
+            uint32_t eid = (uint32_t)e;
+            
+            auto& instance = m_aiControllers[eid];
+            if (instance.loadedPath != aic.scriptPath) {
+                try {
+                    instance.env = sol::environment(m_lua, sol::create, m_lua.globals());
+                    m_lua.script_file(aic.scriptPath, instance.env);
+                    instance.updateFunc = instance.env["update_ai"];
+                    instance.loadedPath = aic.scriptPath;
+                    spdlog::info("[AI] Loaded script for entity {}: {}", eid, aic.scriptPath);
+                } catch (const sol::error& err) {
+                    spdlog::error("[AI] Failed to load {} for entity {}: {}", aic.scriptPath, eid, err.what());
+                    instance.loadedPath = "ERROR_" + aic.scriptPath; // Защита от спама каждый кадр
+                }
+            }
+            
+            if (instance.updateFunc.valid()) {
+                sol::protected_function_result result = instance.updateFunc(eid, dt);
+                if (!result.valid()) {
+                    sol::error err = result;
+                    spdlog::error("[AI] Error in update_ai for entity {}: {}", eid, err.what());
+                }
+            }
+        }
     }
 
     void BindECS(Scene& scene) {
@@ -159,6 +232,7 @@ void BindAudio(std::function<void(const std::string&)> playSound) {
 
     bool HotReload(const std::string& path = "assets/scripts/init.lua") {
         ClearLuaEntities();
+        m_aiControllers.clear(); // Очищаем кэш AI, чтобы скрипты перезагрузились
         return RunScript(path);
     }
 

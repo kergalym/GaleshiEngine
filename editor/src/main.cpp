@@ -111,6 +111,7 @@ protected:
             }
         });
         m_scripts.BindAudio([this](const std::string& p){ m_audio.PlaySound(p); });
+        m_scripts.BindAI();
         m_scripts.BindPhysics([this](const glm::vec3& he, const glm::vec3& pos, entt::entity e) {
             return m_physics->CreateBox(he, pos, e);
         });
@@ -227,6 +228,7 @@ protected:
         // --- End auto-inserted ---
 
         m_time += dt;
+        m_scripts.RunAIScripts(m_scene, dt);
         Galeshi::AISystem::Update(m_scene, dt, m_navSystem.get());
         m_scripts.Update(dt);
 
@@ -541,7 +543,8 @@ if (ImGui::BeginMenu("File")) {
                 tc.scale = {1.0f, 1.0f, 1.0f};
                 
                 e.AddComponent<Galeshi::NavAgentComponent>();
-                e.AddComponent<Galeshi::AIControllerComponent>();
+                auto& aic = e.AddComponent<Galeshi::AIControllerComponent>();
+                aic.scriptPath = "assets/scripts/ai_patrol.lua";
                 m_editor.Select(e);
             }
                 if (ImGui::MenuItem("Build NavMesh")) {
