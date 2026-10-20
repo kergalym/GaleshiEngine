@@ -100,7 +100,7 @@ All dependencies are pulled via FetchContent on the first configuration. The fir
 ### P4 — Long-term
 - [✔] Multi-threaded ECS job system (integrated with `JPH::JobSystemThreadPool`)
 - [✔] Asset pipeline: `.fbx` / `.gltf` 
-- [ ] Material editor
+- [✔] Advanced Material Property Panel 
 - [ ] Scripting over Lua
 - [ ] Packaging: `GaleshiEditor --package Game.gproj`
 - [ ] CLI: `galeshi build`, `galeshi run`, `galeshi package`
