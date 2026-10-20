@@ -86,24 +86,42 @@ All dependencies are pulled via FetchContent on the first configuration. The fir
 - [✔] First effect: color inversion (pipeline smoke test)
 - [✔] SSAO from depth + normal
 - [✔] SSR as optional pass
-- [✔] TAA / FXAA / SMAA selectable in UI
+- [✔] TAA / FXAA / SMAA selectable in UI *(FXAA stable; TAA/SMAA layout fixes moved to P5)*
 
 ### P3 — Navigation, Editor, Serialization
 - [✔] Recast NavMesh generation from `MeshComponent` scene
 - [✔] `NavAgentComponent` + Detour pathfinding
+- [✔] AI Controller in Lua (`RunAIScripts`, isolated `sol::environment` for per-agent state)
 - [✔] Scene hierarchy panel (drag & drop)
 - [✔] Inspector: edit `Transform`, `RigidBody`, `Mesh`
-- [ ] ImGuizmo translate/rotate/scale
+- [ ] ImGuizmo translate/rotate/scale *(postponed — requires applying visModel to ECS)*
 - [✔] Undo/Redo (`m_history`, `m_historyIndex`)
 - [✔] `Scene::Save/Load(path)` via nlohmann/json (`*.gscn`)
 
 ### P4 — Long-term
 - [✔] Multi-threaded ECS job system (integrated with `JPH::JobSystemThreadPool`)
-- [✔] Asset pipeline: `.fbx` / `.gltf` 
-- [✔] Advanced Material Property Panel 
+- [✔] Parallel skeletal animation (`Galeshi::ParallelFor` + `Barrier` API)
+- [✔] Asset pipeline: `.fbx` / `.gltf`
+- [✔] Advanced Material Property Panel (Metal/Plastic/Rubber/Gold presets, Normal Strength, Emissive Map)
 - [✔] Scripting over Lua
 - [✔] Packaging: `GaleshiEditor --package Game.gproj`
-- [✔] CLI: `galeshi build`, `galeshi run`, `galeshi package`
+- [✔] Standalone mode: `--game` (clean fullscreen without editor UI)
+- [✔] CLI: `galeshi build`, `galeshi run`, `galeshi package`, `galeshi editor`
+
+### P5 — Rendering & Optimization
+- [✔] Frustum Culling (`Frustum.hpp` — Gribb-Hartmann plane extraction + sphere test)
+- [✔] Fix BGFX state crash: move culling check BEFORE any `setTexture`/`setUniform` (avoid `s_boneMatrices already set` error)
+- [✔] PSSM (Parallel Split Shadow Maps) — 3 cascades, log-linear split scheme, tight ortho projections
+- [✔] `u_cascadeSplits` uniform + cascade selection in `fs_lighting.sc`
+- [✔] NaN protection in PBR math (`max(..., 0.000001)`) — fix `VK_ERROR_DEVICE_LOST` on zero/negative scale
+- [ ] Instancing (`bgfx::setInstanceDataBuffer` for cubes and other repeating meshes)
+- [ ] Occlusion Culling (Hi-Z or CPU raycast for large scenes)
+- [ ] TAA with Motion Vectors (via G-Buffer `s_motionVec`, ping-pong history + projection jitter)
+- [ ] SMAA (precomputed AreaTex/SearchTex + 3 passes)
+- [ ] LOD system (auto-switch `MeshComponent` by distance)
+- [ ] Bloom improvements (brightness threshold, multi-pass downsampling)
+- [ ] Shadow acne / peter-panning tuning in PSSM (bias + normal offset per cascade)
+- [ ] Mobile/quality scaling via BGFX `setViewRect` + dynamic resolution
 
 
 Known limitations
@@ -135,4 +153,3 @@ Credits
 
     All library authors listed above
 
-    
