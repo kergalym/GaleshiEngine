@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Galeshi Engine CLI Tool
+# Usage: galeshi <command> [args]
+
+set -uo pipefail
+PROJECT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+BUILD_BIN="$PROJECT_ROOT/build/debug/bin/GaleshiEditor"
+
+# Проверка, что движок собран
+if [ ! -f "$BUILD_BIN" ]; then
+    echo "❌ Engine binary not found at $BUILD_BIN"
+    echo "   Run 'galeshi build' first."
+    exit 1
+fi
+
+COMMAND="${1:-}"
+shift || true
+
+case "$COMMAND" in
+    build)
+        echo "🔨 Building GaleshiEngine (Debug)..."
+        cmake --preset debug
+        cmake --build --preset debug -j$(nproc)
+        echo "✅ Build complete."
+        ;;
+    package)
+        if [ -z "${1:-}" ]; then
+            echo "❌ Usage: galeshi package <project.gproj>"
+            exit 1
+        fi
+        PROJECT_FILE="$1"
+        echo "📦 Packaging project: $PROJECT_FILE"
+        "$BUILD_BIN" --package "$PROJECT_FILE"
+        ;;
+    run)
+        if [ -z "${1:-}" ]; then
+            echo "❌ Usage: galeshi run <project.gproj>"
+            echo "   (or just run the game from build/package/<name>/run.sh)"
+            exit 1
+        fi
+        PROJECT_FILE="$1"
+        PROJECT_NAME=$(grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' "$PROJECT_FILE" | cut -d'"' -f4)
+        PACKAGE_DIR="$PROJECT_ROOT/build/package/$PROJECT_NAME"
+        
+        if [ -d "$PACKAGE_DIR" ]; then
+            echo "▶️  Running packaged game: $PROJECT_NAME"
+            "$PACKAGE_DIR/run.sh"
+        else
+            echo "⚠️  Package not found. Packaging now..."
+            "$BUILD_BIN" --package "$PROJECT_FILE"
+            echo "▶️  Running packaged game: $PROJECT_NAME"
+            "$PACKAGE_DIR/run.sh"
+        fi
+        ;;
+    editor)
+        echo "🖥️  Launching Editor..."
+        "$BUILD_BIN" "$@"
+        ;;
+    *)
+        echo "Galeshi Engine CLI"
+        echo "Usage: galeshi <command> [args]"
+        echo ""
+        echo "Commands:"
+        echo "  build                Compile the engine and editor (Debug)"
+        echo "  package <file.gproj> Package the game into build/package/<name>/"
+        echo "  run <file.gproj>     Package (if needed) and run the game"
+        echo "  editor               Launch the editor"
+        exit 1
+        ;;
+esac

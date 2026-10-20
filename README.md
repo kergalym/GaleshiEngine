@@ -103,6 +103,7 @@ All dependencies are pulled via FetchContent on the first configuration. The fir
 - [✔] Advanced Material Property Panel 
 - [✔] Scripting over Lua
 - [✔] Packaging: `GaleshiEditor --package Game.gproj`
+- [✔] CLI: `galeshi build`, `galeshi run`, `galeshi package`
 
     ☑
 
