@@ -90,7 +90,7 @@ All dependencies are pulled via FetchContent on the first configuration. The fir
 
 ### P3 — Navigation, Editor, Serialization
 - [✔] Recast NavMesh generation from `MeshComponent` scene
-- [ ] `NavAgentComponent` + Detour pathfinding
+- [✔] `NavAgentComponent` + Detour pathfinding
 - [✔] Scene hierarchy panel (drag & drop)
 - [✔] Inspector: edit `Transform`, `RigidBody`, `Mesh`
 - [ ] ImGuizmo translate/rotate/scale
