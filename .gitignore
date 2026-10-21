@@ -30,3 +30,4 @@ imgui.ini
 *.chroma_db/
 .venv/
 build/**/shaders/*.bin
+.aider.*

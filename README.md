@@ -1,11 +1,10 @@
-![alt](./screenshoots/initial2.png)
+![alt](./screenshoots/initial3.png)
 
 # GaleshiEngine
 
-A minimalist game engine inspired by Unreal Engine 5 with ECS-based Scene Graph. The goal is a cross-platform editor with a Vulkan renderer, physics, AI, and the ability to write C++ directly inside the editor.
+A minimalist game engine inspired by Unreal Engine 5 with ECS-based Scene Graph. The goal is a cross-platform editor with a Vulkan renderer, physics, AI, and Lua Scripting.
 
-**Current status: Stage 2 complete.** Window, Vulkan renderer, ImGui editor, basic PBR shader, and a rotating cube all work.
-
+Project is under prealpha state, renderer is still unstable and sometimes may hang your GPU, Use at own risk!
 ---
 
 ## Features
@@ -20,8 +19,8 @@ A minimalist game engine inspired by Unreal Engine 5 with ECS-based Scene Graph.
 | FBX/glTF import    | Done    | Assimp (linked)                      |
 | Scene / ECS        | Done    | EnTT (linked)                        |
 | Physics            | Done    | Jolt Physics (rigid + soft)          |
-| AI / NavMesh       | WIP     | Recast and Detour                    |
-| Scripting          | Planned | Lua                                      |
+| AI / NavMesh       | Done    | Recast and Detour                    |
+| Scripting          | WIP | Lua                                      |
 
 ---
 
@@ -35,7 +34,7 @@ A minimalist game engine inspired by Unreal Engine 5 with ECS-based Scene Graph.
 - Vulkan SDK (`vulkaninfo` must work)
 - SDL3 is pulled automatically via FetchContent
 
-### Linux (Gentoo / Arch / Fedora / Ubuntu)
+### Linux 
 
 ```bash
 git clone <repo> GaleshiEngine
@@ -83,10 +82,7 @@ All dependencies are pulled via FetchContent on the first configuration. The fir
 ### P2 — Post-processing
 - [✔] Off-screen FBO: color + depth + normal + position
 - [✔] `PostProcessManager::Render(fbo)` — takes scene textures
-- [✔] First effect: color inversion (pipeline smoke test)
-- [✔] SSAO from depth + normal
-- [✔] SSR as optional pass
-- [✔] TAA / FXAA / SMAA selectable in UI *(FXAA stable; TAA/SMAA layout fixes moved to P5)*
+
 
 ### P3 — Navigation, Editor, Serialization
 - [✔] Recast NavMesh generation from `MeshComponent` scene
@@ -110,10 +106,10 @@ All dependencies are pulled via FetchContent on the first configuration. The fir
 
 ### P5 — Rendering & Optimization
 - [✔] Frustum Culling (`Frustum.hpp` — Gribb-Hartmann plane extraction + sphere test)
-- [✔] Fix BGFX state crash: move culling check BEFORE any `setTexture`/`setUniform` (avoid `s_boneMatrices already set` error)
+- [ ] SSAO from depth + normal
+- [ ] SSR as optional pass
+- [ ] TAA / FXAA / SMAA selectable in UI *(FXAA stable; TAA/SMAA layout fixes moved to P5)*
 - [✔] PSSM (Parallel Split Shadow Maps) — 3 cascades, log-linear split scheme, tight ortho projections
-- [✔] `u_cascadeSplits` uniform + cascade selection in `fs_lighting.sc`
-- [✔] NaN protection in PBR math (`max(..., 0.000001)`) — fix `VK_ERROR_DEVICE_LOST` on zero/negative scale
 - [ ] Instancing (`bgfx::setInstanceDataBuffer` for cubes and other repeating meshes)
 - [ ] Occlusion Culling (Hi-Z or CPU raycast for large scenes)
 - [ ] TAA with Motion Vectors (via G-Buffer `s_motionVec`, ping-pong history + projection jitter)
@@ -124,19 +120,13 @@ All dependencies are pulled via FetchContent on the first configuration. The fir
 - [ ] Mobile/quality scaling via BGFX `setViewRect` + dynamic resolution
 
 
+
 Known limitations
 
     Linux/X11 only at the moment. The Wayland path in bgfx is untested.
 
-    Vulkan backend only. An OpenGL/DX12 foundation exists but is untested.
-
     PBR is currently basic: Lambert + Blinn-Phong, no IBL, no metallic/roughness maps.
 
-    Jolt is linked but does not initialize on some builds because the Jolt target is not always created. Temporarily disabled until Stage 4.
-
-    ImGui ViewportsEnable is on, but the multi-window backend is not implemented. If a single workspace is preferred, disable the flag in Application.cpp.
-
-    Cling (the C++ interpreter) is not yet integrated.
 
 License
 
