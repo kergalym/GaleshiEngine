@@ -31,3 +31,5 @@ imgui.ini
 .venv/
 build/**/shaders/*.bin
 .aider.*
+aider_run.sh
+galeshi_chat
