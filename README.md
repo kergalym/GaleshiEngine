@@ -34,7 +34,7 @@ Project is under prealpha state, renderer is still unstable and sometimes may ha
 - Vulkan SDK (`vulkaninfo` must work)
 - SDL3 is pulled automatically via FetchContent
 
-### Linux 
+## Linux 
 
 ```bash
 git clone <repo> GaleshiEngine
@@ -47,18 +47,20 @@ or
 ./build/debug/bin/GaleshiEditor --debug
 ```
 
-Technology stack
-Component	Library	License
-Window / input	SDL3	zlib
-Rendering	bgfx	BSD-2
-UI	Dear ImGui	MIT
-Gizmo	ImGuizmo	MIT
-Math	GLM	MIT
-Model import	Assimp	BSD-3
-Physics	Jolt Physics	MIT
-Navigation	RecastNavigation	zlib
-ECS	EnTT	MIT
-Logging	spdlog	MIT
+## Third-Party Libraries
+
+| Component | Library | License |
+|---|---|---|
+| Window / Input | [SDL3](https://github.com/libsdl-org/SDL) | zlib |
+| Rendering | [bgfx](https://github.com/bkaradzic/bgfx) | BSD-2-Clause |
+| UI | [Dear ImGui](https://github.com/ocornut/imgui) | MIT |
+| Gizmo | [ImGuizmo](https://github.com/CedricGuillemet/ImGuizmo) | MIT |
+| Math | [GLM](https://github.com/g-truc/glm) | MIT |
+| Model Import | [Assimp](https://github.com/assimp/assimp) | BSD-3-Clause |
+| Physics | [Jolt Physics](https://github.com/jrouwe/JoltPhysics) | MIT |
+| Navigation | [RecastNavigation](https://github.com/recastnavigation/recastnavigation) | zlib |
+| ECS | [EnTT](https://github.com/skypjack/entt) | MIT |
+| Logging | [spdlog](https://github.com/gabime/spdlog) | MIT |
 
 
 ## Roadmap
