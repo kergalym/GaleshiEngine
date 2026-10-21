@@ -4,7 +4,7 @@
 
 A minimalist game engine inspired by Unreal Engine 5 with ECS-based Scene Graph. The goal is a cross-platform editor with a Vulkan renderer, physics, AI, and Lua Scripting.
 
-Project is under prealpha state, renderer is still unstable and sometimes may hang your GPU, Use at own risk!
+Project is under prealpha state, renderer is still unstable and sometimes may hang your GPU. Use at own risk!
 ---
 
 ## Features
@@ -60,7 +60,6 @@ Navigation	RecastNavigation	zlib
 ECS	EnTT	MIT
 Logging	spdlog	MIT
 
-All dependencies are pulled via FetchContent on the first configuration. The first build takes 15 to 30 minutes (bgfx and Assimp); subsequent builds take seconds.
 
 ## Roadmap
 
