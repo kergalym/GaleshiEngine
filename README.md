@@ -70,14 +70,6 @@ Implemented post-processing passes:
 - Chromatic aberration
 - Invert
 
-The effects are ordered through fixed bgfx View IDs below 256. Individual passes can be enabled from the `Post-Process` menu. The full stack is tested with the deferred Vulkan path. For debugging, set `GALESHI_EFFECTS` to a bitmask: `1` SSAO, `2` SSR, `4` SMAA, `8` FXAA, `16` DoF, `32` Motion Blur, `64` Atmosphere, `128` God Rays, `256` TAA, `512` Bloom.
-
-Motion Blur follows the two-pass camera blur from [tobspr/renderpipeline](https://github.com/tobspr/renderpipeline): a velocity pass projects the G-buffer world position with the previous view-projection matrix, and a second pass applies jittered samples along that velocity. Velocity is clamped to 70 px and 0.5 px, scaled by frame delta, and weighted against the sample velocity to reduce bleeding. Sky pixels use a reconstructed far-plane point so camera rotation blurs the background as well. This is camera-only motion blur; per-object velocity is not generated yet.
-
-Depth of Field, Motion Blur, and Atmosphere submit fullscreen passes with explicit write state. The Atmosphere pass derives its ray direction relative to the scene camera and preserves the source sky when a ray misses the atmosphere shell.
-
-The Vulkan cubemap workaround used by bgfx is kept in `patches/bgfx-vulkan-cubemap-workaround.patch`. Re-apply it after recreating the build directory; see `patches/README.md` for details.
-
 ---
 
 ## Physics
@@ -262,36 +254,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 ## Known limitations
 
 - The renderer is pre-alpha and may crash or hang the GPU on some drivers.
-- Motion Blur uses camera velocity only; per-object motion vectors are not implemented.
-- Glass materials do not render: `m_glassProg` is not initialized in `RenderSystem`.
-- ImGuizmo is displayed but its transform is not applied.
-- Scene serialization is partial.
-- The standalone runtime and project loader are not implemented.
-- Packaged builds use the editor executable in `--game` mode.
-- SSR is an approximation, not a physically accurate reflection pass.
-- Point shadows are generated only for the first point light.
-- The deferred path supports up to 64 point lights; spot shadows support up to four lights.
-- Skeletal animation has no blending or state machine.
-- Audio is 2D only.
 - Linux/X11 is the only tested platform. Wayland is untested.
-- Instancing, occlusion culling, LOD, and dynamic resolution are not implemented.
-- There is no automated test suite.
-
-### Serialization gaps
-
-The scene serializer currently saves:
-
-- Name and parent relationship.
-- Transform.
-- Landscape data.
-- Mesh reference and primitive type (`cube` or `sphere`).
-- Material parameters and texture paths.
-- Skeletal animation state.
-- Directional and point lights.
-
-It does not save cameras, spot lights, audio sources, rigid bodies, colliders, NavMesh agents, AI controllers, soft bodies, Lua entities, or the glass flag.
-
----
 
 ## Roadmap
 
@@ -322,7 +285,6 @@ It does not save cameras, spot lights, audio sources, rigid bodies, colliders, N
 
 - [ ] Animation blending and state machines.
 - [ ] 3D audio and mixer buses.
-- [ ] Physics joints and constraints.
 - [ ] Improve AI with behavior trees and perception.
 
 ---
