@@ -1,26 +1,147 @@
-![alt](./screenshoots/initial3.png)
+![GaleshiEngine](./screenshoots/initial3.png)
 
 # GaleshiEngine
 
-A minimalist game engine inspired by Unreal Engine 5 with ECS-based Scene Graph. The goal is a cross-platform editor with a Vulkan renderer, physics, AI, and Lua Scripting.
+GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20. It targets Linux/X11 and uses a Vulkan renderer through bgfx. The project is intended as a compact engine for learning, prototyping, and building small games.
 
-Project is under prealpha state, renderer is still unstable and sometimes may hang your GPU. Use at own risk!
+> **Status: pre-alpha (0.2.0).** The editor and most engine subsystems are functional, but the renderer is still under active development. The full post-processing stack is not stable yet, and some editor tools are incomplete. The engine can crash or hang the GPU on some drivers. Use at your own risk.
+
 ---
 
 ## Features
 
-| System             | Status  | Library                              |
-| ------------------ | :-----: | ------------------------------------ |
-| Window and input   | Done    | SDL3                                 |
-| Renderer (Vulkan)  | Done    | bgfx + bimg + bx                     |
-| Editor UI          | Done    | Dear ImGui (docking)                 |
-| Gizmo              | Done    | ImGuizmo (linked, not wired)         |
-| PBR shader         | Done    | Basic model (Lambert + Blinn-Phong)  |
-| FBX/glTF import    | Done    | Assimp (linked)                      |
-| Scene / ECS        | Done    | EnTT (linked)                        |
-| Physics            | Done    | Jolt Physics (rigid + soft)          |
-| AI / NavMesh       | Done    | Recast and Detour                    |
-| Scripting          | WIP | Lua                                      |
+| System | Status | Notes |
+| --- | --- | --- |
+| Window and input | Working | SDL3 |
+| Scene and ECS | Working | EnTT, parent-child transforms, entity lifecycle |
+| Renderer core | Working | bgfx with the Vulkan backend |
+| Deferred PBR | Working | Metallic-roughness PBR with G-Buffer |
+| IBL | Working | Irradiance and prefiltered environment cubemaps |
+| Shadow maps | Working | 3-cascade directional PSSM, point and spot shadows |
+| Tiled light culling | Working | 16x16 tiles, up to 64 point lights in the deferred path |
+| Post-processing | Partial | Effects exist, but the full stack is not stable yet |
+| Physics | Working | Jolt rigid bodies and cloth/soft-body simulation |
+| AI and navigation | Working | Recast/Detour NavMesh and path following |
+| Scripting | Working | Lua 5.4 through sol2, hot reload |
+| Audio | Working | miniaudio, 2D playback and looping |
+| Asset import | Working | Assimp FBX/glTF, PBR materials, skeletal animation |
+| Editor | Working | Docking UI, viewport, outliner, details, content browser |
+| Gizmo | Partial | ImGuizmo is rendered, but its transform is not applied |
+| Glass material | WIP | Shader and UI flag exist, render pass is not connected |
+| Scene serialization | Partial | Only part of the ECS components is saved |
+| Runtime and packaging | Partial | Runtime target is a stub; packaging uses the editor binary |
+| Automated tests | None | `BUILD_TESTING` is disabled |
+
+---
+
+## Rendering
+
+The primary rendering path is deferred:
+
+- G-Buffer: albedo/metallic, normal/roughness, world position, and depth.
+- Metallic-roughness PBR: GGX distribution, Smith geometry, Schlick Fresnel.
+- IBL: generated irradiance and prefiltered environment cubemaps. The deferred lighting shader evaluates the split-sum BRDF analytically to stay within the Vulkan descriptor budget.
+- Directional shadows: three-cascade PSSM with log-linear split selection and tight orthographic projections.
+- Point shadows: a cubemap for the first point light.
+- Spot shadows: up to four spot lights.
+- Tiled light culling through a compute shader.
+- Frustum culling for scene meshes.
+- Skybox and debug line rendering.
+
+There is also a forward PBR fallback in `RenderSystem`, but the deferred path is the primary one and is enabled by default.
+
+Implemented post-processing passes:
+
+- SSAO
+- SSR, using an approximate screen-space raymarch
+- Bloom
+- TAA
+- SMAA
+- FXAA
+- Depth of Field
+- Motion Blur
+- Atmosphere
+- God Rays
+- ACES tonemapping
+- Color correction
+- Vignette
+- Chromatic aberration
+- Invert
+
+The effects are ordered through fixed bgfx View IDs below 256. Individual passes can be enabled from the `Post-Process` menu, but enabling the complete stack currently produces black frames on some configurations. Depth of Field can alternate between correct and black frames because the ping-pong framebuffers are not symmetric.
+
+The Vulkan cubemap workaround used by bgfx is kept in `patches/bgfx-vulkan-cubemap-workaround.patch`. Re-apply it after recreating the build directory; see `patches/README.md` for details.
+
+---
+
+## Physics
+
+- Jolt Physics 5.2.
+- Static, dynamic, and kinematic rigid bodies.
+- Box, sphere, and capsule shapes.
+- Gravity, impulses, linear velocity, and contact callbacks.
+- Transform synchronization from Jolt to ECS.
+- Cloth/soft-body grid simulation.
+- Multithreaded job system.
+
+Joint and constraint interfaces are not exposed yet.
+
+## AI and navigation
+
+- Recast/Detour NavMesh generation from scene meshes and landscape geometry.
+- Pathfinding between world-space points.
+- Nav agents that follow waypoint paths.
+- Per-entity Lua AI controllers with an `update_ai` callback.
+- Debug visualization of the generated NavMesh.
+
+This is basic pathfinding and path following. Behavior trees, perception, and squad logic are not implemented.
+
+## Scripting
+
+- Lua 5.4 with sol2.
+- Hot reload with F5.
+- Entity creation and destruction.
+- Transform access: `set_position`, `get_position`, `translate`.
+- Input queries and physics helpers.
+- Impulse and velocity control.
+- Sound playback.
+- Navigation commands for AI agents.
+- Entities created by scripts are tagged with `LuaEntityComponent` and removed on hot reload.
+
+## Audio
+
+- miniaudio.
+- File-based playback, looping, stopping, and playback state checks.
+- `AudioSourceComponent` in ECS.
+- Playback can be triggered from Lua, editor actions, or collision callbacks.
+
+The current implementation is 2D only. There is no spatial audio, mixer, or bus system.
+
+## Assets
+
+- Assimp import for FBX and glTF.
+- Meshes, PBR materials, and textures with caching.
+- Primitive cube, sphere, and capsule meshes.
+- Landscape mesh generation.
+- Skeletal animation with bone matrices.
+- PBR material parameters and texture slots.
+
+## Editor
+
+- Docking ImGui interface.
+- Viewport with orbit camera, selection, and drag movement.
+- World Outliner and Details panels.
+- Content Browser with model import.
+- Create entities, lights, physics primitives, cloth, landscape, and AI agents.
+- PBR material editing with Metal, Plastic, Rubber, and Gold presets.
+- Landscape sculpting.
+- NavMesh generation from the Create menu.
+- Undo/Redo through scene snapshots.
+- Scene save/load in JSON format.
+- Play/Stop mode with physics reset and scene restoration.
+- Debug overlay for grids, axes, light volumes, and NavMesh.
+
+The ImGuizmo manipulator is currently visual only. Dragging the center marker moves the selected object, but ImGuizmo's returned transform is not applied to the ECS.
 
 ---
 
@@ -28,119 +149,236 @@ Project is under prealpha state, renderer is still unstable and sometimes may ha
 
 ### Requirements
 
-- CMake 3.24 or newer (on CMake 4.x requires `CMAKE_POLICY_VERSION_MINIMUM=3.5`)
-- C++20 compiler (GCC 13+, Clang 15+, MSVC 19.35+)
-- Ninja (or Make)
-- Vulkan SDK (`vulkaninfo` must work)
-- SDL3 is pulled automatically via FetchContent
+- Linux/X11. The Wayland path is not tested.
+- CMake 3.24 or newer.
+- C++20 compiler: GCC 13+, Clang 15+, or MSVC 19.35+.
+- Ninja.
+- A working Vulkan driver and Vulkan SDK.
+- `shaderc` available in `PATH` or in the Vulkan SDK.
+- X11 development headers.
+- FreeType development files.
+- Network access during the first configure, because dependencies are fetched with FetchContent.
 
-## Linux 
+### Debug build
 
 ```bash
 git clone <repo> GaleshiEngine
 cd GaleshiEngine
 cmake --preset debug --fresh
-cmake --build --preset debug --target GaleshiEditor -j$(nproc)
-
-./build/debug/bin/GaleshiEditor
-or 
-./build/debug/bin/GaleshiEditor --debug
+cmake --build --preset debug -j"$(nproc)"
 ```
 
-## Third-Party Libraries
+Assets are copied to `build/debug/bin/assets`, and shaders are compiled automatically by the `CompileGaleshiShaders` target.
+
+If shaders need to be rebuilt manually:
+
+```bash
+bash scripts/compile_shaders.sh build/debug shaders build/debug/bin/shaders
+```
+
+### Running
+
+Run the editor from the binary directory so relative paths to `assets` and `shaders` resolve correctly:
+
+```bash
+cd build/debug/bin
+./GaleshiEditor
+```
+
+Optional flags:
+
+```bash
+./GaleshiEditor --debug
+./GaleshiEditor --game
+```
+
+`--debug` enables verbose logging. `--game` hides the editor panels and runs the viewport in game mode, but it still uses the editor executable.
+
+### Release build
+
+```bash
+cmake --preset release --fresh
+cmake --build --preset release -j"$(nproc)"
+cd build/release/bin
+./GaleshiEditor
+```
+
+### CLI helper
+
+The repository contains a small wrapper for packaging and running builds. It expects an existing debug build:
+
+```bash
+./galeshi package Game.gproj
+./galeshi run Game.gproj
+```
+
+The wrapper's `editor` command starts the binary from the repository root. Because the renderer loads `shaders/` and `assets/` relative to the working directory, use `cd build/debug/bin && ./GaleshiEditor` for direct editor launches.
+
+---
+
+## Project files and packaging
+
+A project file is a JSON document such as `Game.gproj`:
+
+```json
+{
+  "name": "MyGame",
+  "startScene": "scene.json"
+}
+```
+
+Packaging is experimental:
+
+```bash
+./galeshi package Game.gproj
+```
+
+The output is written to `build/package/<name>/` and includes the executable, assets, compiled shaders, scene, project file, and a `run.sh` launcher.
+
+Current limitation: packaging copies `GaleshiEditor` and runs it with `--game`. The dedicated `GaleshiRuntime` target exists but is only a stub. Game mode currently auto-loads `scene.json` from the working directory rather than a full project/start-scene loader.
+
+---
+
+## Controls
+
+| Input | Action |
+| --- | --- |
+| Right mouse drag | Orbit the editor camera |
+| Mouse wheel | Zoom |
+| Arrow keys | Pan the camera |
+| Left click | Select an entity |
+| Left drag on center marker | Move the selected entity |
+| W / E / R | Switch gizmo mode (translate / rotate / scale) |
+| F | Focus the camera on the selected entity |
+| Delete | Delete the selected entity |
+| Ctrl+I | Import a model |
+| Ctrl+S | Save the scene |
+| Ctrl+O | Load a scene |
+| Ctrl+Z / Ctrl+Y | Undo / Redo |
+| F5 | Hot-reload `assets/scripts/init.lua` |
+
+The ImGuizmo handles are visible, but only the center-marker drag currently modifies the scene.
+
+---
+
+## Project layout
+
+```text
+engine/        Engine library: ECS, renderer, physics, AI, audio, assets
+editor/        Editor executable and ImGui interface
+runtime/       Intended standalone runtime, currently a stub
+shaders/       GLSL shaders in bgfx .sc format
+assets/        Models, textures, sounds, and Lua scripts
+scripts/       Build and shader compilation helpers
+patches/       Local dependency patches, including the Vulkan cubemap fix
+cmake/         CMake dependency and warning helpers
+```
+
+---
+
+## Known limitations
+
+- The renderer is pre-alpha and may crash or hang the GPU on some drivers.
+- The complete post-processing stack can produce black frames.
+- Depth of Field can alternate between correct and black frames.
+- Glass materials do not render: `m_glassProg` is not initialized in `RenderSystem`.
+- ImGuizmo is displayed but its transform is not applied.
+- Scene serialization is partial.
+- The standalone runtime and project loader are not implemented.
+- Packaged builds use the editor executable in `--game` mode.
+- SSR is an approximation, not a physically accurate reflection pass.
+- Point shadows are generated only for the first point light.
+- The deferred path supports up to 64 point lights; spot shadows support up to four lights.
+- Skeletal animation has no blending or state machine.
+- Audio is 2D only.
+- Linux/X11 is the only tested platform. Wayland is untested.
+- Instancing, occlusion culling, LOD, and dynamic resolution are not implemented.
+- There is no automated test suite.
+
+### Serialization gaps
+
+The scene serializer currently saves:
+
+- Name and parent relationship.
+- Transform.
+- Landscape data.
+- Mesh reference and primitive type.
+- Material parameters and texture paths.
+- Skeletal animation state.
+- Directional and point lights.
+
+It does not save cameras, spot lights, audio sources, rigid bodies, colliders, NavMesh agents, AI controllers, soft bodies, Lua entities, or the glass flag.
+
+---
+
+## Roadmap
+
+### Stability
+
+- [ ] Fix the asymmetric ping-pong framebuffers used by post-processing.
+- [ ] Stabilize Depth of Field and the complete post-processing stack.
+- [ ] Run the Vulkan validation layers on all render passes.
+- [ ] Wire the glass render pass.
+- [ ] Apply ImGuizmo transforms to the ECS.
+
+### Editor and data
+
+- [ ] Complete scene serialization for all ECS components.
+- [ ] Add project/start-scene loading to game mode.
+- [ ] Implement the standalone `GaleshiRuntime`.
+- [ ] Add automated tests for ECS, serialization, physics, and rendering setup.
+
+### Rendering
+
+- [ ] Improve SSR quality and projection.
+- [ ] Add instancing for repeated meshes.
+- [ ] Add occlusion culling and LOD.
+- [ ] Tune PSSM bias and normal offsets.
+- [ ] Add TAA motion vectors.
+- [ ] Add quality scaling and dynamic resolution.
+
+### Content systems
+
+- [ ] Animation blending and state machines.
+- [ ] 3D audio and mixer buses.
+- [ ] Physics joints and constraints.
+- [ ] Improve AI with behavior trees and perception.
+
+---
+
+## Third-party libraries
 
 | Component | Library | License |
-|---|---|---|
-| Window / Input | [SDL3](https://github.com/libsdl-org/SDL) | zlib |
+| --- | --- | --- |
+| Window and input | [SDL3](https://github.com/libsdl-org/SDL) | zlib |
 | Rendering | [bgfx](https://github.com/bkaradzic/bgfx) | BSD-2-Clause |
+| Image loading | [bimg](https://github.com/bkaradzic/bimg) | BSD-2-Clause |
+| Base library | [bx](https://github.com/bkaradzic/bx) | BSD-2-Clause |
 | UI | [Dear ImGui](https://github.com/ocornut/imgui) | MIT |
 | Gizmo | [ImGuizmo](https://github.com/CedricGuillemet/ImGuizmo) | MIT |
 | Math | [GLM](https://github.com/g-truc/glm) | MIT |
-| Model Import | [Assimp](https://github.com/assimp/assimp) | BSD-3-Clause |
+| Model import | [Assimp](https://github.com/assimp/assimp) | BSD-3-Clause |
 | Physics | [Jolt Physics](https://github.com/jrouwe/JoltPhysics) | MIT |
 | Navigation | [RecastNavigation](https://github.com/recastnavigation/recastnavigation) | zlib |
 | ECS | [EnTT](https://github.com/skypjack/entt) | MIT |
 | Logging | [spdlog](https://github.com/gabime/spdlog) | MIT |
+| JSON | [nlohmann/json](https://github.com/nlohmann/json) | MIT |
+| Lua bindings | [sol2](https://github.com/ThePhD/sol2) | MIT |
+| Lua | [Lua](https://www.lua.org/) | MIT |
+| Audio | [miniaudio](https://github.com/mackron/miniaudio) | Public domain / MIT-0 |
+| Font rendering | [FreeType](https://freetype.org/) | FreeType License / GPLv2 |
 
+## Credits
 
-## Roadmap
+- bgfx for the renderer abstraction.
+- Dear ImGui for the editor tooling.
+- Jolt Physics for rigid bodies and soft bodies.
+- Recast and Detour for navigation.
+- The SSAO implementation follows the approach used by [tobspr/renderpipeline](https://github.com/tobspr/renderpipeline).
+- All library authors listed above.
 
-### P0 — Physics ↔ ECS
-- [✔] `PhysicsSystem::SyncTransformsToECS()` — read body positions from Jolt, write to `TransformComponent`
-- [✔] Call `SyncTransformsToECS()` from `OnUpdate()` after `PhysicsSystem::Update()`
-- [✔] Spawn test scene: 5 dynamic cubes (`CreateBox()` + `RigidBodyComponent`)
-- [✔] Verify cubes fall and settle on the floor
+## License
 
-### P1 — Scripting & Audio
-- [✔] Lua ↔ ECS: pass entity IDs from C++ to Lua (`new_entity()`)
-- [✔] Implement real `set_position(entity, x, y, z)` on `TransformComponent`
-- [✔] Add `get_position`, `translate` bindings
-- [✔] Hot-reload `init.lua` on keypress
-- [✔] `AudioSystem::PlaySound(path)` via miniaudio
-- [✔] `AudioSourceComponent` in ECS
-- [✔] Trigger sound on keypress / collision / script event
+MIT. See [LICENSE](LICENSE).
 
-### P2 — Post-processing
-- [✔] Off-screen FBO: color + depth + normal + position
-- [✔] `PostProcessManager::Render(fbo)` — takes scene textures
-
-
-### P3 — Navigation, Editor, Serialization
-- [✔] Recast NavMesh generation from `MeshComponent` scene
-- [✔] `NavAgentComponent` + Detour pathfinding
-- [✔] AI Controller in Lua (`RunAIScripts`, isolated `sol::environment` for per-agent state)
-- [✔] Scene hierarchy panel (drag & drop)
-- [✔] Inspector: edit `Transform`, `RigidBody`, `Mesh`
-- [ ] ImGuizmo translate/rotate/scale *(postponed — requires applying visModel to ECS)*
-- [✔] Undo/Redo (`m_history`, `m_historyIndex`)
-- [✔] `Scene::Save/Load(path)` via nlohmann/json (`*.gscn`)
-
-### P4 — Long-term
-- [✔] Multi-threaded ECS job system (integrated with `JPH::JobSystemThreadPool`)
-- [✔] Parallel skeletal animation (`Galeshi::ParallelFor` + `Barrier` API)
-- [✔] Asset pipeline: `.fbx` / `.gltf`
-- [✔] Advanced Material Property Panel (Metal/Plastic/Rubber/Gold presets, Normal Strength, Emissive Map)
-- [✔] Scripting over Lua
-- [✔] Packaging: `GaleshiEditor --package Game.gproj`
-- [✔] Standalone mode: `--game` (clean fullscreen without editor UI)
-- [✔] CLI: `galeshi build`, `galeshi run`, `galeshi package`, `galeshi editor`
-
-### P5 — Rendering & Optimization
-- [✔] Frustum Culling (`Frustum.hpp` — Gribb-Hartmann plane extraction + sphere test)
-- [ ] SSAO from depth + normal
-- [ ] SSR as optional pass
-- [ ] TAA / FXAA / SMAA selectable in UI *(FXAA stable; TAA/SMAA layout fixes moved to P5)*
-- [✔] PSSM (Parallel Split Shadow Maps) — 3 cascades, log-linear split scheme, tight ortho projections
-- [ ] Instancing (`bgfx::setInstanceDataBuffer` for cubes and other repeating meshes)
-- [ ] Occlusion Culling (Hi-Z or CPU raycast for large scenes)
-- [ ] TAA with Motion Vectors (via G-Buffer `s_motionVec`, ping-pong history + projection jitter)
-- [ ] SMAA (precomputed AreaTex/SearchTex + 3 passes)
-- [ ] LOD system (auto-switch `MeshComponent` by distance)
-- [ ] Bloom improvements (brightness threshold, multi-pass downsampling)
-- [ ] Shadow acne / peter-panning tuning in PSSM (bias + normal offset per cascade)
-- [ ] Mobile/quality scaling via BGFX `setViewRect` + dynamic resolution
-
-
-
-Known limitations
-
-    Linux/X11 only at the moment. The Wayland path in bgfx is untested.
-
-    PBR is currently basic: Lambert + Blinn-Phong, no IBL, no metallic/roughness maps.
-
-
-License
-
-MIT. See LICENSE.
-
-All third-party libraries are distributed under their own licenses (see the table above).
-Credits
-
-    bgfx for a solid cross-API renderer
-
-    Dear ImGui for the tooling that makes an editor possible
-
-    Jolt Physics for a modern physics engine with soft body support
-
-    All library authors listed above
-
+All third-party libraries are distributed under their own licenses.
