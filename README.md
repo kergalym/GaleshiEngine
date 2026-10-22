@@ -1,4 +1,4 @@
-![GaleshiEngine](./screenshoots/initial3.png)
+![GaleshiEngine](./screenshoots/initial4.png)
 
 # GaleshiEngine
 
