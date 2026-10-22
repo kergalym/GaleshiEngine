@@ -1,0 +1,39 @@
+diff --git a/src/renderer_vk.cpp b/src/renderer_vk.cpp
+index 44eb1ceec..ee7c266e6 100644
+--- a/src/renderer_vk.cpp
++++ b/src/renderer_vk.cpp
+@@ -6862,7 +6862,7 @@ retry:
+ 		}
+ 	}
+ 
+-	void TextureVK::resolve(VkCommandBuffer _commandBuffer, uint8_t _resolve, uint32_t _layer, uint32_t _numLayers, uint32_t _mip)
++	void TextureVK::resolve(VkCommandBuffer _commandBuffer, uint8_t _resolve, uint32_t _layer, uint32_t m_numSides, uint32_t _mip)
+ 	{
+ 		BGFX_PROFILER_SCOPE("TextureVK::resolve", kColorResource);
+ 
+@@ -6883,7 +6883,7 @@ retry:
+ 			|| m_type == VK_IMAGE_VIEW_TYPE_CUBE
+ 			|| m_type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY
+ 			? m_numSides
+-			: _numLayers
++			: m_numSides
+ 			;
+ 
+ 		if (needResolve)
+@@ -7090,6 +7090,16 @@ retry:
+ 		if (VK_IMAGE_VIEW_TYPE_CUBE       == _type
+ 		||  VK_IMAGE_VIEW_TYPE_CUBE_ARRAY == _type)
+ 		{
++			// [GaleshiEngine] BGFX bug workaround (issue #3236): callers of createView for cube
++			// views pass m_numLayers (cube count, e.g. 1) instead of face count (6*N).
++			// m_numSides is unreliable (may equal m_numLayers in this BGFX version), so
++			// normalize based on Vulkan spec: CUBE = 6 faces, CUBE_ARRAY = 6 * cubeCount.
++			if (VK_IMAGE_VIEW_TYPE_CUBE == _type || VK_IMAGE_VIEW_TYPE_CUBE_ARRAY == _type)
++			{
++				uint32_t const faceCount = (VK_IMAGE_VIEW_TYPE_CUBE_ARRAY == _type)
++				    ? (6u * m_numLayers) : 6u;
++				if (_numLayers != faceCount) { _numLayers = faceCount; }
++			}
+ 			BX_ASSERT(_numLayers % 6 == 0, "");
+ 			BX_ASSERT(
+ 				  VK_IMAGE_VIEW_TYPE_3D != m_type

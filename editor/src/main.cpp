@@ -51,6 +51,8 @@ class GaleshiEditorApp final : public Galeshi::Application {
     Galeshi::AudioSystem m_audio;
     Galeshi::ScriptEngine m_scripts;
     Galeshi::PostProcessManager m_postProcess;
+    bool m_iblGenerated = false;
+    glm::vec3 m_lastIblSun{999.0f, 999.0f, 999.0f};
 
 public:
     bool m_isGameMode = false;
@@ -196,14 +198,25 @@ protected:
         // --- Deferred effect enable (frame 2+) ---
         m_renderFrameCounter++;
         if (m_pendingEffectsEnable && m_renderFrameCounter >= 2) {
-            m_postProcess.SetSsaoEnabled(true);
-            m_postProcess.SetSsrEnabled(true);
+            // Temporary debug hook: GALESHI_EFFECTS is a bitmask used to
+            // bisect Vulkan layout problems. Without it every effect is on.
+            int effectMask = 0x3FF;
+            if (const char* env = std::getenv("GALESHI_EFFECTS")) {
+                effectMask = std::atoi(env);
+            }
+            m_postProcess.SetSsaoEnabled((effectMask & 1) != 0);
+            m_postProcess.SetSsrEnabled((effectMask & 2) != 0);
+            m_postProcess.SetSmaaEnabled((effectMask & 4) != 0);
+            m_postProcess.SetFxaaEnabled((effectMask & 8) != 0);
+            m_postProcess.SetDofEnabled((effectMask & 16) != 0);
+            m_postProcess.SetMotionBlurEnabled((effectMask & 32) != 0);
+            m_postProcess.SetAtmosphereEnabled((effectMask & 64) != 0);
+            m_postProcess.SetGodRaysEnabled((effectMask & 128) != 0);
+            m_postProcess.SetTaaEnabled((effectMask & 256) != 0);
+            m_postProcess.SetBloomEnabled((effectMask & 512) != 0);
             m_pendingEffectsEnable = false;
-            spdlog::info("[Effects] SSAO and SSR enabled on frame {}", m_renderFrameCounter);
-
-            // Generate IBL on frame 2 (after shadow maps are ready)
-            float defaultSun[4] = {-0.4f, -0.8f, -0.5f, 0.0f};
-            m_postProcess.GenerateIBL(defaultSun);
+            spdlog::info("[Effects] post-processing enabled on frame {} mask=0x{:x}",
+                         m_renderFrameCounter, effectMask);
         }
 
         // --- Auto-inserted physics update ---
@@ -414,6 +427,8 @@ private:
         ImGui::SameLine();
 
                 if (ImGui::BeginMenu("Post-Process")) {
+            bool bloom = m_postProcess.BloomEnabled();
+            if (ImGui::MenuItem("Bloom", nullptr, &bloom)) m_postProcess.SetBloomEnabled(bloom);
             bool inv = m_postProcess.InvertEnabled();
             if (ImGui::MenuItem("Invert Colors", nullptr, &inv)) m_postProcess.SetInvertEnabled(inv);
             bool fxaa = m_postProcess.FxaaEnabled();
@@ -424,14 +439,26 @@ private:
             if (ImGui::MenuItem("SMAA", nullptr, &smaa)) m_postProcess.SetSmaaEnabled(smaa);
             bool taa = m_postProcess.TaaEnabled();
             if (ImGui::MenuItem("TAA", nullptr, &taa)) m_postProcess.SetTaaEnabled(taa);
+
+            bool dof = m_postProcess.DofEnabled();
+            if (ImGui::MenuItem("Depth of Field", nullptr, &dof)) m_postProcess.SetDofEnabled(dof);
+
+            bool mb = m_postProcess.MotionBlurEnabled();
+            if (ImGui::MenuItem("Motion Blur", nullptr, &mb)) m_postProcess.SetMotionBlurEnabled(mb);
+
+            bool atmo = m_postProcess.AtmosphereEnabled();
+            if (ImGui::MenuItem("Atmosphere", nullptr, &atmo)) m_postProcess.SetAtmosphereEnabled(atmo);
+
+            bool gr = m_postProcess.GodRaysEnabled();
+            if (ImGui::MenuItem("Volumetric Light", nullptr, &gr)) m_postProcess.SetGodRaysEnabled(gr);
             bool ssr = m_postProcess.SsrEnabled();
             if (ImGui::MenuItem("SSR", nullptr, &ssr)) m_postProcess.SetSsrEnabled(ssr);
             ImGui::Separator();
             if (ImGui::MenuItem("Reset All Effects")) {
                 m_postProcess.SetInvertEnabled(false);
                 m_postProcess.SetFxaaEnabled(false);
-                m_postProcess.SetSsaoEnabled(true);
-                m_postProcess.SetSsrEnabled(true);
+                m_postProcess.SetSsaoEnabled(false); // DEBUG
+                m_postProcess.SetSsrEnabled(false); // DEBUG
             }
             ImGui::EndMenu();
         }
@@ -722,6 +749,15 @@ if (ImGui::BeginMenu("File")) {
 
         if (w > 0 && h > 0) {
             if (!m_framebuffer || m_framebuffer->Width() != w || m_framebuffer->Height() != h) {
+                // Recreating an FBO that bgfx still considers bound can make it
+                // skip the image-layout transition on the next bind (the new
+                // handle may reuse the old index). Touch the backbuffer first
+                // so the next view always binds a different framebuffer.
+                bgfx::setViewFrameBuffer(0, BGFX_INVALID_HANDLE);
+                bgfx::setViewRect(0, 0, 0, 1, 1);
+                bgfx::setViewClear(0, BGFX_CLEAR_NONE);
+                bgfx::touch(0);
+
                 if (!m_framebuffer) m_framebuffer = std::make_unique<Galeshi::Framebuffer>();
                 m_framebuffer->Resize(w, h);
             }
@@ -805,11 +841,12 @@ if (ImGui::BeginMenu("File")) {
                     glm::mat4 lightProj;
                     bx::mtxOrtho(glm::value_ptr(lightProj), minX, maxX, minY, maxY, -maxZ - 10.0f, -minZ + 10.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
                     
-                    if (i == 0) lightMtx0 = lightProj * lightView;
-                    else if (i == 1) lightMtx1 = lightProj * lightView;
-                    else lightMtx2 = lightProj * lightView;
+                    const glm::mat4 lightMtx = lightProj * lightView;
+                    if (i == 0) lightMtx0 = lightMtx;
+                    else if (i == 1) lightMtx1 = lightMtx;
+                    else lightMtx2 = lightMtx;
 
-                    m_render->RenderShadowMap(m_scene, lightMtx0, 6 + i, m_shadowFbos[i]);
+                    m_render->RenderShadowMap(m_scene, lightMtx, 2 + i, m_shadowFbos[i]);
                 }
             } else {
                 // Fallback (без света)
@@ -818,10 +855,11 @@ if (ImGui::BeginMenu("File")) {
                     glm::mat4 lightView = glm::lookAt(glm::vec3(0,20,0), glm::vec3(0), glm::vec3(0,1,0));
                     glm::mat4 lightProj;
                     bx::mtxOrtho(glm::value_ptr(lightProj), -15.0f, 15.0f, -15.0f, 15.0f, 0.1f, 50.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
-                    if (i == 0) lightMtx0 = lightProj * lightView;
-                    else if (i == 1) lightMtx1 = lightProj * lightView;
-                    else lightMtx2 = lightProj * lightView;
-                    m_render->RenderShadowMap(m_scene, lightMtx0, 6 + i, m_shadowFbos[i]);
+                    const glm::mat4 lightMtx = lightProj * lightView;
+                    if (i == 0) lightMtx0 = lightMtx;
+                    else if (i == 1) lightMtx1 = lightMtx;
+                    else lightMtx2 = lightMtx;
+                    m_render->RenderShadowMap(m_scene, lightMtx, 2 + i, m_shadowFbos[i]);
                 }
             }
 
@@ -830,8 +868,9 @@ if (ImGui::BeginMenu("File")) {
             if (plview.begin() != plview.end()) {
                 auto firstLight = *plview.begin();
                 auto& tc = plview.get<Galeshi::TransformComponent>(firstLight);
+
                 glm::vec3 lightPos = tc.position;
-                
+
                 glm::mat4 proj;
                 bx::mtxProj(glm::value_ptr(proj), 90.0f, 1.0f, 0.1f, 50.0f, bgfx::getCaps()->homogeneousDepth, bx::Handedness::Right);
                 glm::mat4 views[6] = {
@@ -844,7 +883,7 @@ if (ImGui::BeginMenu("File")) {
                 };
                 
                 for (int i = 0; i < 6; ++i) {
-                    m_render->RenderPointShadowMap(m_scene, proj * views[i], lightPos, 30 + i, m_postProcess.PointShadowFbo(i));
+                    m_render->RenderPointShadowMap(m_scene, proj * views[i], lightPos, 5 + i, m_postProcess.PointShadowFbo(i));
                 }
             }
 
@@ -865,7 +904,7 @@ if (ImGui::BeginMenu("File")) {
                 bx::mtxProj(glm::value_ptr(lightProj), fov, 1.0f, 0.1f, 50.0f, bgfx::getCaps()->homogeneousDepth, bx::Handedness::Right);
                 spotLightVPs[slIdx] = lightProj * lightView;
                 
-                m_render->RenderShadowMap(m_scene, spotLightVPs[slIdx], 40 + slIdx, m_postProcess.SpotShadowFbo(slIdx));
+                m_render->RenderShadowMap(m_scene, spotLightVPs[slIdx], 11 + slIdx, m_postProcess.SpotShadowFbo(slIdx));
                 slIdx++;
             }
 
@@ -886,13 +925,25 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 float camPos[4] = {cp.x, cp.y, cp.z, 1.0f};
                 float lDirA[4]  = {ldir.x, ldir.y, ldir.z, 0.0f};
                 float lColA[4]  = {lcol.r, lcol.g, lcol.b, lint};
+
+                // Rebuild the sky IBL when the sun direction changes. Views
+                // 190/200+ are sorted after the lighting pass, so the current
+                // frame uses the previous (already valid) cubemaps.
+                {
+                    glm::vec3 sunWorld = glm::normalize(-ldir);
+                    if (!m_iblGenerated || glm::distance(sunWorld, m_lastIblSun) > 0.02f) {
+                        m_postProcess.GenerateIBL(lDirA);
+                        m_lastIblSun = sunWorld;
+                        m_iblGenerated = true;
+                    }
+                }
                 
-                float plPosA[8][4] = {};
-                float plColA[8][4] = {};
+                float plPosA[64][4] = {};
+                float plColA[64][4] = {};
                 int plCount = 0;
                 auto plview = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::PointLightComponent>();
                 for (auto h : plview) {
-                    if (plCount >= 8) break;
+                    if (plCount >= 64) break;
                     auto& tc = plview.get<Galeshi::TransformComponent>(h);
                     auto& pl = plview.get<Galeshi::PointLightComponent>(h);
                     plPosA[plCount][0] = tc.position.x;
@@ -934,6 +985,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 glm::mat4 proj = m_camera.Projection();
                 glm::mat4 invProj = glm::inverse(proj);
                 glm::mat4 invViewProj = glm::inverse(proj * m_camera.View());
+                glm::mat4 currVP = proj * m_camera.View(); // True VP matrix for post-processing
                 
 
                 // Pass spot shadow matrices
@@ -953,6 +1005,14 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     if (slCount > 2) bgfx::setUniform(m_postProcess.u_spotLightVP2, glm::value_ptr(spotLightVPs[2]));
                     if (slCount > 3) bgfx::setUniform(m_postProcess.u_spotLightVP3, glm::value_ptr(spotLightVPs[3]));
                 }
+                // Ambient occlusion must be resolved before lighting so the
+                // result can modulate ambient/IBL and not replace final color.
+                if (m_postProcess.SsaoEnabled()) {
+                    m_postProcess.RenderSSAO(m_framebuffer->WorldPos(), m_framebuffer->Normal(),
+                                             m_camera.View(), proj, 15, w, h);
+                }
+
+                m_postProcess.RenderLightCulling(plCount, plPosA, currVP, w, h);
                 m_postProcess.RenderLighting(
                     m_framebuffer->Color(),
                     m_framebuffer->Normal(),
@@ -964,83 +1024,142 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     camPos, lDirA, lColA,
                     plPosA, plColA, plCount,
                     slPos, slDir, slCol, slCount,
-                    2, w, h);
+                    20, w, h);
 
+                // The post-processing passes are submitted in increasing view
+                // ID order. The ping-pong swaps happen on the CPU, so the call
+                // order must match the GPU view order exactly.
 
+                // 1. SSR (View 24)
+                if (m_postProcess.SsrEnabled()) {
+                    if (bgfx::isValid(m_postProcess.RenderSSR(
+                            m_postProcess.OutputTexture(), m_framebuffer->Normal(),
+                            m_framebuffer->Depth(), m_postProcess.PingFbo(),
+                            proj, invProj, camPos, 24, w, h))) {
+                        m_postProcess.SwapFbos();
+                    }
+                }
 
+                // 2. Motion Blur (View 25)
+                if (m_postProcess.MotionBlurEnabled()) {
+                    if (bgfx::isValid(m_postProcess.RenderMotionBlur(
+                            m_postProcess.OutputTexture(), m_framebuffer->Depth(),
+                            m_postProcess.GetPrevViewProj(), glm::inverse(currVP),
+                            m_postProcess.PingFbo(), 25, w, h))) {
+                        m_postProcess.SwapFbos();
+                    }
+                }
 
-                // Bloom + Tonemap (applied before SSAO/SSR to keep color space linear)
-                // m_postProcess.RenderBloom(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 25, w, h, 1.0f, 0.5f);
-                // m_postProcess.SwapFbos();
-                m_postProcess.RenderTonemap(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 16, w, h, 0.0f, 1.0f, 1.0f);
+                // 3. Atmosphere (View 26)
+                if (m_postProcess.AtmosphereEnabled()) {
+                    float sunDir[4] = { -lDirA[0], -lDirA[1], -lDirA[2], 20.0f };
+                    if (bgfx::isValid(m_postProcess.RenderAtmosphere(
+                            m_postProcess.OutputTexture(), m_framebuffer->Depth(),
+                            glm::inverse(currVP), sunDir, m_postProcess.PingFbo(),
+                            26, w, h))) {
+                        m_postProcess.SwapFbos();
+                    }
+                }
+
+                // 4. Volumetric Light / god rays (View 27)
+                if (m_postProcess.GodRaysEnabled()) {
+                    float sunDir[4] = { -lDirA[0], -lDirA[1], -lDirA[2], 20.0f };
+                    if (bgfx::isValid(m_postProcess.RenderGodRays(
+                            m_postProcess.OutputTexture(), m_framebuffer->Depth(),
+                            currVP, camPos, sunDir, m_postProcess.PingFbo(),
+                            27, w, h))) {
+                        m_postProcess.SwapFbos();
+                    }
+                }
+
+                // 5. Depth of Field (Views 28..31)
+                if (m_postProcess.DofEnabled()) {
+                    if (bgfx::isValid(m_postProcess.RenderDof(
+                            m_postProcess.OutputTexture(), m_framebuffer->Depth(),
+                            proj, invProj, m_postProcess.PingFbo(), 28, w, h,
+                            10.0f, 2.8f))) {
+                        m_postProcess.SwapFbos();
+                    }
+                }
+
+                // 6. Bloom (Views 32..35)
+                if (m_postProcess.BloomEnabled()) {
+                    if (bgfx::isValid(m_postProcess.RenderBloom(
+                            m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
+                            32, w, h, 1.2f, 0.8f))) {
+                        m_postProcess.SwapFbos();
+                    }
+                }
+
+                // 7. TAA (Views 36..37)
+                if (m_postProcess.TaaEnabled()) {
+                    if (bgfx::isValid(m_postProcess.RenderTaa(
+                            m_postProcess.OutputTexture(), m_framebuffer->Depth(),
+                            m_postProcess.GetPrevViewProj(), glm::inverse(currVP),
+                            m_postProcess.PingFbo(), 36, w, h))) {
+                        m_postProcess.SwapFbos();
+                    }
+                }
+
+                // 8. Tonemap (View 38)
+                m_postProcess.RenderTonemap(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 38, w, h, 1.0f, 1.0f, 1.0f);
                 m_postProcess.SwapFbos();
 
-                if (m_postProcess.SsaoEnabled()) {
-                    bgfx::TextureHandle depth = m_framebuffer->Depth();
-                    bgfx::TextureHandle normal = m_framebuffer->Normal();
-                    bgfx::TextureHandle color = m_postProcess.OutputTexture();
-                    m_postProcess.RenderSSAO(color, depth, normal,
-                        m_postProcess.PingFbo(), proj, invProj, 3, w, h);
-                    m_postProcess.SwapFbos();
-                }
-                if (m_postProcess.SsrEnabled()) {
-                    bgfx::TextureHandle depth = m_framebuffer->Depth();
-                    bgfx::TextureHandle normal = m_framebuffer->Normal();
-                    bgfx::TextureHandle color = m_postProcess.OutputTexture();
-                    m_postProcess.RenderSSR(color, normal, depth,
-                        m_postProcess.PingFbo(), invProj, camPos, 3, w, h);
-                    m_postProcess.SwapFbos();
-                }
+                // 9. Color Correction (View 39)
+                m_postProcess.RenderColorCorrection(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 39, w, h);
+                m_postProcess.SwapFbos();
 
+                // 10. Vignette (View 40)
+                m_postProcess.RenderVignette(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 40, w, h);
+                m_postProcess.SwapFbos();
+
+                // 11. Chromatic Aberration (View 41)
+                m_postProcess.RenderChromatic(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 41, w, h);
+                m_postProcess.SwapFbos();
+
+                // 12. SMAA (Views 42..43)
                 if (m_postProcess.SmaaEnabled()) {
-                    m_postProcess.RenderSmaa(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 19, w, h);
-                    m_postProcess.SwapFbos();
+                    if (bgfx::isValid(m_postProcess.RenderSmaa(
+                            m_postProcess.OutputTexture(), 42, w, h))) {
+                        m_postProcess.SwapFbos();
+                    }
                 }
 
-                if (m_postProcess.TaaEnabled()) {
-                    glm::mat4 prevVP = m_postProcess.GetPrevViewProj(); // Need to expose this
-                    glm::mat4 currVP = m_camera.Projection() * m_camera.View();
-                    m_postProcess.RenderTaa(m_postProcess.OutputTexture(), m_framebuffer->Depth(), prevVP, glm::inverse(currVP), m_postProcess.PingFbo(), 20, w, h);
-                    m_postProcess.SwapFbos();
-                    m_postProcess.SetPrevViewProj(currVP);
-                }
-
+                // 13. FXAA (View 44)
                 if (m_postProcess.FxaaEnabled()) {
-                    m_postProcess.RenderFxaa(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 25, w, h);
-                    m_postProcess.SwapFbos();
+                    if (bgfx::isValid(m_postProcess.RenderFxaa(
+                            m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
+                            44, w, h))) {
+                        m_postProcess.SwapFbos();
+                    }
                 }
 
+                // 14. Invert (View 45)
                 if (m_postProcess.InvertEnabled()) {
-                    m_postProcess.RenderInvert(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 25, w, h);
-                    m_postProcess.SwapFbos();
+                    if (bgfx::isValid(m_postProcess.RenderInvert(
+                            m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
+                            45, w, h))) {
+                        m_postProcess.SwapFbos();
+                    }
                 }
+
+                // Store the camera matrices for the next frame's motion blur
+                // and TAA reprojection (regardless of whether TAA is on).
+                m_postProcess.SetPrevViewProj(currVP);
             } else {
-                m_postProcess.Render(2, m_framebuffer->Color(), w, h);
-            }
-            
-            // Forward Pass для стекла (рисуется поверх)
-            if (m_postProcess.OutputFbo().idx != bgfx::kInvalidHandle) {
-                bgfx::setViewClear(23, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
-                bgfx::setViewFrameBuffer(23, m_postProcess.OutputFbo());
-                m_render->RenderGlass(m_scene, m_camera, 23, w, h);
+                // View 2 is reserved for the first directional shadow cascade.
+                m_postProcess.Render(46, m_framebuffer->Color(), w, h);
             }
         }
 
-        // Debug rendering (grid, navmesh, selection box)
-        if (m_debug && !m_isGameMode) {
+        // Debug rendering (View 49)
+        if (m_debug && !m_isGameMode && m_framebuffer) {
             m_debug->Begin();
-            
-            // Grid (100x100 на полу)
             m_debug->AddGrid(50.0f, 2.0f, {0.3f, 0.3f, 0.3f, 0.4f});
-            
-            // Оси в origin
             m_debug->AddAxes({0, 0.05f, 0}, 2.0f);
-            
-            // NavMesh debug (если есть)
             if (m_navSystem) {
                 const auto& navTris = m_navSystem->GetDebugTriangles();
                 if (!navTris.empty()) {
-                    // Просто рисуем как линии
                     for (size_t i = 0; i + 2 < navTris.size(); i += 3) {
                         const glm::vec4 c = {0.2f, 0.8f, 0.4f, 0.5f};
                         m_debug->AddLine(navTris[i], navTris[i+1], c);
@@ -1049,14 +1168,10 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     }
                 }
             }
-            
-            // Debug render for AI Agents
             auto navView = m_scene.Registry().view<Galeshi::NavAgentComponent, Galeshi::TransformComponent>();
             for (auto e : navView) {
                 auto& tc = navView.get<Galeshi::TransformComponent>(e);
                 auto& nav = navView.get<Galeshi::NavAgentComponent>(e);
-                
-                // Compute world position (walk up parents)
                 glm::vec3 worldPos = tc.position;
                 entt::entity curr = e;
                 int depth = 0;
@@ -1065,19 +1180,13 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     if (m_scene.Registry().all_of<Galeshi::TransformComponent>(curr))
                         worldPos += m_scene.Registry().get<Galeshi::TransformComponent>(curr).position;
                 }
-                
-                // Draw green box for agent (at world position)
                 m_debug->AddBox(worldPos, glm::vec3(0.5f), {0.2f, 1.0f, 0.2f, 1.0f});
-                
-                // Draw yellow path lines
                 glm::vec3 prev = worldPos;
                 for (const auto& pt : nav.path) {
                     m_debug->AddLine(prev, pt, {1.0f, 1.0f, 0.0f, 1.0f});
                     prev = pt;
                 }
             }
-
-            // Light Radius Visualization
             auto plviewViz = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::PointLightComponent>();
             for (auto e : plviewViz) {
                 auto& tc = plviewViz.get<Galeshi::TransformComponent>(e);
@@ -1092,7 +1201,6 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     m_debug->AddLine(tc.position + glm::vec3(cos(a1), sin(a1), 0)*r, tc.position + glm::vec3(cos(a2), sin(a2), 0)*r, c);
                 }
             }
-
             auto slviewViz = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::SpotLightComponent>();
             for (auto e : slviewViz) {
                 auto& tc = slviewViz.get<Galeshi::TransformComponent>(e);
@@ -1102,12 +1210,10 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 float outer = glm::radians(sl.outerConeAngle);
                 float coneR = tan(outer) * r;
                 glm::vec3 endPos = tc.position + dir * r;
-
                 glm::vec3 up = glm::vec3(0, 1, 0);
                 if (abs(dot(dir, up)) > 0.99f) up = glm::vec3(1, 0, 0);
                 glm::vec3 right = glm::normalize(glm::cross(dir, up));
                 glm::vec3 forward = glm::normalize(glm::cross(right, dir));
-
                 glm::vec4 c = {1.0f, 0.5f, 0.0f, 1.0f};
                 for (int i = 0; i < 16; ++i) {
                     float a1 = i * 2.0f * 3.14159f / 16.0f;
@@ -1118,32 +1224,46 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     m_debug->AddLine(p1, p2, c);
                 }
             }
-
-            // Selection box (вокруг выделенного)
             Galeshi::Entity sel = m_editor.Selected(&m_scene);
             if (sel && sel.HasComponent<Galeshi::TransformComponent>() && !sel.HasComponent<Galeshi::SkeletalComponent>()) {
                 auto& tc = sel.GetComponent<Galeshi::TransformComponent>();
                 m_debug->AddBox(tc.position, tc.scale + glm::vec3(0.1f), {1, 1, 0, 1});
             }
-            
-            if (m_postProcess.OutputFbo().idx != bgfx::kInvalidHandle) {
-                bgfx::setViewFrameBuffer(24, m_postProcess.OutputFbo());
-                m_debug->Render(m_camera, 24, w, h);
+            if (m_framebuffer && bgfx::isValid(m_framebuffer->Handle())) {
+                // Draw directly into the G-buffer FBO: it already owns the
+                // scene depth, and its color attachment has been filled with
+                // the post-processed image at view 47. The G-buffer color is
+                // no longer sampled after the lighting pass.
+                bgfx::setViewFrameBuffer(49, m_framebuffer->Handle());
+                m_debug->Render(m_camera, 49, w, h);
             }
         }
 
+        // Copy the final HDR color into the G-buffer color attachment, then
+        // blend the transparent layer over it (view 48, before debug at 49 and
+        // the ImGui blit at 50). Reusing the persistent G-buffer FBO avoids
+        // temporary FBOs whose attachment layout can get out of sync.
+        if (m_framebuffer && bgfx::isValid(m_framebuffer->Color()) &&
+            m_postProcess.OutputFbo().idx != bgfx::kInvalidHandle) {
+            m_postProcess.BlitTexture(m_postProcess.OutputTexture(), m_framebuffer->Color(), 47);
+            bgfx::setViewFrameBuffer(48, m_framebuffer->Handle());
+            bgfx::setViewRect(48, 0, 0, w, h);
+            m_render->RenderGlass(m_scene, m_camera, 48, w, h);
+        }
+
+        // Blit для ImGui (View 50)
         if (m_framebuffer && bgfx::isValid(m_framebuffer->Color())) {
-            bgfx::TextureHandle __ppTex = m_postProcess.OutputTexture();
-            bgfx::TextureHandle __disp = bgfx::isValid(__ppTex)
-                ? __ppTex : m_framebuffer->Color();
-            // Force a blit to a BLIT_DST texture to ensure correct image layout for ImGui (Vulkan)
+            bgfx::TextureHandle __ppTex = m_framebuffer->Color();
+            bgfx::TextureHandle __disp = bgfx::isValid(__ppTex) ? __ppTex : m_framebuffer->Color();
             if (bgfx::isValid(__ppTex)) {
-                m_postProcess.BlitTexture(__ppTex, m_postProcess.BlitTextureA(), 25);
+                m_postProcess.BlitTexture(__ppTex, m_postProcess.BlitTextureA(), 50);
                 __disp = m_postProcess.BlitTextureA();
             }
             ImTextureID texId = static_cast<ImTextureID>(__disp.idx);
             ImGui::Image(texId, ImVec2(static_cast<float>(w), static_cast<float>(h)), ImVec2(0, 0), ImVec2(1, 1));
-            
+        }
+
+        if (m_framebuffer && bgfx::isValid(m_framebuffer->Color())) {
             if (m_isGameMode) {
                 ImGui::End();
                 return; // Пропускаем гизмо и выделение мышью

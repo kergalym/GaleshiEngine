@@ -34,6 +34,9 @@ void RenderSystem::Init(AssetManager* assets) {
     m_gbufferProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_gbuffer.bin");
     m_shadowProg = ShaderManager::LoadProgram("shaders/vs_shadow.bin", "shaders/fs_shadow.bin");
     m_shadowPointProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_shadow_point.bin");
+    spdlog::info("[RenderSystem] programs: pbr={} gbuffer={} shadow={} shadowPoint={}",
+        bgfx::isValid(m_program), bgfx::isValid(m_gbufferProg),
+        bgfx::isValid(m_shadowProg), bgfx::isValid(m_shadowPointProg));
     u_shadowLightPos = bgfx::createUniform("u_shadowLightPos", bgfx::UniformType::Vec4);
     if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
 
@@ -89,7 +92,10 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
 
     bgfx::setViewTransform(viewId, glm::value_ptr(camera.View()), glm::value_ptr(camera.Projection()));
     bgfx::setViewRect(viewId, 0, 0, width, height);
-    bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x232629ff, 1.0f, 0);
+    // In deferred mode the G-buffer world position must be exactly zero for
+    // sky pixels; fs_lighting uses worldPos == 0 as the sky sentinel.
+    const uint32_t clearColor = (m_deferred && bgfx::isValid(m_gbufferProg)) ? 0x00000000u : 0x232629ffu;
+    bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, clearColor, 1.0f, 0);
 
     glm::vec3 lightDir{-0.4f, -0.8f, -0.5f}, lightCol{1.0f}, p = camera.Position();
     float lightInt = 1.2f;

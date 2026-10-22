@@ -25,8 +25,9 @@ bool Framebuffer::Create(uint16_t w, uint16_t h) {
 
     const uint64_t flags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
 
-    // RT0: albedo.rgb + metallic.a
-    m_color = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags);
+    // RT0: albedo.rgb + metallic.a. It also receives the final post-processed
+    // image for the transparent/debug overlay pass, so it must be a blit dst.
+    m_color = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags | BGFX_TEXTURE_BLIT_DST);
     // RT1: normal.xyz encoded + roughness.a
     m_normal = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags);
     // RT2: worldPos.xyz (F16 for precision)

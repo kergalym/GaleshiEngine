@@ -1,4 +1,4 @@
-$input v_worldPos, v_normal, v_uv
+$input v_worldPos, v_normal, v_tangent, v_uv
 #include <bgfx_shader.sh>
 uniform vec4 u_cameraPosition;
 void main()

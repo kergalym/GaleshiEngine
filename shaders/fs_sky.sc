@@ -3,7 +3,7 @@ $input v_texcoord0
 uniform mat4 u_skyCustomInvVP; // Renamed to avoid BGFX reserved names
 uniform vec4 u_skySunDir;
 void main() {
-    vec2 ndc = v_texcoord0 * 2.0 - 1.0;
+    vec2 ndc = vec2(v_texcoord0.x * 2.0 - 1.0, 1.0 - v_texcoord0.y * 2.0);
     vec4 clip = vec4(ndc, 1.0, 1.0);
     vec4 world = mul(u_skyCustomInvVP, clip);
     vec3 dir = normalize(world.xyz / max(world.w, 0.000001));

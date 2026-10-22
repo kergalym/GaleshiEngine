@@ -1,25 +1,27 @@
 $input v_texcoord0
 #include <bgfx_shader.sh>
 
-SAMPLER2D(s_color, 0);
-SAMPLER2D(s_normalRough, 1);
-SAMPLER2D(s_depth, 2);
+SAMPLER2D(s_texColor, 0);
+SAMPLER2D(s_ssrNormal, 1);
+SAMPLER2D(s_texDepth, 2);
 
 uniform mat4 u_ssrInvProj;
+uniform mat4 u_ssrProj;
 uniform vec4 u_cameraPosition;
 uniform vec4 u_texelSize;
 
 vec3 getViewPos(vec2 uv, float depth) {
-    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    vec4 clip = vec4(ndc, depth, 1.0);
     vec4 view = mul(u_ssrInvProj, clip);
     return view.xyz / view.w;
 }
 
 void main() {
     vec2 uv = v_texcoord0;
-    vec4 col = texture2D(s_color, uv);
-    vec4 nR = texture2D(s_normalRough, uv);
-    float depth = texture2D(s_depth, uv).r;
+    vec4 col = texture2D(s_texColor, uv);
+    vec4 nR = texture2D(s_ssrNormal, uv);
+    float depth = texture2D(s_texDepth, uv).r;
 
     // Фон — просто возвращаем
     if (depth >= 0.9999) { gl_FragColor = col; return; }
@@ -62,7 +64,7 @@ void main() {
         if (sampleUV.x < 0.0 || sampleUV.x > 1.0 ||
             sampleUV.y < 0.0 || sampleUV.y > 1.0) break;
 
-        float sampleDepth = texture2D(s_depth, sampleUV).r;
+        float sampleDepth = texture2D(s_texDepth, sampleUV).r;
         if (sampleDepth >= 0.9999) continue;
 
         vec3 samplePos = getViewPos(sampleUV, sampleDepth);
@@ -71,7 +73,7 @@ void main() {
         float dz = samplePos.z - rayPos.z;
         if (dz > 0.0 && dz < 1.0) {
             hit = true;
-            hitColor = texture2D(s_color, sampleUV).rgb;
+            hitColor = texture2D(s_texColor, sampleUV).rgb;
             hitFade = 1.0 - t; // Плавное затухание на дальних расстояниях
             break;
         }

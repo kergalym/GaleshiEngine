@@ -1,9 +1,9 @@
 $input v_texcoord0
 #include <bgfx_shader.sh>
 
-SAMPLER2D(s_color, 0);
+SAMPLER2D(s_texColor, 0);
 SAMPLER2D(s_history, 1);
-SAMPLER2D(s_depth, 2);
+SAMPLER2D(s_texDepth, 2);
 
 uniform mat4 u_prevViewProj;
 uniform mat4 u_taaInvViewProj;
@@ -12,8 +12,8 @@ uniform vec4 u_taaTexelSize; // xy = 1/width, 1/height
 
 void main() {
     vec2 uv = v_texcoord0;
-    vec4 current = texture2D(s_color, uv);
-    float depth = texture2D(s_depth, uv).r;
+    vec4 current = texture2D(s_texColor, uv);
+    float depth = texture2D(s_texDepth, uv).r;
     
     // Фон (небо) не нужно сглаживать, отдаем как есть
     if (depth >= 0.9999) { 
@@ -22,11 +22,12 @@ void main() {
     }
     
     // Reproject using depth (Vulkan: Z in [0,1], so we don't flip Y)
-    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 clip = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
     vec4 world = mul(u_taaInvViewProj, clip);
     world.xyz /= max(world.w, 0.000001);
     vec4 prevClip = mul(u_prevViewProj, world);
-    vec2 prevUV = (prevClip.xy / max(prevClip.w, 0.000001)) * 0.5 + 0.5;
+    vec2 prevUV = vec2((prevClip.x / max(prevClip.w, 0.000001)) * 0.5 + 0.5,
+                       0.5 - (prevClip.y / max(prevClip.w, 0.000001)) * 0.5);
     
     // Если точка вышла за экран, отдаем текущий кадр
     if (prevUV.x < 0.0 || prevUV.x > 1.0 || prevUV.y < 0.0 || prevUV.y > 1.0) {
@@ -42,7 +43,7 @@ void main() {
     vec2 texel = u_taaTexelSize.xy;
     for(int i = -1; i <= 1; ++i) {
         for(int j = -1; j <= 1; ++j) {
-            vec3 c = texture2D(s_color, uv + vec2(float(i), float(j)) * texel).rgb;
+            vec3 c = texture2D(s_texColor, uv + vec2(float(i), float(j)) * texel).rgb;
             minC = min(minC, c);
             maxC = max(maxC, c);
         }

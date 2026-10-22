@@ -295,7 +295,11 @@ int Application::Run() {
 
         m_impl->renderer->BeginFrame();
         OnRender();
-        ImGuiBgfx::Render(m_impl->renderer->NextViewId());
+        // ImGui must use a fixed view ID. NextViewId() walks through the
+        // whole 10..250 range and eventually collides with manually assigned
+        // post-process views (42/43 are SMAA), causing ImGui to render into
+        // the SMAA edge FBO and sample it as a shader resource.
+        ImGuiBgfx::Render(51);
         m_impl->renderer->EndFrame();
     }
 
