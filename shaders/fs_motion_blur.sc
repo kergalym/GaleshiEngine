@@ -1,42 +1,57 @@
 $input v_texcoord0
 #include <bgfx_shader.sh>
 
+// Camera motion blur, adapted from the RenderPipeline motion_blur plugin.
+// The velocity target stores the per-pixel screen-space delta. Samples are
+// distributed along the velocity vector and weighted by how well the sample
+// velocity aligns with the center velocity. This suppresses bleeding from
+// pixels moving in different directions.
+
 SAMPLER2D(s_texColor, 0);
-SAMPLER2D(s_texDepth, 1);
-uniform mat4 u_mbPrevVP;
-uniform mat4 u_mbInvVP;
-uniform vec4 u_motionBlurParams; // x = intensity
+SAMPLER2D(s_mbVelocity, 1);
+uniform vec4 u_motionBlurParams; // x = maxVelocityUV, y = minVelocityUV, z = viewportWidth
+
+float hash12(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
 
 void main() {
-    float depth = texture2D(s_texDepth, v_texcoord0).r;
-    if (depth >= 0.9999) {
-        gl_FragColor = texture2D(s_texColor, v_texcoord0);
+    vec2 uv = v_texcoord0;
+    vec4 center = texture2D(s_texColor, uv);
+    vec2 velocity = texture2D(s_mbVelocity, uv).xy;
+
+    float velocityLen = length(velocity);
+    if (velocityLen < u_motionBlurParams.y) {
+        gl_FragColor = center;
         return;
     }
 
-    vec4 clip = vec4(v_texcoord0 * 2.0 - 1.0, depth, 1.0);
-    vec4 world = mul(u_mbInvVP, clip);
-    world.xyz /= world.w;
-
-    vec4 prevClip = mul(u_mbPrevVP, world);
-    prevClip.xy /= prevClip.w;
-    vec2 prevUV = vec2(prevClip.x * 0.5 + 0.5, 0.5 - prevClip.y * 0.5);
-
-    vec2 velocity = (v_texcoord0 - prevUV) * u_motionBlurParams.x;
-    float speed = length(velocity);
-
-    if (speed < 0.001) {
-        gl_FragColor = texture2D(s_texColor, v_texcoord0);
-        return;
+    if (velocityLen > u_motionBlurParams.x) {
+        velocity *= u_motionBlurParams.x / velocityLen;
+        velocityLen = u_motionBlurParams.x;
     }
 
-    vec4 sum = vec4(0.0);
-    float wsum = 0.0;
-    for (int i = -4; i <= 4; ++i) {
-        float w = 1.0 - abs(float(i)) / 5.0;
-        vec2 uv = v_texcoord0 + velocity * (float(i) / 4.0);
-        sum += texture2D(s_texColor, uv) * w;
-        wsum += w;
+    const int numSamples = 12;
+    float jitter = hash12(gl_FragCoord.xy);
+
+    // A small center weight guarantees a non-zero denominator and keeps the
+    // original pixel from disappearing when all sample weights are low.
+    float weightSum = 1e-3;
+    vec3 accum = center.rgb * weightSum;
+
+    for (int i = -numSamples + 1; i < numSamples; ++i) {
+        vec2 offset = (float(i) + 0.5 * jitter) / float(numSamples) * velocity;
+        vec2 sampleUV = clamp(uv + offset, vec2(0.0), vec2(1.0));
+        vec2 sampleVelocity = texture2D(s_mbVelocity, sampleUV).xy;
+
+        float weight = saturate(dot(sampleVelocity, velocity) *
+                                u_motionBlurParams.z * 3.0);
+        accum += texture2D(s_texColor, sampleUV).rgb * weight;
+        weightSum += weight;
     }
-    gl_FragColor = sum / wsum;
+
+    accum /= max(weightSum, 1e-3);
+    gl_FragColor = vec4(max(accum, vec3(0.0)), 1.0);
 }

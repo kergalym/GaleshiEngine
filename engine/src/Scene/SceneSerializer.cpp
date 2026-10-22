@@ -123,6 +123,7 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
             const int mi = jm.value("meshIndex", 0);
             std::shared_ptr<Mesh> mesh;
             if (prim == "cube") mesh = m_assets.CreateCubeMesh();
+            else if (prim == "sphere") mesh = m_assets.CreateSphereMesh();
             else if (!src.empty()) {
                 auto model = m_assets.LoadModel(src);
                 if (mi >= 0 && mi < (int)model.meshes.size()) mesh = model.meshes[mi];

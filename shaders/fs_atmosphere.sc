@@ -4,6 +4,7 @@ $input v_texcoord0
 SAMPLER2D(s_texColor, 0);
 SAMPLER2D(s_texDepth, 1);
 uniform mat4 u_atmoInvVP;
+uniform vec4 u_cameraPosition; // xyz = camera position in world space
 uniform vec4 u_atmoSunDir; // xyz = direction, w = intensity
 uniform vec4 u_atmoParams; // x = planetRadius, y = atmosphereRadius, z = rayleighScaleHeight, w = mieScaleHeight
 
@@ -33,14 +34,23 @@ void main() {
     vec2 ndc = vec2(v_texcoord0.x * 2.0 - 1.0, 1.0 - v_texcoord0.y * 2.0);
     vec4 clip = vec4(ndc, 1.0, 1.0);
     vec4 world = mul(u_atmoInvVP, clip);
-    vec3 rd = normalize(world.xyz / world.w);
+    if (abs(world.w) < 1e-5) {
+        gl_FragColor = texture2D(s_texColor, v_texcoord0);
+        return;
+    }
+    vec3 farWorld = world.xyz / world.w;
+    // The atmosphere is a distant model, so only the view direction matters.
+    // Derive it relative to the actual scene camera, not the world origin.
+    vec3 rd = normalize(farWorld - u_cameraPosition.xyz);
 
     // Позиция камеры (условно 1000 м над поверхностью планеты)
     vec3 ro = vec3(0.0, u_atmoParams.x + 1000.0, 0.0);
 
     float tAtmo, tAtmoMax;
     if (!raySphereIntersect(ro, rd, u_atmoParams.y, tAtmo, tAtmoMax)) {
-        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); // Космос
+        // The ray missed the atmosphere shell (possible for upward rays).
+        // Keep the already rendered sky instead of replacing it with black.
+        gl_FragColor = texture2D(s_texColor, v_texcoord0);
         return;
     }
     tAtmo = max(tAtmo, 0.0);

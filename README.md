@@ -6,7 +6,7 @@
 
 GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20. It targets Linux/X11 and uses a Vulkan renderer through bgfx. The project is intended as a compact engine for learning, prototyping, and building small games.
 
-> **Status: pre-alpha (0.2.0).** The editor and most engine subsystems are functional, but the renderer is still under active development. The full post-processing stack is not stable yet, and some editor tools are incomplete. The engine can crash or hang the GPU on some drivers. Use at your own risk.
+> **Status: pre-alpha (0.2.0).** The editor and most engine subsystems are functional, but the renderer is still under active development. The post-processing stack is functional on the tested Vulkan path, and some editor tools are incomplete. The engine can crash or hang the GPU on some drivers. Use at your own risk.
 
 ---
 
@@ -21,7 +21,7 @@ GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20
 | IBL | Working | Irradiance and prefiltered environment cubemaps |
 | Shadow maps | Working | 3-cascade directional PSSM, point and spot shadows |
 | Tiled light culling | Working | 16x16 tiles, up to 64 point lights in the deferred path |
-| Post-processing | Partial | Effects exist, but the full stack is not stable yet |
+| Post-processing | Working | DoF, motion blur, atmosphere, and the full stack are tested; effects can be isolated with `GALESHI_EFFECTS` |
 | Physics | Working | Jolt rigid bodies and cloth/soft-body simulation |
 | AI and navigation | Working | Recast/Detour NavMesh and path following |
 | Scripting | Working | Lua 5.4 through sol2, hot reload |
@@ -70,7 +70,11 @@ Implemented post-processing passes:
 - Chromatic aberration
 - Invert
 
-The effects are ordered through fixed bgfx View IDs below 256. Individual passes can be enabled from the `Post-Process` menu, but enabling the complete stack currently produces black frames on some configurations. Depth of Field can alternate between correct and black frames because the ping-pong framebuffers are not symmetric.
+The effects are ordered through fixed bgfx View IDs below 256. Individual passes can be enabled from the `Post-Process` menu. The full stack is tested with the deferred Vulkan path. For debugging, set `GALESHI_EFFECTS` to a bitmask: `1` SSAO, `2` SSR, `4` SMAA, `8` FXAA, `16` DoF, `32` Motion Blur, `64` Atmosphere, `128` God Rays, `256` TAA, `512` Bloom.
+
+Motion Blur follows the two-pass camera blur from [tobspr/renderpipeline](https://github.com/tobspr/renderpipeline): a velocity pass projects the G-buffer world position with the previous view-projection matrix, and a second pass applies jittered samples along that velocity. Velocity is clamped to 70 px and 0.5 px, scaled by frame delta, and weighted against the sample velocity to reduce bleeding. Sky pixels use a reconstructed far-plane point so camera rotation blurs the background as well. This is camera-only motion blur; per-object velocity is not generated yet.
+
+Depth of Field, Motion Blur, and Atmosphere submit fullscreen passes with explicit write state. The Atmosphere pass derives its ray direction relative to the scene camera and preserves the source sky when a ray misses the atmosphere shell.
 
 The Vulkan cubemap workaround used by bgfx is kept in `patches/bgfx-vulkan-cubemap-workaround.patch`. Re-apply it after recreating the build directory; see `patches/README.md` for details.
 
@@ -135,6 +139,8 @@ The current implementation is 2D only. There is no spatial audio, mixer, or bus 
 - World Outliner and Details panels.
 - Content Browser with model import.
 - Create entities, lights, physics primitives, cloth, landscape, and AI agents.
+- `Testing -> Build Scene` rebuilds the PBR test scene: 12 colored spheres (3 albedo samples and a 3x3 metallic/roughness grid) plus the physics demo objects and ground.
+- When `scene.json` is missing, the editor starts with an empty scene; the test scene is not built automatically.
 - PBR material editing with Metal, Plastic, Rubber, and Gold presets.
 - Landscape sculpting.
 - NavMesh generation from the Create menu.
@@ -256,8 +262,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 ## Known limitations
 
 - The renderer is pre-alpha and may crash or hang the GPU on some drivers.
-- The complete post-processing stack can produce black frames.
-- Depth of Field can alternate between correct and black frames.
+- Motion Blur uses camera velocity only; per-object motion vectors are not implemented.
 - Glass materials do not render: `m_glassProg` is not initialized in `RenderSystem`.
 - ImGuizmo is displayed but its transform is not applied.
 - Scene serialization is partial.
@@ -279,7 +284,7 @@ The scene serializer currently saves:
 - Name and parent relationship.
 - Transform.
 - Landscape data.
-- Mesh reference and primitive type.
+- Mesh reference and primitive type (`cube` or `sphere`).
 - Material parameters and texture paths.
 - Skeletal animation state.
 - Directional and point lights.
@@ -292,8 +297,6 @@ It does not save cameras, spot lights, audio sources, rigid bodies, colliders, N
 
 ### Stability
 
-- [ ] Fix the asymmetric ping-pong framebuffers used by post-processing.
-- [ ] Stabilize Depth of Field and the complete post-processing stack.
 - [ ] Run the Vulkan validation layers on all render passes.
 - [ ] Wire the glass render pass.
 - [ ] Apply ImGuizmo transforms to the ECS.
@@ -311,6 +314,7 @@ It does not save cameras, spot lights, audio sources, rigid bodies, colliders, N
 - [ ] Add instancing for repeated meshes.
 - [ ] Add occlusion culling and LOD.
 - [ ] Tune PSSM bias and normal offsets.
+- [ ] Add per-object motion vectors for Motion Blur.
 - [ ] Add TAA motion vectors.
 - [ ] Add quality scaling and dynamic resolution.
 
@@ -351,7 +355,7 @@ It does not save cameras, spot lights, audio sources, rigid bodies, colliders, N
 - Dear ImGui for the editor tooling.
 - Jolt Physics for rigid bodies and soft bodies.
 - Recast and Detour for navigation.
-- The SSAO implementation follows the approach used by [tobspr/renderpipeline](https://github.com/tobspr/renderpipeline).
+- The SSAO and camera motion blur implementations follow the approach used by [tobspr/renderpipeline](https://github.com/tobspr/renderpipeline).
 - All library authors listed above.
 
 ## License

@@ -327,8 +327,10 @@ void PostProcessManager::Init() {
         // --- DoF uniforms ---
         u_dofParams    = bgfx::createUniform("u_dofParams",    bgfx::UniformType::Vec4);
         u_motionBlurParams = bgfx::createUniform("u_motionBlurParams", bgfx::UniformType::Vec4);
+        u_mbVelocityParams = bgfx::createUniform("u_mbVelocityParams", bgfx::UniformType::Vec4);
         u_mbPrevVP = bgfx::createUniform("u_mbPrevVP", bgfx::UniformType::Mat4);
         u_mbInvVP  = bgfx::createUniform("u_mbInvVP",  bgfx::UniformType::Mat4);
+        s_mbVelocity = bgfx::createUniform("s_mbVelocity", bgfx::UniformType::Sampler);
         u_atmoInvVP = bgfx::createUniform("u_atmoInvVP", bgfx::UniformType::Mat4);
         u_atmoSunDir = bgfx::createUniform("u_atmoSunDir", bgfx::UniformType::Vec4);
         u_atmoParams = bgfx::createUniform("u_atmoParams", bgfx::UniformType::Vec4);
@@ -350,14 +352,16 @@ void PostProcessManager::Init() {
         m_dofBlurProg      = createFsProg("shaders/fs_dof_blur.bin");
         m_dofCompositeProg = createFsProg("shaders/fs_dof_composite.bin");
         m_motionBlurProg   = createFsProg("shaders/fs_motion_blur.bin");
+        m_mbVelocityProg   = createFsProg("shaders/fs_motion_blur_velocity.bin");
         m_atmosphereProg   = createFsProg("shaders/fs_atmosphere.bin");
         m_godraysProg      = createFsProg("shaders/fs_godrays.bin");
 
         if (!bgfx::isValid(m_dofCocProg) || !bgfx::isValid(m_dofBlurProg) || !bgfx::isValid(m_dofCompositeProg))
             spdlog::warn("[PP] DoF shaders not all loaded — DoF disabled");
-        spdlog::info("[PP] effects: dof={}/{}/{} mb={} atmo={} godrays={}",
+        spdlog::info("[PP] effects: dof={}/{}/{} mb={}/{} atmo={} godrays={}",
             bgfx::isValid(m_dofCocProg), bgfx::isValid(m_dofBlurProg), bgfx::isValid(m_dofCompositeProg),
-            bgfx::isValid(m_motionBlurProg), bgfx::isValid(m_atmosphereProg), bgfx::isValid(m_godraysProg));
+            bgfx::isValid(m_motionBlurProg), bgfx::isValid(m_mbVelocityProg),
+            bgfx::isValid(m_atmosphereProg), bgfx::isValid(m_godraysProg));
     }
 
     spdlog::info("[PP] programs: ssr={} smaa={}/{} bloom={}/{}/{} tonemap={} color={} vig={} chroma={} fxaa={} taa={} sky={} ibl={}/{}/{} brdf={}",
@@ -490,12 +494,15 @@ void PostProcessManager::Shutdown() {
     destroyProg(m_ssrProg); destroyProg(m_taaProg);
     destroyProg(m_dofCocProg); destroyProg(m_dofBlurProg); destroyProg(m_dofCompositeProg);
     destroyProg(m_motionBlurProg);
+    destroyProg(m_mbVelocityProg);
     destroyProg(m_atmosphereProg);
     destroyProg(m_godraysProg);
     destroyUni(u_sunScreenPos); destroyUni(u_godraysParams);
     destroyUni(u_atmoInvVP); destroyUni(u_atmoSunDir); destroyUni(u_atmoParams);
     destroyUni(u_mbPrevVP); destroyUni(u_mbInvVP);
-    destroyUni(u_motionBlurParams);
+    destroyUni(u_motionBlurParams); destroyUni(u_mbVelocityParams); destroyUni(s_mbVelocity);
+    if (bgfx::isValid(m_mbVelocityFbo)) bgfx::destroy(m_mbVelocityFbo);
+    if (bgfx::isValid(m_mbVelocityTex)) bgfx::destroy(m_mbVelocityTex);
     destroyUni(u_dofParams); destroyUni(u_dofTexelSize); destroyUni(u_dofDir);
     destroyUni(s_dofColor); destroyUni(s_dofDepth); destroyUni(s_dofBlur); destroyUni(s_dofCoc);
     if (bgfx::isValid(m_dofCocFbo))   bgfx::destroy(m_dofCocFbo);
@@ -627,6 +634,8 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
     if (bgfx::isValid(m_outputDepth)) bgfx::destroy(m_outputDepth);
     if (bgfx::isValid(m_pingFbo))     bgfx::destroy(m_pingFbo);
     if (bgfx::isValid(m_pingColor))   bgfx::destroy(m_pingColor);
+    if (bgfx::isValid(m_mbVelocityFbo)) bgfx::destroy(m_mbVelocityFbo);
+    if (bgfx::isValid(m_mbVelocityTex)) bgfx::destroy(m_mbVelocityTex);
         if (bgfx::isValid(m_blitTexA))    bgfx::destroy(m_blitTexA);
     if (bgfx::isValid(m_smaaColorTex)) bgfx::destroy(m_smaaColorTex);
     if (bgfx::isValid(m_blitTexB))    bgfx::destroy(m_blitTexB);
@@ -652,6 +661,11 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
     m_pingColor = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags | BGFX_TEXTURE_BLIT_DST);
     bgfx::TextureHandle pingAtt[] = { m_pingColor };
     m_pingFbo = bgfx::createFrameBuffer(1, pingAtt, false);
+
+    // --- Motion blur velocity (full resolution) ---
+    m_mbVelocityTex = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F,
+        flags | BGFX_TEXTURE_BLIT_DST);
+    m_mbVelocityFbo = bgfx::createFrameBuffer(1, &m_mbVelocityTex, false);
 
     // --- Bloom (half resolution) ---
     const uint16_t bw = (uint16_t)glm::max(1u, (unsigned)(w / 2));
@@ -1228,7 +1242,8 @@ bgfx::TextureHandle PostProcessManager::RenderGodRays(bgfx::TextureHandle color,
 }
 
 bgfx::TextureHandle PostProcessManager::RenderAtmosphere(bgfx::TextureHandle color, bgfx::TextureHandle depth,
-                                                          const glm::mat4& invVP, const float sunDir[4],
+                                                          const glm::mat4& invVP, const float camPos[4],
+                                                          const float sunDir[4],
                                                           bgfx::FrameBufferHandle target,
                                                           bgfx::ViewId viewId, uint16_t w, uint16_t h) {
     if (!bgfx::isValid(m_atmosphereProg)) return BGFX_INVALID_HANDLE;
@@ -1238,32 +1253,66 @@ bgfx::TextureHandle PostProcessManager::RenderAtmosphere(bgfx::TextureHandle col
     bgfx::setTexture(0, s_texColor, color);
     bgfx::setTexture(1, s_texDepth, depth);
     bgfx::setUniform(u_atmoInvVP, glm::value_ptr(invVP));
+    bgfx::setUniform(u_camPos, camPos);
     bgfx::setUniform(u_atmoSunDir, sunDir);
     float params[4] = { 6371e3f, 6471e3f, 8000.0f, 1200.0f };
     bgfx::setUniform(u_atmoParams, params);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId, m_atmosphereProg);
     return m_pingColor;
 }
 
-bgfx::TextureHandle PostProcessManager::RenderMotionBlur(bgfx::TextureHandle color, bgfx::TextureHandle depth,
+bgfx::TextureHandle PostProcessManager::RenderMotionBlur(bgfx::TextureHandle color, bgfx::TextureHandle worldPos,
                                                          const glm::mat4& prevVP, const glm::mat4& invVP,
                                                          bgfx::FrameBufferHandle target,
-                                                         bgfx::ViewId viewId, uint16_t w, uint16_t h) {
-    if (!bgfx::isValid(m_motionBlurProg)) return BGFX_INVALID_HANDLE;
-    bgfx::setViewFrameBuffer(viewId, target);
-    bgfx::setViewRect(viewId, 0, 0, w, h);
-    bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR, 0x000000ff);
-    bgfx::setTexture(0, s_texColor, color);
-    bgfx::setTexture(1, s_texDepth, depth);
+                                                         bgfx::ViewId velocityViewId, bgfx::ViewId blurViewId,
+                                                         uint16_t w, uint16_t h, float frameDelta) {
+    if (!bgfx::isValid(m_motionBlurProg) || !bgfx::isValid(m_mbVelocityProg) ||
+        !bgfx::isValid(m_mbVelocityFbo) || !bgfx::isValid(m_mbVelocityTex)) {
+        return BGFX_INVALID_HANDLE;
+    }
+
+    // Reference: RenderPipeline motion_blur plugin. The camera velocity is
+    // computed first into an RGBA16F target, then the color is blurred along
+    // that velocity. This keeps per-sample velocity lookups cheap and avoids
+    // reconstructing world positions for every blur tap.
+    float dt = frameDelta;
+    if (dt < (1.0f / 1000.0f)) dt = (1.0f / 1000.0f);
+    if (dt > 0.1f) dt = 0.1f;
+    // RenderPipeline scales velocity by (1/60) / frame_delta and by a
+    // user-facing camera blur factor (0.4 by default).
+    float velocityScale = 0.4f * (1.0f / 60.0f) / dt;
+
+    // View [velocityViewId]: camera velocity in UV space.
+    bgfx::setViewFrameBuffer(velocityViewId, m_mbVelocityFbo);
+    bgfx::setViewRect(velocityViewId, 0, 0, w, h);
+    bgfx::setViewClear(velocityViewId, BGFX_CLEAR_COLOR, 0x00000000);
+    bgfx::setTexture(0, s_worldPos, worldPos);
     bgfx::setUniform(u_mbPrevVP, glm::value_ptr(prevVP));
     bgfx::setUniform(u_mbInvVP, glm::value_ptr(invVP));
-    float params[4] = { 5.0f, 0.0f, 0.0f, 0.0f };
-    bgfx::setUniform(u_motionBlurParams, params);
+    float velParams[4] = { velocityScale, 0.0f, 0.0f, 0.0f };
+    bgfx::setUniform(u_mbVelocityParams, velParams);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
-    bgfx::submit(viewId, m_motionBlurProg);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+    bgfx::submit(velocityViewId, m_mbVelocityProg);
+
+    // View [blurViewId]: jittered camera blur. maxVelocity/minVelocity are
+    // expressed in UV units, matching RenderPipeline's 70px and 0.5px limits.
+    bgfx::setViewFrameBuffer(blurViewId, target);
+    bgfx::setViewRect(blurViewId, 0, 0, w, h);
+    bgfx::setViewClear(blurViewId, BGFX_CLEAR_COLOR, 0x000000ff);
+    bgfx::setTexture(0, s_texColor, color);
+    bgfx::setTexture(1, s_mbVelocity, m_mbVelocityTex);
+    float blurParams[4] = { 70.0f / (float)w, 0.5f / (float)w, (float)w, 0.0f };
+    bgfx::setUniform(u_motionBlurParams, blurParams);
+    bgfx::setVertexBuffer(0, m_vbh);
+    bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+    bgfx::submit(blurViewId, m_motionBlurProg);
+
     return m_pingColor;
 }
 
@@ -1297,6 +1346,7 @@ bgfx::TextureHandle PostProcessManager::RenderDof(bgfx::TextureHandle color, bgf
     bgfx::setUniform(u_dofParams, dofParams);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId, m_dofCocProg);
 
     // View [viewId+1]: H blur
@@ -1311,6 +1361,7 @@ bgfx::TextureHandle PostProcessManager::RenderDof(bgfx::TextureHandle color, bgf
     bgfx::setUniform(u_dofDir, dirH);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId + 1, m_dofBlurProg);
 
     // View [viewId+2]: V blur
@@ -1324,6 +1375,7 @@ bgfx::TextureHandle PostProcessManager::RenderDof(bgfx::TextureHandle color, bgf
     bgfx::setUniform(u_dofDir, dirV);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId + 2, m_dofBlurProg);
 
     // View [viewId+3]: composite
@@ -1335,6 +1387,7 @@ bgfx::TextureHandle PostProcessManager::RenderDof(bgfx::TextureHandle color, bgf
     bgfx::setTexture(2, s_dofBlur, m_dofBlurTexB);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId + 3, m_dofCompositeProg);
 
     return m_pingColor;

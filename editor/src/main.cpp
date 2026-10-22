@@ -162,7 +162,8 @@ protected:
         m_browser    = std::make_unique<Galeshi::ContentBrowser>("assets");
         m_serializer = std::make_unique<Galeshi::SceneSerializer>(m_scene, *m_assets);
 
-        // Авто-загрузка сцены, если есть. Иначе — тестовая сцена.
+        // Авто-загрузка сцены, если есть. Тестовая сцена строится вручную
+        // через меню Testing -> Build Scene.
         namespace fs = std::filesystem;
         if (fs::exists("scene.json")) {
             if (m_serializer->Load("scene.json")) {
@@ -177,10 +178,10 @@ protected:
                     }
                 }
             } else {
-                BuildTestScene();
+                spdlog::warn("[Editor] Failed to load scene.json; starting with an empty scene");
             }
         } else {
-            BuildTestScene();
+            spdlog::info("[Editor] scene.json not found; use Testing -> Build Scene to create the test scene");
         }
 
         // Первый снапшот для Undo/Redo
@@ -241,6 +242,7 @@ protected:
         // --- End auto-inserted ---
 
         m_time += dt;
+        m_frameDelta = dt;
         m_scripts.RunAIScripts(m_scene, dt);
         Galeshi::AISystem::Update(m_scene, dt, m_navSystem.get());
         m_scripts.Update(dt);
@@ -467,13 +469,6 @@ if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Load Scene", "Ctrl+O")) LoadScene();
                 if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveScene();
             ImGui::Separator();
-            if (ImGui::MenuItem("Reset Scene")) {
-                m_editor.ClearSelection();
-                m_scene.Registry().clear();
-                BuildTestScene();
-                PushHistory();
-            }
-            ImGui::Separator();
             if (ImGui::MenuItem("Exit")) std::exit(0);
             ImGui::EndMenu();
         }
@@ -613,6 +608,18 @@ if (ImGui::BeginMenu("File")) {
                 auto& tc = e.GetComponent<Galeshi::TransformComponent>();
                 tc.position = {0, 3, 0};
                 m_editor.Select(e);
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Testing")) {
+            if (ImGui::MenuItem("Build Scene")) {
+                m_editor.ClearSelection();
+                m_editor.isPlaying = false;
+                m_physics->Reset();
+                m_scene.Registry().clear();
+                BuildTestScene();
+                PushHistory();
             }
             ImGui::EndMenu();
         }
@@ -1040,12 +1047,12 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     }
                 }
 
-                // 2. Motion Blur (View 25)
-                if (m_postProcess.MotionBlurEnabled()) {
+                // 2. Motion Blur (velocity view 23, blur view 25)
+                if (m_postProcess.MotionBlurEnabled() && m_postProcess.HasPrevViewProj()) {
                     if (bgfx::isValid(m_postProcess.RenderMotionBlur(
-                            m_postProcess.OutputTexture(), m_framebuffer->Depth(),
+                            m_postProcess.OutputTexture(), m_framebuffer->WorldPos(),
                             m_postProcess.GetPrevViewProj(), glm::inverse(currVP),
-                            m_postProcess.PingFbo(), 25, w, h))) {
+                            m_postProcess.PingFbo(), 23, 25, w, h, m_frameDelta))) {
                         m_postProcess.SwapFbos();
                     }
                 }
@@ -1055,7 +1062,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     float sunDir[4] = { -lDirA[0], -lDirA[1], -lDirA[2], 20.0f };
                     if (bgfx::isValid(m_postProcess.RenderAtmosphere(
                             m_postProcess.OutputTexture(), m_framebuffer->Depth(),
-                            glm::inverse(currVP), sunDir, m_postProcess.PingFbo(),
+                            glm::inverse(currVP), camPos, sunDir, m_postProcess.PingFbo(),
                             26, w, h))) {
                         m_postProcess.SwapFbos();
                     }
@@ -2015,6 +2022,16 @@ void DrawDetails() {
         return e;
     }
 
+    Galeshi::Entity MakeSphere(const std::string& name, glm::vec3 pos) {
+        auto e = m_scene.CreateEntity(name);
+        auto mesh = m_assets->CreateSphereMesh();
+        e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ mesh, "", "sphere" });
+        auto mat = std::make_shared<Galeshi::Material>();
+        e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+        e.GetComponent<Galeshi::TransformComponent>().position = pos;
+        return e;
+    }
+
     // -------------------------------------------------------------------
     // Spawn a cube with a Jolt rigid body attached.
     // Always use this for physics cubes — it wires RigidBodyComponent,
@@ -2089,11 +2106,76 @@ void DrawDetails() {
             rb.motionType = Galeshi::RigidBodyComponent::MotionType::Static;
             rb.bodyId = m_physics->CreateBox(glm::vec3(100.0f, 10.0f, 100.0f) * 0.5f, ground.GetComponent<Galeshi::TransformComponent>().position, static_cast<entt::entity>(ground), true);
         }
-        // Кубки Dynamic (как PhysicsCube) — падают с y=3.0 на землю
-        auto spawnDynamicCube = [this](const std::string& name, glm::vec3 pos, glm::vec3 color) {
+        // --- PBR material test grid ---
+        // Front row: albedo comparison. Next three rows: metallic sweep
+        // (0.0 / 0.5 / 1.0) against roughness sweep (0.05 / 0.35 / 0.80).
+        // Every sphere has its own base colour; the material values remain
+        // visible in the entity name and the Details panel.
+        m_editor.camTarget = {0.0f, 0.8f, 0.0f};
+        m_editor.camYaw = 0.30f;
+        m_editor.camPitch = 0.55f;
+        m_editor.camRadius = 8.0f;
+
+        const float sphereScale = 1.2f;
+        const float sphereY = sphereScale * 0.5f;
+        const float xSpacing = 2.8f;
+        const float zSpacing = 1.8f;
+        const float albedoRowZ = 2.7f;
+        const float metallicRowZ = 0.9f;
+
+        const float metallicValues[3] = {0.0f, 0.5f, 1.0f};
+        const float roughnessValues[3] = {0.05f, 0.35f, 0.8f};
+        const char* metallicLabels[3] = {"M00", "M50", "M100"};
+        const char* roughnessLabels[3] = {"R05", "R35", "R80"};
+        const char* albedoLabels[3] = {"Red", "Green", "Blue"};
+        const glm::vec3 albedoTestColors[3] = {
+            {0.85f, 0.18f, 0.14f},
+            {0.18f, 0.65f, 0.25f},
+            {0.15f, 0.35f, 0.85f},
+        };
+        const glm::vec3 metallicColors[3][3] = {
+            {{0.92f, 0.48f, 0.12f}, {0.88f, 0.78f, 0.18f}, {0.10f, 0.62f, 0.58f}},
+            {{0.78f, 0.24f, 0.70f}, {0.16f, 0.68f, 0.86f}, {0.56f, 0.82f, 0.22f}},
+            {{1.00f, 0.77f, 0.34f}, {0.95f, 0.64f, 0.54f}, {0.82f, 0.84f, 0.88f}},
+        };
+
+        auto makePbrSphere = [this, sphereScale](const std::string& name, glm::vec3 pos,
+                                                 glm::vec3 albedo, float metallic, float roughness) {
+            auto e = MakeSphere(name, pos);
+            e.GetComponent<Galeshi::TransformComponent>().scale = glm::vec3(sphereScale);
+            auto& mat = *e.GetComponent<Galeshi::MaterialComponent>().material;
+            mat.name = name + "_Material";
+            mat.albedoFactor = glm::vec4(albedo, 1.0f);
+            mat.metallicFactor = metallic;
+            mat.roughnessFactor = roughness;
+            return e;
+        };
+
+        for (int col = 0; col < 3; ++col) {
+            const float x = (static_cast<float>(col) - 1.0f) * xSpacing;
+            const std::string name = std::string("PBR_Albedo_") + albedoLabels[col];
+            makePbrSphere(name, {x, sphereY, albedoRowZ}, albedoTestColors[col], 0.0f, 0.35f);
+        }
+
+        for (int row = 0; row < 3; ++row) {
+            for (int col = 0; col < 3; ++col) {
+                const float x = (static_cast<float>(col) - 1.0f) * xSpacing;
+                const float z = metallicRowZ - static_cast<float>(row) * zSpacing;
+                const std::string name = std::string("PBR_") + metallicLabels[row] + "_" + roughnessLabels[col];
+                makePbrSphere(name, {x, sphereY, z}, metallicColors[row][col],
+                              metallicValues[row], roughnessValues[col]);
+            }
+        }
+
+        // Keep a small dynamic physics demo off to the side of the PBR grid.
+        auto spawnDynamicCube = [this](const std::string& name, glm::vec3 pos, glm::vec3 color,
+                                       float metallic = 0.0f, float roughness = 0.5f) {
             auto e = MakeCube(name, pos);
             auto& mat = *e.GetComponent<Galeshi::MaterialComponent>().material;
+            mat.name = name + "_Material";
             mat.albedoFactor = glm::vec4(color, 1.0f);
+            mat.metallicFactor = metallic;
+            mat.roughnessFactor = roughness;
             auto& tf = e.GetComponent<Galeshi::TransformComponent>();
             auto& rb = e.AddComponent<Galeshi::RigidBodyComponent>();
             rb.motionType = Galeshi::RigidBodyComponent::MotionType::Dynamic;
@@ -2101,9 +2183,9 @@ void DrawDetails() {
             rb.bodyId = m_physics->CreateBox(tf.scale * 0.5f, pos, static_cast<entt::entity>(e), false);
             return e;
         };
-        spawnDynamicCube("Cube_Orange", { 0.0f, 3.0f, 0.0f}, {0.85f, 0.55f, 0.25f});
-        spawnDynamicCube("Cube_Metal",  {-2.5f, 3.5f, 0.0f}, {0.95f, 0.95f, 0.95f});
-        spawnDynamicCube("Cube_Rough",  { 2.5f, 4.0f, 0.0f}, {0.30f, 0.55f, 0.85f});
+        spawnDynamicCube("Physics_Orange", { 6.0f, 3.0f, -1.0f}, {0.85f, 0.55f, 0.25f}, 0.0f, 0.6f);
+        spawnDynamicCube("Physics_White",  { 6.0f, 4.2f, -1.0f}, {0.95f, 0.95f, 0.95f}, 1.0f, 0.15f);
+        spawnDynamicCube("Physics_Blue",   { 6.0f, 5.4f, -1.0f}, {0.30f, 0.55f, 0.85f}, 0.0f, 0.8f);
 
 
         auto pl = m_scene.CreateEntity("PointLight");
@@ -2117,6 +2199,7 @@ void DrawDetails() {
     Galeshi::Camera         m_camera;
     Galeshi::EditorState    m_editor;
     float                   m_time = 0.0f;
+    float                   m_frameDelta = 1.0f / 60.0f;
     int                     m_renderFrameCounter = 0;
     bool                    m_pendingEffectsEnable = false;
 

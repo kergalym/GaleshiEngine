@@ -78,15 +78,16 @@ public:
     void SetGodRaysEnabled(bool v) { m_godraysEnabled = v; }
     bool GodRaysEnabled() const { return m_godraysEnabled; }
     bgfx::TextureHandle RenderAtmosphere(bgfx::TextureHandle color, bgfx::TextureHandle depth,
-                                           const glm::mat4& invVP, const float sunDir[4],
+                                           const glm::mat4& invVP, const float camPos[4], const float sunDir[4],
                                            bgfx::FrameBufferHandle target,
                                            bgfx::ViewId viewId, uint16_t w, uint16_t h);
     void SetAtmosphereEnabled(bool v) { m_atmosphereEnabled = v; }
     bool AtmosphereEnabled() const { return m_atmosphereEnabled; }
-    bgfx::TextureHandle RenderMotionBlur(bgfx::TextureHandle color, bgfx::TextureHandle depth,
+    bgfx::TextureHandle RenderMotionBlur(bgfx::TextureHandle color, bgfx::TextureHandle worldPos,
                                               const glm::mat4& prevVP, const glm::mat4& invVP,
                                               bgfx::FrameBufferHandle target,
-                                              bgfx::ViewId viewId, uint16_t w, uint16_t h);
+                                              bgfx::ViewId velocityViewId, bgfx::ViewId blurViewId,
+                                              uint16_t w, uint16_t h, float frameDelta);
     void SetMotionBlurEnabled(bool v) { m_motionBlurEnabled = v; }
     bool MotionBlurEnabled() const { return m_motionBlurEnabled; }
     bgfx::TextureHandle RenderDof(bgfx::TextureHandle color, bgfx::TextureHandle depth,
@@ -109,7 +110,8 @@ public:
     bgfx::UniformHandle u_spotLightVP2 = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_spotLightVP3 = BGFX_INVALID_HANDLE;
     glm::mat4 GetPrevViewProj() const { return m_prevViewProj; }
-    void SetPrevViewProj(const glm::mat4& m) { m_prevViewProj = m; }
+    bool HasPrevViewProj() const { return m_prevViewProjValid; }
+    void SetPrevViewProj(const glm::mat4& m) { m_prevViewProj = m; m_prevViewProjValid = true; }
 
 bgfx::TextureHandle EnvScratch() const { return m_envScratch; }
     bgfx::FrameBufferHandle EnvScratchFbo() const { return m_envScratchFbo; }
@@ -254,6 +256,7 @@ private:
     bgfx::TextureHandle m_historyColor = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_historyFbo = BGFX_INVALID_HANDLE;
     glm::mat4 m_prevViewProj{1.0f};
+    bool m_prevViewProjValid = false;
     bgfx::ProgramHandle m_skyProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_iblGenProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_irradianceConvProg = BGFX_INVALID_HANDLE;
@@ -284,6 +287,7 @@ private:
     bgfx::FrameBufferHandle m_dofBlurFboB = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_dofCocProg       = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_motionBlurProg = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_mbVelocityProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_atmosphereProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_godraysProg = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_sunScreenPos = BGFX_INVALID_HANDLE;
@@ -294,8 +298,12 @@ private:
     bgfx::UniformHandle u_atmoParams = BGFX_INVALID_HANDLE;
     bool m_atmosphereEnabled = false;
     bgfx::UniformHandle u_motionBlurParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_mbVelocityParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_mbPrevVP = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_mbInvVP  = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_mbVelocity = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_mbVelocityTex = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_mbVelocityFbo = BGFX_INVALID_HANDLE;
     bool m_motionBlurEnabled = false;
     bgfx::ProgramHandle m_dofBlurProg      = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_dofCompositeProg = BGFX_INVALID_HANDLE;

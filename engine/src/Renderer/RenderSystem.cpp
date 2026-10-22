@@ -238,7 +238,6 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
     glm::mat4 view = glm::mat4(1.0f);
     bgfx::setViewTransform(viewId, glm::value_ptr(view), glm::value_ptr(lightMtx));
 
-    int renderedCount = 0;
     auto viewIter = scene.Registry().view<TransformComponent, MeshComponent>();
     for (auto h : viewIter) {
         const auto& mc = viewIter.get<MeshComponent>(h);
@@ -261,9 +260,7 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
         bgfx::setIndexBuffer(mc.mesh->IB());
         bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
         bgfx::submit(viewId, m_shadowProg);
-        renderedCount++;
     }
-    spdlog::info("[Shadow] viewId={} rendered {} meshes", viewId, renderedCount);
 }
 
 
