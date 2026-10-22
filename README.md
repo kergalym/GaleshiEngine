@@ -168,21 +168,14 @@ cmake --preset debug --fresh
 cmake --build --preset debug -j"$(nproc)"
 ```
 
-Assets are copied to `build/debug/bin/assets`, and shaders are compiled automatically by the `CompileGaleshiShaders` target.
-
-If shaders need to be rebuilt manually:
-
 ```bash
 bash scripts/compile_shaders.sh build/debug shaders build/debug/bin/shaders
 ```
 
 ### Running
 
-Run the editor from the binary directory so relative paths to `assets` and `shaders` resolve correctly:
-
 ```bash
-cd build/debug/bin
-./GaleshiEditor
+./build/debug/bin/GaleshiEditor
 ```
 
 Optional flags:
@@ -199,8 +192,7 @@ Optional flags:
 ```bash
 cmake --preset release --fresh
 cmake --build --preset release -j"$(nproc)"
-cd build/release/bin
-./GaleshiEditor
+./build/debug/bin/GaleshiEditor
 ```
 
 ### CLI helper
@@ -258,23 +250,6 @@ Current limitation: packaging copies `GaleshiEditor` and runs it with `--game`. 
 | F5 | Hot-reload `assets/scripts/init.lua` |
 
 The ImGuizmo handles are visible, but only the center-marker drag currently modifies the scene.
-
----
-
-## Project layout
-
-```text
-engine/        Engine library: ECS, renderer, physics, AI, audio, assets
-editor/        Editor executable and ImGui interface
-runtime/       Intended standalone runtime, currently a stub
-shaders/       GLSL shaders in bgfx .sc format
-assets/        Models, textures, sounds, and Lua scripts
-scripts/       Build and shader compilation helpers
-patches/       Local dependency patches, including the Vulkan cubemap fix
-cmake/         CMake dependency and warning helpers
-```
-
----
 
 ## Known limitations
 
