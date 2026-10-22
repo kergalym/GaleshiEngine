@@ -225,10 +225,6 @@ Packaging is experimental:
 ./galeshi package Game.gproj
 ```
 
-The output is written to `build/package/<name>/` and includes the executable, assets, compiled shaders, scene, project file, and a `run.sh` launcher.
-
-Current limitation: packaging copies `GaleshiEditor` and runs it with `--game`. The dedicated `GaleshiRuntime` target exists but is only a stub. Game mode currently auto-loads `scene.json` from the working directory rather than a full project/start-scene loader.
-
 ---
 
 ## Controls
