@@ -69,6 +69,72 @@ public:
 
 protected:
     // -------------------------------------------------------------------
+    // Scene path helpers
+    // -------------------------------------------------------------------
+    static std::filesystem::path FindProjectRoot() {
+        namespace fs = std::filesystem;
+        fs::path dir = fs::current_path();
+        for (int depth = 0; depth < 8; ++depth) {
+            std::error_code ec;
+            if (fs::exists(dir / "Game.gproj", ec) ||
+                fs::exists(dir / "CMakePresets.json", ec)) {
+                return dir;
+            }
+            const fs::path parent = dir.parent_path();
+            if (parent.empty() || parent == dir) break;
+            dir = parent;
+        }
+        return fs::current_path();
+    }
+
+    static std::filesystem::path LastSceneStateFile() {
+        namespace fs = std::filesystem;
+        fs::path base;
+        if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg && *xdg) {
+            base = xdg;
+        } else if (const char* home = std::getenv("HOME"); home && *home) {
+            base = fs::path(home) / ".config";
+        } else {
+            base = fs::current_path();
+        }
+        return base / "galeshi" / "last_scene.txt";
+    }
+
+    static std::string ReadLastScenePath() {
+        std::ifstream in(LastSceneStateFile());
+        if (!in.is_open()) return {};
+        std::string path;
+        std::getline(in, path);
+        const auto first = path.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) return {};
+        const auto last = path.find_last_not_of(" \t\r\n");
+        return path.substr(first, last - first + 1);
+    }
+
+    static void WriteLastScenePath(const std::string& path) {
+        namespace fs = std::filesystem;
+        const fs::path stateFile = LastSceneStateFile();
+        std::error_code ec;
+        fs::create_directories(stateFile.parent_path(), ec);
+        std::ofstream out(stateFile, std::ios::trunc);
+        if (out.is_open()) out << path << '\n';
+    }
+
+    std::string SceneStartDirectory() const {
+        namespace fs = std::filesystem;
+        if (!m_currentScenePath.empty()) {
+            const fs::path parent = fs::path(m_currentScenePath).parent_path();
+            std::error_code ec;
+            if (!parent.empty() && fs::exists(parent, ec)) return parent.string();
+        }
+        const fs::path projectRoot = FindProjectRoot();
+        std::error_code ec;
+        if (fs::exists(projectRoot, ec)) return projectRoot.string();
+        const char* home = std::getenv("HOME");
+        return home ? home : "/";
+    }
+
+    // -------------------------------------------------------------------
     // LIFECYCLE
     // -------------------------------------------------------------------
     void OnStart() override {
@@ -163,25 +229,44 @@ protected:
         m_browser    = std::make_unique<Galeshi::ContentBrowser>("assets");
         m_serializer = std::make_unique<Galeshi::SceneSerializer>(m_scene, *m_assets);
 
-        // Авто-загрузка сцены, если есть. Тестовая сцена строится вручную
-        // через меню Testing -> Build Scene.
+        // Auto-load the scene the user saved last.  The application changes
+        // its working directory to the executable directory, while Save Scene
+        // historically defaulted to $HOME, so checking only "./scene.json"
+        // missed almost every saved scene.
         namespace fs = std::filesystem;
-        if (fs::exists("scene.json")) {
-            if (m_serializer->Load("scene.json")) {
-                spdlog::info("[Editor] Scene auto-loaded from scene.json");
-                // Fix upward-pointing sun for correct shadows
-                auto lview = m_scene.Registry().view<Galeshi::DirectionalLightComponent>();
-                for (auto e : lview) {
-                    auto& dl = lview.get<Galeshi::DirectionalLightComponent>(e);
-                    if (dl.direction.y > 0.0f || true) {
-                        dl.direction = glm::normalize(glm::vec3(-0.4f, -0.8f, -0.5f));
-                        spdlog::warn("[Editor] Sun was pointing up, flipped downwards for shadows");
-                    }
-                }
-            } else {
-                spdlog::warn("[Editor] Failed to load scene.json; starting with an empty scene");
+        std::vector<fs::path> sceneCandidates;
+        auto addCandidate = [&](const fs::path& candidate) {
+            if (candidate.empty()) return;
+            std::error_code ec;
+            fs::path absolute = fs::absolute(candidate, ec);
+            if (ec) absolute = candidate;
+            absolute = absolute.lexically_normal();
+            if (std::find(sceneCandidates.begin(), sceneCandidates.end(), absolute) ==
+                sceneCandidates.end()) {
+                sceneCandidates.push_back(std::move(absolute));
             }
-        } else {
+        };
+        addCandidate(ReadLastScenePath());
+        addCandidate(fs::current_path() / "scene.json");
+        if (const char* home = std::getenv("HOME"); home && *home) {
+            addCandidate(fs::path(home) / "scene.json");
+        }
+        addCandidate(FindProjectRoot() / "scene.json");
+
+        bool sceneAutoLoaded = false;
+        for (const auto& candidate : sceneCandidates) {
+            std::error_code ec;
+            if (!fs::exists(candidate, ec)) continue;
+            if (m_serializer->Load(candidate.string())) {
+                m_currentScenePath = candidate.string();
+                WriteLastScenePath(m_currentScenePath);
+                sceneAutoLoaded = true;
+                spdlog::info("[Editor] Scene auto-loaded from {}", m_currentScenePath);
+                break;
+            }
+            spdlog::warn("[Editor] Failed to load scene {}", candidate.string());
+        }
+        if (!sceneAutoLoaded) {
             spdlog::info("[Editor] scene.json not found; use Testing -> Build Scene to create the test scene");
         }
 
@@ -375,7 +460,9 @@ protected:
         if (!chosenSave.empty()) {
             if (m_serializer) {
                 if (m_serializer->Save(chosenSave)) {
-                    spdlog::info("[Editor] Scene saved to {}", chosenSave);
+                    m_currentScenePath = std::filesystem::absolute(chosenSave).lexically_normal().string();
+                    WriteLastScenePath(m_currentScenePath);
+                    spdlog::info("[Editor] Scene saved to {}", m_currentScenePath);
                 } else {
                     spdlog::error("[Editor] Failed to save scene to {}", chosenSave);
                 }
@@ -387,7 +474,9 @@ protected:
         if (!chosenLoad.empty()) {
             m_editor.ClearSelection();
             if (m_serializer->Load(chosenLoad)) {
-                spdlog::info("[Editor] Scene loaded from {}", chosenLoad);
+                m_currentScenePath = std::filesystem::absolute(chosenLoad).lexically_normal().string();
+                WriteLastScenePath(m_currentScenePath);
+                spdlog::info("[Editor] Scene loaded from {}", m_currentScenePath);
             } else {
                 spdlog::error("[Editor] Failed to load scene: {}", chosenLoad);
             }
@@ -674,16 +763,16 @@ if (ImGui::BeginMenu("File")) {
     // Save / Load / Delete
     // -------------------------------------------------------------------
     void SaveScene() {
-        const char* home = std::getenv("HOME");
-        std::string start = home ? home : "/";
-        m_filePickerSave.SaveAs(start, "scene.json", "Save Scene", { ".json" });
+        const std::string start = SceneStartDirectory();
+        const std::string fileName = m_currentScenePath.empty()
+            ? "scene.json"
+            : std::filesystem::path(m_currentScenePath).filename().string();
+        m_filePickerSave.SaveAs(start, fileName, "Save Scene", { ".json" });
     }
     
     void LoadScene() {
         // Load Scene -> модальный диалог для .json файлов
-        const char* home = std::getenv("HOME");
-        std::string start = home ? home : "/";
-        m_scenePicker.Open(start, "Load Scene", { ".json" });
+        m_scenePicker.Open(SceneStartDirectory(), "Load Scene", { ".json" });
     }
 
     void DeleteSelected() {
@@ -2291,6 +2380,7 @@ void DrawDetails() {
 
     uint16_t    m_viewportW = 0, m_viewportH = 0;
     bool        m_viewportHovered = false;
+    std::string m_currentScenePath;
     Galeshi::FilePickerDialog m_filePicker;
     Galeshi::FilePickerDialog m_filePickerSave;
     Galeshi::FilePickerDialog m_scenePicker;
