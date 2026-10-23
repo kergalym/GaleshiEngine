@@ -189,9 +189,20 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
 
     LoadedModel out;
     auto importer = std::make_shared<Assimp::Importer>();
-    const aiScene* scene = importer->ReadFile(path,
-        aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenSmoothNormals |
-        aiProcess_CalcTangentSpace);
+
+    // Texture loading flips images vertically, matching the bottom-left V
+    // origin used by FBX/OBJ/Collada. glTF is the exception: its UV origin is
+    // top-left, so it still needs Assimp's flip to use the same convention.
+    std::string extension = LowerAssetPath(
+        std::filesystem::path(path).extension().string());
+    unsigned int postProcess =
+        aiProcess_Triangulate | aiProcess_GenSmoothNormals |
+        aiProcess_CalcTangentSpace;
+    if (extension == ".gltf" || extension == ".glb") {
+        postProcess |= aiProcess_FlipUVs;
+    }
+
+    const aiScene* scene = importer->ReadFile(path, postProcess);
 
     if (!scene || !scene->mRootNode) {
         spdlog::error("[AssetManager] Assimp failed: {}", importer->GetErrorString());
