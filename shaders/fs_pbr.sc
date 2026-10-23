@@ -87,11 +87,17 @@ void main()
     metallic = clamp(metallic, 0.0, 1.0);
     rough = clamp(rough, 0.04, 1.0);
 
+    // Two-sided shading: flip the geometric normal and tangent handedness on
+    // back-facing fragments so both sides of open meshes are lit correctly.
+    bool backFace = !gl_FrontFacing;
     vec3 N = normalize(v_normal);
+    if (backFace) N = -N;
+
     vec3 T = v_tangent - N * dot(N, v_tangent);
     float tangentLen = length(T);
     if (tangentLen > 1e-4) {
         T /= tangentLen;
+        if (backFace) T = -T;
         vec3 B = cross(N, T);
         vec3 tangentNormal = texture2D(s_normalMap, v_uv).xyz * 2.0 - 1.0;
         tangentNormal.xy *= u_materialParams.x;

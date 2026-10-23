@@ -20,7 +20,8 @@ public:
     AssetManager();
     ~AssetManager();
 
-    std::shared_ptr<Texture> LoadTexture(const std::string& path);
+    // srgb = true for colour maps (base colour/emissive), false for data maps.
+    std::shared_ptr<Texture> LoadTexture(const std::string& path, bool srgb = false);
 
     struct LoadedModel {
         std::vector<std::shared_ptr<Mesh>>     meshes;

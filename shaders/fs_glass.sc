@@ -12,12 +12,16 @@ uniform vec4 u_glassParams;
 
 void main()
 {
+    // Two-sided shading for transparent surfaces viewed from either side.
+    bool backFace = !gl_FrontFacing;
     vec3 N = normalize(v_normal);
+    if (backFace) N = -N;
 
     vec3 T = v_tangent - N * dot(N, v_tangent);
     float tangentLen = length(T);
     if (tangentLen > 1e-4) {
         T /= tangentLen;
+        if (backFace) T = -T;
         vec3 B = cross(N, T);
         vec3 tangentNormal = texture2D(s_normalMap, v_uv).xyz * 2.0 - 1.0;
         tangentNormal.xy *= u_glassParams.y;

@@ -49,7 +49,13 @@ void main()
     rough    = clamp(rough, 0.04, 1.0);
 
     vec3 albedo = a.rgb * u_albedoFactor.rgb;
+
+    // Two-sided shading: a back-facing fragment has an interpolated normal
+    // pointing away from the viewer. Flip it (and the tangent handedness) so
+    // capes, cloth and other open surfaces are lit from the visible side.
+    bool backFace = !gl_FrontFacing;
     vec3 N = normalize(v_normal);
+    if (backFace) N = -N;
 
     // Tangent-space normal mapping. If the mesh has no tangent data the
     // geometric normal is kept instead of producing NaNs.
@@ -57,6 +63,7 @@ void main()
     float tangentLen = length(T);
     if (tangentLen > 1e-4) {
         T /= tangentLen;
+        if (backFace) T = -T;
         vec3 B = cross(N, T);
         vec3 tangentNormal = texture2D(s_normalMap, v_uv).xyz * 2.0 - 1.0;
         tangentNormal.xy *= u_materialParams.x;

@@ -269,7 +269,11 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         }
 
         bgfx::setVertexBuffer(0, mc.mesh->VB()); bgfx::setIndexBuffer(mc.mesh->IB());
-        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA);
+        // Imported meshes are CCW-front. Declaring it explicitly makes
+        // gl_FrontFacing reliable for the two-sided normal correction.
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
+                       BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA |
+                       BGFX_STATE_FRONT_CCW);
         if (m_deferred && bgfx::isValid(m_gbufferProg)) {
             bgfx::submit(viewId, m_gbufferProg);
         } else {
@@ -312,7 +316,8 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
         bgfx::setTransform(glm::value_ptr(model));
         bgfx::setVertexBuffer(0, mc.mesh->VB());
         bgfx::setIndexBuffer(mc.mesh->IB());
-        bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+        bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
+                       BGFX_STATE_FRONT_CCW);
         bgfx::submit(viewId, m_shadowProg);
     }
 }
@@ -389,7 +394,8 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
         bgfx::setTransform(glm::value_ptr(model));
         bgfx::setVertexBuffer(0, mc.mesh->VB());
         bgfx::setIndexBuffer(mc.mesh->IB());
-        bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS);
+        bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
+                       BGFX_STATE_FRONT_CCW);
         bgfx::submit(viewId, m_shadowPointProg);
     }
 }
@@ -511,7 +517,7 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
         // fragments do not occlude each other incorrectly.
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
                        BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_ALPHA |
-                       BGFX_STATE_MSAA);
+                       BGFX_STATE_MSAA | BGFX_STATE_FRONT_CCW);
         bgfx::submit(viewId, m_glassProg);
     }
 }

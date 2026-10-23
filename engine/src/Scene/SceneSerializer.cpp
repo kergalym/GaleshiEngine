@@ -152,21 +152,21 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
             mat->occlusionStrength = jm.value("occlusionStrength", 1.0f);
             mat->alphaCutoff = jm.value("alphaCutoff", 0.5f);
 
-            auto loadMap = [&](const char* key) -> std::shared_ptr<Texture> {
+            auto loadMap = [&](const char* key, bool srgb) -> std::shared_ptr<Texture> {
                 const std::string p = jm.value(key, "");
                 if (p.empty()) return nullptr;
-                auto tex = m_assets.LoadTexture(p);
+                auto tex = m_assets.LoadTexture(p, srgb);
                 return (tex && tex != m_assets.WhiteTexture()) ? tex : nullptr;
             };
-            mat->albedoMap = loadMap("albedoMapPath");
-            mat->normalMap = loadMap("normalMapPath");
-            mat->metallicRoughnessMap = loadMap("mrMapPath");
-            mat->metallicMap = loadMap("metallicMapPath");
-            mat->roughnessMap = loadMap("roughnessMapPath");
-            mat->emissiveMap = loadMap("emissiveMapPath");
-            mat->occlusionMap = loadMap("occlusionMapPath");
-            mat->opacityMap = loadMap("opacityMapPath");
-            mat->specularMap = loadMap("specularMapPath");
+            mat->albedoMap = loadMap("albedoMapPath", true);
+            mat->normalMap = loadMap("normalMapPath", false);
+            mat->metallicRoughnessMap = loadMap("mrMapPath", false);
+            mat->metallicMap = loadMap("metallicMapPath", false);
+            mat->roughnessMap = loadMap("roughnessMapPath", false);
+            mat->emissiveMap = loadMap("emissiveMapPath", true);
+            mat->occlusionMap = loadMap("occlusionMapPath", false);
+            mat->opacityMap = loadMap("opacityMapPath", false);
+            mat->specularMap = loadMap("specularMapPath", false);
 
             e.AddComponent<MaterialComponent>(MaterialComponent{ mat });
         }

@@ -57,22 +57,33 @@ std::string AssetBaseName(const std::string& path) {
     const auto slash = path.find_last_of('/');
     return slash == std::string::npos ? path : path.substr(slash + 1);
 }
+
+// Colour and data textures must not share a cache entry: the same bitmap can
+// be requested as sRGB for albedo and as linear data elsewhere.
+std::string TextureCacheKey(const std::string& path, bool srgb) {
+    return srgb ? "srgb:" + path : path;
+}
 } // namespace
 
-std::shared_ptr<Texture> AssetManager::LoadTexture(const std::string& path) {
+std::shared_ptr<Texture> AssetManager::LoadTexture(const std::string& path, bool srgb) {
     if (path.empty()) return m_white;
 
-    auto it = m_textures.find(path);
-    if (it != m_textures.end()) return it->second;
-
     const std::string normalized = NormalizeAssetPath(path);
-    it = m_textures.find(normalized);
+    const std::string key       = TextureCacheKey(path, srgb);
+    const std::string normKey   = TextureCacheKey(normalized, srgb);
+
+    auto it = m_textures.find(key);
     if (it != m_textures.end()) return it->second;
+    if (normKey != key) {
+        it = m_textures.find(normKey);
+        if (it != m_textures.end()) return it->second;
+    }
 
     const std::string lower = LowerAssetPath(normalized);
-    auto embedded = m_embeddedTextures.find(lower);
+    auto embedded = m_embeddedTextures.find(TextureCacheKey(lower, srgb));
     if (embedded != m_embeddedTextures.end()) return embedded->second;
-    embedded = m_embeddedTextures.find(LowerAssetPath(AssetBaseName(normalized)));
+    embedded = m_embeddedTextures.find(
+        TextureCacheKey(LowerAssetPath(AssetBaseName(normalized)), srgb));
     if (embedded != m_embeddedTextures.end()) return embedded->second;
 
     std::error_code ec;
@@ -83,13 +94,13 @@ std::shared_ptr<Texture> AssetManager::LoadTexture(const std::string& path) {
     }
     if (!exists) return m_white;
 
-    Texture* raw = Texture::LoadFromFile(path);
-    if (!raw && normalized != path) raw = Texture::LoadFromFile(normalized);
+    Texture* raw = Texture::LoadFromFile(path, srgb);
+    if (!raw && normalized != path) raw = Texture::LoadFromFile(normalized, srgb);
     if (!raw) return m_white;
 
     std::shared_ptr<Texture> tex(raw);
-    m_textures[path] = tex;
-    m_textures[normalized] = tex;
+    m_textures[key] = tex;
+    m_textures[normKey] = tex;
     return tex;
 }
 
@@ -265,14 +276,16 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
         return true;
     };
 
-    auto loadEmbeddedTexture = [&](int index, const std::string& reference) -> std::shared_ptr<Texture> {
+    auto loadEmbeddedTexture = [&](int index, const std::string& reference,
+                                   bool srgb) -> std::shared_ptr<Texture> {
         if (index < 0 || index >= static_cast<int>(scene->mNumTextures)) return nullptr;
         const aiTexture* embedded = scene->mTextures[index];
         const std::string embeddedName = NormalizeAssetPath(embedded->mFilename.C_Str());
         std::string displayPath = NormalizeAssetPath(reference);
         if (displayPath.empty() || displayPath[0] == '*') displayPath = embeddedName;
 
-        const std::string cacheKey = "embedded:" + std::to_string(index) + ":" + embeddedName;
+        const std::string cacheKey = "embedded:" + std::to_string(index) + ":" +
+                                     (srgb ? "srgb:" : "linear:") + embeddedName;
         auto cached = m_textures.find(cacheKey);
         if (cached != m_textures.end()) return cached->second;
 
@@ -280,30 +293,32 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
         if (embedded->mHeight == 0) {
             raw = Texture::LoadFromMemory(
                 reinterpret_cast<const unsigned char*>(embedded->pcData),
-                static_cast<size_t>(embedded->mWidth), displayPath);
+                static_cast<size_t>(embedded->mWidth), displayPath, srgb);
         } else {
             raw = Texture::CreateFromBgra8(
                 reinterpret_cast<const unsigned char*>(embedded->pcData),
                 static_cast<int>(embedded->mWidth),
-                static_cast<int>(embedded->mHeight), displayPath);
+                static_cast<int>(embedded->mHeight), displayPath, srgb);
         }
         if (!raw) return nullptr;
 
         auto tex = std::shared_ptr<Texture>(raw);
         m_textures[cacheKey] = tex;
-        m_textures[displayPath] = tex;
-        m_textures[LowerAssetPath(displayPath)] = tex;
-        m_embeddedTextures[LowerAssetPath(displayPath)] = tex;
-        m_embeddedTextures[LowerAssetPath(AssetBaseName(displayPath))] = tex;
+        m_textures[TextureCacheKey(displayPath, srgb)] = tex;
+        m_textures[TextureCacheKey(LowerAssetPath(displayPath), srgb)] = tex;
+        m_embeddedTextures[TextureCacheKey(LowerAssetPath(displayPath), srgb)] = tex;
+        m_embeddedTextures[TextureCacheKey(LowerAssetPath(AssetBaseName(displayPath)), srgb)] = tex;
         if (!embeddedName.empty()) {
-            m_embeddedTextures[LowerAssetPath(embeddedName)] = tex;
-            m_embeddedTextures[LowerAssetPath(AssetBaseName(embeddedName))] = tex;
+            m_embeddedTextures[TextureCacheKey(LowerAssetPath(embeddedName), srgb)] = tex;
+            m_embeddedTextures[TextureCacheKey(LowerAssetPath(AssetBaseName(embeddedName)), srgb)] = tex;
         }
-        spdlog::info("  -> EMBEDDED[{}] '{}': OK", index, displayPath);
+        spdlog::info("  -> EMBEDDED[{}] '{}': OK{}", index, displayPath,
+                     srgb ? " [sRGB]" : "");
         return tex;
     };
 
-    auto resolveExternalTexture = [&](const std::string& reference) -> std::shared_ptr<Texture> {
+    auto resolveExternalTexture = [&](const std::string& reference,
+                                      bool srgb) -> std::shared_ptr<Texture> {
         const std::filesystem::path relative(NormalizeAssetPath(reference));
         std::filesystem::path resolved;
         std::error_code ec;
@@ -320,20 +335,22 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
         }
         if (resolved.empty()) return nullptr;
 
-        auto tex = LoadTexture(resolved.string());
+        auto tex = LoadTexture(resolved.string(), srgb);
         if (tex && tex != m_white) {
-            spdlog::info("  -> EXTERNAL '{}': OK", resolved.string());
+            spdlog::info("  -> EXTERNAL '{}': OK{}", resolved.string(),
+                         srgb ? " [sRGB]" : "");
             return tex;
         }
         return nullptr;
     };
 
-    auto loadTextureReference = [&](const std::string& reference) -> std::shared_ptr<Texture> {
+    auto loadTextureReference = [&](const std::string& reference,
+                                    bool srgb) -> std::shared_ptr<Texture> {
         if (reference.empty()) return nullptr;
         int embeddedIndex = -1;
         if (findEmbeddedTexture(reference, embeddedIndex))
-            return loadEmbeddedTexture(embeddedIndex, reference);
-        return resolveExternalTexture(reference);
+            return loadEmbeddedTexture(embeddedIndex, reference, srgb);
+        return resolveExternalTexture(reference, srgb);
     };
 
     // Assimp sometimes stores only the "*N" index in material texture slots.
@@ -589,21 +606,24 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
             }
         }
 
-        auto assign = [&](std::shared_ptr<Texture>& slot, const std::string& ref) {
+        auto assign = [&](std::shared_ptr<Texture>& slot, const std::string& ref,
+                          bool srgb) {
             if (slot || ref.empty()) return;
-            auto tex = loadTextureReference(ref);
+            auto tex = loadTextureReference(ref, srgb);
             if (tex && tex != m_white) slot = tex;
         };
 
-        assign(mat->albedoMap, albedoRef);
-        assign(mat->normalMap, normalRef);
-        assign(mat->metallicRoughnessMap, metallicRoughnessRef);
-        assign(mat->metallicMap, metallicRef);
-        assign(mat->roughnessMap, roughnessRef);
-        assign(mat->emissiveMap, emissiveRef);
-        assign(mat->occlusionMap, occlusionRef);
-        assign(mat->opacityMap, opacityRef);
-        assign(mat->specularMap, specularRef);
+        // Base-colour and emissive textures carry sRGB-encoded colour. All
+        // other maps are linear data and must not be gamma-decoded.
+        assign(mat->albedoMap, albedoRef, true);
+        assign(mat->normalMap, normalRef, false);
+        assign(mat->metallicRoughnessMap, metallicRoughnessRef, false);
+        assign(mat->metallicMap, metallicRef, false);
+        assign(mat->roughnessMap, roughnessRef, false);
+        assign(mat->emissiveMap, emissiveRef, true);
+        assign(mat->occlusionMap, occlusionRef, false);
+        assign(mat->opacityMap, opacityRef, false);
+        assign(mat->specularMap, specularRef, false);
 
         // Reuse the R channel of packed ORM maps as ambient occlusion when the
         // material does not have a dedicated AO texture.

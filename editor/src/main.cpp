@@ -1556,7 +1556,8 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
     // -------------------------------------------------------------------
     // Details
     // -------------------------------------------------------------------
-    void DrawTextureSlot(const char* label, std::shared_ptr<Galeshi::Texture>& slot) {
+    void DrawTextureSlot(const char* label, std::shared_ptr<Galeshi::Texture>& slot,
+                         bool srgb) {
         ImGui::PushID(label);
         ImGui::Text("%s", label);
 
@@ -1586,7 +1587,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 for (auto& c : ext) c = static_cast<char>(std::tolower(c));
                 if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
                     ext == ".bmp" || ext == ".tga") {
-                    slot = m_assets->LoadTexture(p);
+                    slot = m_assets->LoadTexture(p, srgb);
                 }
             }
             ImGui::EndDragDropTarget();
@@ -1880,15 +1881,15 @@ void DrawDetails() {
                 ImGui::Text("Texture Maps (drag from Content Browser):");
 
                 // --- Текстурные слоты ---
-                DrawTextureSlot("Albedo Map",           m.albedoMap);
-                DrawTextureSlot("Normal Map",           m.normalMap);
-                DrawTextureSlot("Metallic/Roughness",   m.metallicRoughnessMap);
-                DrawTextureSlot("Metallic Map",         m.metallicMap);
-                DrawTextureSlot("Roughness Map",        m.roughnessMap);
-                DrawTextureSlot("Emissive Map",         m.emissiveMap);
-                DrawTextureSlot("Occlusion Map",        m.occlusionMap);
-                DrawTextureSlot("Opacity Map",          m.opacityMap);
-                DrawTextureSlot("Specular Map",         m.specularMap);
+                DrawTextureSlot("Albedo Map",           m.albedoMap,           true);
+                DrawTextureSlot("Normal Map",           m.normalMap,           false);
+                DrawTextureSlot("Metallic/Roughness",   m.metallicRoughnessMap, false);
+                DrawTextureSlot("Metallic Map",         m.metallicMap,         false);
+                DrawTextureSlot("Roughness Map",        m.roughnessMap,        false);
+                DrawTextureSlot("Emissive Map",         m.emissiveMap,         true);
+                DrawTextureSlot("Occlusion Map",        m.occlusionMap,        false);
+                DrawTextureSlot("Opacity Map",          m.opacityMap,          false);
+                DrawTextureSlot("Specular Map",         m.specularMap,         false);
             }
             ImGui::PopID();
         };
@@ -2003,7 +2004,7 @@ void DrawDetails() {
             if (sel && sel.HasComponent<Galeshi::MaterialComponent>()) {
                 auto& matc = sel.GetComponent<Galeshi::MaterialComponent>();
                 if (matc.material) {
-                    matc.material->albedoMap = m_assets->LoadTexture(path);
+                    matc.material->albedoMap = m_assets->LoadTexture(path, true);
                     spdlog::info("[Editor] Applied texture to selected: {}", path);
                 }
             }
@@ -2027,7 +2028,7 @@ void DrawDetails() {
             if (sel && sel.HasComponent<Galeshi::MaterialComponent>()) {
                 auto& matc = sel.GetComponent<Galeshi::MaterialComponent>();
                 if (matc.material) {
-                    matc.material->albedoMap = m_assets->LoadTexture(path);
+                    matc.material->albedoMap = m_assets->LoadTexture(path, true);
                     spdlog::info("[Editor] Set albedo map: {}", path);
                 }
             }

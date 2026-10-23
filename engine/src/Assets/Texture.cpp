@@ -14,6 +14,14 @@
 
 namespace Galeshi {
 
+namespace {
+uint64_t TextureFlags(bool srgb) {
+    uint64_t flags = BGFX_TEXTURE_NONE | BGFX_SAMPLER_NONE;
+    if (srgb) flags |= BGFX_TEXTURE_SRGB;
+    return flags;
+}
+} // namespace
+
 Texture::~Texture() { Destroy(); }
 
 void Texture::Destroy() {
@@ -23,7 +31,7 @@ void Texture::Destroy() {
     }
 }
 
-Texture* Texture::LoadFromFile(const std::string& path) {
+Texture* Texture::LoadFromFile(const std::string& path, bool srgb) {
     int w = 0, h = 0, channels = 0;
 
     // UV в bgfx идут сверху-вниз (как в DDS), но stb по умолчанию
@@ -39,23 +47,25 @@ Texture* Texture::LoadFromFile(const std::string& path) {
 
     Texture* tex = new Texture();
     tex->m_path   = path;
+    tex->m_srgb   = srgb;
     tex->m_handle = bgfx::createTexture2D(
         static_cast<uint16_t>(w),
         static_cast<uint16_t>(h),
         false,
         1,
         bgfx::TextureFormat::RGBA8,
-        BGFX_TEXTURE_NONE | BGFX_SAMPLER_NONE,
+        TextureFlags(srgb),
         bgfx::copy(pixels, static_cast<uint32_t>(w * h * 4)));
 
     stbi_image_free(pixels);
 
-    spdlog::info("[Texture] Loaded {} ({}x{})", path, w, h);
+    spdlog::info("[Texture] Loaded {} ({}x{}){}", path, w, h,
+                 srgb ? " [sRGB]" : "");
     return tex;
 }
 
 Texture* Texture::LoadFromMemory(const unsigned char* data, size_t size,
-                                 const std::string& displayPath) {
+                                 const std::string& displayPath, bool srgb) {
     if (!data || size == 0) return nullptr;
 
     int w = 0, h = 0, channels = 0;
@@ -71,19 +81,21 @@ Texture* Texture::LoadFromMemory(const unsigned char* data, size_t size,
 
     Texture* tex = new Texture();
     tex->m_path = displayPath;
+    tex->m_srgb = srgb;
     tex->m_handle = bgfx::createTexture2D(
         static_cast<uint16_t>(w), static_cast<uint16_t>(h),
         false, 1, bgfx::TextureFormat::RGBA8,
-        BGFX_TEXTURE_NONE | BGFX_SAMPLER_NONE,
+        TextureFlags(srgb),
         bgfx::copy(pixels, static_cast<uint32_t>(w * h * 4)));
 
     stbi_image_free(pixels);
-    spdlog::info("[Texture] Embedded loaded '{}' ({}x{})", displayPath, w, h);
+    spdlog::info("[Texture] Embedded loaded '{}' ({}x{}){}", displayPath, w, h,
+                 srgb ? " [sRGB]" : "");
     return tex;
 }
 
 Texture* Texture::CreateFromBgra8(const unsigned char* data, int width, int height,
-                                  const std::string& displayPath) {
+                                  const std::string& displayPath, bool srgb) {
     if (!data || width <= 0 || height <= 0) return nullptr;
 
     const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
@@ -97,10 +109,11 @@ Texture* Texture::CreateFromBgra8(const unsigned char* data, int width, int heig
 
     Texture* tex = new Texture();
     tex->m_path = displayPath;
+    tex->m_srgb = srgb;
     tex->m_handle = bgfx::createTexture2D(
         static_cast<uint16_t>(width), static_cast<uint16_t>(height),
         false, 1, bgfx::TextureFormat::RGBA8,
-        BGFX_TEXTURE_NONE | BGFX_SAMPLER_NONE,
+        TextureFlags(srgb),
         bgfx::copy(rgba.data(), static_cast<uint32_t>(rgba.size())));
 
     if (!bgfx::isValid(tex->m_handle)) {
@@ -110,7 +123,8 @@ Texture* Texture::CreateFromBgra8(const unsigned char* data, int width, int heig
         return nullptr;
     }
 
-    spdlog::info("[Texture] Embedded raw loaded '{}' ({}x{})", displayPath, width, height);
+    spdlog::info("[Texture] Embedded raw loaded '{}' ({}x{}){}", displayPath, width, height,
+                 srgb ? " [sRGB]" : "");
     return tex;
 }
 
