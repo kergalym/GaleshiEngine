@@ -69,7 +69,8 @@ std::string ContentBrowser::Draw() {
 
         // Thumbnail для изображений
         bool isImage = (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-                        ext == ".bmp" || ext == ".tga");
+                        ext == ".bmp" || ext == ".tga" || ext == ".dds" ||
+                        ext == ".ktx");
 
         if (isImage && m_assets) {
             std::string path = e.path.string();

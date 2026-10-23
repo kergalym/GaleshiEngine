@@ -451,6 +451,17 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
         aiMat->Get(AI_MATKEY_NAME, name);
         mat->name = name.C_Str();
 
+        // Assimp exposes AI_MATKEY_TWOSIDED for formats that carry it. If the
+        // key is missing (classic FBX often omits it) keep the old renderer
+        // behaviour of drawing imported meshes from both sides; the material
+        // checkbox lets artists opt into backface culling explicitly.
+        int twoSided = 1;
+        if (aiMat->Get(AI_MATKEY_TWOSIDED, twoSided) == AI_SUCCESS) {
+            mat->twoSided = twoSided != 0;
+        } else {
+            mat->twoSided = true;
+        }
+
         spdlog::info("[AssetManager] Material[{}] '{}':", i, mat->name);
 
         std::vector<std::pair<int, std::string>> references;

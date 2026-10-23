@@ -12,6 +12,8 @@ class Texture;
 class Material {
 public:
     bool isGlass = false;
+    // Render both faces and flip normals on back-facing fragments.
+    bool twoSided = false;
 public:
     Material() = default;
     ~Material() = default;

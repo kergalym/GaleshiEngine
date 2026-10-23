@@ -1675,7 +1675,8 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 std::string ext = (dotPos != std::string::npos) ? p.substr(dotPos) : "";
                 for (auto& c : ext) c = static_cast<char>(std::tolower(c));
                 if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-                    ext == ".bmp" || ext == ".tga") {
+                    ext == ".bmp" || ext == ".tga" ||
+                    ext == ".dds" || ext == ".ktx") {
                     slot = m_assets->LoadTexture(p, srgb);
                 }
             }
@@ -1964,6 +1965,11 @@ void DrawDetails() {
                 if (m.isGlass) {
                     ImGui::SliderFloat("Glass Opacity", &m.glassOpacity, 0.0f, 1.0f);
                 }
+                ImGui::Checkbox("Two Sided", &m.twoSided);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Render both faces and flip normals on back-facing fragments.\n"
+                                      "When disabled, backfaces are culled.");
+                }
                 ImGui::ColorEdit3("Emissive Color", glm::value_ptr(m.emissiveFactor));
 
                 ImGui::Separator();
@@ -1985,18 +1991,24 @@ void DrawDetails() {
 
         // 1. Draw material for the selected entity itself (if any)
         if (selected[0].HasComponent<Galeshi::MaterialComponent>()) {
-            DrawMaterialUI("Material", selected[0].GetComponent<Galeshi::MaterialComponent>(), (uint32_t)selected[0].Handle());
+            auto& matc = selected[0].GetComponent<Galeshi::MaterialComponent>();
+            std::string label = (matc.material && !matc.material->name.empty())
+                ? matc.material->name : std::string("Material");
+            DrawMaterialUI(label.c_str(), matc, (uint32_t)selected[0].Handle());
         }
 
         // 2. Draw materials for all children (e.g., skeletal mesh sub-meshes)
         for (auto e : m_scene.AllEntities()) {
             if (e.HasComponent<Galeshi::ParentComponent>() && e.GetComponent<Galeshi::ParentComponent>().parent == selected[0].Handle()) {
                 if (e.HasComponent<Galeshi::MaterialComponent>()) {
+                    auto& matc = e.GetComponent<Galeshi::MaterialComponent>();
                     std::string label = "Material Slot [" + std::to_string((uint32_t)e.Handle()) + "]";
-                    if (e.HasComponent<Galeshi::NameComponent>()) {
+                    if (matc.material && !matc.material->name.empty()) {
+                        label = matc.material->name;
+                    } else if (e.HasComponent<Galeshi::NameComponent>()) {
                         label = e.GetComponent<Galeshi::NameComponent>().name;
                     }
-                    DrawMaterialUI(label.c_str(), e.GetComponent<Galeshi::MaterialComponent>(), (uint32_t)e.Handle());
+                    DrawMaterialUI(label.c_str(), matc, (uint32_t)e.Handle());
                 }
             }
         }
@@ -2087,7 +2099,8 @@ void DrawDetails() {
         if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") {
             SpawnFromModel(path, glm::vec3(0.0f));
         } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-                   ext == ".bmp" || ext == ".tga") {
+                   ext == ".bmp" || ext == ".tga" ||
+                   ext == ".dds" || ext == ".ktx") {
             // Применяем к выделенному объекту
             Galeshi::Entity sel = m_editor.Selected(&m_scene);
             if (sel && sel.HasComponent<Galeshi::MaterialComponent>()) {
@@ -2112,7 +2125,8 @@ void DrawDetails() {
 
         // Если бросили текстуру на объект с материалом — установить в albedo
         if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-            ext == ".bmp" || ext == ".tga") {
+            ext == ".bmp" || ext == ".tga" ||
+            ext == ".dds" || ext == ".ktx") {
             Galeshi::Entity sel = m_editor.Selected(&m_scene);
             if (sel && sel.HasComponent<Galeshi::MaterialComponent>()) {
                 auto& matc = sel.GetComponent<Galeshi::MaterialComponent>();

@@ -49,6 +49,7 @@ target_link_libraries(GaleshiEngine
         imguizmo
         bgfx
         bimg
+        bimg_encode
         bx
     PRIVATE
         assimp::assimp

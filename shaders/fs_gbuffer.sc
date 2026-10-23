@@ -15,7 +15,8 @@ uniform vec4 u_albedoFactor;
 uniform vec4 u_metallicFactor;
 uniform vec4 u_roughnessFactor;
 uniform vec4 u_emissiveFactor;
-// x = normal strength, y = occlusion strength, z = alpha cutoff
+// x = normal strength, y = occlusion strength, z = alpha cutoff,
+// w = two-sided material flag
 uniform vec4 u_materialParams;
 // x = separate metallic map, y = separate roughness map,
 // z = specular map, w = opacity map
@@ -53,7 +54,8 @@ void main()
     // Two-sided shading: a back-facing fragment has an interpolated normal
     // pointing away from the viewer. Flip it (and the tangent handedness) so
     // capes, cloth and other open surfaces are lit from the visible side.
-    bool backFace = !gl_FrontFacing;
+    // u_materialParams.w is the per-material Two Sided switch.
+    bool backFace = u_materialParams.w > 0.5 && !gl_FrontFacing;
     vec3 N = normalize(v_normal);
     if (backFace) N = -N;
 

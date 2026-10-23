@@ -167,6 +167,7 @@ std::string SceneSerializer::SaveToString() const {
                     {"roughnessFactor", m.roughnessFactor},
                     {"emissiveFactor", Vec3ToJson(m.emissiveFactor)},
                     {"isGlass", m.isGlass},
+                    {"twoSided", m.twoSided},
                     {"glassOpacity", m.glassOpacity},
                     {"normalStrength", m.normalStrength},
                     {"occlusionStrength", m.occlusionStrength},
@@ -472,6 +473,10 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
             material->roughnessFactor = jm.value("roughnessFactor", 0.5f);
             material->emissiveFactor = jm.contains("emissiveFactor") ? Vec3FromJson(jm.at("emissiveFactor")) : glm::vec3(0.0f);
             material->isGlass = jm.value("isGlass", false);
+            // Older scenes had no two-sided switch and the renderer mirrored
+            // backface normals unconditionally. Default missing values to
+            // true so loaded scenes keep their previous appearance.
+            material->twoSided = jm.value("twoSided", true);
             material->glassOpacity = jm.value("glassOpacity", 0.35f);
             material->normalStrength = jm.value("normalStrength", 1.0f);
             material->occlusionStrength = jm.value("occlusionStrength", 1.0f);

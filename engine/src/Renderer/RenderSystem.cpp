@@ -23,6 +23,12 @@ namespace {
         fread(mem->data, 1, (size_t)sz, f); fclose(f);
         return bgfx::createShader(mem);
     }
+
+    uint64_t FaceState(bool twoSided) {
+        uint64_t state = BGFX_STATE_FRONT_CCW;
+        if (!twoSided) state |= BGFX_STATE_CULL_CW;
+        return state;
+    }
 }
 
 RenderSystem::RenderSystem() = default;
@@ -231,7 +237,8 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         const Material& mat = *matc.material;
         const float alb[4] = {mat.albedoFactor.r, mat.albedoFactor.g, mat.albedoFactor.b, mat.albedoFactor.a};
         const float met[4] = {mat.metallicFactor, 0, 0, 0}, rgh[4] = {mat.roughnessFactor, 0, 0, 0}, emi[4] = {mat.emissiveFactor.r, mat.emissiveFactor.g, mat.emissiveFactor.b, 0};
-        const float params[4] = {mat.normalStrength, mat.occlusionStrength, mat.alphaCutoff, 0.0f};
+        const float params[4] = {mat.normalStrength, mat.occlusionStrength, mat.alphaCutoff,
+                                 mat.twoSided ? 1.0f : 0.0f};
         const float flags[4] = {
             mat.metallicMap ? 1.0f : 0.0f,
             mat.roughnessMap ? 1.0f : 0.0f,
@@ -269,11 +276,12 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         }
 
         bgfx::setVertexBuffer(0, mc.mesh->VB()); bgfx::setIndexBuffer(mc.mesh->IB());
-        // Imported meshes are CCW-front. Declaring it explicitly makes
-        // gl_FrontFacing reliable for the two-sided normal correction.
+        // Imported meshes are CCW-front. Single-sided materials cull their
+        // backfaces; two-sided materials keep them and the fragment shaders
+        // flip the normals for those fragments.
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
                        BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA |
-                       BGFX_STATE_FRONT_CCW);
+                       FaceState(mat.twoSided));
         if (m_deferred && bgfx::isValid(m_gbufferProg)) {
             bgfx::submit(viewId, m_gbufferProg);
         } else {
@@ -296,9 +304,13 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
     for (auto h : viewIter) {
         const auto& mc = viewIter.get<MeshComponent>(h);
         if (!mc.mesh || !mc.mesh->Valid()) continue;
+        bool twoSided = false;
         if (scene.Registry().all_of<MaterialComponent>(h)) {
             const auto& matc = scene.Registry().get<MaterialComponent>(h);
-            if (matc.material && matc.material->isGlass) continue;
+            if (matc.material) {
+                if (matc.material->isGlass) continue;
+                twoSided = matc.material->twoSided;
+            }
         }
 
         glm::mat4 model(1.0f);
@@ -317,7 +329,7 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
         bgfx::setVertexBuffer(0, mc.mesh->VB());
         bgfx::setIndexBuffer(mc.mesh->IB());
         bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
-                       BGFX_STATE_FRONT_CCW);
+                       FaceState(twoSided));
         bgfx::submit(viewId, m_shadowProg);
     }
 }
@@ -349,9 +361,13 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
     for (auto h : viewIter) {
         const auto& mc = viewIter.get<MeshComponent>(h);
         if (!mc.mesh || !mc.mesh->Valid()) continue;
+        bool twoSided = false;
         if (scene.Registry().all_of<MaterialComponent>(h)) {
             const auto& matc = scene.Registry().get<MaterialComponent>(h);
-            if (matc.material && matc.material->isGlass) continue;
+            if (matc.material) {
+                if (matc.material->isGlass) continue;
+                twoSided = matc.material->twoSided;
+            }
         }
 
         glm::mat4 model(1.0f);
@@ -395,7 +411,7 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
         bgfx::setVertexBuffer(0, mc.mesh->VB());
         bgfx::setIndexBuffer(mc.mesh->IB());
         bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
-                       BGFX_STATE_FRONT_CCW);
+                       FaceState(twoSided));
         bgfx::submit(viewId, m_shadowPointProg);
     }
 }
@@ -474,7 +490,8 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
     for (const GlassItem& item : items) {
         const Material& mat = *item.material;
         const float alb[4] = {mat.albedoFactor.r, mat.albedoFactor.g, mat.albedoFactor.b, mat.albedoFactor.a};
-        const float glass[4] = {mat.glassOpacity, mat.normalStrength, mat.roughnessFactor, 0.0f};
+        const float glass[4] = {mat.glassOpacity, mat.normalStrength, mat.roughnessFactor,
+                                mat.twoSided ? 1.0f : 0.0f};
         bgfx::setUniform(u_albedoFactor, alb);
         bgfx::setUniform(u_glassParams, glass);
 
@@ -517,7 +534,7 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
         // fragments do not occlude each other incorrectly.
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
                        BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_ALPHA |
-                       BGFX_STATE_MSAA | BGFX_STATE_FRONT_CCW);
+                       BGFX_STATE_MSAA | FaceState(mat.twoSided));
         bgfx::submit(viewId, m_glassProg);
     }
 }

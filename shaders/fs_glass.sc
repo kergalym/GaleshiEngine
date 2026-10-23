@@ -7,13 +7,14 @@ SAMPLER2D(s_opacityMap, 9);
 
 uniform vec4 u_cameraPosition;
 uniform vec4 u_albedoFactor;
-// x = glass opacity, y = normal strength, z = roughness, w = unused
+// x = glass opacity, y = normal strength, z = roughness,
+// w = two-sided material flag
 uniform vec4 u_glassParams;
 
 void main()
 {
     // Two-sided shading for transparent surfaces viewed from either side.
-    bool backFace = !gl_FrontFacing;
+    bool backFace = u_glassParams.w > 0.5 && !gl_FrontFacing;
     vec3 N = normalize(v_normal);
     if (backFace) N = -N;
 
