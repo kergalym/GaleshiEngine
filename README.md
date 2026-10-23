@@ -257,15 +257,14 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 ### Stability
 
 - [ ] Run the Vulkan validation layers on all render passes.
-- [ ] Wire the glass render pass.
-- [ ] Apply ImGuizmo transforms to the ECS.
+- [x] Wire the glass render pass.
+- [x] Apply ImGuizmo transforms to the ECS.
 
 ### Editor and data
 
-- [ ] Complete scene serialization for all ECS components.
+- [x] Complete scene serialization for all ECS components.
 - [ ] Add project/start-scene loading to game mode.
-- [ ] Implement the standalone `GaleshiRuntime`.
-- [ ] Add automated tests for ECS, serialization, physics, and rendering setup.
+- [ ] Landscape formation tools
 
 ### Rendering
 
@@ -276,6 +275,9 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [ ] Add per-object motion vectors for Motion Blur.
 - [ ] Add TAA motion vectors.
 - [ ] Add quality scaling and dynamic resolution.
+- [x] Add texture compression and compressed texture loading/reading
+- [x] Add two sided mode for normals option as checkbox to Material properties
+- [ ] Rename material slots to their names in FBX file format
 
 ### Content systems
 
