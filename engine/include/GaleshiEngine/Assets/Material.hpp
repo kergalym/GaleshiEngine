@@ -39,6 +39,14 @@ public:
 
     std::string name = "Material";
     std::string sourcePath;
+
+    // Optional parent material.  A material with a base is an instance: it
+    // owns an independent copy of the parameters and texture slots, while the
+    // base link keeps the asset lineage for Reset to Base and for preserving
+    // the relationship in scene files.
+    std::shared_ptr<Material> base;
+
+    bool IsInstance() const { return base != nullptr; }
 };
 
 } // namespace Galeshi

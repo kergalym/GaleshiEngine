@@ -87,39 +87,6 @@ protected:
         return fs::current_path();
     }
 
-    static std::filesystem::path LastSceneStateFile() {
-        namespace fs = std::filesystem;
-        fs::path base;
-        if (const char* xdg = std::getenv("XDG_CONFIG_HOME"); xdg && *xdg) {
-            base = xdg;
-        } else if (const char* home = std::getenv("HOME"); home && *home) {
-            base = fs::path(home) / ".config";
-        } else {
-            base = fs::current_path();
-        }
-        return base / "galeshi" / "last_scene.txt";
-    }
-
-    static std::string ReadLastScenePath() {
-        std::ifstream in(LastSceneStateFile());
-        if (!in.is_open()) return {};
-        std::string path;
-        std::getline(in, path);
-        const auto first = path.find_first_not_of(" \t\r\n");
-        if (first == std::string::npos) return {};
-        const auto last = path.find_last_not_of(" \t\r\n");
-        return path.substr(first, last - first + 1);
-    }
-
-    static void WriteLastScenePath(const std::string& path) {
-        namespace fs = std::filesystem;
-        const fs::path stateFile = LastSceneStateFile();
-        std::error_code ec;
-        fs::create_directories(stateFile.parent_path(), ec);
-        std::ofstream out(stateFile, std::ios::trunc);
-        if (out.is_open()) out << path << '\n';
-    }
-
     std::string SceneStartDirectory() const {
         namespace fs = std::filesystem;
         if (!m_currentScenePath.empty()) {
@@ -229,46 +196,9 @@ protected:
         m_browser    = std::make_unique<Galeshi::ContentBrowser>("assets");
         m_serializer = std::make_unique<Galeshi::SceneSerializer>(m_scene, *m_assets);
 
-        // Auto-load the scene the user saved last.  The application changes
-        // its working directory to the executable directory, while Save Scene
-        // historically defaulted to $HOME, so checking only "./scene.json"
-        // missed almost every saved scene.
-        namespace fs = std::filesystem;
-        std::vector<fs::path> sceneCandidates;
-        auto addCandidate = [&](const fs::path& candidate) {
-            if (candidate.empty()) return;
-            std::error_code ec;
-            fs::path absolute = fs::absolute(candidate, ec);
-            if (ec) absolute = candidate;
-            absolute = absolute.lexically_normal();
-            if (std::find(sceneCandidates.begin(), sceneCandidates.end(), absolute) ==
-                sceneCandidates.end()) {
-                sceneCandidates.push_back(std::move(absolute));
-            }
-        };
-        addCandidate(ReadLastScenePath());
-        addCandidate(fs::current_path() / "scene.json");
-        if (const char* home = std::getenv("HOME"); home && *home) {
-            addCandidate(fs::path(home) / "scene.json");
-        }
-        addCandidate(FindProjectRoot() / "scene.json");
-
-        bool sceneAutoLoaded = false;
-        for (const auto& candidate : sceneCandidates) {
-            std::error_code ec;
-            if (!fs::exists(candidate, ec)) continue;
-            if (m_serializer->Load(candidate.string())) {
-                m_currentScenePath = candidate.string();
-                WriteLastScenePath(m_currentScenePath);
-                sceneAutoLoaded = true;
-                spdlog::info("[Editor] Scene auto-loaded from {}", m_currentScenePath);
-                break;
-            }
-            spdlog::warn("[Editor] Failed to load scene {}", candidate.string());
-        }
-        if (!sceneAutoLoaded) {
-            spdlog::info("[Editor] scene.json not found; use Testing -> Build Scene to create the test scene");
-        }
+        // The editor deliberately starts with an empty scene.  Scenes are
+        // loaded explicitly through File -> Load Scene.
+        spdlog::info("[Editor] Starting with an empty scene");
 
         // Первый снапшот для Undo/Redo
         m_history.clear();
@@ -461,7 +391,6 @@ protected:
             if (m_serializer) {
                 if (m_serializer->Save(chosenSave)) {
                     m_currentScenePath = std::filesystem::absolute(chosenSave).lexically_normal().string();
-                    WriteLastScenePath(m_currentScenePath);
                     spdlog::info("[Editor] Scene saved to {}", m_currentScenePath);
                 } else {
                     spdlog::error("[Editor] Failed to save scene to {}", chosenSave);
@@ -475,7 +404,6 @@ protected:
             m_editor.ClearSelection();
             if (m_serializer->Load(chosenLoad)) {
                 m_currentScenePath = std::filesystem::absolute(chosenLoad).lexically_normal().string();
-                WriteLastScenePath(m_currentScenePath);
                 spdlog::info("[Editor] Scene loaded from {}", m_currentScenePath);
             } else {
                 spdlog::error("[Editor] Failed to load scene: {}", chosenLoad);
@@ -1926,12 +1854,71 @@ void DrawDetails() {
             ImGui::Text("Current Tool: %s", m_editor.toolMode == Galeshi::EditorState::ToolMode::Raise ? "Raise" : "Select");
         }
 
+        auto materialUserCount = [&](const Galeshi::Material* material) {
+            size_t count = 0;
+            auto view = m_scene.Registry().view<Galeshi::MaterialComponent>();
+            for (auto handle : view) {
+                if (view.get<Galeshi::MaterialComponent>(handle).material.get() == material) {
+                    ++count;
+                }
+            }
+            return count;
+        };
+
         // Helper lambda to draw material UI safely
         auto DrawMaterialUI = [&](const char* label, Galeshi::MaterialComponent& matc, uint32_t eid) {
             if (!matc.material) return;
             auto& m = *matc.material;
             ImGui::PushID(eid);
             if (ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_DefaultOpen)) {
+                const size_t userCount = materialUserCount(&m);
+                if (m.base) {
+                    ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f),
+                        "Instance of: %s", m.base->name.c_str());
+                    if (ImGui::Button("Reset to Base")) {
+                        const auto base = m.base;
+                        const std::string instanceName = m.name;
+                        m = *base;
+                        m.base = base;
+                        m.name = instanceName;
+                        matc.isGlass = m.isGlass;
+                        PushHistory();
+                        ImGui::PopID();
+                        return;
+                    }
+                } else {
+                    ImGui::TextDisabled("Base material");
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("| Used by %zu object%s", userCount, userCount == 1 ? "" : "s");
+                if (userCount > 1) {
+                    if (ImGui::Button("Create Instance")) {
+                        auto base = matc.material;
+                        auto instance = std::make_shared<Galeshi::Material>(*base);
+                        instance->base = base;
+                        instance->name = base->name.empty()
+                            ? std::string("Material Instance")
+                            : base->name + " Instance";
+                        matc.material = instance;
+                        matc.isGlass = instance->isGlass;
+                        PushHistory();
+                        ImGui::PopID();
+                        return;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Create an independent material instance.\n"
+                                          "Texture maps are shared, parameters can be edited separately.");
+                    }
+                }
+
+                char nameBuffer[128];
+                std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", m.name.c_str());
+                if (ImGui::InputText("Material Name", nameBuffer, sizeof(nameBuffer))) {
+                    m.name = nameBuffer;
+                }
+
+                ImGui::Separator();
+
                 // --- Пресеты ---
                 ImGui::Text("Presets:");
                 if (ImGui::Button("Metal")) {

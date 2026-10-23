@@ -12,6 +12,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -34,6 +35,94 @@ glm::quat QuatFromJson(const json& j) { return glm::quat(j.at(0).get<float>(), j
 
 std::string TexturePath(const std::shared_ptr<Texture>& texture) {
     return texture ? texture->Path() : std::string{};
+}
+
+json MaterialToJson(const Material& m) {
+    return {
+        {"name", m.name},
+        {"sourcePath", m.sourcePath},
+        {"albedoFactor", Vec4ToJson(m.albedoFactor)},
+        {"metallicFactor", m.metallicFactor},
+        {"roughnessFactor", m.roughnessFactor},
+        {"emissiveFactor", Vec3ToJson(m.emissiveFactor)},
+        {"isGlass", m.isGlass},
+        {"twoSided", m.twoSided},
+        {"glassOpacity", m.glassOpacity},
+        {"normalStrength", m.normalStrength},
+        {"occlusionStrength", m.occlusionStrength},
+        {"alphaCutoff", m.alphaCutoff},
+        {"albedoMapPath", TexturePath(m.albedoMap)},
+        {"normalMapPath", TexturePath(m.normalMap)},
+        {"mrMapPath", TexturePath(m.metallicRoughnessMap)},
+        {"metallicMapPath", TexturePath(m.metallicMap)},
+        {"roughnessMapPath", TexturePath(m.roughnessMap)},
+        {"emissiveMapPath", TexturePath(m.emissiveMap)},
+        {"occlusionMapPath", TexturePath(m.occlusionMap)},
+        {"opacityMapPath", TexturePath(m.opacityMap)},
+        {"specularMapPath", TexturePath(m.specularMap)}
+    };
+}
+
+std::shared_ptr<Material> MaterialFromJson(const json& jm,
+                                           AssetManager& assets,
+                                           const std::string& textureRoot) {
+    auto material = std::make_shared<Material>();
+    material->name = jm.value("name", std::string("Material"));
+    material->sourcePath = jm.value("sourcePath", std::string{});
+    material->albedoFactor = jm.contains("albedoFactor")
+        ? Vec4FromJson(jm.at("albedoFactor")) : glm::vec4(1.0f);
+    material->metallicFactor = jm.value("metallicFactor", 0.0f);
+    material->roughnessFactor = jm.value("roughnessFactor", 0.5f);
+    material->emissiveFactor = jm.contains("emissiveFactor")
+        ? Vec3FromJson(jm.at("emissiveFactor")) : glm::vec3(0.0f);
+    material->isGlass = jm.value("isGlass", false);
+    // Older scenes had no two-sided switch and the renderer mirrored
+    // backface normals unconditionally. Default missing values to true so
+    // loaded scenes keep their previous appearance.
+    material->twoSided = jm.value("twoSided", true);
+    material->glassOpacity = jm.value("glassOpacity", 0.35f);
+    material->normalStrength = jm.value("normalStrength", 1.0f);
+    material->occlusionStrength = jm.value("occlusionStrength", 1.0f);
+    material->alphaCutoff = jm.value("alphaCutoff", 0.5f);
+
+    std::string modelSource = textureRoot;
+    if (modelSource.empty()) modelSource = material->sourcePath;
+    if (!modelSource.empty()) {
+        // Register embedded model textures before resolving material maps.
+        assets.LoadModel(modelSource);
+    }
+
+    auto loadMap = [&](const char* key, bool srgb) -> std::shared_ptr<Texture> {
+        const std::string path = jm.value(key, std::string{});
+        if (path.empty()) return nullptr;
+
+        auto load = [&](const std::string& candidate) -> std::shared_ptr<Texture> {
+            if (candidate.empty()) return nullptr;
+            auto texture = assets.LoadTexture(candidate, srgb);
+            return (texture && texture != assets.WhiteTexture()) ? texture : nullptr;
+        };
+
+        auto texture = load(path);
+        if (!texture && !modelSource.empty()) {
+            const auto modelDir = std::filesystem::path(modelSource).parent_path();
+            texture = load((modelDir / path).string());
+            if (!texture) {
+                texture = load((modelDir / std::filesystem::path(path).filename()).string());
+            }
+        }
+        return texture;
+    };
+
+    material->albedoMap = loadMap("albedoMapPath", true);
+    material->normalMap = loadMap("normalMapPath", false);
+    material->metallicRoughnessMap = loadMap("mrMapPath", false);
+    material->metallicMap = loadMap("metallicMapPath", false);
+    material->roughnessMap = loadMap("roughnessMapPath", false);
+    material->emissiveMap = loadMap("emissiveMapPath", true);
+    material->occlusionMap = loadMap("occlusionMapPath", false);
+    material->opacityMap = loadMap("opacityMapPath", false);
+    material->specularMap = loadMap("specularMapPath", false);
+    return material;
 }
 
 // Character sub-meshes are named "<root>_<number>".  Old scene files stored
@@ -120,6 +209,66 @@ std::string SceneSerializer::SaveToString() const {
         idByEntity.emplace(entities[i], static_cast<int>(i));
     }
 
+    // Collect the unique materials used by the scene.  Materials are shared
+    // between entities by shared_ptr, so storing them once in a top-level
+    // table keeps that sharing (and the base/instance relationship) intact
+    // across save/load.  A material's base is included even if no entity
+    // references it directly.
+    struct MaterialRecord {
+        std::shared_ptr<Material> material;
+        std::string textureRoot;
+    };
+    std::vector<MaterialRecord> materialRecords;
+    std::unordered_map<const Material*, int> materialIds;
+    std::unordered_set<const Material*> visitingMaterials;
+
+    std::function<void(const std::shared_ptr<Material>&, const std::string&)> addMaterial;
+    addMaterial = [&](const std::shared_ptr<Material>& material, const std::string& textureRoot) {
+        if (!material || !visitingMaterials.insert(material.get()).second) return;
+
+        if (material->base) {
+            const std::string baseRoot = !textureRoot.empty() ? textureRoot : material->sourcePath;
+            addMaterial(material->base, baseRoot);
+        }
+
+        auto [it, inserted] = materialIds.emplace(material.get(),
+                                                   static_cast<int>(materialRecords.size()));
+        if (inserted) {
+            materialRecords.push_back({material, textureRoot});
+        } else if (materialRecords[it->second].textureRoot.empty() && !textureRoot.empty()) {
+            materialRecords[it->second].textureRoot = textureRoot;
+        }
+        visitingMaterials.erase(material.get());
+    };
+
+    const auto& registry = m_scene.Registry();
+    for (const entt::entity handle : entities) {
+        if (!registry.all_of<MaterialComponent>(handle)) continue;
+        const auto& material = registry.get<MaterialComponent>(handle).material;
+        if (!material) continue;
+
+        std::string textureRoot;
+        if (registry.all_of<MeshComponent>(handle)) {
+            textureRoot = registry.get<MeshComponent>(handle).sourceAssetPath;
+        }
+        if (textureRoot.empty()) textureRoot = material->sourcePath;
+        addMaterial(material, textureRoot);
+    }
+
+    if (!materialRecords.empty()) {
+        root["materials"] = json::array();
+        for (const auto& record : materialRecords) {
+            const auto& material = *record.material;
+            json jm = MaterialToJson(material);
+            jm["textureRoot"] = record.textureRoot;
+            if (material.base) {
+                const auto baseIt = materialIds.find(material.base.get());
+                if (baseIt != materialIds.end()) jm["baseId"] = baseIt->second;
+            }
+            root["materials"].push_back(std::move(jm));
+        }
+    }
+
     for (size_t i = 0; i < entities.size(); ++i) {
         const entt::entity handle = entities[i];
         const auto& reg = m_scene.Registry();
@@ -158,30 +307,13 @@ std::string SceneSerializer::SaveToString() const {
         if (reg.all_of<MaterialComponent>(handle)) {
             const auto& matc = reg.get<MaterialComponent>(handle);
             if (matc.material) {
-                const auto& m = *matc.material;
-                je["material"] = {
-                    {"name", m.name},
-                    {"sourcePath", m.sourcePath},
-                    {"albedoFactor", Vec4ToJson(m.albedoFactor)},
-                    {"metallicFactor", m.metallicFactor},
-                    {"roughnessFactor", m.roughnessFactor},
-                    {"emissiveFactor", Vec3ToJson(m.emissiveFactor)},
-                    {"isGlass", m.isGlass},
-                    {"twoSided", m.twoSided},
-                    {"glassOpacity", m.glassOpacity},
-                    {"normalStrength", m.normalStrength},
-                    {"occlusionStrength", m.occlusionStrength},
-                    {"alphaCutoff", m.alphaCutoff},
-                    {"albedoMapPath", TexturePath(m.albedoMap)},
-                    {"normalMapPath", TexturePath(m.normalMap)},
-                    {"mrMapPath", TexturePath(m.metallicRoughnessMap)},
-                    {"metallicMapPath", TexturePath(m.metallicMap)},
-                    {"roughnessMapPath", TexturePath(m.roughnessMap)},
-                    {"emissiveMapPath", TexturePath(m.emissiveMap)},
-                    {"occlusionMapPath", TexturePath(m.occlusionMap)},
-                    {"opacityMapPath", TexturePath(m.opacityMap)},
-                    {"specularMapPath", TexturePath(m.specularMap)}
-                };
+                const auto materialIt = materialIds.find(matc.material.get());
+                if (materialIt != materialIds.end()) {
+                    je["materialId"] = materialIt->second;
+                }
+                // Keep the inline material for backward compatibility with
+                // scene files and tools that predate the material table.
+                je["material"] = MaterialToJson(*matc.material);
             }
         }
         if (reg.all_of<SkeletalComponent>(handle)) {
@@ -330,6 +462,49 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
     };
 
     m_scene.Registry().clear();
+
+    // Material instances are stored once in a top-level table.  Build them
+    // before the entities so every component referencing the same materialId
+    // receives the same shared_ptr; resolve base links in a second pass to
+    // allow instances to appear before their bases in malformed/hand-edited
+    // files.
+    std::vector<std::shared_ptr<Material>> materialLibrary;
+    std::vector<int> materialBaseIds;
+    if (root.contains("materials") && root["materials"].is_array()) {
+        const auto& jsonMaterials = root["materials"];
+        materialLibrary.reserve(jsonMaterials.size());
+        materialBaseIds.reserve(jsonMaterials.size());
+        for (const auto& jm : jsonMaterials) {
+            if (!jm.is_object()) {
+                materialLibrary.push_back(nullptr);
+                materialBaseIds.push_back(-1);
+                continue;
+            }
+            const std::string textureRoot = jm.value("textureRoot", std::string{});
+            materialLibrary.push_back(MaterialFromJson(jm, m_assets, textureRoot));
+            materialBaseIds.push_back(jm.value("baseId", -1));
+        }
+        for (size_t i = 0; i < materialLibrary.size(); ++i) {
+            if (!materialLibrary[i]) continue;
+            const int baseId = materialBaseIds[i];
+            if (baseId < 0 || baseId >= static_cast<int>(materialLibrary.size()) ||
+                baseId == static_cast<int>(i) || !materialLibrary[static_cast<size_t>(baseId)]) {
+                continue;
+            }
+            materialLibrary[i]->base = materialLibrary[static_cast<size_t>(baseId)];
+            // Reject malformed cycles so Reset to Base can never loop.
+            const Material* ancestor = materialLibrary[i]->base.get();
+            size_t guard = 0;
+            while (ancestor && guard++ < materialLibrary.size()) {
+                if (ancestor == materialLibrary[i].get()) {
+                    materialLibrary[i]->base.reset();
+                    break;
+                }
+                ancestor = ancestor->base.get();
+            }
+        }
+    }
+
     std::vector<LoadedEntity> loaded;
     loaded.reserve(jsonEntities.size());
 
@@ -463,70 +638,25 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
             }
         }
 
-        if (je.contains("material")) {
-            const auto& jm = je["material"];
-            auto material = std::make_shared<Material>();
-            material->name = jm.value("name", std::string("Material"));
-            material->sourcePath = jm.value("sourcePath", std::string{});
-            material->albedoFactor = jm.contains("albedoFactor") ? Vec4FromJson(jm.at("albedoFactor")) : glm::vec4(1.0f);
-            material->metallicFactor = jm.value("metallicFactor", 0.0f);
-            material->roughnessFactor = jm.value("roughnessFactor", 0.5f);
-            material->emissiveFactor = jm.contains("emissiveFactor") ? Vec3FromJson(jm.at("emissiveFactor")) : glm::vec3(0.0f);
-            material->isGlass = jm.value("isGlass", false);
-            // Older scenes had no two-sided switch and the renderer mirrored
-            // backface normals unconditionally. Default missing values to
-            // true so loaded scenes keep their previous appearance.
-            material->twoSided = jm.value("twoSided", true);
-            material->glassOpacity = jm.value("glassOpacity", 0.35f);
-            material->normalStrength = jm.value("normalStrength", 1.0f);
-            material->occlusionStrength = jm.value("occlusionStrength", 1.0f);
-            material->alphaCutoff = jm.value("alphaCutoff", 0.5f);
+        std::shared_ptr<Material> material;
+        if (je.contains("materialId") && je["materialId"].is_number_integer()) {
+            const int materialId = je["materialId"].get<int>();
+            if (materialId >= 0 && materialId < static_cast<int>(materialLibrary.size())) {
+                material = materialLibrary[static_cast<size_t>(materialId)];
+            }
+        }
 
+        // Fall back to the per-entity material block for older scene files
+        // (or if the material table was stripped by an external tool).
+        if (!material && je.contains("material") && je["material"].is_object()) {
             std::string meshSource;
-            std::string materialSource = material->sourcePath;
             if (je.contains("mesh")) {
                 meshSource = je["mesh"].value("sourceAssetPath", std::string{});
             }
-            if (!meshSource.empty()) {
-                // Ensure embedded model textures are registered even if this
-                // entity has no mesh component of its own.
-                m_assets.LoadModel(meshSource);
-            }
+            material = MaterialFromJson(je["material"], m_assets, meshSource);
+        }
 
-            auto loadMap = [&](const char* key, bool srgb) -> std::shared_ptr<Texture> {
-                const std::string path = jm.value(key, std::string{});
-                if (path.empty()) return nullptr;
-
-                auto load = [&](const std::string& candidate) -> std::shared_ptr<Texture> {
-                    if (candidate.empty()) return nullptr;
-                    auto texture = m_assets.LoadTexture(candidate, srgb);
-                    return (texture && texture != m_assets.WhiteTexture()) ? texture : nullptr;
-                };
-
-                auto texture = load(path);
-                if (!texture) {
-                    const std::string& modelSource = !meshSource.empty() ? meshSource : materialSource;
-                    if (!modelSource.empty()) {
-                        const auto modelDir = std::filesystem::path(modelSource).parent_path();
-                        texture = load((modelDir / path).string());
-                        if (!texture) {
-                            texture = load((modelDir / std::filesystem::path(path).filename()).string());
-                        }
-                    }
-                }
-                return texture;
-            };
-
-            material->albedoMap = loadMap("albedoMapPath", true);
-            material->normalMap = loadMap("normalMapPath", false);
-            material->metallicRoughnessMap = loadMap("mrMapPath", false);
-            material->metallicMap = loadMap("metallicMapPath", false);
-            material->roughnessMap = loadMap("roughnessMapPath", false);
-            material->emissiveMap = loadMap("emissiveMapPath", true);
-            material->occlusionMap = loadMap("occlusionMapPath", false);
-            material->opacityMap = loadMap("opacityMapPath", false);
-            material->specularMap = loadMap("specularMapPath", false);
-
+        if (material) {
             auto& materialComponent = e.AddComponent<MaterialComponent>(MaterialComponent{ material });
             materialComponent.isGlass = material->isGlass;
         }
