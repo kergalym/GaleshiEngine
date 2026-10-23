@@ -34,9 +34,16 @@ AssetManager::AssetManager() {
 
 AssetManager::~AssetManager() = default;
 void AssetManager::Clear() {
+    // Scene entities must release their shared_ptrs before this is called.
+    // Clearing the model cache destroys imported meshes plus their materials
+    // and textures; removing the cached primitives releases their GPU buffers
+    // as well. The small default textures are shared engine resources and
+    // remain alive.
     m_models.clear();
     m_textures.clear();
     m_embeddedTextures.clear();
+    m_cubeMesh.reset();
+    m_sphereMesh.reset();
 }
 
 namespace {

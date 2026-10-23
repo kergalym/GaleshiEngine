@@ -636,6 +636,10 @@ if (ImGui::BeginMenu("File")) {
                 m_editor.isPlaying = false;
                 m_physics->Reset();
                 m_scene.Registry().clear();
+                // Nothing in the scene references the old model meshes or
+                // textures anymore, so drop the caches before rebuilding to
+                // release their video memory.
+                m_assets->Clear();
                 BuildTestScene();
                 PushHistory();
             }
@@ -1287,6 +1291,23 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             }
             ImTextureID texId = static_cast<ImTextureID>(__disp.idx);
             ImGui::Image(texId, ImVec2(static_cast<float>(w), static_cast<float>(h)), ImVec2(0, 0), ImVec2(1, 1));
+
+            // Accept assets dragged from the Content Browser. Models are
+            // spawned under the cursor; textures are still applied to the
+            // selected material by OnAssetDropped().
+            const ImVec2 dropImageMin = ImGui::GetItemRectMin();
+            if (!m_isGameMode && ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload =
+                        ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
+                    const char* path = static_cast<const char*>(payload->Data);
+                    if (path && *path) {
+                        const glm::vec3 dropPos = ViewportDropWorldPosition(
+                            ImGui::GetMousePos(), dropImageMin, w, h);
+                        OnAssetDropped(path, dropPos);
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
         }
 
         if (m_framebuffer && bgfx::isValid(m_framebuffer->Color())) {
@@ -1660,6 +1681,23 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             tf.scale    = scl;
         };
 
+        // Imported models are stored as an empty root with one mesh child per
+        // material submesh. Those children only add noise to the Outliner, so
+        // show the model root by itself. Skeletal roots can own non-mesh
+        // children as well, so recognise them explicitly.
+        auto IsModelRoot = [&](entt::entity root,
+                               const std::vector<entt::entity>& children) {
+            if (reg.all_of<Galeshi::SkeletalComponent>(root)) return true;
+            if (children.empty() || reg.all_of<Galeshi::MeshComponent>(root))
+                return false;
+            for (entt::entity child : children) {
+                if (!reg.all_of<Galeshi::MeshComponent>(child)) return false;
+                if (reg.get<Galeshi::MeshComponent>(child).sourceAssetPath.empty())
+                    return false;
+            }
+            return true;
+        };
+
         std::function<void(entt::entity, int)> DrawNode = [&](entt::entity e, int depth) {
             if (!reg.valid(e)) return;
 
@@ -1676,6 +1714,9 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             reg.view<Galeshi::ParentComponent>().each([&](auto child, auto& pc) {
                 if (pc.parent == e) children.push_back(child);
             });
+            if (IsModelRoot(e, children)) {
+                children.clear();
+            }
             bool hasChildren = !children.empty();
 
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen;
@@ -2100,13 +2141,44 @@ void DrawDetails() {
         }
     }
 
+    glm::vec3 ViewportDropWorldPosition(const ImVec2& mouse, const ImVec2& imageMin,
+                                        uint16_t width, uint16_t height) const {
+        if (width == 0 || height == 0) return m_editor.camTarget;
+
+        const float u = (mouse.x - imageMin.x) / static_cast<float>(width);
+        const float v = (mouse.y - imageMin.y) / static_cast<float>(height);
+        const float ndcX = u * 2.0f - 1.0f;
+        const float ndcY = 1.0f - v * 2.0f;
+
+        const glm::mat4 invVP =
+            glm::inverse(m_camera.Projection() * m_camera.View());
+        glm::vec4 nearPoint = invVP * glm::vec4(ndcX, ndcY, -1.0f, 1.0f);
+        glm::vec4 farPoint  = invVP * glm::vec4(ndcX, ndcY,  1.0f, 1.0f);
+        if (std::abs(nearPoint.w) < 1e-6f || std::abs(farPoint.w) < 1e-6f)
+            return m_editor.camTarget;
+
+        nearPoint /= nearPoint.w;
+        farPoint  /= farPoint.w;
+        const glm::vec3 rayOrigin(nearPoint);
+        const glm::vec3 rayDir = glm::normalize(glm::vec3(farPoint - nearPoint));
+
+        // Build/empty scenes use the y=0 plane as their placement surface.
+        // Falling back to the camera target keeps drops usable even when the
+        // camera is looking up or parallel to that plane.
+        if (std::abs(rayDir.y) > 1e-4f) {
+            const float t = -rayOrigin.y / rayDir.y;
+            if (t > 0.0f && t < 1000.0f) return rayOrigin + rayDir * t;
+        }
+        return m_editor.camTarget;
+    }
+
     void OnAssetDropped(const std::string& path, glm::vec3 pos) {
         namespace fs = std::filesystem;
         std::string ext = fs::path(path).extension().string();
         for (auto& c : ext) c = static_cast<char>(std::tolower(c));
 
         if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") {
-            SpawnFromModel(path, pos);
+            SpawnFromModel(path, pos, true);
             return;
         }
 
@@ -2125,7 +2197,8 @@ void DrawDetails() {
         }
     }
 
-    void SpawnFromModel(const std::string& path, glm::vec3 pos) {
+    void SpawnFromModel(const std::string& path, glm::vec3 pos,
+                        bool placeAtPosition = false) {
         PushHistory();
         auto model = m_assets->LoadModel(path);
         if (model.meshes.empty()) return;
@@ -2135,8 +2208,9 @@ void DrawDetails() {
         auto root = m_scene.CreateEntity(stem);
         auto& rootTf = root.GetComponent<Galeshi::TransformComponent>();
         
-        // 1. Force clean TransformComponent (0,0,0) as requested
-        rootTf.position = glm::vec3(0.0f);
+        // Model imports are normally created at the origin. A viewport drop
+        // additionally positions the new root at the drop point.
+        rootTf.position = placeAtPosition ? pos : glm::vec3(0.0f);
         rootTf.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
         rootTf.scale = glm::vec3(1.0f);
         

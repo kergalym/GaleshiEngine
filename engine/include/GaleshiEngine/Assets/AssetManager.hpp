@@ -49,6 +49,9 @@ public:
     std::shared_ptr<Mesh> CreateCubeMesh();
     std::shared_ptr<Mesh> CreateSphereMesh();  // unit sphere, radius 0.5
     std::shared_ptr<Mesh> CreateCapsuleMesh(float halfHeight, float radius);
+
+    // Release cached meshes and textures. Clear the scene first so its
+    // components no longer hold shared references to these resources.
     void Clear();
 
 private:
