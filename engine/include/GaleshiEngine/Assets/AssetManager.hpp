@@ -52,6 +52,8 @@ public:
 
 private:
     std::unordered_map<std::string, std::shared_ptr<Texture>> m_textures;
+    // Embedded FBX/glTF textures indexed by normalized lowercase path and basename.
+    std::unordered_map<std::string, std::shared_ptr<Texture>> m_embeddedTextures;
     std::unordered_map<std::string, LoadedModel>              m_models;
 
     std::shared_ptr<Mesh>    m_cubeMesh;

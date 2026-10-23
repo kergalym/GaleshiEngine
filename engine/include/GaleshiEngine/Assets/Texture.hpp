@@ -16,7 +16,11 @@ public:
 
     // Загрузка из файла (PNG/JPG/DDS/KTX через bimg)
     static Texture* LoadFromFile(const std::string& path);
-    static Texture* LoadFromMemory(const unsigned char* data, size_t size);
+    static Texture* LoadFromMemory(const unsigned char* data, size_t size,
+                                  const std::string& displayPath = "<embedded>");
+    // Assimp raw embedded texture: BGRA8, mWidth x mHeight pixels.
+    static Texture* CreateFromBgra8(const unsigned char* data, int width, int height,
+                                    const std::string& displayPath = "<embedded-raw>");
 
     // 1x1 белая / плоская normal / чёрная
     static Texture* CreateWhite();

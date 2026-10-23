@@ -65,9 +65,18 @@ std::string SceneSerializer::SaveToString() const {
                     {"name", m.name}, {"albedoFactor", Vec4ToJson(m.albedoFactor)},
                     {"metallicFactor", m.metallicFactor}, {"roughnessFactor", m.roughnessFactor},
                     {"emissiveFactor", Vec3ToJson(m.emissiveFactor)},
+                    {"isGlass", m.isGlass}, {"glassOpacity", m.glassOpacity},
+                    {"normalStrength", m.normalStrength}, {"occlusionStrength", m.occlusionStrength},
+                    {"alphaCutoff", m.alphaCutoff},
                     {"albedoMapPath", m.albedoMap ? m.albedoMap->Path() : std::string{}},
                     {"normalMapPath", m.normalMap ? m.normalMap->Path() : std::string{}},
-                    {"mrMapPath", m.metallicRoughnessMap ? m.metallicRoughnessMap->Path() : std::string{}}
+                    {"mrMapPath", m.metallicRoughnessMap ? m.metallicRoughnessMap->Path() : std::string{}},
+                    {"metallicMapPath", m.metallicMap ? m.metallicMap->Path() : std::string{}},
+                    {"roughnessMapPath", m.roughnessMap ? m.roughnessMap->Path() : std::string{}},
+                    {"emissiveMapPath", m.emissiveMap ? m.emissiveMap->Path() : std::string{}},
+                    {"occlusionMapPath", m.occlusionMap ? m.occlusionMap->Path() : std::string{}},
+                    {"opacityMapPath", m.opacityMap ? m.opacityMap->Path() : std::string{}},
+                    {"specularMapPath", m.specularMap ? m.specularMap->Path() : std::string{}}
                 };
 
                 
@@ -133,14 +142,31 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
         if (je.contains("material")) {
             const auto& jm = je["material"];
             auto mat = std::make_shared<Material>();
-            mat->name = jm.value("name", "Material"); mat->albedoFactor = Vec4FromJson(jm.at("albedoFactor"));
+            mat->name = jm.value("name", "Material");
+            mat->albedoFactor = jm.contains("albedoFactor") ? Vec4FromJson(jm.at("albedoFactor")) : glm::vec4(1.0f);
             mat->metallicFactor = jm.value("metallicFactor", 0.0f); mat->roughnessFactor = jm.value("roughnessFactor", 0.5f);
-            mat->emissiveFactor = Vec3FromJson(jm.at("emissiveFactor"));
-            const std::string aPath = jm.value("albedoMapPath", ""); if (!aPath.empty()) mat->albedoMap = m_assets.LoadTexture(aPath);
-            const std::string nPath = jm.value("normalMapPath", ""); if (!nPath.empty()) mat->normalMap = m_assets.LoadTexture(nPath);
-            const std::string mPath = jm.value("mrMapPath", ""); if (!mPath.empty()) mat->metallicRoughnessMap = m_assets.LoadTexture(mPath);
-            
-            
+            mat->emissiveFactor = jm.contains("emissiveFactor") ? Vec3FromJson(jm.at("emissiveFactor")) : glm::vec3(0.0f);
+            mat->isGlass = jm.value("isGlass", false);
+            mat->glassOpacity = jm.value("glassOpacity", 0.35f);
+            mat->normalStrength = jm.value("normalStrength", 1.0f);
+            mat->occlusionStrength = jm.value("occlusionStrength", 1.0f);
+            mat->alphaCutoff = jm.value("alphaCutoff", 0.5f);
+
+            auto loadMap = [&](const char* key) -> std::shared_ptr<Texture> {
+                const std::string p = jm.value(key, "");
+                if (p.empty()) return nullptr;
+                auto tex = m_assets.LoadTexture(p);
+                return (tex && tex != m_assets.WhiteTexture()) ? tex : nullptr;
+            };
+            mat->albedoMap = loadMap("albedoMapPath");
+            mat->normalMap = loadMap("normalMapPath");
+            mat->metallicRoughnessMap = loadMap("mrMapPath");
+            mat->metallicMap = loadMap("metallicMapPath");
+            mat->roughnessMap = loadMap("roughnessMapPath");
+            mat->emissiveMap = loadMap("emissiveMapPath");
+            mat->occlusionMap = loadMap("occlusionMapPath");
+            mat->opacityMap = loadMap("opacityMapPath");
+            mat->specularMap = loadMap("specularMapPath");
 
             e.AddComponent<MaterialComponent>(MaterialComponent{ mat });
         }

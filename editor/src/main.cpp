@@ -33,6 +33,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
 #include <bx/math.h>
 
 #include <algorithm>
@@ -1024,6 +1025,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     m_framebuffer->Color(),
                     m_framebuffer->Normal(),
                     m_framebuffer->WorldPos(),
+                    m_framebuffer->Material(),
                     m_shadowMaps[0], m_shadowMaps[1], m_shadowMaps[2],
                     lightMtx0, lightMtx1, lightMtx2,
                     invViewProj,
@@ -1308,16 +1310,19 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 }
             }
 
-            // --- Visual gizmo: X/Y/Z arrows drawn, but result IGNORED. ---
+            // --- Gizmo: apply translation/rotation/scale to the ECS. ---
             if (selHasTf) {
                 ImGuizmo::SetDrawlist();
                 ImGuizmo::SetRect(imgMin.x, imgMin.y, w, h);
                 ImGuizmo::SetGizmoSizeClipSpace(0.12f);
                 glm::mat4 visView  = m_camera.View();
                 glm::mat4 visProj  = m_camera.Projection();
-                
-                // Compute World Matrix for Gizmo
+
+                // Compute the world matrix and the parent world matrix
+                // separately so the manipulated world transform can be
+                // converted back into the entity's local transform.
                 glm::mat4 worldMatrix(1.0f);
+                glm::mat4 parentWorld(1.0f);
                 entt::entity curr = sel.Handle();
                 std::vector<entt::entity> chain;
                 int depth = 0;
@@ -1328,16 +1333,73 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     else
                         break;
                 }
-                for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-                    if (m_scene.Registry().all_of<Galeshi::TransformComponent>(*it))
-                        worldMatrix = worldMatrix * m_scene.Registry().get<Galeshi::TransformComponent>(*it).LocalMatrix();
+                // chain[0] is the selected entity, the rest are ancestors.
+                for (size_t ci = chain.size(); ci-- > 0; ) {
+                    if (!m_scene.Registry().all_of<Galeshi::TransformComponent>(chain[ci]))
+                        continue;
+                    const glm::mat4 local =
+                        m_scene.Registry().get<Galeshi::TransformComponent>(chain[ci]).LocalMatrix();
+                    worldMatrix = worldMatrix * local;
+                    if (ci > 0) parentWorld = parentWorld * local;
                 }
-                
+
+                ImGuizmo::OPERATION operation = ImGuizmo::TRANSLATE;
+                switch (m_editor.Mode()) {
+                    case Galeshi::GizmoMode::Rotate: operation = ImGuizmo::ROTATE; break;
+                    case Galeshi::GizmoMode::Scale:  operation = ImGuizmo::SCALE;  break;
+                    case Galeshi::GizmoMode::Translate:
+                    default:                         operation = ImGuizmo::TRANSLATE; break;
+                }
+
                 glm::mat4 visModel = worldMatrix;
-                ImGuizmo::Manipulate(glm::value_ptr(visView), glm::value_ptr(visProj),
-                                     ImGuizmo::TRANSLATE, ImGuizmo::WORLD, // Use WORLD mode
-                                     glm::value_ptr(visModel));
-                // visModel intentionally not applied.
+                const bool manipulated = ImGuizmo::Manipulate(
+                    glm::value_ptr(visView), glm::value_ptr(visProj),
+                    operation, ImGuizmo::WORLD, glm::value_ptr(visModel));
+                const bool usingGizmo = manipulated || ImGuizmo::IsUsing();
+
+                if (usingGizmo) {
+                    // Snapshot the pre-drag state on the first frame that
+                    // actually changes the matrix. A plain click on a handle
+                    // must not create a redundant undo entry.
+                    if (manipulated && !m_wasUsingGizmo) {
+                        PushHistory();
+                        m_wasUsingGizmo = true;
+                    }
+
+                    if (manipulated) {
+                        glm::vec3 localTranslation, localScale, localSkew;
+                        glm::vec4 localPerspective;
+                        glm::quat localRotation;
+                        const glm::mat4 localMatrix = glm::inverse(parentWorld) * visModel;
+                        if (glm::decompose(localMatrix, localScale, localRotation,
+                                           localTranslation, localSkew, localPerspective)) {
+                            auto& tcGizmo = sel.GetComponent<Galeshi::TransformComponent>();
+                            tcGizmo.position = localTranslation;
+                            tcGizmo.rotation = glm::normalize(localRotation);
+                            tcGizmo.scale = localScale;
+
+                            if (sel.HasComponent<Galeshi::RigidBodyComponent>()) {
+                                auto& rb = sel.GetComponent<Galeshi::RigidBodyComponent>();
+                                glm::vec3 worldTranslation, worldScale, worldSkew;
+                                glm::vec4 worldPerspective;
+                                glm::quat worldRotation;
+                                if (glm::decompose(visModel, worldScale, worldRotation,
+                                                   worldTranslation, worldSkew, worldPerspective)) {
+                                    if (rb.bodyId != 0xFFFFFFFF) {
+                                        m_physics->SetBodyTransform(rb.bodyId, worldTranslation,
+                                                                    glm::normalize(worldRotation));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if (m_wasUsingGizmo) {
+                    // Store the final transform so Redo can restore the drag.
+                    PushHistory();
+                    m_wasUsingGizmo = false;
+                }
+            } else {
+                m_wasUsingGizmo = false;
             }
 
             const float centerRadiusPx = 24.0f;
@@ -1347,14 +1409,16 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
 
             // Begin drag on LMB down over center
             if (ImGui::IsItemHovered() && !m_isDragging &&
-                ImGui::IsMouseClicked(ImGuiMouseButton_Left) && overCenter) {
+                ImGui::IsMouseClicked(ImGuiMouseButton_Left) && overCenter &&
+                !ImGuizmo::IsOver() && !ImGuizmo::IsUsing()) {
                 m_isDragging = true;
                 m_dragStartMouse = { mouse.x, mouse.y };
                 m_dragStartObjWorld = selWorldPos;
             }
 
             // Perform drag while LMB held
-            if (m_isDragging && ImGui::IsMouseDown(ImGuiMouseButton_Left) && selHasTf) {
+            if (m_isDragging && ImGui::IsMouseDown(ImGuiMouseButton_Left) && selHasTf &&
+                !ImGuizmo::IsUsing()) {
                 const float dx = mouse.x - m_dragStartMouse.x;
                 const float dy = mouse.y - m_dragStartMouse.y;
 
@@ -1802,9 +1866,14 @@ void DrawDetails() {
                 // --- Основные параметры ---
                 ImGui::ColorEdit4("Albedo Factor", glm::value_ptr(m.albedoFactor));
                 ImGui::SliderFloat("Metallic Factor",  &m.metallicFactor,  0.0f, 1.0f);
-                ImGui::Checkbox("Glass (Transparent)", &m.isGlass);
                 ImGui::SliderFloat("Roughness Factor", &m.roughnessFactor, 0.04f, 1.0f);
                 ImGui::SliderFloat("Normal Strength",  &m.normalStrength,  0.0f, 2.0f);
+                ImGui::SliderFloat("Occlusion Strength", &m.occlusionStrength, 0.0f, 1.0f);
+                ImGui::SliderFloat("Alpha Cutoff",     &m.alphaCutoff,     0.0f, 1.0f);
+                ImGui::Checkbox("Glass (Transparent)", &m.isGlass);
+                if (m.isGlass) {
+                    ImGui::SliderFloat("Glass Opacity", &m.glassOpacity, 0.0f, 1.0f);
+                }
                 ImGui::ColorEdit3("Emissive Color", glm::value_ptr(m.emissiveFactor));
 
                 ImGui::Separator();
@@ -1814,7 +1883,12 @@ void DrawDetails() {
                 DrawTextureSlot("Albedo Map",           m.albedoMap);
                 DrawTextureSlot("Normal Map",           m.normalMap);
                 DrawTextureSlot("Metallic/Roughness",   m.metallicRoughnessMap);
+                DrawTextureSlot("Metallic Map",         m.metallicMap);
+                DrawTextureSlot("Roughness Map",        m.roughnessMap);
                 DrawTextureSlot("Emissive Map",         m.emissiveMap);
+                DrawTextureSlot("Occlusion Map",        m.occlusionMap);
+                DrawTextureSlot("Opacity Map",          m.opacityMap);
+                DrawTextureSlot("Specular Map",         m.specularMap);
             }
             ImGui::PopID();
         };
@@ -2001,7 +2075,6 @@ void DrawDetails() {
                 mat = model.materials[0];
             if (!mat)
                 mat = std::make_shared<Galeshi::Material>();
-            mat->isGlass = false; // Force opaque for characters
             e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
         }
         m_editor.Select(root);

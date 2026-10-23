@@ -34,9 +34,11 @@ void RenderSystem::Init(AssetManager* assets) {
     m_gbufferProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_gbuffer.bin");
     m_shadowProg = ShaderManager::LoadProgram("shaders/vs_shadow.bin", "shaders/fs_shadow.bin");
     m_shadowPointProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_shadow_point.bin");
-    spdlog::info("[RenderSystem] programs: pbr={} gbuffer={} shadow={} shadowPoint={}",
+    m_glassProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_glass.bin");
+    spdlog::info("[RenderSystem] programs: pbr={} gbuffer={} shadow={} shadowPoint={} glass={}",
         bgfx::isValid(m_program), bgfx::isValid(m_gbufferProg),
-        bgfx::isValid(m_shadowProg), bgfx::isValid(m_shadowPointProg));
+        bgfx::isValid(m_shadowProg), bgfx::isValid(m_shadowPointProg),
+        bgfx::isValid(m_glassProg));
     u_shadowLightPos = bgfx::createUniform("u_shadowLightPos", bgfx::UniformType::Vec4);
     if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
 
@@ -50,6 +52,9 @@ void RenderSystem::Init(AssetManager* assets) {
     u_pointLightPosRadius = bgfx::createUniform("u_pointLightPosRadius", bgfx::UniformType::Vec4, kMaxPointLights);
     u_pointLightColorInt = bgfx::createUniform("u_pointLightColorInt", bgfx::UniformType::Vec4, kMaxPointLights);
     u_pointLightCount = bgfx::createUniform("u_pointLightCount", bgfx::UniformType::Vec4);
+    u_materialParams = bgfx::createUniform("u_materialParams", bgfx::UniformType::Vec4);
+    u_materialFlags = bgfx::createUniform("u_materialFlags", bgfx::UniformType::Vec4);
+    u_glassParams = bgfx::createUniform("u_glassParams", bgfx::UniformType::Vec4);
     
     s_boneMatrices = bgfx::createUniform("s_boneMatrices", bgfx::UniformType::Sampler);
     m_boneTexture = bgfx::createTexture2D(4, kMaxBones, false, 1, bgfx::TextureFormat::RGBA32F);
@@ -57,6 +62,12 @@ void RenderSystem::Init(AssetManager* assets) {
     s_albedoMap = bgfx::createUniform("s_albedoMap", bgfx::UniformType::Sampler);
     s_metallicRoughnessMap = bgfx::createUniform("s_metallicRoughnessMap", bgfx::UniformType::Sampler);
     s_normalMap = bgfx::createUniform("s_normalMap", bgfx::UniformType::Sampler);
+    s_emissiveMap = bgfx::createUniform("s_emissiveMap", bgfx::UniformType::Sampler);
+    s_occlusionMap = bgfx::createUniform("s_occlusionMap", bgfx::UniformType::Sampler);
+    s_opacityMap = bgfx::createUniform("s_opacityMap", bgfx::UniformType::Sampler);
+    s_metallicMap = bgfx::createUniform("s_metallicMap", bgfx::UniformType::Sampler);
+    s_roughnessMap = bgfx::createUniform("s_roughnessMap", bgfx::UniformType::Sampler);
+    s_specularMap = bgfx::createUniform("s_specularMap", bgfx::UniformType::Sampler);
     s_brdfLUT = bgfx::createUniform("s_brdfLUT", bgfx::UniformType::Sampler);
 }
 
@@ -65,6 +76,7 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(m_gbufferProg)) bgfx::destroy(m_gbufferProg);
     if (bgfx::isValid(m_shadowProg)) bgfx::destroy(m_shadowProg);
     if (bgfx::isValid(m_shadowPointProg)) bgfx::destroy(m_shadowPointProg);
+    if (bgfx::isValid(m_glassProg)) bgfx::destroy(m_glassProg);
     if (bgfx::isValid(u_shadowLightPos)) bgfx::destroy(u_shadowLightPos);
     if (bgfx::isValid(u_albedoFactor)) bgfx::destroy(u_albedoFactor);
     if (bgfx::isValid(u_metallicFactor)) bgfx::destroy(u_metallicFactor);
@@ -76,11 +88,20 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(u_pointLightPosRadius)) bgfx::destroy(u_pointLightPosRadius);
     if (bgfx::isValid(u_pointLightColorInt)) bgfx::destroy(u_pointLightColorInt);
     if (bgfx::isValid(u_pointLightCount)) bgfx::destroy(u_pointLightCount);
+    if (bgfx::isValid(u_materialParams)) bgfx::destroy(u_materialParams);
+    if (bgfx::isValid(u_materialFlags)) bgfx::destroy(u_materialFlags);
+    if (bgfx::isValid(u_glassParams)) bgfx::destroy(u_glassParams);
     if (bgfx::isValid(s_boneMatrices)) bgfx::destroy(s_boneMatrices);
     if (bgfx::isValid(m_boneTexture)) bgfx::destroy(m_boneTexture);
     if (bgfx::isValid(s_albedoMap)) bgfx::destroy(s_albedoMap);
     if (bgfx::isValid(s_metallicRoughnessMap)) bgfx::destroy(s_metallicRoughnessMap);
     if (bgfx::isValid(s_normalMap)) bgfx::destroy(s_normalMap);
+    if (bgfx::isValid(s_emissiveMap)) bgfx::destroy(s_emissiveMap);
+    if (bgfx::isValid(s_occlusionMap)) bgfx::destroy(s_occlusionMap);
+    if (bgfx::isValid(s_opacityMap)) bgfx::destroy(s_opacityMap);
+    if (bgfx::isValid(s_metallicMap)) bgfx::destroy(s_metallicMap);
+    if (bgfx::isValid(s_roughnessMap)) bgfx::destroy(s_roughnessMap);
+    if (bgfx::isValid(s_specularMap)) bgfx::destroy(s_specularMap);
     if (bgfx::isValid(s_brdfLUT)) bgfx::destroy(s_brdfLUT);
     m_program = BGFX_INVALID_HANDLE;
 }
@@ -141,6 +162,9 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
     for (auto h : view) {
         const auto& mc = view.get<MeshComponent>(h); const auto& matc = view.get<MaterialComponent>(h);
         if (!mc.mesh || !mc.mesh->Valid() || !matc.material) continue;
+        // Transparent glass is submitted later in RenderGlass, after the
+        // post-processed image has been copied into the color attachment.
+        if (matc.material->isGlass) continue;
 
         glm::mat4 model(1.0f);
         entt::entity curr = h;
@@ -207,13 +231,39 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         const Material& mat = *matc.material;
         const float alb[4] = {mat.albedoFactor.r, mat.albedoFactor.g, mat.albedoFactor.b, mat.albedoFactor.a};
         const float met[4] = {mat.metallicFactor, 0, 0, 0}, rgh[4] = {mat.roughnessFactor, 0, 0, 0}, emi[4] = {mat.emissiveFactor.r, mat.emissiveFactor.g, mat.emissiveFactor.b, 0};
+        const float params[4] = {mat.normalStrength, mat.occlusionStrength, mat.alphaCutoff, 0.0f};
+        const float flags[4] = {
+            mat.metallicMap ? 1.0f : 0.0f,
+            mat.roughnessMap ? 1.0f : 0.0f,
+            mat.specularMap ? 1.0f : 0.0f,
+            mat.opacityMap ? 1.0f : 0.0f
+        };
         bgfx::setUniform(u_albedoFactor, alb); bgfx::setUniform(u_metallicFactor, met);
         bgfx::setUniform(u_roughnessFactor, rgh); bgfx::setUniform(u_emissiveFactor, emi);
+        bgfx::setUniform(u_materialParams, params);
+        bgfx::setUniform(u_materialFlags, flags);
 
         auto white = m_assets->WhiteTexture(), flatN = m_assets->FlatNormalTexture();
-        auto albedo = mat.albedoMap ? mat.albedoMap : white, mr = mat.metallicRoughnessMap ? mat.metallicRoughnessMap : white;
+        auto albedo = mat.albedoMap ? mat.albedoMap : white;
+        auto mr = mat.metallicRoughnessMap ? mat.metallicRoughnessMap : white;
         auto nrm = mat.normalMap ? mat.normalMap : flatN;
-        bgfx::setTexture(0, s_albedoMap, albedo->Handle()); bgfx::setTexture(1, s_metallicRoughnessMap, mr->Handle()); bgfx::setTexture(2, s_normalMap, nrm->Handle());
+        // White fallback keeps a non-zero emissive factor usable even when the
+        // material has no emissive texture.
+        auto emissive = mat.emissiveMap ? mat.emissiveMap : white;
+        auto occlusion = mat.occlusionMap ? mat.occlusionMap : white;
+        auto opacity = mat.opacityMap ? mat.opacityMap : white;
+        auto metallic = mat.metallicMap ? mat.metallicMap : white;
+        auto roughness = mat.roughnessMap ? mat.roughnessMap : white;
+        auto specular = mat.specularMap ? mat.specularMap : white;
+        bgfx::setTexture(0, s_albedoMap, albedo->Handle());
+        bgfx::setTexture(1, s_metallicRoughnessMap, mr->Handle());
+        bgfx::setTexture(2, s_normalMap, nrm->Handle());
+        bgfx::setTexture(7, s_emissiveMap, emissive->Handle());
+        bgfx::setTexture(8, s_occlusionMap, occlusion->Handle());
+        bgfx::setTexture(9, s_opacityMap, opacity->Handle());
+        bgfx::setTexture(10, s_metallicMap, metallic->Handle());
+        bgfx::setTexture(11, s_roughnessMap, roughness->Handle());
+        bgfx::setTexture(12, s_specularMap, specular->Handle());
         if (bgfx::isValid(m_brdfLUT)) {
             bgfx::setTexture(6, s_brdfLUT, m_brdfLUT);
         }
@@ -242,6 +292,10 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
     for (auto h : viewIter) {
         const auto& mc = viewIter.get<MeshComponent>(h);
         if (!mc.mesh || !mc.mesh->Valid()) continue;
+        if (scene.Registry().all_of<MaterialComponent>(h)) {
+            const auto& matc = scene.Registry().get<MaterialComponent>(h);
+            if (matc.material && matc.material->isGlass) continue;
+        }
 
         glm::mat4 model(1.0f);
         entt::entity curr = h;
@@ -290,6 +344,10 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
     for (auto h : viewIter) {
         const auto& mc = viewIter.get<MeshComponent>(h);
         if (!mc.mesh || !mc.mesh->Valid()) continue;
+        if (scene.Registry().all_of<MaterialComponent>(h)) {
+            const auto& matc = scene.Registry().get<MaterialComponent>(h);
+            if (matc.material && matc.material->isGlass) continue;
+        }
 
         glm::mat4 model(1.0f);
         entt::entity curr = h;
@@ -340,6 +398,24 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
     if (!bgfx::isValid(m_glassProg)) return;
     bgfx::setViewTransform(viewId, glm::value_ptr(camera.View()), glm::value_ptr(camera.Projection()));
     bgfx::setViewRect(viewId, 0, 0, width, height);
+    // The color attachment already contains the post-processed opaque image
+    // and the depth attachment still contains the opaque scene depth. Do not
+    // clear either one.
+    bgfx::setViewClear(viewId, BGFX_CLEAR_NONE);
+    // Sequential submission is required for back-to-front alpha blending.
+    bgfx::setViewMode(viewId, bgfx::ViewMode::Sequential);
+
+    struct GlassItem {
+        entt::entity entity = entt::null;
+        glm::mat4 model{1.0f};
+        std::shared_ptr<Mesh> mesh;
+        std::shared_ptr<Material> material;
+        float distanceSq = 0.0f;
+    };
+
+    const glm::vec3 camPos = camera.Position();
+    std::vector<GlassItem> items;
+    items.reserve(64);
 
     auto view = scene.Registry().view<TransformComponent, MeshComponent, MaterialComponent>();
     for (auto h : view) {
@@ -347,7 +423,11 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
         const auto& matc = view.get<MaterialComponent>(h);
         if (!mc.mesh || !mc.mesh->Valid() || !matc.material || !matc.material->isGlass) continue;
 
-        glm::mat4 model(1.0f);
+        GlassItem item;
+        item.entity = h;
+        item.mesh = mc.mesh;
+        item.material = matc.material;
+
         entt::entity curr = h;
         std::vector<entt::entity> chain;
         int __depth = 0; while (curr != entt::null && __depth++ < 128) {
@@ -358,18 +438,80 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
         }
         for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
             if (scene.Registry().all_of<TransformComponent>(*it))
-                model = model * scene.Registry().get<TransformComponent>(*it).LocalMatrix();
+                item.model = item.model * scene.Registry().get<TransformComponent>(*it).LocalMatrix();
         }
 
-        bgfx::setTransform(glm::value_ptr(model));
-        
-        glm::vec3 cp = camera.Position();
-        float camPos[4] = {cp.x, cp.y, cp.z, 1.0f};
-        bgfx::setUniform(u_cameraPosition, camPos);
+        const glm::vec3 worldPos = glm::vec3(item.model[3]);
+        item.distanceSq = glm::dot(worldPos - camPos, worldPos - camPos);
+        items.push_back(std::move(item));
+    }
 
-        bgfx::setVertexBuffer(0, mc.mesh->VB());
-        bgfx::setIndexBuffer(mc.mesh->IB());
-        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_ALPHA);
+    // Painter's algorithm: furthest glass first.
+    std::sort(items.begin(), items.end(), [](const GlassItem& a, const GlassItem& b) {
+        return a.distanceSq > b.distanceSq;
+    });
+
+    const float cam[4] = {camPos.x, camPos.y, camPos.z, 1.0f};
+    bgfx::setUniform(u_cameraPosition, cam);
+
+    auto white = m_assets->WhiteTexture(), flatN = m_assets->FlatNormalTexture();
+    static std::vector<glm::vec4> identityBoneData(kMaxBones * 4, glm::vec4(0.0f));
+    static bool initIdentity = false;
+    if (!initIdentity) {
+        glm::mat4 id(1.0f);
+        for (int i = 0; i < kMaxBones; ++i) {
+            for (int j = 0; j < 4; ++j) identityBoneData[i * 4 + j] = id[j];
+        }
+        initIdentity = true;
+    }
+    std::vector<glm::vec4> boneData(kMaxBones * 4);
+    for (const GlassItem& item : items) {
+        const Material& mat = *item.material;
+        const float alb[4] = {mat.albedoFactor.r, mat.albedoFactor.g, mat.albedoFactor.b, mat.albedoFactor.a};
+        const float glass[4] = {mat.glassOpacity, mat.normalStrength, mat.roughnessFactor, 0.0f};
+        bgfx::setUniform(u_albedoFactor, alb);
+        bgfx::setUniform(u_glassParams, glass);
+
+        auto albedo = mat.albedoMap ? mat.albedoMap : white;
+        auto nrm = mat.normalMap ? mat.normalMap : flatN;
+        auto opacity = mat.opacityMap ? mat.opacityMap : white;
+        bgfx::setTexture(0, s_albedoMap, albedo->Handle());
+        bgfx::setTexture(2, s_normalMap, nrm->Handle());
+        bgfx::setTexture(9, s_opacityMap, opacity->Handle());
+
+        // vs_pbr always samples the bone palette, so bind real skeletal data
+        // when available and identity matrices otherwise.
+        const std::vector<glm::vec4>* bones = &identityBoneData;
+        entt::entity root = item.entity;
+        while (root != entt::null) {
+            if (scene.Registry().all_of<ParentComponent>(root))
+                root = scene.Registry().get<ParentComponent>(root).parent;
+            else
+                break;
+        }
+        if (scene.Registry().all_of<SkeletalComponent>(root)) {
+            auto& skel = scene.Registry().get<SkeletalComponent>(root);
+            if (skel.isAnimated && !skel.sourcePath.empty()) {
+                if (skel.boneMatrices.size() != kMaxBones)
+                    skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
+                for (int i = 0; i < kMaxBones; ++i) {
+                    for (int j = 0; j < 4; ++j) boneData[i * 4 + j] = skel.boneMatrices[i][j];
+                }
+                bones = &boneData;
+            }
+        }
+        bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
+            bgfx::copy(bones->data(), kMaxBones * 4 * sizeof(glm::vec4)));
+        bgfx::setTexture(3, s_boneMatrices, m_boneTexture);
+
+        bgfx::setTransform(glm::value_ptr(item.model));
+        bgfx::setVertexBuffer(0, item.mesh->VB());
+        bgfx::setIndexBuffer(item.mesh->IB());
+        // Depth test against opaque geometry, but never write depth so glass
+        // fragments do not occlude each other incorrectly.
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                       BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_ALPHA |
+                       BGFX_STATE_MSAA);
         bgfx::submit(viewId, m_glassProg);
     }
 }

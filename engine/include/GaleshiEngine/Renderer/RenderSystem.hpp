@@ -42,10 +42,16 @@ private:
     bgfx::UniformHandle u_roughnessFactor = BGFX_INVALID_HANDLE, u_emissiveFactor = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_cameraPosition = BGFX_INVALID_HANDLE, u_lightDirection = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lightColorIntensity = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_materialParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_materialFlags = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_glassParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_pointLightPosRadius = BGFX_INVALID_HANDLE, u_pointLightColorInt = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_pointLightCount = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_boneMatrices = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_boneTexture = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_albedoMap = BGFX_INVALID_HANDLE, s_metallicRoughnessMap = BGFX_INVALID_HANDLE, s_normalMap = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_emissiveMap = BGFX_INVALID_HANDLE, s_occlusionMap = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_opacityMap = BGFX_INVALID_HANDLE, s_metallicMap = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_roughnessMap = BGFX_INVALID_HANDLE, s_specularMap = BGFX_INVALID_HANDLE;
 };
 } // namespace Galeshi

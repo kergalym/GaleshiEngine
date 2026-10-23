@@ -9,6 +9,12 @@ file(GLOB_RECURSE GALESHI_ENGINE_HEADERS CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.hpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h")
 
+# "AssetManager copy.cpp" is a historical backup that defines the same
+# AssetManager symbols. It sits before AssetManager.cpp in the archive and
+# therefore shadows the maintained implementation during linking. Keep the
+# file for reference, but never compile it.
+list(FILTER GALESHI_ENGINE_SOURCES EXCLUDE REGEX "/AssetManager copy\\.cpp$")
+
 add_library(GaleshiEngine STATIC
     ${GALESHI_ENGINE_SOURCES}
     ${GALESHI_ENGINE_HEADERS})

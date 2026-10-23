@@ -36,6 +36,7 @@ public:
 
     void RenderLightCulling(int pointLightCount, const float pointLightPosRadius[][4], const glm::mat4& viewProj, uint16_t width, uint16_t height);
     bgfx::TextureHandle RenderLighting(bgfx::TextureHandle albedoMr, bgfx::TextureHandle normalRough, bgfx::TextureHandle worldPos,
+                                       bgfx::TextureHandle materialData,
                                        bgfx::TextureHandle shadowMap0, bgfx::TextureHandle shadowMap1, bgfx::TextureHandle shadowMap2,
                                        const glm::mat4& lightMtx0, const glm::mat4& lightMtx1, const glm::mat4& lightMtx2,
                                        const glm::mat4& invViewProj, 
@@ -154,6 +155,7 @@ private:
     bgfx::UniformHandle s_albedoMr    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_normalRough = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_worldPos    = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_materialTex = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_shadowMap0  = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_shadowMap1  = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_shadowMap2  = BGFX_INVALID_HANDLE;

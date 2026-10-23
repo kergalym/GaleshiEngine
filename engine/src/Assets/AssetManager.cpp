@@ -11,8 +11,13 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <functional>
+#include <vector>
 
 namespace Galeshi {
 
@@ -28,15 +33,63 @@ AssetManager::AssetManager() {
 }
 
 AssetManager::~AssetManager() = default;
-void AssetManager::Clear() { m_models.clear(); m_textures.clear(); }
+void AssetManager::Clear() {
+    m_models.clear();
+    m_textures.clear();
+    m_embeddedTextures.clear();
+}
+
+namespace {
+std::string NormalizeAssetPath(std::string path) {
+    std::replace(path.begin(), path.end(), '\\', '/');
+    while (path.rfind("./", 0) == 0) path.erase(0, 2);
+    return path;
+}
+
+std::string LowerAssetPath(std::string path) {
+    path = NormalizeAssetPath(std::move(path));
+    std::transform(path.begin(), path.end(), path.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return path;
+}
+
+std::string AssetBaseName(const std::string& path) {
+    const auto slash = path.find_last_of('/');
+    return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+} // namespace
 
 std::shared_ptr<Texture> AssetManager::LoadTexture(const std::string& path) {
+    if (path.empty()) return m_white;
+
     auto it = m_textures.find(path);
     if (it != m_textures.end()) return it->second;
+
+    const std::string normalized = NormalizeAssetPath(path);
+    it = m_textures.find(normalized);
+    if (it != m_textures.end()) return it->second;
+
+    const std::string lower = LowerAssetPath(normalized);
+    auto embedded = m_embeddedTextures.find(lower);
+    if (embedded != m_embeddedTextures.end()) return embedded->second;
+    embedded = m_embeddedTextures.find(LowerAssetPath(AssetBaseName(normalized)));
+    if (embedded != m_embeddedTextures.end()) return embedded->second;
+
+    std::error_code ec;
+    bool exists = std::filesystem::exists(path, ec);
+    if (!exists && normalized != path) {
+        ec.clear();
+        exists = std::filesystem::exists(normalized, ec);
+    }
+    if (!exists) return m_white;
+
     Texture* raw = Texture::LoadFromFile(path);
+    if (!raw && normalized != path) raw = Texture::LoadFromFile(normalized);
     if (!raw) return m_white;
+
     std::shared_ptr<Texture> tex(raw);
     m_textures[path] = tex;
+    m_textures[normalized] = tex;
     return tex;
 }
 
@@ -137,7 +190,8 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
     LoadedModel out;
     auto importer = std::make_shared<Assimp::Importer>();
     const aiScene* scene = importer->ReadFile(path,
-        aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenSmoothNormals);
+        aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_GenSmoothNormals |
+        aiProcess_CalcTangentSpace);
 
     if (!scene || !scene->mRootNode) {
         spdlog::error("[AssetManager] Assimp failed: {}", importer->GetErrorString());
@@ -164,6 +218,201 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
 
     const std::string dir = std::filesystem::path(path).parent_path().string();
 
+    // Build an embedded texture lookup. FBX often stores the original file
+    // names instead of the "*0" form, for example
+    // "..\\..\\FbxWorkingDirectory\\Foo_Diffuse.png". Both forms must work.
+    std::unordered_map<std::string, unsigned> embeddedByName;
+    for (unsigned ti = 0; ti < scene->mNumTextures; ++ti) {
+        const std::string filename = NormalizeAssetPath(scene->mTextures[ti]->mFilename.C_Str());
+        if (filename.empty()) continue;
+        const std::string key = LowerAssetPath(filename);
+        embeddedByName[key] = ti;
+        const std::string basename = LowerAssetPath(AssetBaseName(filename));
+        if (!basename.empty()) embeddedByName[basename] = ti;
+    }
+
+    auto findEmbeddedTexture = [&](const std::string& reference, int& outIndex) -> bool {
+        if (reference.empty()) return false;
+        if (reference[0] == '*') {
+            try {
+                const int idx = std::stoi(reference.substr(1));
+                if (idx >= 0 && idx < static_cast<int>(scene->mNumTextures)) {
+                    outIndex = idx;
+                    return true;
+                }
+            } catch (...) {
+                return false;
+            }
+            return false;
+        }
+        const std::string key = LowerAssetPath(reference);
+        auto found = embeddedByName.find(key);
+        if (found == embeddedByName.end())
+            found = embeddedByName.find(LowerAssetPath(AssetBaseName(key)));
+        if (found == embeddedByName.end()) return false;
+        outIndex = static_cast<int>(found->second);
+        return true;
+    };
+
+    auto loadEmbeddedTexture = [&](int index, const std::string& reference) -> std::shared_ptr<Texture> {
+        if (index < 0 || index >= static_cast<int>(scene->mNumTextures)) return nullptr;
+        const aiTexture* embedded = scene->mTextures[index];
+        const std::string embeddedName = NormalizeAssetPath(embedded->mFilename.C_Str());
+        std::string displayPath = NormalizeAssetPath(reference);
+        if (displayPath.empty() || displayPath[0] == '*') displayPath = embeddedName;
+
+        const std::string cacheKey = "embedded:" + std::to_string(index) + ":" + embeddedName;
+        auto cached = m_textures.find(cacheKey);
+        if (cached != m_textures.end()) return cached->second;
+
+        Texture* raw = nullptr;
+        if (embedded->mHeight == 0) {
+            raw = Texture::LoadFromMemory(
+                reinterpret_cast<const unsigned char*>(embedded->pcData),
+                static_cast<size_t>(embedded->mWidth), displayPath);
+        } else {
+            raw = Texture::CreateFromBgra8(
+                reinterpret_cast<const unsigned char*>(embedded->pcData),
+                static_cast<int>(embedded->mWidth),
+                static_cast<int>(embedded->mHeight), displayPath);
+        }
+        if (!raw) return nullptr;
+
+        auto tex = std::shared_ptr<Texture>(raw);
+        m_textures[cacheKey] = tex;
+        m_textures[displayPath] = tex;
+        m_textures[LowerAssetPath(displayPath)] = tex;
+        m_embeddedTextures[LowerAssetPath(displayPath)] = tex;
+        m_embeddedTextures[LowerAssetPath(AssetBaseName(displayPath))] = tex;
+        if (!embeddedName.empty()) {
+            m_embeddedTextures[LowerAssetPath(embeddedName)] = tex;
+            m_embeddedTextures[LowerAssetPath(AssetBaseName(embeddedName))] = tex;
+        }
+        spdlog::info("  -> EMBEDDED[{}] '{}': OK", index, displayPath);
+        return tex;
+    };
+
+    auto resolveExternalTexture = [&](const std::string& reference) -> std::shared_ptr<Texture> {
+        const std::filesystem::path relative(NormalizeAssetPath(reference));
+        std::filesystem::path resolved;
+        std::error_code ec;
+        if (relative.is_absolute()) {
+            if (std::filesystem::exists(relative, ec)) resolved = relative;
+        } else {
+            const std::filesystem::path nearModel = std::filesystem::path(dir) / relative;
+            if (std::filesystem::exists(nearModel, ec)) resolved = nearModel;
+        }
+        if (resolved.empty()) {
+            const std::filesystem::path nearModel = std::filesystem::path(dir) / relative.filename();
+            ec.clear();
+            if (std::filesystem::exists(nearModel, ec)) resolved = nearModel;
+        }
+        if (resolved.empty()) return nullptr;
+
+        auto tex = LoadTexture(resolved.string());
+        if (tex && tex != m_white) {
+            spdlog::info("  -> EXTERNAL '{}': OK", resolved.string());
+            return tex;
+        }
+        return nullptr;
+    };
+
+    auto loadTextureReference = [&](const std::string& reference) -> std::shared_ptr<Texture> {
+        if (reference.empty()) return nullptr;
+        int embeddedIndex = -1;
+        if (findEmbeddedTexture(reference, embeddedIndex))
+            return loadEmbeddedTexture(embeddedIndex, reference);
+        return resolveExternalTexture(reference);
+    };
+
+    // Assimp sometimes stores only the "*N" index in material texture slots.
+    // Resolve it to the embedded file name before guessing the texture role,
+    // otherwise every such slot is classified as Unknown.
+    auto referenceDisplayName = [&](const std::string& reference) -> std::string {
+        int embeddedIndex = -1;
+        if (findEmbeddedTexture(reference, embeddedIndex)) {
+            const std::string name =
+                NormalizeAssetPath(scene->mTextures[embeddedIndex]->mFilename.C_Str());
+            if (!name.empty()) return name;
+        }
+        return reference;
+    };
+
+    enum class TextureRole {
+        Albedo, Normal, Metallic, Roughness, MetallicRoughness,
+        Emissive, Occlusion, Opacity, Specular, Unknown
+    };
+    // Unreal-style ORM keeps AO in R, roughness in G and metallic in B. Only
+    // this channel layout can safely be reused for the occlusion slot.
+    auto isOcclusionRoughnessMetallic = [](const std::string& reference) {
+        const std::string name = LowerAssetPath(reference);
+        auto hasToken = [&](const char* token) {
+            const size_t len = std::strlen(token);
+            size_t pos = 0;
+            while ((pos = name.find(token, pos)) != std::string::npos) {
+                const bool left = pos == 0 ||
+                    !std::isalnum(static_cast<unsigned char>(name[pos - 1]));
+                const bool right = pos + len >= name.size() ||
+                    !std::isalnum(static_cast<unsigned char>(name[pos + len]));
+                if (left && right) return true;
+                pos += len;
+            }
+            return false;
+        };
+        return hasToken("orm") || hasToken("occlusionroughnessmetallic");
+    };
+    auto classifyTexture = [](const std::string& reference) -> TextureRole {
+        const std::string name = LowerAssetPath(reference);
+        // Tokenize on separators so short markers such as "orm" or "ao" only
+        // match whole words ("normal" must not be read as an ORM map).
+        std::vector<std::string> tokens;
+        std::string current;
+        for (const unsigned char c : name) {
+            if (std::isalnum(c)) {
+                current.push_back(static_cast<char>(c));
+            } else if (!current.empty()) {
+                tokens.push_back(current);
+                current.clear();
+            }
+        }
+        if (!current.empty()) tokens.push_back(current);
+
+        auto tokenIs = [&](const char* value) {
+            return std::find(tokens.begin(), tokens.end(), value) != tokens.end();
+        };
+        auto tokenHas = [&](const char* value) {
+            return std::any_of(tokens.begin(), tokens.end(),
+                               [&](const std::string& token) {
+                                   return token.find(value) != std::string::npos;
+                               });
+        };
+
+        // Combined masks first: their names also contain the individual map
+        // words, but they must not be split into one of them.
+        if (tokenHas("metallicroughness") || tokenHas("metalnessroughness") ||
+            tokenHas("occlusionroughnessmetallic") ||
+            tokenIs("orm") || tokenIs("rma") || tokenIs("mra"))
+            return TextureRole::MetallicRoughness;
+        // Explicit colour-map names win over secondary words in the same
+        // filename, e.g. "Eye_Occlusion_Diffuse" and "Hair_Transparency_Diffuse"
+        // are still albedo maps.
+        if (tokenHas("diffuse") || tokenHas("albedo") || tokenHas("basecolor"))
+            return TextureRole::Albedo;
+        if (tokenHas("normal") || tokenIs("nrm") || tokenIs("nor"))
+            return TextureRole::Normal;
+        if (tokenHas("metallic") || tokenHas("metalness")) return TextureRole::Metallic;
+        if (tokenHas("roughness") || tokenIs("rough")) return TextureRole::Roughness;
+        if (tokenHas("emissive") || tokenHas("emission") || tokenIs("glow"))
+            return TextureRole::Emissive;
+        if (tokenHas("occlusion") || tokenIs("ao") || tokenIs("ambientocclusion"))
+            return TextureRole::Occlusion;
+        if (tokenHas("opacity") || tokenIs("alpha") || tokenHas("transparen"))
+            return TextureRole::Opacity;
+        if (tokenHas("specular") || tokenIs("spec")) return TextureRole::Specular;
+        if (tokenHas("color")) return TextureRole::Albedo;
+        return TextureRole::Unknown;
+    };
+
     // === МАТЕРИАЛЫ ===
     out.materials.reserve(scene->mNumMaterials);
     for (unsigned i = 0; i < scene->mNumMaterials; ++i) {
@@ -176,95 +425,212 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
 
         spdlog::info("[AssetManager] Material[{}] '{}':", i, mat->name);
 
-        // Цвет
-        aiColor4D col;
-        if (aiMat->Get(AI_MATKEY_BASE_COLOR, col) == AI_SUCCESS ||
-            aiMat->Get(AI_MATKEY_COLOR_DIFFUSE, col) == AI_SUCCESS) {
-            mat->albedoFactor = {col.r, col.g, col.b, col.a};
-            spdlog::info("  base color: ({:.2f},{:.2f},{:.2f},{:.2f})",
-                         col.r, col.g, col.b, col.a);
-        }
-
-        // Все texture slots — для диагностики
-        bool albedoAssigned = false;
-        for (unsigned t = 0; t < 32; ++t) {
-            unsigned cnt = aiMat->GetTextureCount(static_cast<aiTextureType>(t));
-            for (unsigned j = 0; j < cnt; ++j) {
-                aiString p;
-                if (aiMat->GetTexture(static_cast<aiTextureType>(t), j, &p) != AI_SUCCESS)
-                    continue;
-                std::string ps = p.C_Str();
-                spdlog::info("  texture type[{}][{}] = '{}'",
-                             t, j, ps);
-
-                // Загружаем первый найденный texture как albedo
-                if (!albedoAssigned &&
-                    (t == aiTextureType_BASE_COLOR ||
-                     t == aiTextureType_DIFFUSE ||
-                     t == aiTextureType_UNKNOWN)) {
-                    std::shared_ptr<Texture> tex;
-                    if (!ps.empty() && ps[0] == '*') {
-                        // EMBEDDED
-                        try {
-                            int idx = std::stoi(ps.substr(1));
-                            if (idx >= 0 && idx < static_cast<int>(scene->mNumTextures)) {
-                                const aiTexture* at = scene->mTextures[idx];
-                                if (at->mHeight == 0) {
-                                    // Compressed PNG/JPG
-                                    tex = std::shared_ptr<Texture>(Texture::LoadFromMemory(
-                                        reinterpret_cast<const unsigned char*>(at->pcData),
-                                        static_cast<size_t>(at->mWidth)));
-                                } else {
-                                    // Raw RGBA (mWidth x mHeight)
-                                    tex = std::shared_ptr<Texture>(Texture::LoadFromMemory(
-                                        reinterpret_cast<const unsigned char*>(at->pcData),
-                                        static_cast<size_t>(at->mWidth * at->mHeight * 4)));
-                                }
-                                if (tex) {
-                                    spdlog::info("  → EMBEDDED #{}: OK", idx);
-                                }
-                            }
-                        } catch (...) {
-                            spdlog::warn("  → embedded parse error");
-                        }
-                    } else if (!ps.empty()) {
-                        // EXTERNAL
-                        std::filesystem::path pp(ps);
-                        std::string full;
-                        if (pp.is_absolute()) {
-                            if (std::filesystem::exists(pp)) {
-                                full = ps;
-                            } else {
-                                // Если абсолютный путь не найден, ищем файл рядом с FBX
-                                std::string local = (std::filesystem::path(dir) / pp.filename()).string();
-                                if (std::filesystem::exists(local)) {
-                                    full = local;
-                                    spdlog::info("  → Исправлен путь к текстуре: {}", full);
-                                } else {
-                                    full = ps; // оставляем как есть, не загрузится
-                                }
-                            }
-                        } else {
-                            full = (std::filesystem::path(dir) / pp).string();
-                        }
-                        tex = LoadTexture(full);
-                        if (tex && tex != m_white) {
-                            spdlog::info("  → EXTERNAL: OK ({})", full);
-                        }
-                    }
-
-                    if (tex && tex != m_white) {
-                        mat->albedoMap = tex;
-                        mat->albedoFactor = glm::vec4(1, 1, 1, 1);
-                        mat->sourcePath = ps;
-                        albedoAssigned = true;
-                    }
-                }
+        std::vector<std::pair<int, std::string>> references;
+        for (int type = 0; type <= static_cast<int>(AI_TEXTURE_TYPE_MAX); ++type) {
+            const auto textureType = static_cast<aiTextureType>(type);
+            const unsigned count = aiMat->GetTextureCount(textureType);
+            for (unsigned slot = 0; slot < count; ++slot) {
+                aiString texturePath;
+                if (aiMat->GetTexture(textureType, slot, &texturePath) == AI_SUCCESS)
+                    references.emplace_back(type, NormalizeAssetPath(texturePath.C_Str()));
             }
         }
 
-        if (!albedoAssigned) {
-            spdlog::warn("  ⚠ No albedo texture found for material '{}'", mat->name);
+        auto firstOf = [&](std::initializer_list<aiTextureType> types) -> std::string {
+            for (const aiTextureType type : types) {
+                for (const auto& ref : references) {
+                    if (ref.first == static_cast<int>(type) && !ref.second.empty())
+                        return ref.second;
+                }
+            }
+            return {};
+        };
+
+        std::string albedoRef = firstOf({aiTextureType_BASE_COLOR, aiTextureType_DIFFUSE});
+        std::string normalRef = firstOf({aiTextureType_NORMAL_CAMERA, aiTextureType_NORMALS});
+        std::string metallicRoughnessRef = firstOf({aiTextureType_GLTF_METALLIC_ROUGHNESS});
+        std::string metallicRef = firstOf({aiTextureType_METALNESS});
+        std::string roughnessRef = firstOf({aiTextureType_DIFFUSE_ROUGHNESS});
+        std::string emissiveRef = firstOf({aiTextureType_EMISSION_COLOR, aiTextureType_EMISSIVE});
+        std::string occlusionRef = firstOf({aiTextureType_AMBIENT_OCCLUSION});
+        std::string opacityRef = firstOf({aiTextureType_OPACITY});
+        std::string specularRef = firstOf({aiTextureType_SPECULAR});
+        std::string firstUnknownRef;
+
+        for (const auto& ref : references) {
+            if (ref.first == static_cast<int>(aiTextureType_BASE_COLOR) ||
+                ref.first == static_cast<int>(aiTextureType_DIFFUSE) ||
+                ref.first == static_cast<int>(aiTextureType_NORMAL_CAMERA) ||
+                ref.first == static_cast<int>(aiTextureType_NORMALS) ||
+                ref.first == static_cast<int>(aiTextureType_METALNESS) ||
+                ref.first == static_cast<int>(aiTextureType_DIFFUSE_ROUGHNESS) ||
+                ref.first == static_cast<int>(aiTextureType_EMISSION_COLOR) ||
+                ref.first == static_cast<int>(aiTextureType_EMISSIVE) ||
+                ref.first == static_cast<int>(aiTextureType_AMBIENT_OCCLUSION) ||
+                ref.first == static_cast<int>(aiTextureType_OPACITY) ||
+                ref.first == static_cast<int>(aiTextureType_SPECULAR) ||
+                ref.first == static_cast<int>(aiTextureType_GLTF_METALLIC_ROUGHNESS))
+                continue;
+
+            const TextureRole role = classifyTexture(referenceDisplayName(ref.second));
+            if (role == TextureRole::Unknown) {
+                if (firstUnknownRef.empty()) firstUnknownRef = ref.second;
+                continue;
+            }
+            if (role == TextureRole::Albedo && albedoRef.empty()) albedoRef = ref.second;
+            else if (role == TextureRole::Normal && normalRef.empty()) normalRef = ref.second;
+            else if (role == TextureRole::Metallic && metallicRef.empty()) metallicRef = ref.second;
+            else if (role == TextureRole::Roughness && roughnessRef.empty()) roughnessRef = ref.second;
+            else if (role == TextureRole::MetallicRoughness && metallicRoughnessRef.empty()) metallicRoughnessRef = ref.second;
+            else if (role == TextureRole::Emissive && emissiveRef.empty()) emissiveRef = ref.second;
+            else if (role == TextureRole::Occlusion && occlusionRef.empty()) occlusionRef = ref.second;
+            else if (role == TextureRole::Opacity && opacityRef.empty()) opacityRef = ref.second;
+            else if (role == TextureRole::Specular && specularRef.empty()) specularRef = ref.second;
+        }
+
+        // A packed ORM/MR texture can be exposed through several Assimp
+        // slots (for example SHININESS and METALNESS). Prefer the combined
+        // map, whose G/B channels hold roughness/metallic; sampling the same
+        // file as a separate metallic map would read its R (AO) channel.
+        auto promotePacked = [&](std::string& ref) {
+            if (!ref.empty() && metallicRoughnessRef.empty() &&
+                classifyTexture(referenceDisplayName(ref)) == TextureRole::MetallicRoughness) {
+                metallicRoughnessRef = ref;
+                ref.clear();
+            }
+        };
+        promotePacked(metallicRef);
+        promotePacked(roughnessRef);
+
+        auto sameRef = [](const std::string& lhs, const std::string& rhs) {
+            return !lhs.empty() && LowerAssetPath(lhs) == LowerAssetPath(rhs);
+        };
+        if (!metallicRoughnessRef.empty()) {
+            if (sameRef(metallicRef, metallicRoughnessRef)) metallicRef.clear();
+            if (sameRef(roughnessRef, metallicRoughnessRef)) roughnessRef.clear();
+        }
+
+        if (albedoRef.empty() && !firstUnknownRef.empty()) albedoRef = firstUnknownRef;
+
+        // Classic FBX sometimes stores metallic/roughness data in specular
+        // or shininess slots. Use the filename as a hint.
+        if (metallicRef.empty() && classifyTexture(referenceDisplayName(specularRef)) == TextureRole::Metallic)
+            metallicRef = specularRef;
+        if (roughnessRef.empty() && classifyTexture(referenceDisplayName(specularRef)) == TextureRole::Roughness)
+            roughnessRef = specularRef;
+
+        aiColor4D color;
+        if (aiMat->Get(AI_MATKEY_BASE_COLOR, color) == AI_SUCCESS ||
+            aiMat->Get(AI_MATKEY_COLOR_DIFFUSE, color) == AI_SUCCESS) {
+            mat->albedoFactor = {color.r, color.g, color.b, color.a};
+        }
+
+        float opacity = 1.0f;
+        if (aiMat->Get(AI_MATKEY_OPACITY, opacity) == AI_SUCCESS)
+            mat->albedoFactor.a *= glm::clamp(opacity, 0.0f, 1.0f);
+        float transparency = 0.0f;
+        if (aiMat->Get(AI_MATKEY_TRANSPARENCYFACTOR, transparency) == AI_SUCCESS)
+            mat->albedoFactor.a *= 1.0f - glm::clamp(transparency, 0.0f, 1.0f);
+
+        float metallic = 0.0f;
+        const bool hasMetallicFactor =
+            aiMat->Get(AI_MATKEY_METALLIC_FACTOR, metallic) == AI_SUCCESS;
+        if (hasMetallicFactor)
+            mat->metallicFactor = glm::clamp(metallic, 0.0f, 1.0f);
+
+        float roughness = 0.5f;
+        float glossiness = 0.0f;
+        const bool hasRoughnessFactor =
+            aiMat->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness) == AI_SUCCESS;
+        if (hasRoughnessFactor) {
+            mat->roughnessFactor = glm::clamp(roughness, 0.04f, 1.0f);
+        } else if (aiMat->Get(AI_MATKEY_GLOSSINESS_FACTOR, glossiness) == AI_SUCCESS) {
+            mat->roughnessFactor = glm::clamp(1.0f - glossiness, 0.04f, 1.0f);
+        } else {
+            float shininess = 0.0f;
+            if (aiMat->Get(AI_MATKEY_SHININESS, shininess) == AI_SUCCESS && shininess > 0.0f)
+                mat->roughnessFactor =
+                    glm::clamp(std::sqrt(2.0f / (shininess + 2.0f)), 0.04f, 1.0f);
+        }
+
+        aiColor3D emissive(0.0f, 0.0f, 0.0f);
+        if (aiMat->Get(AI_MATKEY_COLOR_EMISSIVE, emissive) == AI_SUCCESS)
+            mat->emissiveFactor = {emissive.r, emissive.g, emissive.b};
+        float emissiveIntensity = 1.0f;
+        if (aiMat->Get(AI_MATKEY_EMISSIVE_INTENSITY, emissiveIntensity) == AI_SUCCESS)
+            mat->emissiveFactor *= glm::max(emissiveIntensity, 0.0f);
+
+        float bumpScale = 1.0f;
+        if (aiMat->Get(AI_MATKEY_BUMPSCALING, bumpScale) == AI_SUCCESS)
+            mat->normalStrength = glm::max(bumpScale, 0.0f);
+
+        float transmission = 0.0f;
+        if (aiMat->Get(AI_MATKEY_TRANSMISSION_FACTOR, transmission) == AI_SUCCESS &&
+            transmission > 0.05f) {
+            mat->isGlass = true;
+            // Prefer an explicit alpha value. Many FBX glass materials keep
+            // alpha at 1.0 and only carry a transmission factor, so derive a
+            // sensible base opacity from transmission in that case.
+            if (mat->albedoFactor.a < 0.999f) {
+                mat->glassOpacity = glm::clamp(mat->albedoFactor.a, 0.05f, 1.0f);
+            } else {
+                mat->glassOpacity = glm::clamp(1.0f - transmission * 0.75f, 0.1f, 0.9f);
+            }
+        }
+
+        auto assign = [&](std::shared_ptr<Texture>& slot, const std::string& ref) {
+            if (slot || ref.empty()) return;
+            auto tex = loadTextureReference(ref);
+            if (tex && tex != m_white) slot = tex;
+        };
+
+        assign(mat->albedoMap, albedoRef);
+        assign(mat->normalMap, normalRef);
+        assign(mat->metallicRoughnessMap, metallicRoughnessRef);
+        assign(mat->metallicMap, metallicRef);
+        assign(mat->roughnessMap, roughnessRef);
+        assign(mat->emissiveMap, emissiveRef);
+        assign(mat->occlusionMap, occlusionRef);
+        assign(mat->opacityMap, opacityRef);
+        assign(mat->specularMap, specularRef);
+
+        // Reuse the R channel of packed ORM maps as ambient occlusion when the
+        // material does not have a dedicated AO texture.
+        if (!mat->occlusionMap && mat->metallicRoughnessMap &&
+            isOcclusionRoughnessMetallic(referenceDisplayName(metallicRoughnessRef))) {
+            mat->occlusionMap = mat->metallicRoughnessMap;
+        }
+
+        // FBX materials usually keep the viewport diffuse colour next to a
+        // BaseColor texture. Multiplying both makes textured characters almost
+        // black (the Korlan armour is a good example), so the texture replaces
+        // the RGB tint. Alpha is preserved for opacity/glass handling.
+        if (mat->albedoMap) {
+            mat->albedoFactor.r = 1.0f;
+            mat->albedoFactor.g = 1.0f;
+            mat->albedoFactor.b = 1.0f;
+        }
+        // Texture-driven material factors default to 1.0. Assimp leaves the
+        // metallic factor at 0 for FBX files that only provide a packed map.
+        if (!hasMetallicFactor && (mat->metallicRoughnessMap || mat->metallicMap))
+            mat->metallicFactor = 1.0f;
+        if (!hasRoughnessFactor && (mat->metallicRoughnessMap || mat->roughnessMap))
+            mat->roughnessFactor = 1.0f;
+
+        if (!albedoRef.empty()) mat->sourcePath = albedoRef;
+
+        spdlog::info("  PBR: base=({:.2f},{:.2f},{:.2f},{:.2f}) metal={:.2f} rough={:.2f} normal={:.2f} glass={}",
+                     mat->albedoFactor.r, mat->albedoFactor.g, mat->albedoFactor.b, mat->albedoFactor.a,
+                     mat->metallicFactor, mat->roughnessFactor, mat->normalStrength, mat->isGlass);
+        spdlog::info("  maps: albedo={} normal={} metal={} rough={} mr={} emissive={} ao={} opacity={} specular={}",
+                     mat->albedoMap != nullptr, mat->normalMap != nullptr,
+                     mat->metallicMap != nullptr, mat->roughnessMap != nullptr,
+                     mat->metallicRoughnessMap != nullptr, mat->emissiveMap != nullptr,
+                     mat->occlusionMap != nullptr, mat->opacityMap != nullptr,
+                     mat->specularMap != nullptr);
+
+        if (!mat->albedoMap) {
+            spdlog::warn("  No albedo texture found for material '{}'", mat->name);
         }
 
         out.materials.push_back(mat);

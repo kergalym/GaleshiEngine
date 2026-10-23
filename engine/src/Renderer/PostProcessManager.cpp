@@ -114,6 +114,7 @@ void PostProcessManager::Init() {
             s_albedoMr    = bgfx::createUniform("s_albedoMr",    bgfx::UniformType::Sampler);
             s_normalRough = bgfx::createUniform("s_normalRough", bgfx::UniformType::Sampler);
             s_worldPos    = bgfx::createUniform("s_worldPos",    bgfx::UniformType::Sampler);
+            s_materialTex = bgfx::createUniform("s_materialTex", bgfx::UniformType::Sampler);
             s_shadowMap0  = bgfx::createUniform("s_shadowMap0",  bgfx::UniformType::Sampler);
             s_shadowMap1  = bgfx::createUniform("s_shadowMap1",  bgfx::UniformType::Sampler);
             s_shadowMap2  = bgfx::createUniform("s_shadowMap2",  bgfx::UniformType::Sampler);
@@ -544,7 +545,7 @@ void PostProcessManager::Shutdown() {
 
     destroyUni(s_texColor); destroyUni(s_texDepth); destroyUni(u_texelSize);
     destroyUni(u_camPos); destroyUni(u_cascadeSplits); destroyUni(u_lightDir); destroyUni(u_lightCol);
-    destroyUni(s_albedoMr); destroyUni(s_normalRough); destroyUni(s_worldPos);
+    destroyUni(s_albedoMr); destroyUni(s_normalRough); destroyUni(s_worldPos); destroyUni(s_materialTex);
     destroyUni(s_shadowMap0); destroyUni(s_shadowMap1); destroyUni(s_shadowMap2); destroyUni(u_lightVP0); destroyUni(u_lightVP1); destroyUni(u_lightVP2); 
     destroyUni(u_plPos); destroyUni(u_plCol); destroyUni(u_plCnt);
     destroyUni(u_slPos); destroyUni(u_slDir); destroyUni(u_slCol); destroyUni(u_slCnt); if (bgfx::isValid(m_pointShadowFbos[0])) {
@@ -759,6 +760,7 @@ void PostProcessManager::RenderLightCulling(int pointLightCount, const float poi
 
 bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::TextureHandle albedoMr, bgfx::TextureHandle normalRough, bgfx::TextureHandle worldPos,
+    bgfx::TextureHandle materialData,
     bgfx::TextureHandle shadowMap0, bgfx::TextureHandle shadowMap1, bgfx::TextureHandle shadowMap2,
     const glm::mat4& lightMtx0, const glm::mat4& lightMtx1, const glm::mat4& lightMtx2,
     const glm::mat4& invViewProj, 
@@ -812,6 +814,11 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     if (bgfx::isValid(s_aoTex) && bgfx::isValid(aoTex)) {
         bgfx::setTexture(8, s_aoTex, aoTex);
     }
+
+    // Material G-buffer: emissive.rgb + AO, plus specular mask in worldPos.w.
+    if (bgfx::isValid(s_materialTex) && bgfx::isValid(materialData)) {
+        bgfx::setTexture(9, s_materialTex, materialData);
+    }
     
 
     if (pointLightCount > 0) {
@@ -826,11 +833,8 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
         float tp[4] = { (float)((width + 15) / 16), (float)((height + 15) / 16), (float)width, (float)height };
         bgfx::setUniform(u_tileParams, tp);
     }
-    if (bgfx::isValid(m_pointShadowMap)) {
-        bgfx::setTexture(9, s_pointShadowMap, m_pointShadowMap);
-        float farPlane[4] = { 50.0f, 0, 0, 0 };
-        bgfx::setUniform(u_pointLightFarPlane, farPlane);
-    }
+    // Point shadows are not sampled by fs_lighting yet; slot 9 is used by the
+    // material G-buffer texture. The resource is kept alive for later.
     if (spotLightCount > 0) {
         bgfx::setTexture(10, s_spotShadowMap0, m_spotShadowMaps[0]);
         bgfx::setTexture(11, s_spotShadowMap1, m_spotShadowMaps[1]);

@@ -14,6 +14,8 @@ SAMPLERCUBE(s_prefilteredCube, 7);
 // analytic UE4 approximation below, because all 16 Vulkan descriptor slots
 // are already consumed by the G-buffer, shadow maps, IBL and tile-light SSBOs.
 SAMPLER2D(s_aoTex,          8);
+// Slot 9 holds the material RT: emissive.rgb + material AO.
+SAMPLER2D(s_materialTex,    9);
 SAMPLER2D(s_spotShadowMap0, 10);
 SAMPLER2D(s_spotShadowMap1, 11);
 SAMPLER2D(s_spotShadowMap2, 12);
@@ -77,14 +79,14 @@ vec3 F_SchlickRoughness(float NdotV, vec3 F0, float roughness) {
     return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - NdotV, 0.0, 1.0), 5.0);
 }
 
-vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, vec3 L, vec3 radiance) {
+vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, float specularStrength, vec3 L, vec3 radiance) {
     vec3 H = normalize(L + V);
     float NdotL = max(dot(N, L), 0.0);
     float NdotV = max(dot(N, V), 0.000001);
     float NdotH = max(dot(N, H), 0.0);
     float VdotH = max(dot(V, H), 0.0);
     if (NdotL <= 0.0) return vec3(0.0);
-    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 F0 = mix(vec3(0.04 * specularStrength), albedo, metallic);
     float D = D_GGX(NdotH, rough);
     float G = G_Smith(NdotV, NdotL, rough);
     vec3 F  = F_Schlick(VdotH, F0);
@@ -303,22 +305,25 @@ void main()
 
     vec4 aMr  = texture2D(s_albedoMr,    uv);
     vec4 nR   = texture2D(s_normalRough, uv);
+    vec4 matData = texture2D(s_materialTex, uv);
 
     vec3 albedo    = aMr.rgb;
     float metallic = aMr.a;
     vec3 N         = normalize(nR.rgb * 2.0 - 1.0);
     float rough    = max(nR.a, 0.05);
     vec3 V         = normalize(u_cameraPosition.xyz - wPos.xyz);
+    // RT2.w carries 1 + specular mask (0 stays reserved for sky pixels).
+    float materialSpecular = clamp(wPos.w - 1.0, 0.0, 1.0);
 
-    // Ambient occlusion from the half-res SSAO chain. White (1.0) when the
-    // effect is disabled. Only ambient/IBL light is modulated; direct light
-    // keeps using shadow maps.
-    float ao = saturate(texture2D(s_aoTex, uv).r);
+    // Ambient occlusion from the half-res SSAO chain multiplied by the
+    // material's occlusion map. White (1.0) when the effect is disabled.
+    // Only ambient/IBL light is modulated; direct light keeps using shadow maps.
+    float ao = saturate(texture2D(s_aoTex, uv).r) * saturate(matData.a);
 
     // 1. Ambient (Базовое освещение, чтобы не было абсолютно черных теней)
     // Увеличено с 0.15 до 0.3 для лучшей видимости в тенях
         // Physically correct IBL (Split-Sum)
-    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 F0 = mix(vec3(0.04 * materialSpecular), albedo, metallic);
     float NdotV = max(dot(N, V), 0.000001);
     
     vec3 F = F_SchlickRoughness(NdotV, F0, rough);
@@ -356,7 +361,7 @@ void main()
     float shadowFactor = calculateShadow(lightSpacePos, NdotL, cascadeIdx);
     float visibility = 1.0 - shadowFactor;
 
-    finalColor += calcLight(N, V, albedo, metallic, rough, L_dir, radiance_dir) * visibility;
+    finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L_dir, radiance_dir) * visibility;
 
     // 3. Point Lights (Tiled)
     uvec2 pixel = uvec2(gl_FragCoord.xy);
@@ -376,7 +381,7 @@ void main()
             float window = saturate(1.0 - pow(dist / radius, 4.0));
             atten *= window * window;
             vec3 radiance = u_pointLightColorInt[lightIdx].rgb * u_pointLightColorInt[lightIdx].a * atten;
-            finalColor += calcLight(N, V, albedo, metallic, rough, L, radiance);
+            finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L, radiance);
         }
     }
 
@@ -404,7 +409,7 @@ void main()
                 vec3 radiance = lightColor * intensity * atten * spotFactor;
                 vec4 spotLightSpace = mul(u_spotLightVP0, vec4(wPos.xyz + N * 0.1, 1.0));
                 float spotShadow = calcSpotShadow0(spotLightSpace, max(dot(N, L), 0.0));
-                finalColor += calcLight(N, V, albedo, metallic, rough, L, radiance) * (1.0 - spotShadow);
+                finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L, radiance) * (1.0 - spotShadow);
             }
         }
     }
@@ -429,7 +434,7 @@ void main()
                 vec3 radiance = lightColor * intensity * atten * spotFactor;
                 vec4 spotLightSpace = mul(u_spotLightVP1, vec4(wPos.xyz + N * 0.1, 1.0));
                 float spotShadow = calcSpotShadow1(spotLightSpace, max(dot(N, L), 0.0));
-                finalColor += calcLight(N, V, albedo, metallic, rough, L, radiance) * (1.0 - spotShadow);
+                finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L, radiance) * (1.0 - spotShadow);
             }
         }
     }
@@ -454,7 +459,7 @@ void main()
                 vec3 radiance = lightColor * intensity * atten * spotFactor;
                 vec4 spotLightSpace = mul(u_spotLightVP2, vec4(wPos.xyz + N * 0.1, 1.0));
                 float spotShadow = calcSpotShadow2(spotLightSpace, max(dot(N, L), 0.0));
-                finalColor += calcLight(N, V, albedo, metallic, rough, L, radiance) * (1.0 - spotShadow);
+                finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L, radiance) * (1.0 - spotShadow);
             }
         }
     }
@@ -479,10 +484,14 @@ void main()
                 vec3 radiance = lightColor * intensity * atten * spotFactor;
                 vec4 spotLightSpace = mul(u_spotLightVP3, vec4(wPos.xyz + N * 0.1, 1.0));
                 float spotShadow = calcSpotShadow3(spotLightSpace, max(dot(N, L), 0.0));
-                finalColor += calcLight(N, V, albedo, metallic, rough, L, radiance) * (1.0 - spotShadow);
+                finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L, radiance) * (1.0 - spotShadow);
             }
         }
     }
+
+    // Emissive comes from the material G-buffer RT (already scaled by the
+    // emissive factor and emissive map in fs_gbuffer).
+    finalColor += matData.rgb;
 
     // Tonemapping moved to post-process
 
