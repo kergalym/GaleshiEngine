@@ -277,7 +277,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [ ] Add quality scaling and dynamic resolution.
 - [x] Add texture compression and compressed texture loading/reading
 - [x] Add two sided mode for normals option as checkbox to Material properties
-- [ ] Rename material slots to their names in FBX file format
+- [x] Rename material slots to their names in FBX file format
 
 ### Content systems
 
