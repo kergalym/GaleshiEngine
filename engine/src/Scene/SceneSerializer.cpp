@@ -38,10 +38,17 @@ std::string TexturePath(const std::shared_ptr<Texture>& texture) {
     return texture ? texture->Path() : std::string{};
 }
 
-json MaterialToJson(const Material& m) {
+json MaterialToJson(const Material& m, const AssetManager& assets) {
+    auto relPath = [&](const std::shared_ptr<Texture>& tex) {
+        if (!tex) return std::string{};
+        return assets.MakeRelativePath(tex->Path());
+    };
+    auto relStr = [&](const std::string& s) {
+        return assets.MakeRelativePath(s);
+    };
     return {
         {"name", m.name},
-        {"sourcePath", m.sourcePath},
+        {"sourcePath", relStr(m.sourcePath)},
         {"albedoFactor", Vec4ToJson(m.albedoFactor)},
         {"metallicFactor", m.metallicFactor},
         {"roughnessFactor", m.roughnessFactor},
@@ -52,15 +59,15 @@ json MaterialToJson(const Material& m) {
         {"normalStrength", m.normalStrength},
         {"occlusionStrength", m.occlusionStrength},
         {"alphaCutoff", m.alphaCutoff},
-        {"albedoMapPath", TexturePath(m.albedoMap)},
-        {"normalMapPath", TexturePath(m.normalMap)},
-        {"mrMapPath", TexturePath(m.metallicRoughnessMap)},
-        {"metallicMapPath", TexturePath(m.metallicMap)},
-        {"roughnessMapPath", TexturePath(m.roughnessMap)},
-        {"emissiveMapPath", TexturePath(m.emissiveMap)},
-        {"occlusionMapPath", TexturePath(m.occlusionMap)},
-        {"opacityMapPath", TexturePath(m.opacityMap)},
-        {"specularMapPath", TexturePath(m.specularMap)}
+        {"albedoMapPath", relPath(m.albedoMap)},
+        {"normalMapPath", relPath(m.normalMap)},
+        {"mrMapPath", relPath(m.metallicRoughnessMap)},
+        {"metallicMapPath", relPath(m.metallicMap)},
+        {"roughnessMapPath", relPath(m.roughnessMap)},
+        {"emissiveMapPath", relPath(m.emissiveMap)},
+        {"occlusionMapPath", relPath(m.occlusionMap)},
+        {"opacityMapPath", relPath(m.opacityMap)},
+        {"specularMapPath", relPath(m.specularMap)}
     };
 }
 
@@ -260,8 +267,8 @@ std::string SceneSerializer::SaveToString() const {
         root["materials"] = json::array();
         for (const auto& record : materialRecords) {
             const auto& material = *record.material;
-            json jm = MaterialToJson(material);
-            jm["textureRoot"] = record.textureRoot;
+            json jm = MaterialToJson(material, m_assets);
+            jm["textureRoot"] = m_assets.MakeRelativePath(record.textureRoot);
             if (material.base) {
                 const auto baseIt = materialIds.find(material.base.get());
                 if (baseIt != materialIds.end()) jm["baseId"] = baseIt->second;
@@ -322,7 +329,7 @@ std::string SceneSerializer::SaveToString() const {
 
         if (reg.all_of<MeshComponent>(handle)) {
             const auto& mc = reg.get<MeshComponent>(handle);
-            je["mesh"] = { {"sourceAssetPath", mc.sourceAssetPath}, {"primitiveType", mc.primitiveType}, {"meshIndex", mc.meshIndex} };
+            je["mesh"] = { {"sourceAssetPath", m_assets.MakeRelativePath(mc.sourceAssetPath)}, {"primitiveType", mc.primitiveType}, {"meshIndex", mc.meshIndex} };
         }
         if (reg.all_of<MaterialComponent>(handle)) {
             const auto& matc = reg.get<MaterialComponent>(handle);
@@ -333,7 +340,7 @@ std::string SceneSerializer::SaveToString() const {
                 }
                 // Keep the inline material for backward compatibility with
                 // scene files and tools that predate the material table.
-                je["material"] = MaterialToJson(*matc.material);
+                je["material"] = MaterialToJson(*matc.material, m_assets);
             }
         }
         if (reg.all_of<SkeletalComponent>(handle)) {
@@ -750,7 +757,7 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
                     mesh = BuildClothMesh(*softBody);
                 }
             } else if (!source.empty()) {
-                auto model = m_assets.LoadModel(source);
+                auto model = m_assets.LoadModel(m_assets.MakeRelativePath(source));
                 if (meshIndex >= 0 && meshIndex < static_cast<int>(model.meshes.size())) {
                     mesh = model.meshes[static_cast<size_t>(meshIndex)];
                 }

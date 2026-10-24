@@ -77,6 +77,7 @@ public:
     void Clear();
 
     std::string ResolvePath(const std::string& path) const;
+    std::string MakeRelativePath(const std::string& path) const;
 
 private:
     std::unordered_map<std::string, std::shared_ptr<Texture>> m_textures;

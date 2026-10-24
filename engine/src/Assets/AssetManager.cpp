@@ -36,6 +36,30 @@ AssetManager::AssetManager() {
 
 AssetManager::~AssetManager() = default;
 
+std::string AssetManager::MakeRelativePath(const std::string& path) const {
+    if (path.empty()) return path;
+    std::filesystem::path p(path);
+    if (p.is_relative()) return p.generic_string(); // Already relative
+
+    std::string projPath = ProjectManager::GetProjectPath();
+    if (!projPath.empty()) {
+        std::filesystem::path proj = std::filesystem::absolute(projPath).lexically_normal();
+        std::filesystem::path absPath = std::filesystem::absolute(p).lexically_normal();
+        std::error_code ec;
+        auto rel = std::filesystem::relative(absPath, proj, ec);
+        if (!ec && !rel.empty() && rel.generic_string().rfind("..", 0) != 0) {
+            return rel.generic_string();
+        }
+    }
+    // Fallback: try to find "assets/" in the path
+    std::string s = p.generic_string();
+    size_t pos = s.find("/assets/");
+    if (pos != std::string::npos) {
+        return s.substr(pos + 1);
+    }
+    return p.generic_string();
+}
+
 std::string AssetManager::ResolvePath(const std::string& path) const {
     if (path.empty()) return path;
     std::filesystem::path p(path);
@@ -89,8 +113,9 @@ std::string TextureCacheKey(const std::string& path, bool srgb) {
 }
 } // namespace
 
-std::shared_ptr<Texture> AssetManager::LoadTexture(const std::string& path, bool srgb) {
-    if (path.empty()) return m_white;
+std::shared_ptr<Texture> AssetManager::LoadTexture(const std::string& originalPath, bool srgb) {
+    if (originalPath.empty()) return m_white;
+    const std::string path = MakeRelativePath(originalPath);
 
     const std::string normalized = NormalizeAssetPath(path);
     const std::string key       = TextureCacheKey(path, srgb);
@@ -260,8 +285,9 @@ void ReadNodeHeirarchy(const aiScene* scene, const aiAnimation* anim, float time
 }
 } // namespace
 
-AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
-    if (path.empty()) return LoadedModel{};
+AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPath) {
+    if (originalPath.empty()) return LoadedModel{};
+    const std::string path = MakeRelativePath(originalPath);
     auto it = m_models.find(path);
     if (it != m_models.end()) return it->second;
 

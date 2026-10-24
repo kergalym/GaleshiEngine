@@ -3208,9 +3208,10 @@ void DrawDetails() {
         }
     }
 
-    void SpawnFromModel(const std::string& path, glm::vec3 pos,
+    void SpawnFromModel(const std::string& originalPath, glm::vec3 pos,
                         bool placeAtPosition = false) {
         PushHistory();
+        const std::string path = m_assets->MakeRelativePath(originalPath);
         auto model = m_assets->LoadModel(path);
         if (model.meshes.empty()) return;
         namespace fs = std::filesystem;
