@@ -20,6 +20,7 @@ void FilePickerDialog::Open(const std::string& startDir,
 {
     m_open        = true;
     m_saveMode    = false;
+    m_pickFolderMode = false;
     m_title       = title;
     m_root        = startDir;
     m_current     = startDir.empty() ? fs::current_path() : fs::path(startDir);
@@ -30,6 +31,11 @@ void FilePickerDialog::Open(const std::string& startDir,
     m_dirty = true;
 }
 
+void FilePickerDialog::PickFolder(const std::string& startDir, const std::string& title) {
+    Open(startDir, title, {});
+    m_pickFolderMode = true;
+}
+
 void FilePickerDialog::SaveAs(const std::string& startDir,
                               const std::string& defaultName,
                               const std::string& title,
@@ -37,6 +43,7 @@ void FilePickerDialog::SaveAs(const std::string& startDir,
 {
     m_open        = true;
     m_saveMode    = true;
+    m_pickFolderMode = false;
     m_title       = title;
     m_root        = startDir;
     m_current     = startDir.empty() ? fs::current_path() : fs::path(startDir);
@@ -181,6 +188,12 @@ std::string FilePickerDialog::Draw() {
             ImGui::EndDisabled();
             ImGui::SameLine();
             if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                m_open = false;
+                ImGui::CloseCurrentPopup();
+            }
+        } else if (m_pickFolderMode) {
+            if (ImGui::Button("Select Folder", ImVec2(120, 0))) {
+                result = m_current.string();
                 m_open = false;
                 ImGui::CloseCurrentPopup();
             }

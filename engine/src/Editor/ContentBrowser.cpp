@@ -49,7 +49,19 @@ std::string ContentBrowser::Draw() {
         ImGui::SameLine();
     }
     if (ImGui::Button("Refresh")) Refresh();
+    ImGui::SameLine();
+    if (ImGui::Button("Import Asset")) {
+        m_importPicker.Open(m_current.string(), "Import Asset", { ".fbx", ".gltf", ".glb", ".png", ".jpg", ".wav", ".mp3" });
+    }
     ImGui::Separator();
+
+    std::string importPath = m_importPicker.Draw();
+    if (!importPath.empty()) {
+        std::filesystem::path dest = m_current / std::filesystem::path(importPath).filename();
+        std::error_code ec;
+        std::filesystem::copy_file(importPath, dest, std::filesystem::copy_options::overwrite_existing, ec);
+        if (!ec) Refresh();
+    }
 
     if (m_entries.empty()) Refresh();
 

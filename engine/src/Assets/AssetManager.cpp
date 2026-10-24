@@ -2,6 +2,7 @@
 #include "GaleshiEngine/Assets/Texture.hpp"
 #include "GaleshiEngine/Assets/Mesh.hpp"
 #include "GaleshiEngine/Assets/Material.hpp"
+#include "GaleshiEngine/Core/ProjectManager.hpp"
 
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
@@ -34,6 +35,18 @@ AssetManager::AssetManager() {
 }
 
 AssetManager::~AssetManager() = default;
+
+std::string AssetManager::ResolvePath(const std::string& path) const {
+    if (path.empty()) return path;
+    std::filesystem::path p(path);
+    if (p.is_absolute()) return path;
+    std::string projPath = ProjectManager::GetProjectPath();
+    if (!projPath.empty()) {
+        return (std::filesystem::path(projPath) / path).string();
+    }
+    return path;
+}
+
 void AssetManager::Clear() {
     // Scene entities must release their shared_ptrs before this is called.
     // Clearing the model cache destroys imported meshes plus their materials
@@ -105,7 +118,7 @@ std::shared_ptr<Texture> AssetManager::LoadTexture(const std::string& path, bool
     }
     if (!exists) return m_white;
 
-    Texture* raw = Texture::LoadFromFile(path, srgb);
+    Texture* raw = Texture::LoadFromFile(ResolvePath(path), srgb);
     if (!raw && normalized != path) raw = Texture::LoadFromFile(normalized, srgb);
     if (!raw) return m_white;
 
@@ -269,7 +282,7 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
         postProcess |= aiProcess_FlipUVs;
     }
 
-    const aiScene* scene = importer->ReadFile(path, postProcess);
+    const aiScene* scene = importer->ReadFile(ResolvePath(path), postProcess);
 
     if (!scene || !scene->mRootNode) {
         spdlog::error("[AssetManager] Assimp failed: {}", importer->GetErrorString());

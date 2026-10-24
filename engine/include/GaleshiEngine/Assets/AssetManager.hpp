@@ -76,6 +76,8 @@ public:
     // components no longer hold shared references to these resources.
     void Clear();
 
+    std::string ResolvePath(const std::string& path) const;
+
 private:
     std::unordered_map<std::string, std::shared_ptr<Texture>> m_textures;
     // Embedded FBX/glTF textures indexed by normalized lowercase path and basename.

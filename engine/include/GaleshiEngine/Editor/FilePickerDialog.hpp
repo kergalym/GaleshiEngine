@@ -16,6 +16,9 @@ public:
               std::vector<std::string> extensions);
 
     // Режим сохранения файла (с полем ввода имени)
+    // Режим выбора папки
+    void PickFolder(const std::string& startDir, const std::string& title);
+
     void SaveAs(const std::string& startDir,
                 const std::string& defaultName,
                 const std::string& title,
@@ -33,6 +36,7 @@ private:
     void Refresh();
 
     bool         m_open = false;
+    bool         m_pickFolderMode = false;
     bool         m_saveMode = false;
     std::string  m_title = "Open File";
     std::string  m_root;

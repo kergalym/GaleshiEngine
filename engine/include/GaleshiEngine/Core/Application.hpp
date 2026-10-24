@@ -33,6 +33,7 @@ protected:
     virtual void OnRender()         {}
     virtual void OnImGui()          {}
     virtual void OnShutdown()       {}
+    virtual void OnFileDrop(const std::string& filepath) {}
 
 private:
     struct Impl;

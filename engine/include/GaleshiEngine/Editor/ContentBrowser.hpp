@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include "GaleshiEngine/Editor/FilePickerDialog.hpp"
 #include <string>
 #include <vector>
 
@@ -31,6 +32,7 @@ private:
     AssetManager*         m_assets = nullptr;
     std::filesystem::path m_current;
     std::vector<Entry>    m_entries;
+    FilePickerDialog m_importPicker;
 };
 
 } // namespace Galeshi

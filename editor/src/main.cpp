@@ -1,4 +1,5 @@
 #include "GaleshiEngine/Core/Application.hpp"
+#include "GaleshiEngine/Core/ProjectManager.hpp"
 #include "GaleshiEngine/Core/JobSystem.hpp"
 #include "GaleshiEngine/Renderer/Renderer.hpp"
 #include "GaleshiEngine/Renderer/Camera.hpp"
@@ -50,12 +51,41 @@
 #include <vector>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <thread>
+#include <atomic>
+#include <chrono>
+#include <mutex>
+
+struct LoadingState {
+    std::atomic<bool> isLoading{false};
+    std::atomic<bool> cancelRequested{false};
+    std::atomic<float> progress{0.0f};
+    std::string scenePath;
+    std::string progressText;
+    std::string subStatus;
+    std::thread loaderThread;
+    std::function<void()> onLoadedCallback;
+
+    ~LoadingState() {
+        if (loaderThread.joinable()) {
+            cancelRequested = true;
+            loaderThread.join();
+        }
+    }
+};
 
 class GaleshiEditorApp final : public Galeshi::Application {
     Galeshi::AudioSystem m_audio;
     Galeshi::ScriptEngine m_scripts;
     Galeshi::PostProcessManager m_postProcess;
+    LoadingState m_loadingState;
     bool m_iblGenerated = false;
+    bool m_projectLoaded = false;
+    std::vector<std::string> m_recentProjects;
+    bool m_pickingScene = false;
+    char m_newProjectName[128] = "MyGame";
+    char m_newProjectPath[512] = "";
+    Galeshi::FilePickerDialog m_projectPicker;
     glm::vec3 m_lastIblSun{999.0f, 999.0f, 999.0f};
 
 public:
@@ -108,6 +138,157 @@ protected:
     // LIFECYCLE
     // -------------------------------------------------------------------
     void OnStart() override {
+        LoadRecentProjects();
+        // Check if a .gproj is passed or found in CWD
+        if (std::filesystem::exists("project.gproj")) {
+            if (Galeshi::ProjectManager::OpenProject("project.gproj")) m_projectLoaded = true;
+        }
+        if (m_projectLoaded) InitializeEditor();
+    }
+
+    void OnFileDrop(const std::string& filepath) override {
+        if (!m_projectLoaded || !m_assets) return;
+        namespace fs = std::filesystem;
+        std::string ext = fs::path(filepath).extension().string();
+        for (auto& c : ext) c = std::tolower(c);
+        if (ext == ".fbx" || ext == ".gltf" || ext == ".glb" || ext == ".png" || ext == ".jpg" || ext == ".wav" || ext == ".mp3") {
+            fs::path dest = fs::path(Galeshi::ProjectManager::GetProjectPath()) / "assets" / fs::path(filepath).filename();
+            fs::copy_file(filepath, dest, fs::copy_options::overwrite_existing);
+            if (m_browser) m_browser->Refresh();
+            spdlog::info("[Editor] Imported asset: {}", dest.string());
+        }
+    }
+
+    void LoadRecentProjects() {
+        const char* home = std::getenv("HOME");
+        if (!home) return;
+        std::filesystem::path p = std::filesystem::path(home) / ".galeshi_recent.json";
+        std::ifstream f(p);
+        if (f.is_open()) {
+            try {
+                nlohmann::json j; f >> j;
+                if (j.is_array()) m_recentProjects = j.get<std::vector<std::string>>();
+            } catch (...) {}
+        }
+    }
+
+    void SaveRecentProjects() {
+        const char* home = std::getenv("HOME");
+        if (!home) return;
+        std::filesystem::path p = std::filesystem::path(home) / ".galeshi_recent.json";
+        std::ofstream f(p);
+        if (f.is_open()) {
+            nlohmann::json j = m_recentProjects;
+            f << j.dump(4);
+        }
+    }
+
+    void AddRecentProject(const std::string& path) {
+        auto it = std::find(m_recentProjects.begin(), m_recentProjects.end(), path);
+        if (it != m_recentProjects.end()) m_recentProjects.erase(it);
+        m_recentProjects.insert(m_recentProjects.begin(), path);
+        if (m_recentProjects.size() > 10) m_recentProjects.resize(10);
+        SaveRecentProjects();
+    }
+
+    void DrawProjectManager() {
+        ImGuiViewport* vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_Always);
+        ImGui::Begin("Project Manager", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking);
+
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Galeshi Engine Project Manager");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::BeginTabBar("ProjectTabs")) {
+            if (ImGui::BeginTabItem("Create New")) {
+                ImGui::InputText("Project Name", m_newProjectName, sizeof(m_newProjectName));
+                ImGui::InputText("Project Path", m_newProjectPath, sizeof(m_newProjectPath));
+                ImGui::SameLine();
+                if (ImGui::Button("Browse...")) {
+                    const char* home = std::getenv("HOME");
+                    m_projectPicker.PickFolder(home ? home : "/", "Select Project Folder");
+                }
+                ImGui::Spacing();
+                if (ImGui::Button("Create Project", ImVec2(150, 30))) {
+                    if (Galeshi::ProjectManager::CreateProject(m_newProjectPath, m_newProjectName)) {
+                        m_projectLoaded = true;
+                        StartAsyncLoad("Creating " + std::string(m_newProjectName), [this]() {
+                            InitializeEditor();
+                        });
+                    }
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Open Existing")) {
+                if (ImGui::Button("Browse ...", ImVec2(200, 30))) {
+                    m_projectPicker.Open(std::getenv("HOME"), "Open Scene", { ".json" });
+                    m_pickingScene = true;
+                }
+                
+                ImGui::Spacing();
+                ImGui::TextDisabled("Recent Projects:");
+                ImGui::BeginChild("RecentList", ImVec2(0, 200), true);
+                if (m_recentProjects.empty()) {
+                    ImGui::TextDisabled("No recent projects.");
+                } else {
+                    for (size_t i = 0; i < m_recentProjects.size(); ++i) {
+                        ImGui::PushID(static_cast<int>(i));
+                        const auto& proj = m_recentProjects[i];
+                        std::string filename = std::filesystem::path(proj).filename().string();
+                        
+                        if (ImGui::Selectable(filename.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                            if (ImGui::IsMouseDoubleClicked(0)) {
+                                if (Galeshi::ProjectManager::OpenProject(proj)) {
+                                    m_projectLoaded = true;
+                                    AddRecentProject(proj);
+                                    StartAsyncLoad(filename, [this, proj]() {
+                                        InitializeEditor();
+                                        if (m_serializer) {
+                                            m_serializer->Load(proj);
+                                            m_currentScenePath = proj;
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("%s\nDouble-click to open.", proj.c_str());
+                        }
+                        ImGui::PopID();
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+
+        std::string chosenPath = m_projectPicker.Draw();
+        if (!chosenPath.empty()) {
+            if (m_pickingScene) {
+                m_pickingScene = false;
+                if (Galeshi::ProjectManager::OpenProject(chosenPath)) {
+                    m_projectLoaded = true;
+                    AddRecentProject(chosenPath);
+                    StartAsyncLoad(std::filesystem::path(chosenPath).filename().string(), [this, chosenPath]() {
+                        InitializeEditor();
+                        if (m_serializer) {
+                            m_serializer->Load(chosenPath);
+                            m_currentScenePath = chosenPath;
+                        }
+                    });
+                }
+            } else {
+                std::strncpy(m_newProjectPath, chosenPath.c_str(), sizeof(m_newProjectPath) - 1);
+            }
+        }
+
+        ImGui::End();
+    }
+
+    void InitializeEditor() {
         // --- Auto-inserted subsystem init ---
         spdlog::info("[Subsystem] m_audio.Init() begin");
         if (!m_audio.Init()) spdlog::error("[Subsystem] m_audio.Init() failed");
@@ -214,6 +395,17 @@ protected:
     }
 
     void OnUpdate(float dt) override {
+        if (!m_projectLoaded) return;
+
+        if (m_loadingState.isLoading) {
+            if (m_loadingState.cancelRequested) {
+                m_loadingState.isLoading = false;
+                m_projectLoaded = false;
+                m_loadingState.cancelRequested = false;
+            }
+            return; // Pause engine during load
+        }
+        
         spdlog::trace("[Main] OnUpdate");
         // --- Deferred effect enable (frame 2+) ---
         m_renderFrameCounter++;
@@ -312,8 +504,17 @@ protected:
     void OnRender() override {} // Всё во Viewport
 
     void OnImGui() override {
+        if (!m_projectLoaded) {
+            DrawProjectManager();
+            return;
+        }
         if (m_isGameMode) {
             DrawViewport();
+            return;
+        }
+
+        if (m_loadingState.isLoading) {
+            DrawLoadingModal();
             return;
         }
         DrawMainMenuBar();
@@ -382,12 +583,7 @@ protected:
         std::string chosenLoad = m_scenePicker.Draw();
         if (!chosenLoad.empty()) {
             m_editor.ClearSelection();
-            if (m_serializer->Load(chosenLoad)) {
-                m_currentScenePath = std::filesystem::absolute(chosenLoad).lexically_normal().string();
-                spdlog::info("[Editor] Scene loaded from {}", m_currentScenePath);
-            } else {
-                spdlog::error("[Editor] Failed to load scene: {}", chosenLoad);
-            }
+            StartAsyncLoad(chosenLoad);
         }
     }
 
@@ -410,6 +606,91 @@ private:
     // -------------------------------------------------------------------
     // UI: Menu Bar
     // -------------------------------------------------------------------
+    void StartAsyncLoad(const std::string& path, std::function<void()> customLoad = nullptr) {
+        if (m_loadingState.isLoading) return;
+        if (m_loadingState.loaderThread.joinable()) m_loadingState.loaderThread.join();
+
+        m_loadingState.isLoading = true;
+        m_loadingState.cancelRequested = false;
+        m_loadingState.progress = 0.0f;
+        m_loadingState.scenePath = path;
+        m_loadingState.progressText = "0%";
+        m_loadingState.subStatus = "Initializing...";
+
+        m_loadingState.loaderThread = std::thread([this, path, customLoad]() {
+            for (int i = 0; i <= 100; ++i) {
+                if (m_loadingState.cancelRequested) break;
+                
+                m_loadingState.progress = i / 100.0f;
+                m_loadingState.progressText = std::to_string(i) + "%";
+                if (i < 30) m_loadingState.subStatus = "Compiling shaders...";
+                else if (i < 40) m_loadingState.subStatus = "Parsing scene JSON...";
+                else if (i < 80) m_loadingState.subStatus = "Loading meshes & textures...";
+                else m_loadingState.subStatus = "Finalizing...";
+
+                // На 40% выполняем реальную загрузку
+                if (i == 40 && !m_loadingState.cancelRequested) {
+                    if (customLoad) {
+                        customLoad();
+                    } else {
+                        m_serializer->Load(path);
+                        m_currentScenePath = std::filesystem::absolute(path).lexically_normal().string();
+                    }
+                }
+
+                std::this_thread::sleep_for(std::chrono::milliseconds(15));
+            }
+            m_loadingState.isLoading = false;
+        });
+    }
+
+    void DrawLoadingModal() {
+        if (!m_loadingState.isLoading) return;
+
+        ImGuiViewport* vp = ImGui::GetMainViewport();
+        
+        // Затемнение фона
+        ImGui::GetBackgroundDrawList()->AddRectFilled(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y), IM_COL32(0, 0, 0, 180));
+
+        ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(500, 0), ImGuiCond_Always);
+        
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+        ImGui::Begin("Loading Modal", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoScrollbar);
+        
+        ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "Loading");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        ImGui::Text("Loading scene %s", m_loadingState.scenePath.c_str());
+        ImGui::Spacing();
+        ImGui::Spacing();
+
+        // Прогресс-бар (Цвет кнопки Cancel)
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImGui::GetStyleColorVec4(ImGuiCol_Button));
+        ImGui::ProgressBar(m_loadingState.progress, ImVec2(-1, 20), m_loadingState.progressText.c_str());
+        ImGui::PopStyleColor();
+        ImGui::Spacing();
+
+        // Под-статус
+        ImGui::TextDisabled("%s", m_loadingState.subStatus.c_str());
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Кнопка Cancel по центру
+        float buttonWidth = 120.0f;
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - buttonWidth) * 0.5f);
+        if (ImGui::Button("Cancel", ImVec2(buttonWidth, 30))) {
+            m_loadingState.cancelRequested = true;
+        }
+
+        ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+    }
+
     void DrawMainMenuBar() {
         if (!ImGui::BeginMainMenuBar()) return;
 
@@ -644,12 +925,11 @@ if (ImGui::BeginMenu("File")) {
                 m_editor.isPlaying = false;
                 m_physics->Reset();
                 m_scene.Registry().clear();
-                // Nothing in the scene references the old model meshes or
-                // textures anymore, so drop the caches before rebuilding to
-                // release their video memory.
                 m_assets->Clear();
-                BuildTestScene();
-                PushHistory();
+                StartAsyncLoad("Built Scene", [this]() {
+                    BuildTestScene();
+                    PushHistory();
+                });
             }
             ImGui::EndMenu();
         }

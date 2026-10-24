@@ -19,6 +19,9 @@ add_library(GaleshiEngine STATIC
     ${GALESHI_ENGINE_SOURCES}
     ${GALESHI_ENGINE_HEADERS})
 
+# Add new source files
+target_sources(GaleshiEngine PRIVATE src/Core/ProjectManager.cpp)
+
 target_include_directories(GaleshiEngine
 
     PUBLIC

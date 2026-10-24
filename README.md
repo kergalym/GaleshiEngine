@@ -275,14 +275,14 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [x] Complete scene serialization for all ECS components.
 - [ ] Add project/start-scene loading to game mode.
 - [x] Landscape formation tools and tree/grass instancing
-- [ ] Scene loading progress bar dialog
-- [ ] Separate project implementation and resources (show project selecting window at startup)
-- [ ] Import content (fbx, glTF, textures, wav, mp3 sounds) into project
+- [x] Scene loading progress bar dialog
+- [x] Separate project implementation and resources (show project creating or selecting window at startup)
+- [x] Import content (fbx, glTF, textures, wav, mp3 sounds) into project
 - [ ] Lua game logic scripting system and editor under viewport (tab system on the right side area of Content browser). Lua bindings to C++ functions
 - [ ] Add logo to the left up corner of an editor
 - [ ] Add naming labels to Outliner and Properties panels
 - [ ] Show small splash window at startup
-- [ ] Add input axis system for keyboard and mouse
+- [ ] Add input axis system for keyboard and mouse ()
 - [ ] Add RunOnce and RunAlways system functions
 - [ ] UI designing system
 
