@@ -398,6 +398,8 @@ protected:
         // через File -> Save Scene (Ctrl+S).
 
         // Выходим без очистки GPU (иначе NVIDIA deadlock)
+        SDL_Quit();
+        bgfx::shutdown();
         spdlog::info("[Editor] OnShutdown: exit (skip GPU cleanup)");
         std::fflush(stdout);
         std::fflush(stderr);
@@ -3246,15 +3248,10 @@ int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::setvbuf(stderr, nullptr, _IONBF, 0);
 
-    // ВАЖНО: создаём app через new и НИКОГДА не удаляем.
-    // Причина: ~Application вызывает bgfx::shutdown() и SDL_Quit(),
-    // которые падают в deadlock внутри libnvidia-glcore при dlclose.
-    // OnShutdown() (в конце Run) уже сохраняет сцену и делает cleanup.
-    // OS освободит GPU-ресурсы при завершении процесса.
     GaleshiEditorApp* app = new GaleshiEditorApp(debugMode, gameMode);
     int exitCode = app->Run();
 
     std::fflush(stdout);
     std::fflush(stderr);
-    std::_Exit(exitCode);  // нет деструкторов, нет dlclose, нет NVIDIA deadlock
+    std::_Exit(exitCode);
 }
