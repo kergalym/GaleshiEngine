@@ -25,6 +25,7 @@
 #include "GaleshiEngine/AI/AISystem.hpp"
 #include "GaleshiEngine/Audio/AudioSystem.hpp"
 #include "GaleshiEngine/Scripting/ScriptEngine.hpp"
+#include "TextEditor/TextEditor.h"
 #include "GaleshiEngine/Renderer/PostProcessManager.hpp"
 
 #include <SDL3/SDL.h>
@@ -81,6 +82,7 @@ class GaleshiEditorApp final : public Galeshi::Application {
     LoadingState m_loadingState;
     bool m_iblGenerated = false;
     bool m_projectLoaded = false;
+    bool m_resetLayout = false;
     std::vector<std::string> m_recentProjects;
     bool m_pickingScene = false;
     char m_newProjectName[128] = "MyGame";
@@ -388,6 +390,9 @@ protected:
         m_history.clear();
         m_historyIndex = -1;
         PushHistory();
+        
+        // Force layout reset to match the tabbed design
+        m_resetLayout = true;
 
         m_camera.SetPerspective(glm::radians(60.0f),
             static_cast<float>(GetRenderer()->Width()) / static_cast<float>(GetRenderer()->Height()),
@@ -558,6 +563,9 @@ protected:
         DrawOutliner();
         DrawDetails();
         DrawContentBrowser();
+        DrawLuaEditor();
+        DrawLuaConsole();
+        DrawScriptComponents();
 
         // File Picker (модальный)
         
@@ -920,6 +928,8 @@ if (ImGui::BeginMenu("File")) {
         }
 
         if (ImGui::BeginMenu("Testing")) {
+            if (ImGui::MenuItem("Reset Layout")) m_resetLayout = true;
+            ImGui::Separator();
             if (ImGui::MenuItem("Build Scene")) {
                 m_editor.ClearSelection();
                 m_editor.isPlaying = false;
@@ -1025,20 +1035,32 @@ if (ImGui::BeginMenu("File")) {
         ImGui::PopStyleVar(3);
 
         const ImGuiID dockspaceId = ImGui::GetID("GaleshiDockspace");
-        if (ImGui::DockBuilderGetNode(dockspaceId) == nullptr) {
+        if (ImGui::DockBuilderGetNode(dockspaceId) == nullptr || m_resetLayout) {
+            m_resetLayout = false;
             ImGui::DockBuilderRemoveNode(dockspaceId);
             ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
             ImGui::DockBuilderSetNodeSize(dockspaceId, vp->Size);
 
             ImGuiID center = dockspaceId;
             ImGuiID right  = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.25f, nullptr, &center);
-            ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down,  0.30f, nullptr, &center);
+            ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down,  0.35f, nullptr, &center);
             ImGuiID left   = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left,  0.20f, nullptr, &center);
 
-            ImGui::DockBuilderDockWindow("Viewport",        center);
-            ImGui::DockBuilderDockWindow("World Outliner",  left);
-            ImGui::DockBuilderDockWindow("Details",         right);
-            ImGui::DockBuilderDockWindow("Content Browser", bottom);
+            // Split the bottom area into Left (Content Browser) and Right (Lua Editor)
+            ImGuiID bottomLeft = ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.20f, nullptr, &bottom);
+
+            ImGui::DockBuilderDockWindow("Viewport",          center);
+            ImGui::DockBuilderDockWindow("World Outliner",    left);
+            ImGui::DockBuilderDockWindow("Details",           right);
+            
+            // Left side of bottom panel
+            ImGui::DockBuilderDockWindow("Content Browser",   bottomLeft);
+            
+            // Right side of bottom panel (tabs)
+            ImGui::DockBuilderDockWindow("Lua Editor",        bottom);
+            ImGui::DockBuilderDockWindow("Lua Console",       bottom);
+            ImGui::DockBuilderDockWindow("Script Components", bottom);
+
             ImGui::DockBuilderFinish(dockspaceId);
         }
         ImGui::DockSpace(dockspaceId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
@@ -2998,6 +3020,83 @@ void DrawDetails() {
     // -------------------------------------------------------------------
     // Content Browser & Assets
     // -------------------------------------------------------------------
+    void DrawLuaEditor() {
+        ImGui::Begin("Lua Editor");
+        if (!m_luaEditorInitialized) {
+            m_luaEditor.SetLanguageDefinition(TextEditor::LanguageDefinition::Lua());
+            m_luaEditor.SetPalette(TextEditor::GetDarkPalette());
+            m_luaEditor.SetText("-- Select a .lua file from Content Browser");
+            m_luaEditorInitialized = true;
+        }
+        if (m_currentLuaFile.empty()) {
+            ImGui::TextDisabled("No file opened. Double-click a .lua file in Content Browser.");
+        } else {
+            if (ImGui::Button("Save")) {
+                spdlog::info("[Editor] Attempting to save Lua script to: {}", std::filesystem::absolute(m_currentLuaFile).string());
+                std::ofstream out(m_currentLuaFile);
+                if (out.is_open()) {
+                    out << m_luaEditor.GetText();
+                    out.close();
+                    spdlog::info("[Editor] Successfully saved Lua script.");
+                } else {
+                    spdlog::error("[Editor] FAILED to open file for saving: {}", m_currentLuaFile);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Reload")) {
+                if (m_scripts.HotReload(m_currentLuaFile)) {
+                    spdlog::info("[Editor] Reloaded {}", m_currentLuaFile);
+                }
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", m_currentLuaFile.c_str());
+            ImGui::Separator();
+            m_luaEditor.Render("LuaEditor");
+        }
+        ImGui::End();
+    }
+
+    void DrawLuaConsole() {
+        ImGui::Begin("Lua Console");
+        if (ImGui::Button("Clear")) m_scripts.ClearLogs();
+        ImGui::Separator();
+        
+        ImGui::BeginChild("ConsoleScroll", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
+        auto logs = m_scripts.GetLogs();
+        for (const auto& log : logs) {
+            ImGui::TextWrapped("%s", log.c_str());
+        }
+        if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f) {
+            ImGui::SetScrollHereY(1.0f);
+        }
+        ImGui::EndChild();
+        ImGui::End();
+    }
+
+    void DrawScriptComponents() {
+        ImGui::Begin("Script Components");
+        ImGui::BeginChild("ComponentsScroll", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
+        auto& reg = m_scene.Registry();
+        auto view = reg.view<Galeshi::AIControllerComponent>();
+        if (view.begin() == view.end()) {
+            ImGui::TextDisabled("No script components found.");
+        } else {
+            for (auto e : view) {
+                auto& ctrl = view.get<Galeshi::AIControllerComponent>(e);
+                std::string name = "Entity " + std::to_string((uint32_t)e);
+                if (reg.all_of<Galeshi::NameComponent>(e)) name = reg.get<Galeshi::NameComponent>(e).name;
+                ImGui::Text("%s -> %s", name.c_str(), ctrl.scriptPath.c_str());
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Reload")) {
+                    // Force reload AI scripts
+                    m_scripts.HotReload("assets/scripts/init.lua");
+                }
+            }
+        }
+        ImGui::EndChild();
+        ImGui::End();
+    }
+
     void DrawContentBrowser() {
         ImGui::Begin("Content Browser");
         std::string clicked = m_browser->Draw();
@@ -3016,6 +3115,16 @@ void DrawDetails() {
         std::string ext = fs::path(path).extension().string();
         for (auto& c : ext) c = static_cast<char>(std::tolower(c));
 
+        if (ext == ".lua") {
+            m_currentLuaFile = path;
+            std::ifstream in(path);
+            if (in.is_open()) {
+                std::stringstream ss;
+                ss << in.rdbuf();
+                m_luaEditor.SetText(ss.str());
+            }
+            return;
+        }
         if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") {
             SpawnFromModel(path, glm::vec3(0.0f));
         } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
@@ -3069,6 +3178,16 @@ void DrawDetails() {
         std::string ext = fs::path(path).extension().string();
         for (auto& c : ext) c = static_cast<char>(std::tolower(c));
 
+        if (ext == ".lua") {
+            m_currentLuaFile = path;
+            std::ifstream in(path);
+            if (in.is_open()) {
+                std::stringstream ss;
+                ss << in.rdbuf();
+                m_luaEditor.SetText(ss.str());
+            }
+            return;
+        }
         if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") {
             SpawnFromModel(path, pos, true);
             return;
@@ -3361,6 +3480,9 @@ void DrawDetails() {
     Galeshi::FilePickerDialog m_filePicker;
     Galeshi::FilePickerDialog m_filePickerSave;
     Galeshi::FilePickerDialog m_scenePicker;
+    TextEditor m_luaEditor;
+    std::string m_currentLuaFile;
+    bool m_luaEditorInitialized = false;
 
     std::vector<std::string> m_history;
     int  m_historyIndex = -1;

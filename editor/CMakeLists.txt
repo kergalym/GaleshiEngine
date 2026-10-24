@@ -5,6 +5,7 @@ include_directories(${CMAKE_BINARY_DIR}/_deps/lua-src/src)
 
 add_executable(GaleshiEditor
     src/main.cpp
+    src/TextEditor/TextEditor.cpp
 )
 
 target_link_libraries(GaleshiEditor PRIVATE GaleshiEngine Jolt)
@@ -16,4 +17,5 @@ set_target_properties(GaleshiEditor PROPERTIES
 )
 
 target_include_directories(GaleshiEditor PRIVATE
+    src/TextEditor
 )

@@ -212,7 +212,14 @@ Application::Application(const ApplicationSpec& spec)
     bool fontLoaded = false;
     for (const char* fp : fontPaths) {
         if (std::filesystem::exists(fp)) {
-            io.Fonts->AddFontFromFileTTF(fp, 32.0f, &font_cfg);
+            {
+                static const ImWchar ranges[] = {
+                    0x0020, 0x00FF, // Basic Latin + Latin Supplement
+                    0x0400, 0x044F, // Cyrillic
+                    0,
+                };
+                io.Fonts->AddFontFromFileTTF(fp, 32.0f, &font_cfg, ranges);
+            }
             io.FontGlobalScale = 0.5f;  // 32px -> визуальные 16px (суперсэмплинг)
             spdlog::info("[Galeshi] Font loaded: {}", fp);
             fontLoaded = true;

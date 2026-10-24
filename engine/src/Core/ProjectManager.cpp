@@ -35,7 +35,7 @@ bool ProjectManager::CreateProject(const std::string& path, const std::string& n
 bool ProjectManager::OpenProject(const std::string& filepath) {
     std::filesystem::path p(filepath);
     if (!std::filesystem::exists(p)) return false;
-    s_projectPath = p.parent_path().string();
+    s_projectPath = std::filesystem::absolute(p).parent_path().string();
     s_projectName = p.stem().string();
     spdlog::info("[ProjectManager] Opened project: {} at {}", s_projectName, s_projectPath);
     return true;
