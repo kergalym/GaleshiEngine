@@ -5,6 +5,7 @@
 #include "GaleshiEngine/Assets/Material.hpp"
 #include "GaleshiEngine/Assets/Texture.hpp"
 #include "GaleshiEngine/Assets/LandscapeMesh.hpp"
+#include "GaleshiEngine/Assets/VegetationGenerator.hpp"
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -299,6 +300,25 @@ std::string SceneSerializer::SaveToString() const {
                 {"heights", safeHeights}
             };
         }
+        if (reg.all_of<VegetationComponent>(handle)) {
+            const auto& veg = reg.get<VegetationComponent>(handle);
+            je["vegetation"] = {
+                {"enabled", veg.enabled},
+                {"castShadows", veg.castShadows},
+                {"grassCastShadows", veg.grassCastShadows},
+                {"treeCount", veg.treeCount},
+                {"grassCount", veg.grassCount},
+                {"treeMinScale", veg.treeMinScale},
+                {"treeMaxScale", veg.treeMaxScale},
+                {"grassMinScale", veg.grassMinScale},
+                {"grassMaxScale", veg.grassMaxScale},
+                {"slopeLimit", veg.slopeLimit},
+                {"seed", veg.seed},
+                {"trunkColor", Vec4ToJson(veg.trunkColor)},
+                {"canopyColor", Vec4ToJson(veg.canopyColor)},
+                {"grassColor", Vec4ToJson(veg.grassColor)}
+            };
+        }
 
         if (reg.all_of<MeshComponent>(handle)) {
             const auto& mc = reg.get<MeshComponent>(handle);
@@ -324,6 +344,46 @@ std::string SceneSerializer::SaveToString() const {
                 {"currentTime", skel.currentTime},
                 {"animationSpeed", skel.animationSpeed},
                 {"activeAnimation", skel.activeAnimation}
+            };
+        }
+        if (reg.all_of<AnimationStateMachineComponent>(handle)) {
+            const auto& machine = reg.get<AnimationStateMachineComponent>(handle);
+            json states = json::array();
+            for (const auto& state : machine.states) {
+                states.push_back({
+                    {"name", state.name},
+                    {"clip", state.clip},
+                    {"loop", state.loop},
+                    {"speed", state.speed}
+                });
+            }
+            json transitions = json::array();
+            for (const auto& transition : machine.transitions) {
+                transitions.push_back({
+                    {"fromState", transition.fromState},
+                    {"toState", transition.toState},
+                    {"parameter", transition.parameter},
+                    {"condition", static_cast<int>(transition.condition)},
+                    {"threshold", transition.threshold},
+                    {"duration", transition.duration},
+                    {"enabled", transition.enabled}
+                });
+            }
+            json parameters = json::array();
+            for (const auto& parameter : machine.parameters) {
+                parameters.push_back({
+                    {"name", parameter.name},
+                    {"value", parameter.value}
+                });
+            }
+            je["animationStateMachine"] = {
+                {"enabled", machine.enabled},
+                {"currentState", machine.currentState},
+                {"playbackSpeed", machine.playbackSpeed},
+                {"blendDuration", machine.blendDuration},
+                {"states", std::move(states)},
+                {"transitions", std::move(transitions)},
+                {"parameters", std::move(parameters)}
             };
         }
         if (reg.all_of<CameraComponent>(handle)) {
@@ -409,6 +469,47 @@ std::string SceneSerializer::SaveToString() const {
         if (reg.all_of<AIControllerComponent>(handle)) {
             const auto& controller = reg.get<AIControllerComponent>(handle);
             je["aiController"] = { {"scriptPath", controller.scriptPath} };
+        }
+        if (reg.all_of<PerceptionComponent>(handle)) {
+            const auto& perception = reg.get<PerceptionComponent>(handle);
+            je["perception"] = {
+                {"sightRadius", perception.sightRadius},
+                {"fieldOfViewDegrees", perception.fieldOfViewDegrees},
+                {"hearingRadius", perception.hearingRadius},
+                {"eyeHeight", perception.eyeHeight},
+                {"detectionInterval", perception.detectionInterval},
+                {"memoryDuration", perception.memoryDuration},
+                {"requireLineOfSight", perception.requireLineOfSight},
+                {"detectPlayerOnly", perception.detectPlayerOnly},
+                {"targetName", perception.targetName}
+            };
+        }
+        if (reg.all_of<BehaviorTreeComponent>(handle)) {
+            const auto& tree = reg.get<BehaviorTreeComponent>(handle);
+            json nodes = json::array();
+            for (const auto& node : tree.nodes) {
+                nodes.push_back({
+                    {"name", node.name},
+                    {"type", static_cast<int>(node.type)},
+                    {"condition", static_cast<int>(node.condition)},
+                    {"action", static_cast<int>(node.action)},
+                    {"children", node.children},
+                    {"range", node.range},
+                    {"duration", node.duration},
+                    {"radius", node.radius},
+                    {"parameter", node.parameter},
+                    {"value", node.value}
+                });
+            }
+            je["behaviorTree"] = {
+                {"enabled", tree.enabled},
+                {"root", tree.root},
+                {"tickInterval", tree.tickInterval},
+                {"nodes", std::move(nodes)}
+            };
+        }
+        if (reg.all_of<PlayerTagComponent>(handle)) {
+            je["playerTag"] = true;
         }
         if (reg.all_of<LuaEntityComponent>(handle)) {
             je["luaEntity"] = true;
@@ -581,6 +682,27 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
             const size_t expected = static_cast<size_t>(landscape.sizeX) * static_cast<size_t>(landscape.sizeZ);
             if (landscape.heights.size() != expected) landscape.heights.resize(expected, 0.0f);
         }
+        if (je.contains("vegetation")) {
+            const auto& jv = je["vegetation"];
+            auto& vegetation = e.AddComponent<VegetationComponent>();
+            vegetation.enabled = jv.value("enabled", true);
+            vegetation.castShadows = jv.value("castShadows", true);
+            vegetation.grassCastShadows = jv.value("grassCastShadows", false);
+            vegetation.treeCount = std::clamp(jv.value("treeCount", 120), 0, 20000);
+            vegetation.grassCount = std::clamp(jv.value("grassCount", 2000), 0, 50000);
+            vegetation.treeMinScale = jv.value("treeMinScale", 0.75f);
+            vegetation.treeMaxScale = jv.value("treeMaxScale", 1.45f);
+            vegetation.grassMinScale = jv.value("grassMinScale", 0.65f);
+            vegetation.grassMaxScale = jv.value("grassMaxScale", 1.25f);
+            vegetation.slopeLimit = jv.value("slopeLimit", 0.65f);
+            vegetation.seed = jv.value("seed", 1337u);
+            if (jv.contains("trunkColor")) vegetation.trunkColor = Vec4FromJson(jv.at("trunkColor"));
+            if (jv.contains("canopyColor")) vegetation.canopyColor = Vec4FromJson(jv.at("canopyColor"));
+            if (jv.contains("grassColor")) vegetation.grassColor = Vec4FromJson(jv.at("grassColor"));
+            if (const auto* landscape = reg.try_get<LandscapeComponent>(e.Handle())) {
+                VegetationGenerator::Generate(*landscape, vegetation);
+            }
+        }
 
         // Cloth meshes are generated from this data, so parse it before the
         // mesh component is rebuilt.
@@ -678,6 +800,49 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
                 }
             }
         }
+        if (je.contains("animationStateMachine")) {
+            const auto& jm = je["animationStateMachine"];
+            auto& machine = e.AddComponent<AnimationStateMachineComponent>();
+            machine.enabled = jm.value("enabled", true);
+            machine.currentState = jm.value("currentState", 0);
+            machine.playbackSpeed = jm.value("playbackSpeed", 1.0f);
+            machine.blendDuration = jm.value("blendDuration", 0.25f);
+            if (jm.contains("states") && jm["states"].is_array()) {
+                for (const auto& js : jm["states"]) {
+                    AnimationState state;
+                    state.name = js.value("name", std::string("State"));
+                    state.clip = js.value("clip", 0);
+                    state.loop = js.value("loop", true);
+                    state.speed = js.value("speed", 1.0f);
+                    machine.states.push_back(std::move(state));
+                }
+            }
+            if (jm.contains("transitions") && jm["transitions"].is_array()) {
+                for (const auto& jt : jm["transitions"]) {
+                    AnimationTransition transition;
+                    transition.fromState = jt.value("fromState", -1);
+                    transition.toState = jt.value("toState", 0);
+                    transition.parameter = jt.value("parameter", std::string{});
+                    transition.condition = static_cast<AnimationCondition>(
+                        std::clamp(jt.value("condition", 0), 0, 5));
+                    transition.threshold = jt.value("threshold", 0.5f);
+                    transition.duration = jt.value("duration", 0.25f);
+                    transition.enabled = jt.value("enabled", true);
+                    machine.transitions.push_back(std::move(transition));
+                }
+            }
+            if (jm.contains("parameters") && jm["parameters"].is_array()) {
+                for (const auto& jp : jm["parameters"]) {
+                    machine.parameters.push_back({
+                        jp.value("name", std::string{}),
+                        jp.value("value", 0.0f)
+                    });
+                }
+            }
+            machine.previousState = -1;
+            machine.blendElapsed = machine.blendDuration;
+            machine.initialized = false;
+        }
 
         if (je.contains("camera")) {
             const auto& jc = je["camera"];
@@ -756,6 +921,56 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
             const auto& jc = je["aiController"];
             auto& controller = e.AddComponent<AIControllerComponent>();
             controller.scriptPath = jc.value("scriptPath", std::string("assets/scripts/ai_controller.lua"));
+        }
+        if (je.contains("perception")) {
+            const auto& jp = je["perception"];
+            auto& perception = e.AddComponent<PerceptionComponent>();
+            perception.sightRadius = jp.value("sightRadius", 20.0f);
+            perception.fieldOfViewDegrees = jp.value("fieldOfViewDegrees", 110.0f);
+            perception.hearingRadius = jp.value("hearingRadius", 8.0f);
+            perception.eyeHeight = jp.value("eyeHeight", 1.6f);
+            perception.detectionInterval = jp.value("detectionInterval", 0.15f);
+            perception.memoryDuration = jp.value("memoryDuration", 4.0f);
+            perception.requireLineOfSight = jp.value("requireLineOfSight", true);
+            perception.detectPlayerOnly = jp.value("detectPlayerOnly", true);
+            perception.targetName = jp.value("targetName", std::string("Player"));
+            perception.canSeeTarget = false;
+            perception.targetEntity = entt::null;
+            perception.timeSinceSeen = 1000.0f;
+        }
+        if (je.contains("behaviorTree")) {
+            const auto& jb = je["behaviorTree"];
+            auto& tree = e.AddComponent<BehaviorTreeComponent>();
+            tree.enabled = jb.value("enabled", true);
+            tree.root = jb.value("root", 0);
+            tree.tickInterval = jb.value("tickInterval", 0.0f);
+            if (jb.contains("nodes") && jb["nodes"].is_array()) {
+                for (const auto& jn : jb["nodes"]) {
+                    BehaviorTreeNode node;
+                    node.name = jn.value("name", std::string("Node"));
+                    node.type = static_cast<BehaviorNodeType>(
+                        std::clamp(jn.value("type", 0), 0, 3));
+                    node.condition = static_cast<BehaviorCondition>(
+                        std::clamp(jn.value("condition", 0), 0, 5));
+                    node.action = static_cast<BehaviorAction>(
+                        std::clamp(jn.value("action", 0), 0, 8));
+                    if (jn.contains("children") && jn["children"].is_array()) {
+                        for (const auto& child : jn["children"]) {
+                            node.children.push_back(child.get<int>());
+                        }
+                    }
+                    node.range = jn.value("range", 2.0f);
+                    node.duration = jn.value("duration", 1.0f);
+                    node.radius = jn.value("radius", 8.0f);
+                    node.parameter = jn.value("parameter", std::string{});
+                    node.value = jn.value("value", std::string{});
+                    tree.nodes.push_back(std::move(node));
+                }
+            }
+            tree.statusText = "Idle";
+        }
+        if (je.value("playerTag", false)) {
+            e.AddComponent<PlayerTagComponent>();
         }
         if (je.value("luaEntity", false)) {
             e.AddComponent<LuaEntityComponent>();

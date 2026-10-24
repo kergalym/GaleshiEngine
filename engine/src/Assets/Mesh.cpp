@@ -18,6 +18,10 @@ void Mesh::Destroy() {
 void Mesh::Upload(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices) {
     if (vertices.empty() || indices.empty()) return;
 
+    // Re-uploading a mesh (for example after a landscape rebuild) must not
+    // leak the previous GPU buffers.
+    Destroy();
+
     bgfx::VertexLayout layout;
     layout.begin()
         .add(bgfx::Attrib::Position,  3, bgfx::AttribType::Float)
@@ -58,8 +62,13 @@ void Mesh::UpdateVertices(const std::vector<glm::vec3>& newPositions) {
         glm::vec3 n = glm::cross(v1 - v0, v2 - v0);
         m_vertices[i0].normal += n; m_vertices[i1].normal += n; m_vertices[i2].normal += n;
     }
-    for (auto& v : m_vertices) v.normal = glm::normalize(v.normal);
-    bgfx::update(m_vb, 0, bgfx::copy(m_vertices.data(), m_vertices.size() * sizeof(Vertex)));
+    for (auto& v : m_vertices) {
+        const float len = glm::length(v.normal);
+        v.normal = len > 1e-8f ? v.normal / len : glm::vec3(0.0f, 1.0f, 0.0f);
+    }
+    if (bgfx::isValid(m_vb)) {
+        bgfx::update(m_vb, 0, bgfx::copy(m_vertices.data(), m_vertices.size() * sizeof(Vertex)));
+    }
 }
 
 } // namespace Galeshi

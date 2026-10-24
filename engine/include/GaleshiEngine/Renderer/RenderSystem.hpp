@@ -5,7 +5,7 @@
 #include <memory>
 
 namespace Galeshi {
-class Scene; class Camera; class AssetManager;
+class Scene; class Camera; class AssetManager; class Frustum;
 class RenderSystem {
 public:
     RenderSystem(); ~RenderSystem();
@@ -24,6 +24,10 @@ public:
     static constexpr int kMaxPointLights = 4;
     static constexpr int kMaxBones = 256;
 private:
+    void RenderVegetation(Scene& scene, const Frustum& frustum, bgfx::ViewId viewId);
+    void RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle program,
+                                 bgfx::ViewId viewId);
+
     AssetManager* m_assets = nullptr;
     bool m_deferred = false;
     bool m_skipGlass = false;
@@ -36,6 +40,10 @@ private:
     bgfx::ProgramHandle m_shadowPointProg = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_shadowLightPos = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_glassProg    = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_instancedProg = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_instancedGbufferProg = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_instancedShadowProg = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_instancedShadowPointProg = BGFX_INVALID_HANDLE;
 
     bgfx::UniformHandle u_lightMtx = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_albedoFactor = BGFX_INVALID_HANDLE, u_metallicFactor = BGFX_INVALID_HANDLE;
@@ -50,6 +58,7 @@ private:
     bgfx::UniformHandle s_boneMatrices = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_boneTexture = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_albedoMap = BGFX_INVALID_HANDLE, s_metallicRoughnessMap = BGFX_INVALID_HANDLE, s_normalMap = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_irradianceMap = BGFX_INVALID_HANDLE, s_envMap = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_emissiveMap = BGFX_INVALID_HANDLE, s_occlusionMap = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_opacityMap = BGFX_INVALID_HANDLE, s_metallicMap = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_roughnessMap = BGFX_INVALID_HANDLE, s_specularMap = BGFX_INVALID_HANDLE;

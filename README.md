@@ -23,14 +23,15 @@ GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20
 | Tiled light culling | Working | 16x16 tiles, up to 64 point lights in the deferred path |
 | Post-processing | Working | DoF, motion blur, atmosphere, and the full stack are tested; effects can be isolated with `GALESHI_EFFECTS` |
 | Physics | Working | Jolt rigid bodies and cloth/soft-body simulation |
-| AI and navigation | Working | Recast/Detour NavMesh and path following |
-| Scripting | Working | Lua 5.4 through sol2, hot reload |
+| AI and navigation | Working | Recast/Detour NavMesh, path following, behavior trees, and perception |
+| Landscape and vegetation | Working | Heightfield sculpting tools and deterministic instanced trees/grass |
+| Scripting | Working | Lua 5.4 through sol2, hot reload, animation/AI state control |
 | Audio | Working | miniaudio, 2D playback and looping |
 | Asset import | Working | Assimp FBX/glTF, PBR materials, skeletal animation |
 | Editor | Working | Docking UI, viewport, outliner, details, content browser |
 | Gizmo | Partial | ImGuizmo is rendered, but its transform is not applied |
 | Glass material | WIP | Shader and UI flag exist, render pass is not connected |
-| Scene serialization | Partial | Only part of the ECS components is saved |
+| Scene serialization | Working | ECS, materials, landscape/vegetation, animation, and AI components |
 | Runtime and packaging | Partial | Runtime target is a stub; packaging uses the editor binary |
 | Automated tests | None | `BUILD_TESTING` is disabled |
 
@@ -87,12 +88,17 @@ Joint and constraint interfaces are not exposed yet.
 ## AI and navigation
 
 - Recast/Detour NavMesh generation from scene meshes and landscape geometry.
-- Pathfinding between world-space points.
-- Nav agents that follow waypoint paths.
+- Pathfinding between world-space points and NavAgent waypoint following.
+- Direct movement fallback for scenes without a NavMesh.
+- Serializable behavior trees with Selector, Sequence, Condition, and Action nodes.
+- Default behavior tree with patrol, target acquisition, chase, and attack branches.
+- Perception with sight radius, field of view, hearing radius, memory, and AABB line-of-sight checks.
+- Player targeting through `PlayerTagComponent` or an entity-name filter.
 - Per-entity Lua AI controllers with an `update_ai` callback.
-- Debug visualization of the generated NavMesh.
+- Debug visualization of the generated NavMesh and AI state.
+- Editor inspectors for perception, behavior trees, and player tags.
 
-This is basic pathfinding and path following. Behavior trees, perception, and squad logic are not implemented.
+Squad coordination and shared blackboards are not implemented.
 
 ## Scripting
 
@@ -120,8 +126,10 @@ The current implementation is 2D only. There is no spatial audio, mixer, or bus 
 - Assimp import for FBX and glTF.
 - Meshes, PBR materials, and textures with caching.
 - Primitive cube, sphere, and capsule meshes.
-- Landscape mesh generation.
-- Skeletal animation with bone matrices.
+- Landscape heightfield generation with Raise, Lower, Smooth, Flatten, and Noise brushes.
+- Deterministic procedural tree and grass generation, rendered with per-instance matrices and instanced shadow passes.
+- Skeletal animation clip sampling with weighted pose blending.
+- Serializable animation state machines with parameters, triggers, transitions, and blend durations.
 - PBR material parameters and texture slots.
 
 ## Editor
@@ -134,7 +142,9 @@ The current implementation is 2D only. There is no spatial audio, mixer, or bus 
 - `Testing -> Build Scene` rebuilds the PBR test scene: 12 colored spheres (3 albedo samples and a 3x3 metallic/roughness grid) plus the physics demo objects and ground.
 - When `scene.json` is missing, the editor starts with an empty scene; the test scene is not built automatically.
 - PBR material editing with Metal, Plastic, Rubber, and Gold presets.
-- Landscape sculpting.
+- Landscape sculpting with brush settings, undo snapshots, and vegetation regeneration.
+- Animation state machine editor with states, clips, parameters, and transitions.
+- Perception and behavior-tree inspectors, plus player-tag and AI debug controls.
 - NavMesh generation from the Create menu.
 - Undo/Redo through scene snapshots.
 - Scene save/load in JSON format.
@@ -264,7 +274,17 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 
 - [x] Complete scene serialization for all ECS components.
 - [ ] Add project/start-scene loading to game mode.
-- [ ] Landscape formation tools
+- [x] Landscape formation tools and tree/grass instancing
+- [ ] Scene loading progress bar dialog
+- [ ] Separate project implementation and resources (show project selecting window at startup)
+- [ ] Import content (fbx, glTF, textures, wav, mp3 sounds) into project
+- [ ] Lua game logic scripting system and editor under viewport (tab system on the right side area of Content browser). Lua bindings to C++ functions
+- [ ] Add logo to the left up corner of an editor
+- [ ] Add naming labels to Outliner and Properties panels
+- [ ] Show small splash window at startup
+- [ ] Add input axis system for keyboard and mouse
+- [ ] Add RunOnce and RunAlways system functions
+- [ ] UI designing system
 
 ### Rendering
 
@@ -278,12 +298,14 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [x] Add texture compression and compressed texture loading/reading
 - [x] Add two sided mode for normals option as checkbox to Material properties
 - [x] Rename material slots to their names in FBX file format
+- [ ] Add Particles system
+- [ ] Add Postprocessing volume
 
 ### Content systems
 
-- [ ] Animation blending and state machines.
+- [x] Animation blending and state machines.
 - [ ] 3D audio and mixer buses.
-- [ ] Improve AI with behavior trees and perception.
+- [x] Improve AI with behavior trees and perception.
 
 ---
 

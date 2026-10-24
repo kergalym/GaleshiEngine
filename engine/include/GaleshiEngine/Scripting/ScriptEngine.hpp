@@ -12,6 +12,7 @@
 
 #include "GaleshiEngine/Scene/Scene.hpp"
 #include "GaleshiEngine/Scene/Components.hpp"
+#include "GaleshiEngine/Animation/AnimationSystem.hpp"
 
 namespace Galeshi {
 
@@ -70,6 +71,39 @@ public:
                 reg.get<NavAgentComponent>(e).speed = speed;
             }
         });
+
+        auto findAnimationMachine = [this](uint32_t eid) -> AnimationStateMachineComponent* {
+            if (!m_scene) return nullptr;
+            auto& reg = m_scene->Registry();
+            entt::entity e = static_cast<entt::entity>(eid);
+            int depth = 0;
+            while (reg.valid(e) && depth++ < 128) {
+                if (reg.all_of<AnimationStateMachineComponent>(e)) {
+                    return &reg.get<AnimationStateMachineComponent>(e);
+                }
+                if (!reg.all_of<ParentComponent>(e)) break;
+                e = reg.get<ParentComponent>(e).parent;
+            }
+            return nullptr;
+        };
+        m_lua.set_function("set_animation_state",
+            [findAnimationMachine](uint32_t eid, const std::string& state) {
+                if (auto* machine = findAnimationMachine(eid)) {
+                    AnimationSystem::SetState(*machine, state);
+                }
+            });
+        m_lua.set_function("set_animation_parameter",
+            [findAnimationMachine](uint32_t eid, const std::string& name, float value) {
+                if (auto* machine = findAnimationMachine(eid)) {
+                    AnimationSystem::SetParameter(*machine, name, value);
+                }
+            });
+        m_lua.set_function("trigger_animation",
+            [findAnimationMachine](uint32_t eid, const std::string& name) {
+                if (auto* machine = findAnimationMachine(eid)) {
+                    AnimationSystem::Trigger(*machine, name);
+                }
+            });
     }
 
     struct AIControllerInstance {
@@ -198,6 +232,7 @@ void BindAudio(std::function<void(const std::string&)> playSound) {
                 if (!m_scene) return static_cast<uint32_t>(entt::null);
                 auto e = m_scene->CreateEntity(name);
                 e.AddComponent<LuaEntityComponent>();
+                if (name == "Player") e.AddComponent<PlayerTagComponent>();
                 auto& tf = e.AddComponent<TransformComponent>();
                 tf.position = glm::vec3(x, y, z);
                 tf.scale    = glm::vec3(size);

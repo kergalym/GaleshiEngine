@@ -50,6 +50,60 @@ struct SkeletalComponent {
     std::vector<glm::mat4> boneMatrices;
 };
 
+// ---------------------------------------------------------------------------
+// Animation state machine
+// ---------------------------------------------------------------------------
+
+enum class AnimationCondition {
+    BoolTrue = 0,
+    BoolFalse,
+    Greater,
+    Less,
+    Trigger,
+    Always
+};
+
+struct AnimationState {
+    std::string name = "State";
+    int clip = 0;
+    bool loop = true;
+    float speed = 1.0f;
+};
+
+struct AnimationTransition {
+    int fromState = -1;             // -1 = any state
+    int toState = 0;
+    std::string parameter;          // empty for Always/OnFinish conditions
+    AnimationCondition condition = AnimationCondition::BoolTrue;
+    float threshold = 0.5f;
+    float duration = 0.25f;
+    bool enabled = true;
+};
+
+struct AnimationParameter {
+    std::string name;
+    float value = 0.0f;
+};
+
+struct AnimationStateMachineComponent {
+    bool enabled = true;
+    std::vector<AnimationState> states;
+    std::vector<AnimationTransition> transitions;
+    std::vector<AnimationParameter> parameters;
+
+    // Runtime state. currentState is persisted so a saved scene resumes on
+    // the same state; the remaining fields are reset when needed.
+    int currentState = 0;
+    int previousState = -1;
+    float stateTime = 0.0f;
+    float previousTime = 0.0f;
+    float blendElapsed = 0.0f;
+    float blendDuration = 0.25f;
+    float playbackSpeed = 1.0f;
+    bool initialized = false;
+    float currentClipDuration = 0.0f;
+};
+
 struct MaterialComponent {
     bool isGlass = false;
     std::shared_ptr<Material> material;
@@ -99,6 +153,32 @@ struct LandscapeComponent {
     std::vector<float> heights;
 };
 
+struct VegetationComponent {
+    bool enabled = true;
+    bool castShadows = true;
+    bool grassCastShadows = false;
+
+    int treeCount = 120;
+    int grassCount = 2000;
+
+    float treeMinScale = 0.75f;
+    float treeMaxScale = 1.45f;
+    float grassMinScale = 0.65f;
+    float grassMaxScale = 1.25f;
+    // Maximum terrain gradient (rise over run) where vegetation may spawn.
+    float slopeLimit = 0.65f;
+    uint32_t seed = 1337;
+
+    glm::vec4 trunkColor{0.28f, 0.16f, 0.08f, 1.0f};
+    glm::vec4 canopyColor{0.16f, 0.42f, 0.12f, 1.0f};
+    glm::vec4 grassColor{0.22f, 0.52f, 0.14f, 1.0f};
+
+    // Local-space instance transforms (landscape entity space).
+    std::vector<glm::mat4> treeInstances;
+    std::vector<glm::mat4> grassInstances;
+    bool dirty = true;
+};
+
 struct NavAgentComponent {
     std::vector<glm::vec3> path;
     size_t currentWaypoint = 0;
@@ -124,6 +204,92 @@ struct SoftBodyComponent {
 
 struct AIControllerComponent {
     std::string scriptPath = "assets/scripts/ai_controller.lua";
+};
+
+// Tag used by perception and gameplay code to identify the player.  The Lua
+// `new_physics_cube` helper adds this automatically for an entity named
+// "Player"; the editor also offers it for manually authored actors.
+struct PlayerTagComponent {};
+
+struct PerceptionComponent {
+    float sightRadius = 20.0f;
+    float fieldOfViewDegrees = 110.0f;
+    float hearingRadius = 8.0f;
+    float eyeHeight = 1.6f;
+    float detectionInterval = 0.15f;
+    float memoryDuration = 4.0f;
+    bool requireLineOfSight = true;
+    bool detectPlayerOnly = true;
+    std::string targetName = "Player";
+
+    // Runtime perception state.
+    bool canSeeTarget = false;
+    float timeSinceSeen = 1000.0f;
+    glm::vec3 lastKnownPosition{0.0f};
+    entt::entity targetEntity = entt::null;
+    float scanTimer = 0.0f;
+};
+
+enum class BehaviorNodeType : uint8_t {
+    Selector = 0,
+    Sequence,
+    Condition,
+    Action
+};
+
+enum class BehaviorCondition : uint8_t {
+    AlwaysTrue = 0,
+    HasTarget,
+    TargetVisible,
+    TargetInRange,
+    TargetLost,
+    ParameterTrue
+};
+
+enum class BehaviorAction : uint8_t {
+    Wait = 0,
+    SetTargetToPlayer,
+    MoveToTarget,
+    Patrol,
+    Attack,
+    LookAtTarget,
+    SetAnimationState,
+    ClearTarget,
+    SetNavSpeed
+};
+
+struct BehaviorTreeNode {
+    std::string name = "Node";
+    BehaviorNodeType type = BehaviorNodeType::Action;
+    BehaviorCondition condition = BehaviorCondition::AlwaysTrue;
+    BehaviorAction action = BehaviorAction::Wait;
+    std::vector<int> children;
+
+    float range = 2.0f;
+    float duration = 1.0f;
+    float radius = 8.0f;
+    std::string parameter;
+    std::string value;
+
+    // Per-node runtime data (not serialized).
+    float elapsed = 0.0f;
+    bool running = false;
+    int lastStatus = 0; // 0 = failure, 1 = success, 2 = running
+    uint32_t randomIteration = 0;
+};
+
+struct BehaviorTreeComponent {
+    bool enabled = true;
+    int root = 0;
+    std::vector<BehaviorTreeNode> nodes;
+
+    // Runtime state (not serialized).
+    std::string statusText = "Idle";
+    int runningNode = -1;
+    float tickInterval = 0.0f;
+    float tickAccumulator = 0.0f;
+    glm::vec3 homePosition{0.0f};
+    bool homeInitialized = false;
 };
 
 struct AudioSourceComponent {

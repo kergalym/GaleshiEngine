@@ -10,7 +10,7 @@ namespace Galeshi {
 enum class GizmoMode { Translate, Rotate, Scale };
 class EditorState {
 public:
-    enum class ToolMode { Select, Raise, Lower, Smooth };
+    enum class ToolMode { Select, Raise, Lower, Smooth, Flatten, Noise };
     
 
     // --- Selection ---
@@ -46,6 +46,11 @@ public:
 
     // --- Tool (для Landscape Sculpting) ---
     ToolMode toolMode = ToolMode::Select;
+    float brushRadius = 4.0f;
+    float brushStrength = 3.0f;
+    float brushFalloff = 0.65f;
+    float flattenHeight = 0.0f;
+    float noiseFrequency = 0.15f;
 
     // --- Play Mode ---
     bool isPlaying = false;

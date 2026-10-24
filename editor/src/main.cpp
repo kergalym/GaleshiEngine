@@ -13,6 +13,9 @@
 #include "GaleshiEngine/Assets/Texture.hpp"
 #include "GaleshiEngine/Assets/Mesh.hpp"
 #include "GaleshiEngine/Assets/LandscapeMesh.hpp"
+#include "GaleshiEngine/Assets/VegetationGenerator.hpp"
+#include "GaleshiEngine/Animation/AnimationSystem.hpp"
+#include "GaleshiEngine/AI/BehaviorTree.hpp"
 #include "GaleshiEngine/Editor/EditorState.hpp"
 #include "GaleshiEngine/Editor/ContentBrowser.hpp"
 #include "GaleshiEngine/Editor/FilePickerDialog.hpp"
@@ -263,32 +266,9 @@ protected:
         Galeshi::AISystem::Update(m_scene, dt, m_navSystem.get());
         m_scripts.Update(dt);
 
-        // Анимация скелета (Многопоточно)
-        auto animView = m_scene.Registry().view<Galeshi::SkeletalComponent>();
-        std::vector<entt::entity> animEntities;
-        for (auto h : animView) animEntities.push_back(h);
-
-        if (m_physics && !animEntities.empty()) {
-            JPH::JobSystem* js = m_physics->GetJobSystem();
-            Galeshi::ParallelFor(js, static_cast<uint32_t>(animEntities.size()), [&](uint32_t start, uint32_t end) {
-                for (uint32_t i = start; i < end; ++i) {
-                    auto h = animEntities[i];
-                    auto& skel = animView.get<Galeshi::SkeletalComponent>(h);
-                    if (skel.isAnimated) {
-                        skel.currentTime += dt * skel.animationSpeed;
-                        if (skel.currentTime > 10.0f) skel.currentTime = 0.0f;
-                    }
-                }
-            });
-        } else {
-            for (auto h : animEntities) {
-                auto& skel = animView.get<Galeshi::SkeletalComponent>(h);
-                if (skel.isAnimated) {
-                    skel.currentTime += dt * skel.animationSpeed;
-                    if (skel.currentTime > 10.0f) skel.currentTime = 0.0f;
-                }
-            }
-        }
+        // Skeletal playback and animation state machines. This samples the
+        // active clip and blends the previous state when a transition fires.
+        Galeshi::AnimationSystem::Update(m_scene, *m_assets, dt);
 
         // Логика камеры
         const bool cameraControllable = m_viewportHovered && !m_editor.GizmoLocked() && !ImGuizmo::IsUsing() && !ImGuizmo::IsOver();
@@ -519,6 +499,11 @@ if (ImGui::BeginMenu("File")) {
                 mat->albedoFactor = {0.4f, 0.6f, 0.3f, 1.0f};
                 mat->roughnessFactor = 0.9f;
                 e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+
+                auto& veg = e.AddComponent<Galeshi::VegetationComponent>();
+                Galeshi::VegetationGenerator::Generate(lc, veg);
+                spdlog::info("[Editor] Landscape vegetation: {} trees, {} grass instances",
+                             veg.treeInstances.size(), veg.grassInstances.size());
                 
                 m_editor.Select(e);
             }
@@ -576,7 +561,28 @@ if (ImGui::BeginMenu("File")) {
                 e.AddComponent<Galeshi::BoxColliderComponent>();
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("AI Agent")) {
+            if (ImGui::MenuItem("AI Agent (Behavior Tree)")) {
+                auto e = m_scene.CreateEntity("AI_Agent_BT");
+                auto& tc = e.GetComponent<Galeshi::TransformComponent>();
+                tc.position = {0, 1.15f, 0};
+                tc.scale = {1.0f, 1.0f, 1.0f};
+
+                auto mesh = m_assets->CreateCapsuleMesh(0.8f, 0.35f);
+                e.AddComponent<Galeshi::MeshComponent>(
+                    Galeshi::MeshComponent{ mesh, "", "capsule" });
+                auto mat = std::make_shared<Galeshi::Material>();
+                mat->name = "AI_Agent_Material";
+                mat->albedoFactor = {0.75f, 0.18f, 0.12f, 1.0f};
+                mat->roughnessFactor = 0.7f;
+                e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+
+                e.AddComponent<Galeshi::NavAgentComponent>();
+                e.AddComponent<Galeshi::PerceptionComponent>();
+                auto& tree = e.AddComponent<Galeshi::BehaviorTreeComponent>();
+                tree = Galeshi::BehaviorTreeSystem::MakeDefaultBehaviorTree();
+                m_editor.Select(e);
+            }
+            if (ImGui::MenuItem("AI Agent (Lua Patrol)")) {
                 auto e = m_scene.CreateEntity("AI_Agent");
                 auto& tc = e.GetComponent<Galeshi::TransformComponent>();
                 tc.position = {0, 0, 0};
@@ -649,6 +655,8 @@ if (ImGui::BeginMenu("File")) {
         if (ImGui::BeginMenu("Stats")) {
             ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
             ImGui::Text("Entities: %d", (int)m_scene.AllEntities().size());
+            ImGui::Separator();
+            ImGui::MenuItem("AI Perception Debug", nullptr, &m_showAIDebug);
             ImGui::EndMenu();
         }
 
@@ -1217,6 +1225,58 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     prev = pt;
                 }
             }
+            if (m_showAIDebug) {
+                auto perceptionView = m_scene.Registry().view<Galeshi::PerceptionComponent,
+                                                               Galeshi::TransformComponent>();
+                for (auto e : perceptionView) {
+                    const auto& perception =
+                        perceptionView.get<Galeshi::PerceptionComponent>(e);
+                    const auto& tc =
+                        perceptionView.get<Galeshi::TransformComponent>(e);
+                    glm::vec3 origin = tc.position;
+                    entt::entity curr = e;
+                    int depth = 0;
+                    while (depth++ < 128 &&
+                           m_scene.Registry().all_of<Galeshi::ParentComponent>(curr)) {
+                        curr = m_scene.Registry().get<Galeshi::ParentComponent>(curr).parent;
+                        if (m_scene.Registry().all_of<Galeshi::TransformComponent>(curr)) {
+                            origin += m_scene.Registry().get<Galeshi::TransformComponent>(curr).position;
+                        }
+                    }
+
+                    const glm::vec4 ringColor = perception.canSeeTarget
+                        ? glm::vec4(0.3f, 1.0f, 0.3f, 0.9f)
+                        : glm::vec4(0.9f, 0.7f, 0.2f, 0.55f);
+                    const float y = origin.y + 0.04f;
+                    for (int i = 0; i < 40; ++i) {
+                        const float a1 = static_cast<float>(i) / 40.0f * 6.2831853f;
+                        const float a2 = static_cast<float>(i + 1) / 40.0f * 6.2831853f;
+                        m_debug->AddLine(
+                            {origin.x + std::cos(a1) * perception.sightRadius, y,
+                             origin.z + std::sin(a1) * perception.sightRadius},
+                            {origin.x + std::cos(a2) * perception.sightRadius, y,
+                             origin.z + std::sin(a2) * perception.sightRadius},
+                            ringColor);
+                    }
+
+                    if (perception.targetEntity != entt::null &&
+                        m_scene.Registry().valid(perception.targetEntity) &&
+                        m_scene.Registry().all_of<Galeshi::TransformComponent>(
+                            perception.targetEntity)) {
+                        glm::vec3 target =
+                            m_scene.Registry().get<Galeshi::TransformComponent>(
+                                perception.targetEntity).position;
+                        target.y += 1.0f;
+                        const glm::vec3 eye = origin + glm::vec3(0.0f, perception.eyeHeight, 0.0f);
+                        m_debug->AddLine(eye, target,
+                            perception.canSeeTarget ? glm::vec4(1.0f, 0.2f, 0.2f, 1.0f)
+                                                    : glm::vec4(0.5f, 0.5f, 0.5f, 0.7f));
+                        m_debug->AddBox(perception.lastKnownPosition + glm::vec3(0.0f, 0.2f, 0.0f),
+                                        glm::vec3(0.2f),
+                                        glm::vec4(0.2f, 0.8f, 1.0f, 0.8f));
+                    }
+                }
+            }
             auto plviewViz = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::PointLightComponent>();
             for (auto e : plviewViz) {
                 auto& tc = plviewViz.get<Galeshi::TransformComponent>(e);
@@ -1322,6 +1382,102 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             // --- 1. Drag (только ЛКМ, screen-space, без стрелок W/E/R) ---
             Galeshi::Entity sel = m_editor.Selected(&m_scene);
             const bool selHasTf = sel && sel.HasComponent<Galeshi::TransformComponent>();
+            const bool landscapeSculptActive =
+                !m_isGameMode && selHasTf &&
+                sel.HasComponent<Galeshi::LandscapeComponent>() &&
+                m_editor.toolMode != Galeshi::EditorState::ToolMode::Select;
+
+            // Landscape sculpting uses the same camera ray as picking, then
+            // raycasts the actual height field instead of entity AABBs.
+            if (landscapeSculptActive) {
+                const ImVec2 sculptMouse = ImGui::GetMousePos();
+                const bool overImage =
+                    ImGui::IsWindowHovered() &&
+                    sculptMouse.x >= imgMin.x && sculptMouse.x <= imgMax.x &&
+                    sculptMouse.y >= imgMin.y && sculptMouse.y <= imgMax.y;
+                const float ndcX = ((sculptMouse.x - imgMin.x) / w) * 2.0f - 1.0f;
+                const float ndcY = 1.0f - ((sculptMouse.y - imgMin.y) / h) * 2.0f;
+                const glm::mat4 invVP = glm::inverse(m_camera.Projection() * m_camera.View());
+                glm::vec4 rayStart4 = invVP * glm::vec4(ndcX, ndcY, -1.0f, 1.0f);
+                glm::vec4 rayEnd4   = invVP * glm::vec4(ndcX, ndcY,  1.0f, 1.0f);
+                rayStart4 /= rayStart4.w;
+                rayEnd4 /= rayEnd4.w;
+                const glm::vec3 rayOrigin = glm::vec3(rayStart4);
+                const glm::vec3 rayDir = glm::normalize(glm::vec3(rayEnd4 - rayStart4));
+
+                glm::mat4 landscapeWorld(1.0f);
+                {
+                    entt::entity curr = sel.Handle();
+                    std::vector<entt::entity> chain;
+                    int depth = 0;
+                    while (curr != entt::null && depth++ < 128) {
+                        chain.push_back(curr);
+                        if (m_scene.Registry().all_of<Galeshi::ParentComponent>(curr))
+                            curr = m_scene.Registry().get<Galeshi::ParentComponent>(curr).parent;
+                        else
+                            break;
+                    }
+                    for (size_t ci = chain.size(); ci-- > 0;) {
+                        if (m_scene.Registry().all_of<Galeshi::TransformComponent>(chain[ci]))
+                            landscapeWorld = landscapeWorld *
+                                m_scene.Registry().get<Galeshi::TransformComponent>(chain[ci]).LocalMatrix();
+                    }
+                }
+
+                auto& landscape = sel.GetComponent<Galeshi::LandscapeComponent>();
+                Galeshi::LandscapeRaycastHit hit;
+                if (overImage &&
+                    Galeshi::LandscapeMesh::Raycast(landscape, landscapeWorld,
+                                                    rayOrigin, rayDir, hit)) {
+                    m_lastSculptHeight = hit.height;
+                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                        PushHistory();
+                        m_wasSculpting = true;
+                    }
+                    if (m_wasSculpting && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                        Galeshi::LandscapeBrushSettings settings;
+                        switch (m_editor.toolMode) {
+                            case Galeshi::EditorState::ToolMode::Raise:
+                                settings.tool = Galeshi::LandscapeBrush::Raise; break;
+                            case Galeshi::EditorState::ToolMode::Lower:
+                                settings.tool = Galeshi::LandscapeBrush::Lower; break;
+                            case Galeshi::EditorState::ToolMode::Smooth:
+                                settings.tool = Galeshi::LandscapeBrush::Smooth; break;
+                            case Galeshi::EditorState::ToolMode::Flatten:
+                                settings.tool = Galeshi::LandscapeBrush::Flatten; break;
+                            case Galeshi::EditorState::ToolMode::Noise:
+                                settings.tool = Galeshi::LandscapeBrush::Noise; break;
+                            default: break;
+                        }
+                        settings.radius = m_editor.brushRadius;
+                        settings.strength = m_editor.brushStrength;
+                        settings.falloff = m_editor.brushFalloff;
+                        settings.flattenHeight = m_editor.flattenHeight;
+                        settings.noiseFrequency = m_editor.noiseFrequency;
+                        if (Galeshi::LandscapeMesh::ApplyBrush(landscape, settings,
+                                                               hit.localPosition.x,
+                                                               hit.localPosition.z,
+                                                               ImGui::GetIO().DeltaTime) > 0) {
+                            if (sel.HasComponent<Galeshi::MeshComponent>()) {
+                                auto& meshComponent = sel.GetComponent<Galeshi::MeshComponent>();
+                                if (meshComponent.mesh) {
+                                    Galeshi::LandscapeMesh::UpdateMesh(
+                                        landscape, *meshComponent.mesh);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (m_wasSculpting && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    m_wasSculpting = false;
+                    if (sel.HasComponent<Galeshi::VegetationComponent>()) {
+                        sel.GetComponent<Galeshi::VegetationComponent>().dirty = true;
+                    }
+                }
+            } else {
+                m_wasSculpting = false;
+            }
 
             // World position of the selected object (walk up parents)
             glm::vec3 selWorldPos{0.0f};
@@ -1349,7 +1505,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             }
 
             // --- Gizmo: apply translation/rotation/scale to the ECS. ---
-            if (selHasTf) {
+            if (selHasTf && !landscapeSculptActive) {
                 ImGuizmo::SetDrawlist();
                 ImGuizmo::SetRect(imgMin.x, imgMin.y, w, h);
                 ImGuizmo::SetGizmoSizeClipSpace(0.12f);
@@ -1446,7 +1602,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 std::hypot(mouse.x - selScreen.x, mouse.y - selScreen.y) < centerRadiusPx;
 
             // Begin drag on LMB down over center
-            if (ImGui::IsItemHovered() && !m_isDragging &&
+            if (!landscapeSculptActive && ImGui::IsItemHovered() && !m_isDragging &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left) && overCenter &&
                 !ImGuizmo::IsOver() && !ImGuizmo::IsUsing()) {
                 m_isDragging = true;
@@ -1511,7 +1667,9 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             }
 
             // --- 2. ЛКМ Выделение (Raycast по AABB) ---
-            if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_isDragging && !overCenter && !ImGuizmo::IsOver()) {
+            if (!landscapeSculptActive && ImGui::IsItemHovered() &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_isDragging &&
+                !overCenter && !ImGuizmo::IsOver()) {
                 ImVec2 mouse = ImGui::GetMousePos();
                 float mx = mouse.x - imgMin.x;
                 float my = mouse.y - imgMin.y;
@@ -1887,12 +2045,98 @@ void DrawDetails() {
             }
         }
 
-        if (selected[0].HasComponent<Galeshi::LandscapeComponent>() && ImGui::CollapsingHeader("Landscape (Sculpting)", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Text("Use Left Click in viewport to sculpt");
-            if (ImGui::Button("Toggle Raise Brush")) {
-                m_editor.toolMode = (m_editor.toolMode == Galeshi::EditorState::ToolMode::Raise) ? Galeshi::EditorState::ToolMode::Select : Galeshi::EditorState::ToolMode::Raise;
+        if (selected[0].HasComponent<Galeshi::LandscapeComponent>() &&
+            ImGui::CollapsingHeader("Landscape (Sculpting)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& landscape = selected[0].GetComponent<Galeshi::LandscapeComponent>();
+            const char* toolNames[] = {"Select", "Raise", "Lower", "Smooth", "Flatten", "Noise"};
+            int currentTool = static_cast<int>(m_editor.toolMode);
+            if (ImGui::Combo("Brush", &currentTool, toolNames, IM_ARRAYSIZE(toolNames))) {
+                m_editor.toolMode = static_cast<Galeshi::EditorState::ToolMode>(currentTool);
             }
-            ImGui::Text("Current Tool: %s", m_editor.toolMode == Galeshi::EditorState::ToolMode::Raise ? "Raise" : "Select");
+            ImGui::DragFloat("Brush Radius", &m_editor.brushRadius, 0.1f, 0.25f, 100.0f);
+            ImGui::DragFloat("Brush Strength", &m_editor.brushStrength, 0.1f, 0.0f, 50.0f);
+            ImGui::SliderFloat("Brush Falloff", &m_editor.brushFalloff, 0.0f, 1.0f);
+            if (m_editor.toolMode == Galeshi::EditorState::ToolMode::Flatten) {
+                ImGui::DragFloat("Flatten Height", &m_editor.flattenHeight, 0.1f, -500.0f, 500.0f);
+                ImGui::SameLine();
+                if (ImGui::Button("Use Cursor Height")) {
+                    m_editor.flattenHeight = m_lastSculptHeight;
+                }
+            }
+            if (m_editor.toolMode == Galeshi::EditorState::ToolMode::Noise) {
+                ImGui::DragFloat("Noise Frequency", &m_editor.noiseFrequency, 0.005f, 0.01f, 1.0f);
+            }
+            ImGui::TextDisabled("%d x %d vertices, scale %.2f", landscape.sizeX, landscape.sizeZ, landscape.scale);
+            if (m_editor.toolMode == Galeshi::EditorState::ToolMode::Select) {
+                ImGui::TextDisabled("Select a brush, then left-click and drag in the viewport.");
+            } else {
+                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
+                                   "Sculpting with %s brush", toolNames[currentTool]);
+            }
+            if (ImGui::Button("Reset Heights")) {
+                PushHistory();
+                Galeshi::LandscapeMesh::ResetHeights(landscape);
+                if (selected[0].HasComponent<Galeshi::MeshComponent>()) {
+                    auto& meshComponent = selected[0].GetComponent<Galeshi::MeshComponent>();
+                    if (meshComponent.mesh) {
+                        Galeshi::LandscapeMesh::UpdateMesh(landscape, *meshComponent.mesh);
+                    }
+                }
+                if (selected[0].HasComponent<Galeshi::VegetationComponent>()) {
+                    selected[0].GetComponent<Galeshi::VegetationComponent>().dirty = true;
+                }
+            }
+            ImGui::SameLine();
+            if (!selected[0].HasComponent<Galeshi::VegetationComponent>()) {
+                if (ImGui::Button("Add Vegetation")) {
+                    PushHistory();
+                    auto& vegetation = selected[0].AddComponent<Galeshi::VegetationComponent>();
+                    Galeshi::VegetationGenerator::Generate(landscape, vegetation);
+                }
+            } else {
+                ImGui::TextDisabled("Vegetation component is attached");
+            }
+        }
+
+        if (selected[0].HasComponent<Galeshi::VegetationComponent>() &&
+            ImGui::CollapsingHeader("Vegetation (Instanced)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& veg = selected[0].GetComponent<Galeshi::VegetationComponent>();
+            bool changed = false;
+            changed |= ImGui::Checkbox("Enabled", &veg.enabled);
+            ImGui::SameLine();
+            changed |= ImGui::Checkbox("Tree Shadows", &veg.castShadows);
+            ImGui::SameLine();
+            changed |= ImGui::Checkbox("Grass Shadows", &veg.grassCastShadows);
+            ImGui::SetNextItemWidth(170.0f);
+            changed |= ImGui::DragInt("Trees", &veg.treeCount, 1.0f, 0, 20000);
+            ImGui::SetNextItemWidth(170.0f);
+            changed |= ImGui::DragInt("Grass", &veg.grassCount, 10.0f, 0, 50000);
+            changed |= ImGui::DragFloatRange2("Tree Scale", &veg.treeMinScale, &veg.treeMaxScale,
+                                              0.01f, 0.05f, 10.0f, "Min %.2f", "Max %.2f");
+            changed |= ImGui::DragFloatRange2("Grass Scale", &veg.grassMinScale, &veg.grassMaxScale,
+                                              0.01f, 0.05f, 10.0f, "Min %.2f", "Max %.2f");
+            changed |= ImGui::DragFloat("Slope Limit", &veg.slopeLimit, 0.01f, 0.0f, 5.0f);
+            changed |= ImGui::InputScalar("Seed", ImGuiDataType_U32, &veg.seed);
+            changed |= ImGui::ColorEdit4("Trunk Color", glm::value_ptr(veg.trunkColor));
+            changed |= ImGui::ColorEdit4("Canopy Color", glm::value_ptr(veg.canopyColor));
+            changed |= ImGui::ColorEdit4("Grass Color", glm::value_ptr(veg.grassColor));
+            if (changed) veg.dirty = true;
+            const bool hasLandscape = selected[0].HasComponent<Galeshi::LandscapeComponent>();
+            if (!hasLandscape) ImGui::BeginDisabled();
+            if (ImGui::Button("Regenerate")) {
+                PushHistory();
+                Galeshi::VegetationGenerator::Generate(
+                    selected[0].GetComponent<Galeshi::LandscapeComponent>(), veg);
+            }
+            if (!hasLandscape) ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Clear Instances")) {
+                PushHistory();
+                Galeshi::VegetationGenerator::Clear(veg);
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("%zu trees / %zu grass", veg.treeInstances.size(),
+                                veg.grassInstances.size());
         }
 
         auto materialUserCount = [&](const Galeshi::Material* material) {
@@ -2066,10 +2310,376 @@ void DrawDetails() {
             }
         }
 
+        if (ImGui::CollapsingHeader("AI & Gameplay")) {
+            if (!selected[0].HasComponent<Galeshi::PerceptionComponent>()) {
+                if (ImGui::Button("+ Add Perception")) {
+                    PushHistory();
+                    selected[0].AddComponent<Galeshi::PerceptionComponent>();
+                }
+            }
+            if (!selected[0].HasComponent<Galeshi::BehaviorTreeComponent>()) {
+                if (ImGui::Button("+ Add Behavior Tree")) {
+                    PushHistory();
+                    auto& tree = selected[0].AddComponent<Galeshi::BehaviorTreeComponent>();
+                    tree = Galeshi::BehaviorTreeSystem::MakeDefaultBehaviorTree();
+                    if (!selected[0].HasComponent<Galeshi::PerceptionComponent>()) {
+                        selected[0].AddComponent<Galeshi::PerceptionComponent>();
+                    }
+                    if (!selected[0].HasComponent<Galeshi::NavAgentComponent>()) {
+                        selected[0].AddComponent<Galeshi::NavAgentComponent>();
+                    }
+                }
+            }
+            if (!selected[0].HasComponent<Galeshi::PlayerTagComponent>()) {
+                if (ImGui::Button("+ Add Player Tag")) {
+                    PushHistory();
+                    selected[0].AddComponent<Galeshi::PlayerTagComponent>();
+                }
+            }
+        }
+
+        if (selected[0].HasComponent<Galeshi::PerceptionComponent>() &&
+            ImGui::CollapsingHeader("Perception", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& perception = selected[0].GetComponent<Galeshi::PerceptionComponent>();
+            ImGui::SliderFloat("Sight Radius", &perception.sightRadius, 0.0f, 200.0f);
+            ImGui::SliderFloat("Field of View", &perception.fieldOfViewDegrees, 1.0f, 360.0f);
+            ImGui::SliderFloat("Hearing Radius", &perception.hearingRadius, 0.0f, 100.0f);
+            ImGui::SliderFloat("Eye Height", &perception.eyeHeight, 0.0f, 4.0f);
+            ImGui::SliderFloat("Detection Interval", &perception.detectionInterval, 0.02f, 2.0f);
+            ImGui::SliderFloat("Memory Duration", &perception.memoryDuration, 0.0f, 30.0f);
+            ImGui::Checkbox("Require Line of Sight", &perception.requireLineOfSight);
+            ImGui::SameLine();
+            ImGui::Checkbox("Player Only", &perception.detectPlayerOnly);
+            char targetName[128];
+            std::snprintf(targetName, sizeof(targetName), "%s", perception.targetName.c_str());
+            if (ImGui::InputText("Target Name", targetName, sizeof(targetName))) {
+                perception.targetName = targetName;
+            }
+            if (ImGui::Button("Reset Perception")) {
+                Galeshi::BehaviorTreeSystem::ResetPerception(perception);
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(perception.canSeeTarget ? ImVec4(0.4f, 1.0f, 0.4f, 1.0f)
+                                                       : ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
+                               perception.canSeeTarget ? "Target visible" : "No target");
+            ImGui::Text("Last seen: %.2fs ago", perception.timeSinceSeen);
+        }
+
+        if (selected[0].HasComponent<Galeshi::BehaviorTreeComponent>() &&
+            ImGui::CollapsingHeader("Behavior Tree", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& tree = selected[0].GetComponent<Galeshi::BehaviorTreeComponent>();
+            ImGui::Checkbox("Enabled", &tree.enabled);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(100.0f);
+            ImGui::DragFloat("Tick Interval", &tree.tickInterval, 0.01f, 0.0f, 2.0f);
+            ImGui::Text("Status: %s (node %d)", tree.statusText.c_str(), tree.runningNode);
+            if (ImGui::Button("Reset Runtime")) {
+                Galeshi::BehaviorTreeSystem::ResetRuntime(tree);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Load Default Tree")) {
+                PushHistory();
+                tree = Galeshi::BehaviorTreeSystem::MakeDefaultBehaviorTree();
+                if (!selected[0].HasComponent<Galeshi::PerceptionComponent>()) {
+                    selected[0].AddComponent<Galeshi::PerceptionComponent>();
+                }
+                if (!selected[0].HasComponent<Galeshi::NavAgentComponent>()) {
+                    selected[0].AddComponent<Galeshi::NavAgentComponent>();
+                }
+            }
+
+            const char* nodeTypeNames[] = {"Selector", "Sequence", "Condition", "Action"};
+            const char* conditionNames[] = {
+                "Always True", "Has Target", "Target Visible", "Target In Range",
+                "Target Lost", "Parameter True"
+            };
+            const char* actionNames[] = {
+                "Wait", "Set Target To Player", "Move To Target", "Patrol", "Attack",
+                "Look At Target", "Set Animation State", "Clear Target", "Set Nav Speed"
+            };
+
+            std::function<void(int, int)> drawNode = [&](int index, int depth) {
+                if (depth > 32 || index < 0 ||
+                    index >= static_cast<int>(tree.nodes.size())) return;
+                auto& node = tree.nodes[static_cast<size_t>(index)];
+                ImGui::PushID(index);
+                ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
+                                           ImGuiTreeNodeFlags_DefaultOpen;
+                if (node.children.empty()) flags |= ImGuiTreeNodeFlags_Leaf;
+                char label[256];
+                std::snprintf(label, sizeof(label), "[%d] %s", index, node.name.c_str());
+                const bool open = ImGui::TreeNodeEx("##node", flags, "%s", label);
+                ImGui::SameLine();
+                ImGui::TextDisabled("(%s)", nodeTypeNames[static_cast<int>(node.type)]);
+
+                char nodeName[128];
+                std::snprintf(nodeName, sizeof(nodeName), "%s", node.name.c_str());
+                if (ImGui::InputText("Name", nodeName, sizeof(nodeName))) {
+                    node.name = nodeName;
+                }
+                int type = static_cast<int>(node.type);
+                if (ImGui::Combo("Type", &type, nodeTypeNames, IM_ARRAYSIZE(nodeTypeNames))) {
+                    node.type = static_cast<Galeshi::BehaviorNodeType>(type);
+                }
+
+                if (node.type == Galeshi::BehaviorNodeType::Condition) {
+                    int condition = static_cast<int>(node.condition);
+                    if (ImGui::Combo("Condition", &condition, conditionNames,
+                                     IM_ARRAYSIZE(conditionNames))) {
+                        node.condition = static_cast<Galeshi::BehaviorCondition>(condition);
+                    }
+                    if (node.condition == Galeshi::BehaviorCondition::TargetInRange) {
+                        ImGui::DragFloat("Range", &node.range, 0.1f, 0.0f, 100.0f);
+                    }
+                    if (node.condition == Galeshi::BehaviorCondition::ParameterTrue) {
+                        char parameter[128];
+                        std::snprintf(parameter, sizeof(parameter), "%s", node.parameter.c_str());
+                        if (ImGui::InputText("Parameter", parameter, sizeof(parameter))) {
+                            node.parameter = parameter;
+                        }
+                    }
+                } else if (node.type == Galeshi::BehaviorNodeType::Action) {
+                    int action = static_cast<int>(node.action);
+                    if (ImGui::Combo("Action", &action, actionNames,
+                                     IM_ARRAYSIZE(actionNames))) {
+                        node.action = static_cast<Galeshi::BehaviorAction>(action);
+                    }
+                    switch (node.action) {
+                        case Galeshi::BehaviorAction::Wait:
+                            ImGui::DragFloat("Duration", &node.duration, 0.05f, 0.0f, 60.0f);
+                            break;
+                        case Galeshi::BehaviorAction::MoveToTarget:
+                            ImGui::DragFloat("Arrive Range", &node.range, 0.05f, 0.0f, 20.0f);
+                            break;
+                        case Galeshi::BehaviorAction::Patrol:
+                            ImGui::DragFloat("Patrol Radius", &node.radius, 0.25f, 0.5f, 200.0f);
+                            ImGui::DragFloat("Wait Time", &node.duration, 0.05f, 0.0f, 60.0f);
+                            break;
+                        case Galeshi::BehaviorAction::Attack:
+                            ImGui::DragFloat("Attack Range", &node.range, 0.05f, 0.0f, 20.0f);
+                            ImGui::DragFloat("Cooldown", &node.duration, 0.05f, 0.1f, 10.0f);
+                            break;
+                        case Galeshi::BehaviorAction::SetAnimationState: {
+                            char state[128];
+                            std::snprintf(state, sizeof(state), "%s", node.value.c_str());
+                            if (ImGui::InputText("State", state, sizeof(state))) node.value = state;
+                            break;
+                        }
+                        case Galeshi::BehaviorAction::SetNavSpeed: {
+                            char speed[128];
+                            std::snprintf(speed, sizeof(speed), "%s", node.value.c_str());
+                            if (ImGui::InputText("Speed", speed, sizeof(speed))) node.value = speed;
+                            break;
+                        }
+                        default:
+                            break;
+                    }
+                } else {
+                    ImGui::TextDisabled("Children: %zu", node.children.size());
+                }
+
+                if (open) {
+                    std::vector<int> children = node.children;
+                    for (int child : children) drawNode(child, depth + 1);
+                    ImGui::TreePop();
+                }
+                ImGui::PopID();
+            };
+            if (!tree.nodes.empty()) drawNode(tree.root, 0);
+        }
+
+        if (selected[0].HasComponent<Galeshi::PlayerTagComponent>()) {
+            ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Player Tag");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove##playerTag")) {
+                selected[0].RemoveComponent<Galeshi::PlayerTagComponent>();
+            }
+        }
+
         if (selected[0].HasComponent<Galeshi::SkeletalComponent>() && ImGui::CollapsingHeader("Skeletal Animation", ImGuiTreeNodeFlags_DefaultOpen)) {
             auto& skel = selected[0].GetComponent<Galeshi::SkeletalComponent>();
             ImGui::Checkbox("Playing", &skel.isAnimated);
             ImGui::DragFloat("Speed", &skel.animationSpeed, 0.1f, 0.0f, 10.0f);
+            ImGui::TextDisabled("Source: %s", skel.sourcePath.empty() ? "(none)" : skel.sourcePath.c_str());
+            ImGui::Text("Active Clip: %d  Time: %.2fs", skel.activeAnimation, skel.currentTime);
+        }
+
+        if (selected[0].HasComponent<Galeshi::SkeletalComponent>() &&
+            !selected[0].HasComponent<Galeshi::AnimationStateMachineComponent>()) {
+            if (ImGui::Button("+ Add Animation State Machine")) {
+                PushHistory();
+                auto& skel = selected[0].GetComponent<Galeshi::SkeletalComponent>();
+                auto model = m_assets->LoadModel(skel.sourcePath);
+                auto& machine = selected[0].AddComponent<Galeshi::AnimationStateMachineComponent>();
+                machine = Galeshi::AnimationSystem::CreateDefaultStateMachine(model.animationNames);
+                machine.parameters = {
+                    {"Speed", 0.0f},
+                    {"PlayerVisible", 0.0f},
+                    {"TargetDistance", 100.0f}
+                };
+            }
+        }
+
+        if (selected[0].HasComponent<Galeshi::AnimationStateMachineComponent>() &&
+            ImGui::CollapsingHeader("Animation State Machine", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& machine = selected[0].GetComponent<Galeshi::AnimationStateMachineComponent>();
+            int clipCount = 1;
+            if (selected[0].HasComponent<Galeshi::SkeletalComponent>()) {
+                auto model = m_assets->LoadModel(
+                    selected[0].GetComponent<Galeshi::SkeletalComponent>().sourcePath);
+                clipCount = std::max<int>(1, static_cast<int>(model.animationNames.size()));
+            }
+
+            ImGui::Checkbox("Enabled", &machine.enabled);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(120.0f);
+            ImGui::DragFloat("Playback Speed", &machine.playbackSpeed, 0.01f, 0.0f, 4.0f);
+            ImGui::Text("Current State: %d / %zu",
+                        machine.currentState, machine.states.size());
+            ImGui::TextDisabled("Clip duration: %.2fs", machine.currentClipDuration);
+
+            if (ImGui::TreeNodeEx("States", ImGuiTreeNodeFlags_DefaultOpen)) {
+                int removeState = -1;
+                for (int i = 0; i < static_cast<int>(machine.states.size()); ++i) {
+                    auto& state = machine.states[static_cast<size_t>(i)];
+                    ImGui::PushID(i);
+                    char stateName[128];
+                    std::snprintf(stateName, sizeof(stateName), "%s", state.name.c_str());
+                    ImGui::SetNextItemWidth(160.0f);
+                    if (ImGui::InputText("Name", stateName, sizeof(stateName))) {
+                        state.name = stateName;
+                    }
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(80.0f);
+                    ImGui::DragInt("Clip", &state.clip, 1.0f, 0, std::max(0, clipCount - 1));
+                    ImGui::SameLine();
+                    ImGui::Checkbox("Loop", &state.loop);
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(80.0f);
+                    ImGui::DragFloat("Speed", &state.speed, 0.01f, 0.0f, 4.0f);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Set")) {
+                        machine.currentState = i;
+                        machine.previousState = -1;
+                        machine.stateTime = 0.0f;
+                        machine.blendElapsed = machine.blendDuration;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Remove")) removeState = i;
+                    ImGui::PopID();
+                }
+                if (removeState >= 0 && machine.states.size() > 1) {
+                    machine.states.erase(machine.states.begin() + removeState);
+                    for (auto& transition : machine.transitions) {
+                        if (transition.fromState == removeState) transition.fromState = -1;
+                        else if (transition.fromState > removeState) --transition.fromState;
+                        if (transition.toState == removeState) transition.toState = 0;
+                        else if (transition.toState > removeState) --transition.toState;
+                    }
+                    if (machine.currentState >= static_cast<int>(machine.states.size()))
+                        machine.currentState = 0;
+                }
+                if (ImGui::Button("+ Add State")) {
+                    Galeshi::AnimationState state;
+                    state.name = "State " + std::to_string(machine.states.size());
+                    state.clip = 0;
+                    machine.states.push_back(state);
+                }
+                ImGui::TreePop();
+            }
+
+            if (ImGui::TreeNodeEx("Transitions", ImGuiTreeNodeFlags_DefaultOpen)) {
+                const char* conditionNames[] = {
+                    "Bool True", "Bool False", "Greater", "Less", "Trigger", "Always"
+                };
+                int removeTransition = -1;
+                for (int i = 0; i < static_cast<int>(machine.transitions.size()); ++i) {
+                    auto& transition = machine.transitions[static_cast<size_t>(i)];
+                    ImGui::PushID(1000 + i);
+                    int from = transition.fromState + 1;
+                    std::vector<const char*> fromNames;
+                    fromNames.push_back("Any State");
+                    for (const auto& state : machine.states) fromNames.push_back(state.name.c_str());
+                    ImGui::SetNextItemWidth(150.0f);
+                    if (ImGui::Combo("From", &from, fromNames.data(),
+                                     static_cast<int>(fromNames.size()))) {
+                        transition.fromState = from - 1;
+                    }
+                    ImGui::SameLine();
+                    int to = std::clamp(transition.toState, 0,
+                                        std::max(0, static_cast<int>(machine.states.size()) - 1));
+                    std::vector<const char*> toNames;
+                    for (const auto& state : machine.states) toNames.push_back(state.name.c_str());
+                    ImGui::SetNextItemWidth(150.0f);
+                    if (ImGui::Combo("To", &to, toNames.data(),
+                                     static_cast<int>(toNames.size()))) {
+                        transition.toState = to;
+                    }
+                    int condition = static_cast<int>(transition.condition);
+                    ImGui::SetNextItemWidth(120.0f);
+                    if (ImGui::Combo("Condition", &condition, conditionNames,
+                                     IM_ARRAYSIZE(conditionNames))) {
+                        transition.condition = static_cast<Galeshi::AnimationCondition>(condition);
+                    }
+                    ImGui::SameLine();
+                    char parameter[128];
+                    std::snprintf(parameter, sizeof(parameter), "%s", transition.parameter.c_str());
+                    ImGui::SetNextItemWidth(120.0f);
+                    if (ImGui::InputText("Parameter", parameter, sizeof(parameter))) {
+                        transition.parameter = parameter;
+                    }
+                    ImGui::SetNextItemWidth(90.0f);
+                    ImGui::DragFloat("Threshold", &transition.threshold, 0.01f);
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(90.0f);
+                    ImGui::DragFloat("Blend", &transition.duration, 0.01f, 0.0f, 4.0f);
+                    ImGui::SameLine();
+                    ImGui::Checkbox("On", &transition.enabled);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Remove")) removeTransition = i;
+                    ImGui::Separator();
+                    ImGui::PopID();
+                }
+                if (removeTransition >= 0) {
+                    machine.transitions.erase(machine.transitions.begin() + removeTransition);
+                }
+                if (ImGui::Button("+ Add Transition")) {
+                    Galeshi::AnimationTransition transition;
+                    transition.fromState = machine.currentState;
+                    transition.toState = (machine.currentState + 1) % std::max<size_t>(1, machine.states.size());
+                    machine.transitions.push_back(transition);
+                }
+                ImGui::TreePop();
+            }
+
+            if (ImGui::TreeNodeEx("Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
+                int removeParameter = -1;
+                for (int i = 0; i < static_cast<int>(machine.parameters.size()); ++i) {
+                    auto& parameter = machine.parameters[static_cast<size_t>(i)];
+                    ImGui::PushID(2000 + i);
+                    char parameterName[128];
+                    std::snprintf(parameterName, sizeof(parameterName), "%s", parameter.name.c_str());
+                    ImGui::SetNextItemWidth(160.0f);
+                    if (ImGui::InputText("Name", parameterName, sizeof(parameterName))) {
+                        parameter.name = parameterName;
+                    }
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(120.0f);
+                    ImGui::DragFloat("Value", &parameter.value, 0.01f);
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Trigger")) parameter.value = 1.0f;
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Remove")) removeParameter = i;
+                    ImGui::PopID();
+                }
+                if (removeParameter >= 0) {
+                    machine.parameters.erase(machine.parameters.begin() + removeParameter);
+                }
+                if (ImGui::Button("+ Add Parameter")) {
+                    machine.parameters.push_back({"Parameter", 0.0f});
+                }
+                ImGui::TreePop();
+            }
         }
         
         if (selected[0].HasComponent<Galeshi::DirectionalLightComponent>() && ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -2219,7 +2829,17 @@ void DrawDetails() {
 
         if (model.hasAnimation) {
             auto& skel = root.AddComponent<Galeshi::SkeletalComponent>();
-            skel.isAnimated = true; skel.sourcePath = path; skel.boneMatrices.resize(256, glm::mat4(1.0f));
+            skel.isAnimated = true;
+            skel.sourcePath = path;
+            skel.boneMatrices.resize(256, glm::mat4(1.0f));
+
+            auto& machine = root.AddComponent<Galeshi::AnimationStateMachineComponent>();
+            machine = Galeshi::AnimationSystem::CreateDefaultStateMachine(model.animationNames);
+            machine.parameters = {
+                {"Speed", 0.0f},
+                {"PlayerVisible", 0.0f},
+                {"TargetDistance", 100.0f}
+            };
         }
 
         for (size_t i = 0; i < model.meshes.size(); ++i) {
@@ -2464,6 +3084,9 @@ void DrawDetails() {
     int  m_historyIndex = -1;
     bool m_isRestoringHistory = false;
     bool m_wasUsingGizmo = false;
+    bool m_wasSculpting = false;
+    float m_lastSculptHeight = 0.0f;
+    bool m_showAIDebug = true;
 
     // Screen-space translate drag (LMB-only, no W/E/R arrows)
     bool      m_isDragging = false;

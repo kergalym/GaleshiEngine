@@ -11,6 +11,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -44,6 +45,9 @@ void AssetManager::Clear() {
     m_embeddedTextures.clear();
     m_cubeMesh.reset();
     m_sphereMesh.reset();
+    m_treeTrunkMesh.reset();
+    m_treeCanopyMesh.reset();
+    m_grassMesh.reset();
 }
 
 namespace {
@@ -124,63 +128,107 @@ glm::mat4 aiToGlm(const aiMatrix4x4& from) {
     return to;
 }
 
-void ReadNodeHeirarchy(const aiScene* scene, float time, const aiNode* node, const glm::mat4& parentTransform, std::vector<glm::mat4>& boneMatrices, const std::unordered_map<std::string, int>& boneMap, int depth = 0) {
-    if (depth > 128) { return; }
-    std::string nodeName(node->mName.data);
+void ReadNodeHeirarchy(const aiScene* scene, const aiAnimation* anim, float time,
+                       const aiNode* node, const glm::mat4& parentTransform,
+                       std::vector<glm::mat4>& boneMatrices,
+                       const std::unordered_map<std::string, int>& boneMap,
+                       int depth = 0) {
+    if (!node || depth > 128) return;
+
+    const std::string nodeName(node->mName.data);
     glm::mat4 nodeTransform = aiToGlm(node->mTransformation);
 
-    if (scene->mNumAnimations > 0) {
-        const aiAnimation* anim = scene->mAnimations[0];
-        float ticksPerSecond = anim->mTicksPerSecond != 0 ? anim->mTicksPerSecond : 25.0f;
-        float timeInTicks = fmod(time * ticksPerSecond, anim->mDuration);
+    if (anim) {
+        const float ticksPerSecond = anim->mTicksPerSecond != 0.0 ? anim->mTicksPerSecond : 25.0f;
+        const double duration = anim->mDuration;
+        float timeInTicks = static_cast<float>(time * ticksPerSecond);
+        if (duration > 0.0) {
+            const double wrapped = std::fmod(static_cast<double>(timeInTicks), duration);
+            timeInTicks = static_cast<float>(wrapped < 0.0 ? wrapped + duration : wrapped);
+        }
 
         const aiNodeAnim* nodeAnim = nullptr;
         for (unsigned int i = 0; i < anim->mNumChannels; ++i) {
-            if (std::string(anim->mChannels[i]->mNodeName.data) == nodeName) {
+            if (anim->mChannels[i] && nodeName == anim->mChannels[i]->mNodeName.data) {
                 nodeAnim = anim->mChannels[i];
                 break;
             }
         }
 
         if (nodeAnim) {
-            glm::vec3 pos = aiToVec3(nodeAnim->mPositionKeys[0].mValue);
-            if (nodeAnim->mNumPositionKeys > 1) {
-                for (unsigned int i = 0; i < nodeAnim->mNumPositionKeys - 1; ++i) {
-                    if (timeInTicks < (float)nodeAnim->mPositionKeys[i + 1].mTime) {
-                        float dt = (float)nodeAnim->mPositionKeys[i + 1].mTime - (float)nodeAnim->mPositionKeys[i].mTime;
-                        float factor = (timeInTicks - (float)nodeAnim->mPositionKeys[i].mTime) / dt;
-                        pos = glm::mix(aiToVec3(nodeAnim->mPositionKeys[i].mValue), aiToVec3(nodeAnim->mPositionKeys[i + 1].mValue), factor);
+            glm::vec3 pos(0.0f);
+            if (nodeAnim->mNumPositionKeys > 0) {
+                pos = aiToVec3(nodeAnim->mPositionKeys[0].mValue);
+                for (unsigned int i = 0; i + 1 < nodeAnim->mNumPositionKeys; ++i) {
+                    const auto& k0 = nodeAnim->mPositionKeys[i];
+                    const auto& k1 = nodeAnim->mPositionKeys[i + 1];
+                    if (timeInTicks < static_cast<float>(k1.mTime)) {
+                        const float span = static_cast<float>(k1.mTime - k0.mTime);
+                        const float factor = span > 1e-6f
+                            ? std::clamp((timeInTicks - static_cast<float>(k0.mTime)) / span, 0.0f, 1.0f)
+                            : 0.0f;
+                        pos = glm::mix(aiToVec3(k0.mValue), aiToVec3(k1.mValue), factor);
                         break;
                     }
+                    pos = aiToVec3(k1.mValue);
                 }
             }
-            glm::quat rot(nodeAnim->mRotationKeys[0].mValue.w, nodeAnim->mRotationKeys[0].mValue.x, nodeAnim->mRotationKeys[0].mValue.y, nodeAnim->mRotationKeys[0].mValue.z);
-            if (nodeAnim->mNumRotationKeys > 1) {
-                for (unsigned int i = 0; i < nodeAnim->mNumRotationKeys - 1; ++i) {
-                    if (timeInTicks < (float)nodeAnim->mRotationKeys[i + 1].mTime) {
-                        float dt = (float)nodeAnim->mRotationKeys[i + 1].mTime - (float)nodeAnim->mRotationKeys[i].mTime;
-                        float factor = (timeInTicks - (float)nodeAnim->mRotationKeys[i].mTime) / dt;
-                        glm::quat start(nodeAnim->mRotationKeys[i].mValue.w, nodeAnim->mRotationKeys[i].mValue.x, nodeAnim->mRotationKeys[i].mValue.y, nodeAnim->mRotationKeys[i].mValue.z);
-                        glm::quat end(nodeAnim->mRotationKeys[i + 1].mValue.w, nodeAnim->mRotationKeys[i + 1].mValue.x, nodeAnim->mRotationKeys[i + 1].mValue.y, nodeAnim->mRotationKeys[i + 1].mValue.z);
-                        rot = glm::slerp(start, end, factor);
+
+            glm::quat rot(1.0f, 0.0f, 0.0f, 0.0f);
+            if (nodeAnim->mNumRotationKeys > 0) {
+                const aiQuaternion& q0 = nodeAnim->mRotationKeys[0].mValue;
+                rot = glm::normalize(glm::quat(q0.w, q0.x, q0.y, q0.z));
+                for (unsigned int i = 0; i + 1 < nodeAnim->mNumRotationKeys; ++i) {
+                    const auto& k0 = nodeAnim->mRotationKeys[i];
+                    const auto& k1 = nodeAnim->mRotationKeys[i + 1];
+                    if (timeInTicks < static_cast<float>(k1.mTime)) {
+                        const float span = static_cast<float>(k1.mTime - k0.mTime);
+                        const float factor = span > 1e-6f
+                            ? std::clamp((timeInTicks - static_cast<float>(k0.mTime)) / span, 0.0f, 1.0f)
+                            : 0.0f;
+                        const glm::quat start(k0.mValue.w, k0.mValue.x, k0.mValue.y, k0.mValue.z);
+                        const glm::quat end(k1.mValue.w, k1.mValue.x, k1.mValue.y, k1.mValue.z);
+                        rot = glm::normalize(glm::slerp(start, end, factor));
                         break;
                     }
+                    rot = glm::normalize(glm::quat(k1.mValue.w, k1.mValue.x, k1.mValue.y, k1.mValue.z));
                 }
             }
-            glm::vec3 scale = aiToVec3(nodeAnim->mScalingKeys[0].mValue);
-            nodeTransform = glm::translate(glm::mat4(1.0f), pos) * glm::mat4_cast(rot) * glm::scale(glm::mat4(1.0f), scale);
+
+            glm::vec3 scale(1.0f);
+            if (nodeAnim->mNumScalingKeys > 0) {
+                scale = aiToVec3(nodeAnim->mScalingKeys[0].mValue);
+                for (unsigned int i = 0; i + 1 < nodeAnim->mNumScalingKeys; ++i) {
+                    const auto& k0 = nodeAnim->mScalingKeys[i];
+                    const auto& k1 = nodeAnim->mScalingKeys[i + 1];
+                    if (timeInTicks < static_cast<float>(k1.mTime)) {
+                        const float span = static_cast<float>(k1.mTime - k0.mTime);
+                        const float factor = span > 1e-6f
+                            ? std::clamp((timeInTicks - static_cast<float>(k0.mTime)) / span, 0.0f, 1.0f)
+                            : 0.0f;
+                        scale = glm::mix(aiToVec3(k0.mValue), aiToVec3(k1.mValue), factor);
+                        break;
+                    }
+                    scale = aiToVec3(k1.mValue);
+                }
+            }
+
+            nodeTransform = glm::translate(glm::mat4(1.0f), pos) *
+                            glm::mat4_cast(rot) *
+                            glm::scale(glm::mat4(1.0f), scale);
         }
     }
 
-    glm::mat4 globalTransform = parentTransform * nodeTransform;
+    const glm::mat4 globalTransform = parentTransform * nodeTransform;
 
-    if (boneMap.find(nodeName) != boneMap.end()) {
-        int boneIndex = boneMap.at(nodeName);
-        if (boneIndex < 254) { // 255 зарезервирован под Identity
+    const auto boneIt = boneMap.find(nodeName);
+    if (boneIt != boneMap.end()) {
+        const int boneIndex = boneIt->second;
+        if (boneIndex >= 0 && boneIndex < 254) {
             aiBone* bone = nullptr;
             for (unsigned m = 0; m < scene->mNumMeshes && !bone; ++m) {
                 for (unsigned i = 0; i < scene->mMeshes[m]->mNumBones; ++i) {
-                    if (std::string(scene->mMeshes[m]->mBones[i]->mName.data) == nodeName) {
+                    if (nodeName == scene->mMeshes[m]->mBones[i]->mName.data) {
                         bone = scene->mMeshes[m]->mBones[i];
                         break;
                     }
@@ -193,7 +241,8 @@ void ReadNodeHeirarchy(const aiScene* scene, float time, const aiNode* node, con
     }
 
     for (unsigned int i = 0; i < node->mNumChildren; ++i) {
-        ReadNodeHeirarchy(scene, time, node->mChildren[i], globalTransform, boneMatrices, boneMap, depth + 1);
+        ReadNodeHeirarchy(scene, anim, time, node->mChildren[i], globalTransform,
+                          boneMatrices, boneMap, depth + 1);
     }
 }
 } // namespace
@@ -748,6 +797,24 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
     out.boneMap = globalBoneMap;
     out.totalBones = nextBoneIndex;
     out.hasAnimation = (out.rawScene && out.rawScene->mNumAnimations > 0);
+    if (out.rawScene) {
+        out.animationNames.reserve(out.rawScene->mNumAnimations);
+        out.animationDurations.reserve(out.rawScene->mNumAnimations);
+        for (unsigned i = 0; i < out.rawScene->mNumAnimations; ++i) {
+            const aiAnimation* anim = out.rawScene->mAnimations[i];
+            if (!anim) {
+                out.animationNames.emplace_back("Animation " + std::to_string(i));
+                out.animationDurations.push_back(0.0f);
+                continue;
+            }
+            out.animationNames.emplace_back(
+                anim->mName.length > 0 ? anim->mName.data
+                                       : ("Animation " + std::to_string(i)));
+            const double ticks = anim->mTicksPerSecond != 0.0 ? anim->mTicksPerSecond : 25.0;
+            out.animationDurations.push_back(
+                static_cast<float>(anim->mDuration > 0.0 ? anim->mDuration / ticks : 0.0));
+        }
+    }
 
     // Заполняем bone weights для каждого меша
     for (size_t i = 0; i < out.meshes.size(); ++i) {
@@ -794,11 +861,76 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
 
 }
 
-void AssetManager::UpdateAnimation(const LoadedModel& model, float time, std::vector<glm::mat4>& outBoneMatrices) {
+void AssetManager::UpdateAnimation(const LoadedModel& model, float time,
+                                   std::vector<glm::mat4>& outBoneMatrices) {
+    UpdateAnimationClip(model, 0, time, outBoneMatrices);
+}
+
+void AssetManager::UpdateAnimationClip(const LoadedModel& model, int clip, float time,
+                                       std::vector<glm::mat4>& outBoneMatrices) {
+    if (outBoneMatrices.size() != 256) {
+        outBoneMatrices.assign(256, glm::mat4(1.0f));
+    } else {
+        for (auto& matrix : outBoneMatrices) matrix = glm::mat4(1.0f);
+    }
+    outBoneMatrices[255] = glm::mat4(1.0f); // Dummy bone is always identity.
+    if (!model.rawScene || !model.rawScene->mRootNode) return;
+
+    const aiAnimation* anim = nullptr;
+    if (clip >= 0 && clip < static_cast<int>(model.rawScene->mNumAnimations)) {
+        anim = model.rawScene->mAnimations[clip];
+    }
+    ReadNodeHeirarchy(model.rawScene.get(), anim, time, model.rawScene->mRootNode,
+                      glm::mat4(1.0f), outBoneMatrices, model.boneMap);
+}
+
+void AssetManager::UpdateAnimationBlended(const LoadedModel& model,
+                                          int clipA, float timeA,
+                                          int clipB, float timeB,
+                                          float blend,
+                                          std::vector<glm::mat4>& outBoneMatrices) {
+    blend = std::clamp(blend, 0.0f, 1.0f);
+    if (blend <= 0.0001f) {
+        UpdateAnimationClip(model, clipA, timeA, outBoneMatrices);
+        return;
+    }
+    if (blend >= 0.9999f) {
+        UpdateAnimationClip(model, clipB, timeB, outBoneMatrices);
+        return;
+    }
+
+    std::vector<glm::mat4> a, b;
+    UpdateAnimationClip(model, clipA, timeA, a);
+    UpdateAnimationClip(model, clipB, timeB, b);
     if (outBoneMatrices.size() != 256) outBoneMatrices.resize(256, glm::mat4(1.0f));
-    outBoneMatrices[255] = glm::mat4(1.0f); // Dummy bone всегда Identity
-    if (!model.rawScene) return;
-    ReadNodeHeirarchy(model.rawScene.get(), time, model.rawScene->mRootNode, glm::mat4(1.0f), outBoneMatrices, model.boneMap);
+
+    for (int i = 0; i < 255; ++i) {
+        glm::vec3 scaleA, translationA, skewA;
+        glm::vec4 perspectiveA;
+        glm::quat rotationA;
+        glm::vec3 scaleB, translationB, skewB;
+        glm::vec4 perspectiveB;
+        glm::quat rotationB;
+
+        const bool okA = glm::decompose(a[i], scaleA, rotationA, translationA, skewA, perspectiveA);
+        const bool okB = glm::decompose(b[i], scaleB, rotationB, translationB, skewB, perspectiveB);
+        if (okA && okB) {
+            const glm::vec3 translation = glm::mix(translationA, translationB, blend);
+            const glm::quat rotation = glm::normalize(glm::slerp(rotationA, rotationB, blend));
+            const glm::vec3 scale = glm::mix(scaleA, scaleB, blend);
+            outBoneMatrices[i] = glm::translate(glm::mat4(1.0f), translation) *
+                                 glm::mat4_cast(rotation) *
+                                 glm::scale(glm::mat4(1.0f), scale);
+        } else {
+            // Fallback for matrices that cannot be decomposed (very rare for
+            // skeleton bind poses): component-wise interpolation is still
+            // better than a pop.
+            for (int c = 0; c < 4; ++c) {
+                outBoneMatrices[i][c] = glm::mix(a[i][c], b[i][c], blend);
+            }
+        }
+    }
+    outBoneMatrices[255] = glm::mat4(1.0f);
 }
 
 std::shared_ptr<Mesh> AssetManager::CreateCubeMesh() {
@@ -1009,6 +1141,143 @@ std::shared_ptr<Mesh> AssetManager::CreateCapsuleMesh(float halfHeight, float ra
     auto mesh = std::make_shared<Mesh>();
     mesh->Upload(verts, indices);
     return mesh;
+}
+
+namespace {
+
+Vertex VegetationVertex(const glm::vec3& position, const glm::vec3& normal,
+                        const glm::vec3& tangent, const glm::vec2& uv) {
+    Vertex v{};
+    v.position = position;
+    v.normal = normal;
+    v.tangent = tangent;
+    v.uv = uv;
+    v.boneIDs = glm::vec4(255.0f, 0.0f, 0.0f, 0.0f);
+    v.boneWeights = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
+    return v;
+}
+
+void AppendCone(std::vector<Vertex>& verts, std::vector<uint32_t>& indices,
+                const glm::vec3& baseCenter, float radius, float height,
+                int segments, bool cap) {
+    const uint32_t baseStart = static_cast<uint32_t>(verts.size());
+    for (int i = 0; i < segments; ++i) {
+        const float a = static_cast<float>(i) / static_cast<float>(segments) * 6.2831853f;
+        const float ca = std::cos(a), sa = std::sin(a);
+        const glm::vec3 p = baseCenter + glm::vec3(ca * radius, 0.0f, sa * radius);
+        const glm::vec3 n = glm::normalize(glm::vec3(ca * height, radius, sa * height));
+        verts.push_back(VegetationVertex(p, n, glm::vec3(-sa, 0.0f, ca),
+                                         glm::vec2(static_cast<float>(i) / segments, 0.0f)));
+    }
+    const uint32_t apex = static_cast<uint32_t>(verts.size());
+    verts.push_back(VegetationVertex(baseCenter + glm::vec3(0.0f, height, 0.0f),
+                                     glm::vec3(0.0f, 1.0f, 0.0f),
+                                     glm::vec3(1.0f, 0.0f, 0.0f), glm::vec2(0.5f, 1.0f)));
+    for (int i = 0; i < segments; ++i) {
+        const uint32_t a = baseStart + static_cast<uint32_t>(i);
+        const uint32_t b = baseStart + static_cast<uint32_t>((i + 1) % segments);
+        indices.push_back(a);
+        indices.push_back(apex);
+        indices.push_back(b);
+    }
+    if (cap) {
+        const uint32_t center = static_cast<uint32_t>(verts.size());
+        verts.push_back(VegetationVertex(baseCenter, glm::vec3(0.0f, -1.0f, 0.0f),
+                                         glm::vec3(1.0f, 0.0f, 0.0f), glm::vec2(0.5f, 0.5f)));
+        for (int i = 0; i < segments; ++i) {
+            const uint32_t a = baseStart + static_cast<uint32_t>(i);
+            const uint32_t b = baseStart + static_cast<uint32_t>((i + 1) % segments);
+            indices.push_back(center);
+            indices.push_back(a);
+            indices.push_back(b);
+        }
+    }
+}
+
+} // namespace
+
+std::shared_ptr<Mesh> AssetManager::CreateTreeTrunkMesh() {
+    if (m_treeTrunkMesh) return m_treeTrunkMesh;
+    std::vector<Vertex> verts;
+    std::vector<uint32_t> indices;
+    constexpr int segments = 8;
+    constexpr float height = 3.0f;
+    constexpr float bottomRadius = 0.22f;
+    constexpr float topRadius = 0.12f;
+
+    const uint32_t bottomStart = static_cast<uint32_t>(verts.size());
+    for (int i = 0; i < segments; ++i) {
+        const float a = static_cast<float>(i) / segments * 6.2831853f;
+        const float ca = std::cos(a), sa = std::sin(a);
+        verts.push_back(VegetationVertex(
+            {ca * bottomRadius, 0.0f, sa * bottomRadius},
+            {ca, 0.0f, sa}, {-sa, 0.0f, ca},
+            {static_cast<float>(i) / segments, 0.0f}));
+    }
+    const uint32_t topStart = static_cast<uint32_t>(verts.size());
+    for (int i = 0; i < segments; ++i) {
+        const float a = static_cast<float>(i) / segments * 6.2831853f;
+        const float ca = std::cos(a), sa = std::sin(a);
+        verts.push_back(VegetationVertex(
+            {ca * topRadius, height, sa * topRadius},
+            {ca, 0.0f, sa}, {-sa, 0.0f, ca},
+            {static_cast<float>(i) / segments, 1.0f}));
+    }
+    for (int i = 0; i < segments; ++i) {
+        const uint32_t b0 = bottomStart + static_cast<uint32_t>(i);
+        const uint32_t b1 = bottomStart + static_cast<uint32_t>((i + 1) % segments);
+        const uint32_t t0 = topStart + static_cast<uint32_t>(i);
+        const uint32_t t1 = topStart + static_cast<uint32_t>((i + 1) % segments);
+        indices.push_back(b0); indices.push_back(t0); indices.push_back(b1);
+        indices.push_back(b1); indices.push_back(t0); indices.push_back(t1);
+    }
+
+    m_treeTrunkMesh = std::make_shared<Mesh>();
+    m_treeTrunkMesh->Upload(verts, indices);
+    return m_treeTrunkMesh;
+}
+
+std::shared_ptr<Mesh> AssetManager::CreateTreeCanopyMesh() {
+    if (m_treeCanopyMesh) return m_treeCanopyMesh;
+    std::vector<Vertex> verts;
+    std::vector<uint32_t> indices;
+    AppendCone(verts, indices, {0.0f, 1.35f, 0.0f}, 1.35f, 1.65f, 10, true);
+    AppendCone(verts, indices, {0.0f, 2.25f, 0.0f}, 1.02f, 1.45f, 10, false);
+    AppendCone(verts, indices, {0.0f, 3.05f, 0.0f}, 0.68f, 1.15f, 10, false);
+
+    m_treeCanopyMesh = std::make_shared<Mesh>();
+    m_treeCanopyMesh->Upload(verts, indices);
+    return m_treeCanopyMesh;
+}
+
+std::shared_ptr<Mesh> AssetManager::CreateGrassMesh() {
+    if (m_grassMesh) return m_grassMesh;
+    std::vector<Vertex> verts;
+    std::vector<uint32_t> indices;
+
+    auto addBlade = [&](const glm::vec3& right, const glm::vec3& normal) {
+        const uint32_t base = static_cast<uint32_t>(verts.size());
+        const glm::vec3 center(0.0f);
+        const float width = 0.16f;
+        const float height = 0.85f;
+        const glm::vec3 p0 = center - right * width;
+        const glm::vec3 p1 = center + right * width;
+        const glm::vec3 p2 = center + right * width * 0.45f + glm::vec3(0.0f, height, 0.0f);
+        const glm::vec3 p3 = center - right * width * 0.45f + glm::vec3(0.0f, height, 0.0f);
+        verts.push_back(VegetationVertex(p0, normal, right, {0.0f, 0.0f}));
+        verts.push_back(VegetationVertex(p1, normal, right, {1.0f, 0.0f}));
+        verts.push_back(VegetationVertex(p2, normal, right, {1.0f, 1.0f}));
+        verts.push_back(VegetationVertex(p3, normal, right, {0.0f, 1.0f}));
+        indices.push_back(base + 0); indices.push_back(base + 1); indices.push_back(base + 2);
+        indices.push_back(base + 0); indices.push_back(base + 2); indices.push_back(base + 3);
+    };
+    addBlade(glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.35f, 1.0f));
+    addBlade(glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(1.0f, 0.35f, 0.0f));
+    addBlade(glm::normalize(glm::vec3(1.0f, 0.0f, 1.0f)), glm::vec3(0.0f, 1.0f, 0.0f));
+
+    m_grassMesh = std::make_shared<Mesh>();
+    m_grassMesh->Upload(verts, indices);
+    return m_grassMesh;
 }
 
 } // namespace Galeshi

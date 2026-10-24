@@ -7,9 +7,12 @@
 #include "GaleshiEngine/Assets/Material.hpp"
 #include "GaleshiEngine/Assets/Mesh.hpp"
 #include "GaleshiEngine/Assets/Texture.hpp"
+#include "GaleshiEngine/Assets/VegetationGenerator.hpp"
 #include <glm/gtc/type_ptr.hpp>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cstring>
+#include <vector>
 
 namespace Galeshi {
 
@@ -41,10 +44,18 @@ void RenderSystem::Init(AssetManager* assets) {
     m_shadowProg = ShaderManager::LoadProgram("shaders/vs_shadow.bin", "shaders/fs_shadow.bin");
     m_shadowPointProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_shadow_point.bin");
     m_glassProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_glass.bin");
-    spdlog::info("[RenderSystem] programs: pbr={} gbuffer={} shadow={} shadowPoint={} glass={}",
+    m_instancedProg = ShaderManager::LoadProgram(
+        "shaders/vs_vegetation_instanced.bin", "shaders/fs_pbr.bin");
+    m_instancedGbufferProg = ShaderManager::LoadProgram(
+        "shaders/vs_vegetation_instanced.bin", "shaders/fs_gbuffer.bin");
+    m_instancedShadowProg = ShaderManager::LoadProgram(
+        "shaders/vs_vegetation_shadow_instanced.bin", "shaders/fs_shadow.bin");
+    m_instancedShadowPointProg = ShaderManager::LoadProgram(
+        "shaders/vs_vegetation_instanced.bin", "shaders/fs_shadow_point.bin");
+    spdlog::info("[RenderSystem] programs: pbr={} gbuffer={} shadow={} shadowPoint={} glass={} vegetation={}",
         bgfx::isValid(m_program), bgfx::isValid(m_gbufferProg),
         bgfx::isValid(m_shadowProg), bgfx::isValid(m_shadowPointProg),
-        bgfx::isValid(m_glassProg));
+        bgfx::isValid(m_glassProg), bgfx::isValid(m_instancedProg));
     u_shadowLightPos = bgfx::createUniform("u_shadowLightPos", bgfx::UniformType::Vec4);
     if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
 
@@ -68,6 +79,8 @@ void RenderSystem::Init(AssetManager* assets) {
     s_albedoMap = bgfx::createUniform("s_albedoMap", bgfx::UniformType::Sampler);
     s_metallicRoughnessMap = bgfx::createUniform("s_metallicRoughnessMap", bgfx::UniformType::Sampler);
     s_normalMap = bgfx::createUniform("s_normalMap", bgfx::UniformType::Sampler);
+    s_irradianceMap = bgfx::createUniform("s_irradianceMap", bgfx::UniformType::Sampler);
+    s_envMap = bgfx::createUniform("s_envMap", bgfx::UniformType::Sampler);
     s_emissiveMap = bgfx::createUniform("s_emissiveMap", bgfx::UniformType::Sampler);
     s_occlusionMap = bgfx::createUniform("s_occlusionMap", bgfx::UniformType::Sampler);
     s_opacityMap = bgfx::createUniform("s_opacityMap", bgfx::UniformType::Sampler);
@@ -83,6 +96,10 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(m_shadowProg)) bgfx::destroy(m_shadowProg);
     if (bgfx::isValid(m_shadowPointProg)) bgfx::destroy(m_shadowPointProg);
     if (bgfx::isValid(m_glassProg)) bgfx::destroy(m_glassProg);
+    if (bgfx::isValid(m_instancedProg)) bgfx::destroy(m_instancedProg);
+    if (bgfx::isValid(m_instancedGbufferProg)) bgfx::destroy(m_instancedGbufferProg);
+    if (bgfx::isValid(m_instancedShadowProg)) bgfx::destroy(m_instancedShadowProg);
+    if (bgfx::isValid(m_instancedShadowPointProg)) bgfx::destroy(m_instancedShadowPointProg);
     if (bgfx::isValid(u_shadowLightPos)) bgfx::destroy(u_shadowLightPos);
     if (bgfx::isValid(u_albedoFactor)) bgfx::destroy(u_albedoFactor);
     if (bgfx::isValid(u_metallicFactor)) bgfx::destroy(u_metallicFactor);
@@ -102,6 +119,8 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(s_albedoMap)) bgfx::destroy(s_albedoMap);
     if (bgfx::isValid(s_metallicRoughnessMap)) bgfx::destroy(s_metallicRoughnessMap);
     if (bgfx::isValid(s_normalMap)) bgfx::destroy(s_normalMap);
+    if (bgfx::isValid(s_irradianceMap)) bgfx::destroy(s_irradianceMap);
+    if (bgfx::isValid(s_envMap)) bgfx::destroy(s_envMap);
     if (bgfx::isValid(s_emissiveMap)) bgfx::destroy(s_emissiveMap);
     if (bgfx::isValid(s_occlusionMap)) bgfx::destroy(s_occlusionMap);
     if (bgfx::isValid(s_opacityMap)) bgfx::destroy(s_opacityMap);
@@ -288,6 +307,209 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
             bgfx::submit(viewId, m_program);
         }
     }
+
+    RenderVegetation(scene, frustum, viewId);
+}
+
+namespace {
+
+glm::mat4 EntityWorldMatrix(Scene& scene, entt::entity handle) {
+    glm::mat4 model(1.0f);
+    entt::entity current = handle;
+    std::vector<entt::entity> chain;
+    int depth = 0;
+    while (current != entt::null && depth++ < 128) {
+        chain.push_back(current);
+        if (scene.Registry().all_of<ParentComponent>(current)) {
+            current = scene.Registry().get<ParentComponent>(current).parent;
+        } else {
+            break;
+        }
+    }
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        if (scene.Registry().all_of<TransformComponent>(*it)) {
+            model = model * scene.Registry().get<TransformComponent>(*it).LocalMatrix();
+        }
+    }
+    return model;
+}
+
+uint32_t UploadInstances(const std::vector<glm::mat4>& instances,
+                         bgfx::InstanceDataBuffer& idb) {
+    if (instances.empty()) return 0;
+    const uint32_t requested = static_cast<uint32_t>(
+        std::min<size_t>(instances.size(), 0xFFFFFFFFu));
+    const uint32_t available = bgfx::getAvailInstanceDataBuffer(requested, 64);
+    if (available == 0) return 0;
+    bgfx::allocInstanceDataBuffer(&idb, available, 64);
+    float* data = reinterpret_cast<float*>(idb.data);
+    for (uint32_t i = 0; i < available; ++i) {
+        std::memcpy(data + static_cast<size_t>(i) * 16,
+                    glm::value_ptr(instances[i]), sizeof(float) * 16);
+    }
+    return available;
+}
+
+} // namespace
+
+void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
+                                    bgfx::ViewId viewId) {
+    if (!m_assets) return;
+    const bool useGbuffer = m_deferred && bgfx::isValid(m_instancedGbufferProg);
+    const bgfx::ProgramHandle program = useGbuffer
+        ? m_instancedGbufferProg : m_instancedProg;
+    if (!bgfx::isValid(program)) return;
+
+    auto trunkMesh = m_assets->CreateTreeTrunkMesh();
+    auto canopyMesh = m_assets->CreateTreeCanopyMesh();
+    auto grassMesh = m_assets->CreateGrassMesh();
+    if (!trunkMesh || !canopyMesh || !grassMesh) return;
+
+    auto white = m_assets->WhiteTexture();
+    auto flatNormal = m_assets->FlatNormalTexture();
+    if (!white || !flatNormal) return;
+
+    bgfx::setTexture(0, s_albedoMap, white->Handle());
+    bgfx::setTexture(1, s_metallicRoughnessMap, white->Handle());
+    bgfx::setTexture(2, s_normalMap, flatNormal->Handle());
+    bgfx::setTexture(4, s_irradianceMap, white->Handle());
+    bgfx::setTexture(5, s_envMap, white->Handle());
+    if (bgfx::isValid(m_brdfLUT)) {
+        bgfx::setTexture(6, s_brdfLUT, m_brdfLUT);
+    } else {
+        bgfx::setTexture(6, s_brdfLUT, white->Handle());
+    }
+    bgfx::setTexture(7, s_emissiveMap, white->Handle());
+    bgfx::setTexture(8, s_occlusionMap, white->Handle());
+    bgfx::setTexture(9, s_opacityMap, white->Handle());
+    bgfx::setTexture(10, s_metallicMap, white->Handle());
+    bgfx::setTexture(11, s_roughnessMap, white->Handle());
+    bgfx::setTexture(12, s_specularMap, white->Handle());
+
+    const float metallic[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    const float emissive[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    const float flags[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    auto submitGroup = [&](Mesh& mesh, const glm::vec4& color, float roughness,
+                           bool twoSided, bgfx::InstanceDataBuffer& idb,
+                           uint32_t count) {
+        const float albedo[4] = {color.r, color.g, color.b, color.a};
+        const float rough[4] = {roughness, 0.0f, 0.0f, 0.0f};
+        const float params[4] = {1.0f, 1.0f, 0.0f, twoSided ? 1.0f : 0.0f};
+        bgfx::setUniform(u_albedoFactor, albedo);
+        bgfx::setUniform(u_metallicFactor, metallic);
+        bgfx::setUniform(u_roughnessFactor, rough);
+        bgfx::setUniform(u_emissiveFactor, emissive);
+        bgfx::setUniform(u_materialParams, params);
+        bgfx::setUniform(u_materialFlags, flags);
+        bgfx::setInstanceDataBuffer(&idb, 0, count);
+        bgfx::setVertexBuffer(0, mesh.VB());
+        bgfx::setIndexBuffer(mesh.IB());
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
+                       BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA |
+                       FaceState(twoSided));
+        bgfx::submit(viewId, program);
+    };
+
+    auto view = scene.Registry().view<TransformComponent, LandscapeComponent,
+                                      VegetationComponent>();
+    for (auto handle : view) {
+        auto& landscape = view.get<LandscapeComponent>(handle);
+        auto& vegetation = view.get<VegetationComponent>(handle);
+        if (!vegetation.enabled) continue;
+        if (vegetation.dirty) {
+            VegetationGenerator::Generate(landscape, vegetation);
+        }
+        if (vegetation.treeInstances.empty() && vegetation.grassInstances.empty()) {
+            continue;
+        }
+
+        const glm::mat4 world = EntityWorldMatrix(scene, handle);
+        float minHeight = 0.0f;
+        float maxHeight = 0.0f;
+        if (!landscape.heights.empty()) {
+            minHeight = *std::min_element(landscape.heights.begin(), landscape.heights.end());
+            maxHeight = *std::max_element(landscape.heights.begin(), landscape.heights.end());
+        }
+        const float halfX = landscape.sizeX * 0.5f * landscape.scale;
+        const float halfZ = landscape.sizeZ * 0.5f * landscape.scale;
+        const float maxTreeHeight = 5.0f * std::max(1.0f, vegetation.treeMaxScale);
+        const glm::vec3 localCenter(0.0f, (minHeight + maxHeight) * 0.5f + maxTreeHeight * 0.5f, 0.0f);
+        const glm::vec3 localExtents(halfX, (maxHeight - minHeight) * 0.5f + maxTreeHeight, halfZ);
+        const glm::vec3 worldCenter = glm::vec3(world * glm::vec4(localCenter, 1.0f));
+        const float maxScale = std::max(
+            std::max(glm::length(glm::vec3(world[0])), glm::length(glm::vec3(world[1]))),
+            glm::length(glm::vec3(world[2])));
+        if (!frustum.TestSphere(worldCenter, glm::length(localExtents) * maxScale)) {
+            continue;
+        }
+
+        bgfx::setTransform(glm::value_ptr(world));
+
+        if (!vegetation.treeInstances.empty()) {
+            bgfx::InstanceDataBuffer idb;
+            const uint32_t count = UploadInstances(vegetation.treeInstances, idb);
+            if (count > 0) {
+                submitGroup(*trunkMesh, vegetation.trunkColor, 0.92f, false, idb, count);
+                submitGroup(*canopyMesh, vegetation.canopyColor, 0.82f, false, idb, count);
+            }
+        }
+
+        if (!vegetation.grassInstances.empty()) {
+            bgfx::InstanceDataBuffer idb;
+            const uint32_t count = UploadInstances(vegetation.grassInstances, idb);
+            if (count > 0) {
+                submitGroup(*grassMesh, vegetation.grassColor, 0.76f, true, idb, count);
+            }
+        }
+    }
+}
+
+void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle program,
+                                           bgfx::ViewId viewId) {
+    if (!m_assets || !bgfx::isValid(program)) return;
+
+    auto trunkMesh = m_assets->CreateTreeTrunkMesh();
+    auto canopyMesh = m_assets->CreateTreeCanopyMesh();
+    auto grassMesh = m_assets->CreateGrassMesh();
+
+    auto submitShadow = [&](Mesh& mesh, bool twoSided,
+                            bgfx::InstanceDataBuffer& idb, uint32_t count) {
+        bgfx::setInstanceDataBuffer(&idb, 0, count);
+        bgfx::setVertexBuffer(0, mesh.VB());
+        bgfx::setIndexBuffer(mesh.IB());
+        bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
+                       FaceState(twoSided));
+        bgfx::submit(viewId, program);
+    };
+
+    auto view = scene.Registry().view<TransformComponent, LandscapeComponent,
+                                      VegetationComponent>();
+    for (auto handle : view) {
+        auto& vegetation = view.get<VegetationComponent>(handle);
+        if (!vegetation.enabled) continue;
+        if (vegetation.dirty) {
+            VegetationGenerator::Generate(view.get<LandscapeComponent>(handle), vegetation);
+        }
+        const glm::mat4 world = EntityWorldMatrix(scene, handle);
+        bgfx::setTransform(glm::value_ptr(world));
+
+        if (vegetation.castShadows && !vegetation.treeInstances.empty()) {
+            bgfx::InstanceDataBuffer idb;
+            const uint32_t count = UploadInstances(vegetation.treeInstances, idb);
+            if (count > 0) {
+                submitShadow(*trunkMesh, false, idb, count);
+                submitShadow(*canopyMesh, false, idb, count);
+            }
+        }
+        if (vegetation.grassCastShadows && !vegetation.grassInstances.empty()) {
+            bgfx::InstanceDataBuffer idb;
+            const uint32_t count = UploadInstances(vegetation.grassInstances, idb);
+            if (count > 0) {
+                submitShadow(*grassMesh, true, idb, count);
+            }
+        }
+    }
 }
 
 void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo) {
@@ -332,6 +554,8 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
                        FaceState(twoSided));
         bgfx::submit(viewId, m_shadowProg);
     }
+
+    RenderVegetationShadows(scene, m_instancedShadowProg, viewId);
 }
 
 
@@ -414,6 +638,8 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
                        FaceState(twoSided));
         bgfx::submit(viewId, m_shadowPointProg);
     }
+
+    RenderVegetationShadows(scene, m_instancedShadowPointProg, viewId);
 }
 
 void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
