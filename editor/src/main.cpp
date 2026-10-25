@@ -1227,8 +1227,9 @@ if (ImGui::BeginMenu("File")) {
     // -------------------------------------------------------------------
     void DrawDockspace() {
         ImGuiViewport* vp = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(vp->Pos);
-        ImGui::SetNextWindowSize(vp->Size);
+        // Keep docked panels below the main menu bar.
+        ImGui::SetNextWindowPos(vp->WorkPos);
+        ImGui::SetNextWindowSize(vp->WorkSize);
         ImGui::SetNextWindowViewport(vp->ID);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -1246,7 +1247,7 @@ if (ImGui::BeginMenu("File")) {
             m_resetLayout = false;
             ImGui::DockBuilderRemoveNode(dockspaceId);
             ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
-            ImGui::DockBuilderSetNodeSize(dockspaceId, vp->Size);
+            ImGui::DockBuilderSetNodeSize(dockspaceId, vp->WorkSize);
 
             ImGuiID center = dockspaceId;
             ImGuiID right  = ImGui::DockBuilderSplitNode(center, ImGuiDir_Right, 0.25f, nullptr, &center);
