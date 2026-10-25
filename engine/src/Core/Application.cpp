@@ -15,6 +15,11 @@
 
 #include <filesystem>
 
+#define STB_IMAGE_STATIC
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#include <stb_image.h>
+
 namespace Galeshi {
 
 static std::atomic<bool> g_interrupted{false};
@@ -130,6 +135,78 @@ static void ApplyBlackTheme() {
     c[ImGuiCol_ModalWindowDimBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.55f);
 }
 
+namespace {
+
+constexpr Uint64 kSplashDurationMs = 1200;
+
+// Shows a short borderless window sized exactly like the source image. This
+// runs before the main window and deliberately avoids bgfx/ImGui so it can be
+// displayed without a renderer.
+void ShowStartupSplash(const std::string& imagePath) {
+    if (imagePath.empty()) return;
+
+    int width = 0;
+    int height = 0;
+    unsigned char* pixels = stbi_load(imagePath.c_str(), &width, &height,
+                                      nullptr, STBI_rgb_alpha);
+    if (!pixels) {
+        spdlog::warn("[Galeshi] Splash image '{}' could not be loaded: {}",
+                     imagePath, stbi_failure_reason());
+        return;
+    }
+
+    const SDL_WindowFlags flags = SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALWAYS_ON_TOP;
+    SDL_Window* window = SDL_CreateWindow("Galeshi Engine", width, height, flags);
+    if (!window) {
+        spdlog::warn("[Galeshi] Splash window could not be created: {}", SDL_GetError());
+        stbi_image_free(pixels);
+        return;
+    }
+    SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+
+    SDL_Surface* image = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_RGBA32,
+                                               pixels, width * 4);
+    SDL_Surface* windowSurface = SDL_GetWindowSurface(window);
+
+    bool presented = false;
+    if (image && windowSurface) {
+        SDL_FillSurfaceRect(windowSurface, nullptr,
+                            SDL_MapSurfaceRGBA(windowSurface, 0, 0, 0, 255));
+        presented = SDL_BlitSurface(image, nullptr, windowSurface, nullptr) &&
+                    SDL_UpdateWindowSurface(window);
+    }
+    if (image) SDL_DestroySurface(image);
+    stbi_image_free(pixels);
+
+    if (!presented) {
+        spdlog::warn("[Galeshi] Splash image '{}' could not be presented: {}",
+                     imagePath, SDL_GetError());
+        SDL_DestroyWindow(window);
+        return;
+    }
+
+    spdlog::info("[Galeshi] Splash window {}x{}", width, height);
+
+    const Uint64 start = SDL_GetTicks();
+    bool dismissed = false;
+    while (!dismissed && !g_interrupted.load() &&
+           SDL_GetTicks() - start < kSplashDurationMs) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_QUIT ||
+                event.type == SDL_EVENT_KEY_DOWN ||
+                event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+                dismissed = true;
+            }
+        }
+        if (!dismissed) SDL_Delay(10);
+    }
+
+    SDL_DestroyWindow(window);
+}
+
+} // namespace
+
 struct Application::Impl {
     ApplicationSpec spec;
     SDL_Window*     window = nullptr;
@@ -158,14 +235,7 @@ Application::Application(const ApplicationSpec& spec)
     std::signal(SIGINT,  Galeshi::OnSignal);
     std::signal(SIGTERM, Galeshi::OnSignal);
 
-    // Убираем HIGH_PIXEL_DENSITY — на Qtile может ломать swapchain
-    const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
-    m_impl->window = SDL_CreateWindow(spec.name.c_str(), spec.width, spec.height, flags);
-    if (!m_impl->window) {
-        spdlog::critical("[Galeshi] SDL_CreateWindow failed: {}", SDL_GetError());
-        std::abort();
-    }
-
+    // Set the runtime directory before loading any startup assets.
     if (const char* basePath = SDL_GetBasePath()) {
         std::error_code ec;
         std::filesystem::current_path(basePath, ec);
@@ -174,6 +244,16 @@ Application::Application(const ApplicationSpec& spec)
         } else {
             spdlog::info("[Galeshi] CWD = {}", basePath);
         }
+    }
+
+    ShowStartupSplash(spec.splashImage);
+
+    // Убираем HIGH_PIXEL_DENSITY — на Qtile может ломать swapchain
+    const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
+    m_impl->window = SDL_CreateWindow(spec.name.c_str(), spec.width, spec.height, flags);
+    if (!m_impl->window) {
+        spdlog::critical("[Galeshi] SDL_CreateWindow failed: {}", SDL_GetError());
+        std::abort();
     }
 
     m_impl->renderer = std::make_unique<Renderer>();

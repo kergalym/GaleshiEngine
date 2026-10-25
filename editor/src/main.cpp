@@ -122,7 +122,8 @@ public:
               .name = isGameMode ? "GaleshiGame" : "GaleshiEditor", 
               .width = 1600, .height = 900, 
               .editor = true, // ImGui всегда включен
-              .debug = debugMode}) {
+              .debug = debugMode,
+              .splashImage = isGameMode ? "" : "assets/icons/galeshi_engine_logo.png"}) {
         m_isGameMode = isGameMode;
     }
 

@@ -1,4 +1,4 @@
-![GaleshiEnginelOGO](./engine/src/GaleshiEngineLogo.png)
+![GaleshiEngineLogo](./engine/assets/icons/galeshi_engine_logo.png)
 
 ![GaleshiEngine](./screenshoots/scrot-2026-10-25-04:47.png)
 
@@ -281,7 +281,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [x] Lua game logic scripting system and editor under viewport (tab system on the right side area of Content browser). Lua bindings to C++ functions
 - [x] Add logo to the left up corner of an editor
 - [x] Add naming labels to Outliner and Properties panels
-- [ ] Show small splash window at startup
+- [x] Show small splash window at startup
 - [ ] Add input axis system for keyboard and mouse ()
 - [ ] Add RunOnce and RunAlways system functions
 - [ ] UI designing system

@@ -13,6 +13,8 @@ struct ApplicationSpec {
     int         height = 900;
     bool        editor = false;
     bool        debug  = false;
+    // Optional startup splash image, relative to the executable directory.
+    std::string splashImage;
 };
 
 class Application {
