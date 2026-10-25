@@ -49,6 +49,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <limits>
+#include <memory>
 #include <vector>
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -102,6 +103,7 @@ class GaleshiEditorApp final : public Galeshi::Application {
     Galeshi::PostProcessManager m_postProcess;
     LoadingState m_loadingState;
     float m_displayProgress = 0.0f; // UI thread only, smoothed copy of progress
+    std::unique_ptr<Galeshi::Texture> m_logoTexture;
     bool m_iblGenerated = false;
     bool m_projectLoaded = false;
     bool m_resetLayout = false;
@@ -162,6 +164,12 @@ protected:
     // LIFECYCLE
     // -------------------------------------------------------------------
     void OnStart() override {
+        m_logoTexture.reset(
+            Galeshi::Texture::LoadFromFile("assets/icons/galeshi_logo_round.png"));
+        if (!m_logoTexture) {
+            spdlog::warn("[Editor] Missing logo asset: assets/icons/galeshi_logo_round.png");
+        }
+
         LoadRecentProjects();
         // Check if a .gproj is passed or found in CWD
         if (std::filesystem::exists("project.gproj")) {
@@ -857,6 +865,26 @@ private:
 
     void DrawMainMenuBar() {
         if (!ImGui::BeginMainMenuBar()) return;
+
+        // Round engine badge in the top-left corner.
+        if (m_logoTexture && m_logoTexture->Valid()) {
+            const float barHeight = ImGui::GetFrameHeight();
+            const float logoSize = barHeight - 2.0f;
+            const ImVec2 cursor = ImGui::GetCursorScreenPos();
+            ImGui::Dummy(ImVec2(logoSize, barHeight));
+
+            const ImVec2 logoMin(cursor.x, cursor.y + (barHeight - logoSize) * 0.5f);
+            const ImVec2 logoMax(logoMin.x + logoSize, logoMin.y + logoSize);
+            // Texture::LoadFromFile flips rows for mesh UVs; undo that for
+            // ImGui, whose texture origin is the top-left corner.
+            ImGui::GetWindowDrawList()->AddImage(
+                static_cast<ImTextureID>(m_logoTexture->Handle().idx), logoMin, logoMax,
+                ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+            if (ImGui::IsMouseHoveringRect(logoMin, logoMax)) {
+                ImGui::SetTooltip("Galeshi Engine");
+            }
+            ImGui::SameLine(0.0f, 6.0f);
+        }
 
         // Play/Stop
         if (ImGui::Button(m_editor.isPlaying ? "Stop" : "Play", ImVec2(60, 0))) {

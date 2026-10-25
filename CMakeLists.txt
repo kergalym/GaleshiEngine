@@ -57,6 +57,10 @@ add_custom_target(CopyAssets ALL
     COMMENT "Copying assets..."
 )
 
+# Keep target-specific builds (e.g. --target GaleshiEditor) shipping new assets.
+add_dependencies(GaleshiEditor CopyAssets)
+add_dependencies(GaleshiRuntime CopyAssets)
+
 # Компиляция шейдеров через скрипт (после сборки shaderc)
 add_custom_target(CompileGaleshiShaders
     COMMAND ${CMAKE_COMMAND} -E env
