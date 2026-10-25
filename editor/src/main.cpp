@@ -864,8 +864,8 @@ private:
     }
 
     void DrawMainMenuBar() {
-        // The previous 22 px badge + 15 px requested by the design.
-        constexpr float kLogoSize = 37.0f;
+        // The initial 22 px badge plus the requested size increases.
+        constexpr float kLogoSize = 57.0f;
         constexpr float kLogoMargin = 2.0f;
         const float menuBarHeight = kLogoSize + kLogoMargin * 2.0f;
         const ImGuiStyle& style = ImGui::GetStyle();
