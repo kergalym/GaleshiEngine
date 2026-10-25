@@ -52,7 +52,7 @@ add_subdirectory(runtime)
 # Копирование ассетов рядом с бинарником
 add_custom_target(CopyAssets ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/assets
+        ${CMAKE_SOURCE_DIR}/engine/assets
         ${CMAKE_BINARY_DIR}/bin/assets
     COMMENT "Copying assets..."
 )

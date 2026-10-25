@@ -864,17 +864,40 @@ private:
     }
 
     void DrawMainMenuBar() {
-        if (!ImGui::BeginMainMenuBar()) return;
+        // The previous 22 px badge + 15 px requested by the design.
+        constexpr float kLogoSize = 37.0f;
+        constexpr float kLogoMargin = 2.0f;
+        const float menuBarHeight = kLogoSize + kLogoMargin * 2.0f;
+        const ImGuiStyle& style = ImGui::GetStyle();
+        const float tallFramePaddingY =
+            std::max(style.FramePadding.y,
+                     (menuBarHeight - ImGui::GetFontSize()) * 0.5f);
+
+        // BeginMainMenuBar derives the bar height from FramePadding, so use
+        // tall padding only while the bar is being created.
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                            ImVec2(style.FramePadding.x, tallFramePaddingY));
+        const bool menuBarOpen = ImGui::BeginMainMenuBar();
+        ImGui::PopStyleVar();
+        if (!menuBarOpen) return;
+
+        const float barHeight = ImGui::GetWindowSize().y;
+        const float rowHeight = ImGui::GetFrameHeight();
+        const float rowOffset = (barHeight - rowHeight) * 0.5f;
+
+        // Restore the normal menu-row metrics used by items and popups.
+        ImGuiWindow* menuBar = ImGui::GetCurrentWindow();
+        menuBar->DC.CurrLineSize.y = rowHeight;
+        menuBar->DC.CurrLineTextBaseOffset = style.FramePadding.y;
+        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + rowOffset);
 
         // Round engine badge in the top-left corner.
         if (m_logoTexture && m_logoTexture->Valid()) {
-            const float barHeight = ImGui::GetFrameHeight();
-            const float logoSize = barHeight - 2.0f;
             const ImVec2 cursor = ImGui::GetCursorScreenPos();
-            ImGui::Dummy(ImVec2(logoSize, barHeight));
+            ImGui::Dummy(ImVec2(kLogoSize, rowHeight));
 
-            const ImVec2 logoMin(cursor.x, cursor.y + (barHeight - logoSize) * 0.5f);
-            const ImVec2 logoMax(logoMin.x + logoSize, logoMin.y + logoSize);
+            const ImVec2 logoMin(cursor.x, cursor.y - rowOffset + kLogoMargin);
+            const ImVec2 logoMax(logoMin.x + kLogoSize, logoMin.y + kLogoSize);
             // Texture::LoadFromFile flips rows for mesh UVs; undo that for
             // ImGui, whose texture origin is the top-left corner.
             ImGui::GetWindowDrawList()->AddImage(

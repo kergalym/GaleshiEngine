@@ -33,4 +33,4 @@ build/**/shaders/*.bin
 .aider.*
 aider_run.sh
 galeshi_chat
-assets/meshes/*
+engine/assets/meshes/*
