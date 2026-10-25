@@ -535,15 +535,21 @@ bool SceneSerializer::Save(const std::string& path) const {
     return out.good();
 }
 
-bool SceneSerializer::Load(const std::string& path) {
+bool SceneSerializer::Load(const std::string& path,
+                           const std::atomic<bool>* cancel) {
     std::ifstream in(path);
     if (!in.is_open()) return false;
     std::stringstream ss;
     ss << in.rdbuf();
-    return LoadFromString(ss.str());
+    return LoadFromString(ss.str(), cancel);
 }
 
-bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
+bool SceneSerializer::LoadFromString(const std::string& jsonStr,
+                                     const std::atomic<bool>* cancel) {
+    const auto cancelled = [cancel] {
+        return cancel && cancel->load(std::memory_order_relaxed);
+    };
+
     json root;
     try {
         root = json::parse(jsonStr);
@@ -583,6 +589,11 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
         materialLibrary.reserve(jsonMaterials.size());
         materialBaseIds.reserve(jsonMaterials.size());
         for (const auto& jm : jsonMaterials) {
+            if (cancelled()) {
+                m_scene.Registry().clear();
+                spdlog::info("[Scene] Load cancelled while preparing materials");
+                return false;
+            }
             if (!jm.is_object()) {
                 materialLibrary.push_back(nullptr);
                 materialBaseIds.push_back(-1);
@@ -622,6 +633,11 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
     // systems (for example the directional-light selection) rely on the first
     // entity returned by a view being stable.
     for (auto it = jsonEntities.rbegin(); it != jsonEntities.rend(); ++it) {
+        if (cancelled()) {
+            m_scene.Registry().clear();
+            spdlog::info("[Scene] Load cancelled while creating entities");
+            return false;
+        }
         const auto& je = *it;
         if (!je.is_object()) continue;
         const std::string name = je.value("name", std::string("Entity"));
@@ -666,6 +682,11 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr) {
     }
 
     for (auto entryIt = loaded.rbegin(); entryIt != loaded.rend(); ++entryIt) {
+        if (cancelled()) {
+            m_scene.Registry().clear();
+            spdlog::info("[Scene] Load cancelled before the next entity");
+            return false;
+        }
         auto& entry = *entryIt;
         if (!entry.source) continue;
         const auto& je = *entry.source;

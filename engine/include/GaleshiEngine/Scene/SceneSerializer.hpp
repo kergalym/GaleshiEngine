@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 
 namespace Galeshi {
@@ -13,11 +14,16 @@ public:
         : m_scene(scene), m_assets(assets) {}
 
     bool Save(const std::string& path) const;
-    bool Load(const std::string& path);
+
+    // Optional cancel flag lets the async loading dialog abort between
+    // entities instead of waiting for the whole scene to finish.
+    bool Load(const std::string& path,
+              const std::atomic<bool>* cancel = nullptr);
 
     // Для Undo/Redo
     std::string SaveToString() const;
-    bool LoadFromString(const std::string& jsonStr);
+    bool LoadFromString(const std::string& jsonStr,
+                        const std::atomic<bool>* cancel = nullptr);
 
 private:
     Scene&        m_scene;
