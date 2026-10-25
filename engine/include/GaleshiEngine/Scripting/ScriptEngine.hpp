@@ -52,6 +52,7 @@ private:
     };
     std::unordered_map<uint32_t, AIControllerInstance> m_aiControllers;
     std::vector<std::string> m_logs;
+    bool m_runOnceInvoked = false;
 };
 
 } // namespace Galeshi

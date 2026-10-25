@@ -104,6 +104,7 @@ Squad coordination and shared blackboards are not implemented.
 
 - Lua 5.4 with sol2.
 - Hot reload with F5.
+- Lifecycle callbacks: `RunOnce()` runs once after the script is loaded (and again after each successful hot reload), then `RunAlways(dt)` runs every frame. The legacy `update(dt)` callback is used as a fallback when `RunAlways` is not defined.
 - Entity creation and destruction.
 - Transform access: `set_position`, `get_position`, `translate`.
 - Input queries and physics helpers.
@@ -111,6 +112,20 @@ Squad coordination and shared blackboards are not implemented.
 - Sound playback.
 - Navigation commands for AI agents.
 - Entities created by scripts are tagged with `LuaEntityComponent` and removed on hot reload.
+
+```lua
+local player = nil
+
+function RunOnce()
+    player = new_physics_cube("Player", 0.0, 5.0, 0.0, 2.0)
+end
+
+function RunAlways(dt)
+    if not player then return end
+    local velocity = get_velocity(player)
+    -- Per-frame game logic here.
+end
+```
 
 ## Audio
 
@@ -301,7 +316,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [x] Add naming labels to Outliner and Properties panels
 - [x] Show small splash window at startup
 - [ ] Add input axis system for keyboard and mouse ()
-- [ ] Add RunOnce and RunAlways system functions
+- [x] Add RunOnce and RunAlways system functions
 - [ ] UI designing system
 - [x] Standalone one file container build (AppImage for the editor)
 

@@ -367,6 +367,14 @@ void EnginePhysicsSystem::SetLinearVelocity(uint32_t bodyId, const glm::vec3& ve
     }
 }
 
+glm::vec3 EnginePhysicsSystem::GetLinearVelocity(uint32_t bodyId) const {
+    if (!m_impl->initialized || bodyId == 0xFFFFFFFF) return glm::vec3(0.0f);
+    JPH::BodyID id(bodyId);
+    if (!m_impl->bodyInterface->IsAdded(id)) return glm::vec3(0.0f);
+    const JPH::Vec3 velocity = m_impl->bodyInterface->GetLinearVelocity(id);
+    return glm::vec3(velocity.GetX(), velocity.GetY(), velocity.GetZ());
+}
+
 
 void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene) {
     if (!m_impl->initialized) return;

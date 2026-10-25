@@ -22,6 +22,7 @@ public:
     void SetBodyTransform(uint32_t bodyId, const glm::vec3& position, const glm::quat& rotation);
     void AddImpulse(uint32_t bodyId, const glm::vec3& impulse);
     void SetLinearVelocity(uint32_t bodyId, const glm::vec3& velocity);
+    glm::vec3 GetLinearVelocity(uint32_t bodyId) const;
 
     uint32_t CreateBox(const glm::vec3& halfExtents, const glm::vec3& position, entt::entity entity = entt::null, bool isStatic = false);
     uint32_t CreateSphere(float radius, const glm::vec3& position, entt::entity entity = entt::null, bool isStatic = false);

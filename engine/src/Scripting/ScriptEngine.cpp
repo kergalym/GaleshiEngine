@@ -21,6 +21,8 @@ void ScriptEngine::AddLog(const std::string& msg) {
 bool ScriptEngine::RunScript(const std::string& filepath) {
     try {
         m_lua.script_file(filepath);
+        // A fresh script (including a hot reload) gets its own RunOnce pass.
+        m_runOnceInvoked = false;
         AddLog("Ran script: " + filepath);
         return true;
     } catch (const sol::error& e) {
@@ -236,8 +238,39 @@ bool ScriptEngine::HotReload(const std::string& path) {
 }
 
 void ScriptEngine::Update(float dt) {
+    if (!m_runOnceInvoked) {
+        // Mark as invoked before the call so a failing RunOnce is not retried
+        // every frame. It is reset by the next successful script load/reload.
+        m_runOnceInvoked = true;
+
+        auto runOnceFunc = m_lua["RunOnce"];
+        if (runOnceFunc.valid() && runOnceFunc.get_type() != sol::type::nil) {
+            if (runOnceFunc.get_type() == sol::type::function) {
+                try {
+                    runOnceFunc();
+                } catch (const sol::error& e) {
+                    AddLog(std::string("[RUNONCE ERROR] ") + e.what());
+                }
+            } else {
+                AddLog("[RUNONCE ERROR] RunOnce is not a function");
+            }
+        }
+    }
+
+    // RunAlways is the new per-frame entry point. Keep update(dt) working for
+    // scripts written before the lifecycle callbacks were introduced.
+    auto runAlwaysFunc = m_lua["RunAlways"];
+    if (runAlwaysFunc.valid() && runAlwaysFunc.get_type() == sol::type::function) {
+        try {
+            runAlwaysFunc(dt);
+        } catch (const sol::error& e) {
+            AddLog(std::string("[RUNALWAYS ERROR] ") + e.what());
+        }
+        return;
+    }
+
     auto updateFunc = m_lua["update"];
-    if (updateFunc.valid()) {
+    if (updateFunc.valid() && updateFunc.get_type() == sol::type::function) {
         try {
             updateFunc(dt);
         } catch (const sol::error& e) {

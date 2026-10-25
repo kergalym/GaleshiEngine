@@ -355,16 +355,28 @@ protected:
                 }
             }
         });
-                m_scripts.GetState().set_function("set_velocity", [this](uint32_t eid, float vx, float vy, float vz) {
-            entt::entity e = static_cast<entt::entity>(eid);
-            auto& reg = m_scene.Registry();
-            if (reg.valid(e) && reg.all_of<Galeshi::RigidBodyComponent>(e)) {
-                auto& rb = reg.get<Galeshi::RigidBodyComponent>(e);
-                if (rb.bodyId != 0xFFFFFFFF) {
-                    m_physics->SetLinearVelocity(rb.bodyId, glm::vec3(vx, vy, vz));
+        m_scripts.BindVelocity(
+            [this](uint32_t eid) -> glm::vec3 {
+                entt::entity e = static_cast<entt::entity>(eid);
+                auto& reg = m_scene.Registry();
+                if (reg.valid(e) && reg.all_of<Galeshi::RigidBodyComponent>(e)) {
+                    const auto& rb = reg.get<Galeshi::RigidBodyComponent>(e);
+                    if (rb.bodyId != 0xFFFFFFFF) {
+                        return m_physics->GetLinearVelocity(rb.bodyId);
+                    }
                 }
-            }
-        });
+                return glm::vec3(0.0f);
+            },
+            [this](uint32_t eid, const glm::vec3& velocity) {
+                entt::entity e = static_cast<entt::entity>(eid);
+                auto& reg = m_scene.Registry();
+                if (reg.valid(e) && reg.all_of<Galeshi::RigidBodyComponent>(e)) {
+                    const auto& rb = reg.get<Galeshi::RigidBodyComponent>(e);
+                    if (rb.bodyId != 0xFFFFFFFF) {
+                        m_physics->SetLinearVelocity(rb.bodyId, velocity);
+                    }
+                }
+            });
         m_scripts.BindAudio([this](const std::string& p){ m_audio.PlaySound(p); });
         m_scripts.BindAI();
         m_scripts.BindPhysics([this](const glm::vec3& he, const glm::vec3& pos, entt::entity e) {
