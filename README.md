@@ -1,6 +1,6 @@
 ![GaleshiEngineLogo](./engine/assets/icons/galeshi_engine_logo.png)
 
-![GaleshiEngine](./screenshoots/scrot-2026-10-25-04:47.png)
+![GaleshiEngine](./screenshoots/editor.png)
 
 # GaleshiEngine
 
@@ -285,6 +285,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [ ] Add input axis system for keyboard and mouse ()
 - [ ] Add RunOnce and RunAlways system functions
 - [ ] UI designing system
+- [ ] Standalone one file container build
 
 ### Rendering
 
