@@ -280,7 +280,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [x] Import content (fbx, glTF, textures, wav, mp3 sounds) into project
 - [x] Lua game logic scripting system and editor under viewport (tab system on the right side area of Content browser). Lua bindings to C++ functions
 - [x] Add logo to the left up corner of an editor
-- [ ] Add naming labels to Outliner and Properties panels
+- [x] Add naming labels to Outliner and Properties panels
 - [ ] Show small splash window at startup
 - [ ] Add input axis system for keyboard and mouse ()
 - [ ] Add RunOnce and RunAlways system functions
