@@ -19,14 +19,13 @@ function RunAlways(dt)
     local jump_force = 1000.0
 
     local vel = get_velocity(player)
-    local vx = 0
     local vy = vel.y -- сохраняем гравитацию
-    local vz = 0
 
-    if is_key_down("W") then vz = speed end
-    if is_key_down("S") then vz = -speed end
-    if is_key_down("A") then vx = -speed end
-    if is_key_down("D") then vx = speed end
+    -- Keyboard/mouse axes are configured in Edit -> Preferences.
+    local horizontal = get_axis("Horizontal")
+    local vertical = get_axis("Vertical")
+    local vx = horizontal * speed
+    local vz = vertical * speed
 
     -- Применяем скорость только если двигаемся по X или Z
     if vx ~= 0 or vz ~= 0 then
@@ -34,7 +33,7 @@ function RunAlways(dt)
     end
 
     -- Прыжок
-    if is_key_down("Space") then
+    if get_axis("Jump") > 0.5 then
         if math.abs(vy) < 0.5 then
             log("JUMP!")
             apply_impulse(player, 0, jump_force, 0)
@@ -46,8 +45,9 @@ function RunAlways(dt)
     if log_timer > 1.0 then
         log_timer = 0
         local pos = get_position(player)
-        log("Status: W=" .. tostring(is_key_down("W")) ..
-            " Space=" .. tostring(is_key_down("Space")) ..
+        log("Status: Horizontal=" .. string.format("%.2f", horizontal) ..
+            " Vertical=" .. string.format("%.2f", vertical) ..
+            " Jump=" .. string.format("%.2f", get_axis("Jump")) ..
             " PosY=" .. string.format("%.2f", pos.y))
     end
 end

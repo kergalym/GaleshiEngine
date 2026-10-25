@@ -1,6 +1,7 @@
 #include "GaleshiEngine/Core/Application.hpp"
 #include "GaleshiEngine/Core/ProjectManager.hpp"
 #include "GaleshiEngine/Core/JobSystem.hpp"
+#include "GaleshiEngine/Input/InputAxisSystem.hpp"
 #include "GaleshiEngine/Renderer/Renderer.hpp"
 #include "GaleshiEngine/Renderer/Camera.hpp"
 #include "GaleshiEngine/Renderer/RenderSystem.hpp"
@@ -97,6 +98,13 @@ static const char* LoadingStageText(LoadingState::Stage stage) {
     return "";
 }
 
+struct EditorPreferences {
+    float cameraOrbitSensitivity = 0.01f;
+    float cameraPanSpeed = 10.0f;
+    float cameraZoomSpeed = 0.5f;
+    float cameraFovDegrees = 60.0f;
+};
+
 class GaleshiEditorApp final : public Galeshi::Application {
     Galeshi::AudioSystem m_audio;
     Galeshi::ScriptEngine m_scripts;
@@ -107,6 +115,16 @@ class GaleshiEditorApp final : public Galeshi::Application {
     bool m_iblGenerated = false;
     bool m_projectLoaded = false;
     bool m_resetLayout = false;
+    EditorPreferences m_preferences;
+    enum class PreferencesSection {
+        General,
+        Viewport,
+        InputAxes,
+        About,
+    };
+    PreferencesSection m_preferencesSection = PreferencesSection::General;
+    bool m_showPreferences = false;
+    int m_selectedAxis = 0;
     std::vector<std::string> m_recentProjects;
     bool m_pickingScene = false;
     char m_newProjectName[128] = "MyGame";
@@ -172,6 +190,7 @@ protected:
         }
 
         LoadRecentProjects();
+        LoadPreferences();
         // Check if a .gproj is passed or found in CWD
         if (std::filesystem::exists("project.gproj")) {
             if (Galeshi::ProjectManager::OpenProject("project.gproj")) m_projectLoaded = true;
@@ -222,6 +241,96 @@ protected:
         m_recentProjects.insert(m_recentProjects.begin(), path);
         if (m_recentProjects.size() > 10) m_recentProjects.resize(10);
         SaveRecentProjects();
+    }
+
+    static std::filesystem::path PreferencesPath() {
+        const char* home = std::getenv("HOME");
+        if (!home) return {};
+        return std::filesystem::path(home) / ".galeshi_preferences.json";
+    }
+
+    void LoadPreferences() {
+        const std::filesystem::path path = PreferencesPath();
+        if (path.empty()) return;
+
+        std::ifstream f(path);
+        if (!f.is_open()) return;
+
+        try {
+            nlohmann::json j;
+            f >> j;
+
+            if (j.contains("viewport") && j["viewport"].is_object()) {
+                const auto& viewport = j["viewport"];
+                m_preferences.cameraOrbitSensitivity =
+                    viewport.value("orbit_sensitivity", m_preferences.cameraOrbitSensitivity);
+                m_preferences.cameraPanSpeed =
+                    viewport.value("pan_speed", m_preferences.cameraPanSpeed);
+                m_preferences.cameraZoomSpeed =
+                    viewport.value("zoom_speed", m_preferences.cameraZoomSpeed);
+                m_preferences.cameraFovDegrees =
+                    viewport.value("camera_fov", m_preferences.cameraFovDegrees);
+            }
+
+            if (j.contains("input_axes") && j["input_axes"].is_object()) {
+                const auto& axesJson = j["input_axes"];
+                for (Galeshi::InputAxis& axis : GetInput().Axes()) {
+                    if (!axesJson.contains(axis.name) || !axesJson[axis.name].is_object()) {
+                        continue;
+                    }
+                    const auto& axisJson = axesJson[axis.name];
+                    axis.sensitivity = axisJson.value("sensitivity", axis.sensitivity);
+                    axis.deadZone = axisJson.value("dead_zone", axis.deadZone);
+                    axis.invert = axisJson.value("invert", axis.invert);
+                }
+            }
+        } catch (const std::exception& e) {
+            spdlog::warn("[Preferences] Could not load {}: {}", path.string(), e.what());
+        }
+
+        m_preferences.cameraOrbitSensitivity =
+            std::clamp(m_preferences.cameraOrbitSensitivity, 0.001f, 0.1f);
+        m_preferences.cameraPanSpeed =
+            std::clamp(m_preferences.cameraPanSpeed, 1.0f, 50.0f);
+        m_preferences.cameraZoomSpeed =
+            std::clamp(m_preferences.cameraZoomSpeed, 0.05f, 3.0f);
+        m_preferences.cameraFovDegrees =
+            std::clamp(m_preferences.cameraFovDegrees, 30.0f, 110.0f);
+
+        for (Galeshi::InputAxis& axis : GetInput().Axes()) {
+            axis.sensitivity = std::clamp(axis.sensitivity, 0.001f, 10.0f);
+            axis.deadZone = std::clamp(axis.deadZone, 0.0f, 0.99f);
+        }
+    }
+
+    void SavePreferences() {
+        const std::filesystem::path path = PreferencesPath();
+        if (path.empty()) return;
+
+        nlohmann::json j;
+        j["viewport"] = {
+            {"orbit_sensitivity", m_preferences.cameraOrbitSensitivity},
+            {"pan_speed", m_preferences.cameraPanSpeed},
+            {"zoom_speed", m_preferences.cameraZoomSpeed},
+            {"camera_fov", m_preferences.cameraFovDegrees},
+        };
+
+        nlohmann::json axes = nlohmann::json::object();
+        for (const Galeshi::InputAxis& axis : GetInput().Axes()) {
+            axes[axis.name] = {
+                {"sensitivity", axis.sensitivity},
+                {"dead_zone", axis.deadZone},
+                {"invert", axis.invert},
+            };
+        }
+        j["input_axes"] = axes;
+
+        std::ofstream f(path);
+        if (!f.is_open()) {
+            spdlog::warn("[Preferences] Could not write {}", path.string());
+            return;
+        }
+        f << j.dump(4);
     }
 
     void DrawProjectManager() {
@@ -334,17 +443,22 @@ protected:
         else spdlog::info("[Subsystem] m_physics->Init() done");
         m_scripts.BindFunctions();
         m_scripts.BindECS(m_scene);
-        m_scripts.BindInput([](const std::string& key) -> bool {
-            const bool* state = SDL_GetKeyboardState(nullptr);
-            if (!state) return false;
-            if (key == "W") return state[SDL_SCANCODE_W];
-            if (key == "A") return state[SDL_SCANCODE_A];
-            if (key == "S") return state[SDL_SCANCODE_S];
-            if (key == "D") return state[SDL_SCANCODE_D];
-            if (key == "Space") return state[SDL_SCANCODE_SPACE];
-            if (key == "Shift") return state[SDL_SCANCODE_LSHIFT];
-            return false;
+        m_scripts.BindInput([this](const std::string& key) -> bool {
+            return GetInput().IsKeyDown(key);
         });
+        m_scripts.BindInputAxes(
+            [this](const std::string& axis) {
+                return GetInput().GetAxis(axis);
+            },
+            [this](const std::string& axis) {
+                return GetInput().GetAxisRaw(axis);
+            },
+            [this]() { return GetInput().MousePosition(); },
+            [this]() { return GetInput().MouseDelta(); },
+            [this]() { return GetInput().MouseWheel(); },
+            [this](const std::string& button) {
+                return GetInput().IsMouseButtonDown(button);
+            });
         m_scripts.BindImpulse([this](uint32_t eid, const glm::vec3& impulse) {
             entt::entity e = static_cast<entt::entity>(eid);
             auto& reg = m_scene.Registry();
@@ -439,7 +553,7 @@ protected:
         // Force layout reset to match the tabbed design
         m_resetLayout = true;
 
-        m_camera.SetPerspective(glm::radians(60.0f),
+        m_camera.SetPerspective(glm::radians(m_preferences.cameraFovDegrees),
             static_cast<float>(GetRenderer()->Width()) / static_cast<float>(GetRenderer()->Height()),
             0.1f, 1000.0f);
     }
@@ -512,7 +626,7 @@ protected:
         if (m_viewportHovered) {
             float wheel = ImGui::GetIO().MouseWheel;
             if (wheel != 0.0f) {
-                m_editor.camRadius -= wheel * 0.5f;
+                m_editor.camRadius -= wheel * m_preferences.cameraZoomSpeed;
                 m_editor.camRadius = glm::clamp(m_editor.camRadius, 0.5f, 200.0f);
             }
         }
@@ -520,14 +634,14 @@ protected:
         // Вращение ПКМ
         if (cameraControllable && ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
             auto d = ImGui::GetIO().MouseDelta;
-            m_editor.camYaw   -= d.x * 0.01f;
-            m_editor.camPitch -= d.y * 0.01f;
+            m_editor.camYaw   -= d.x * m_preferences.cameraOrbitSensitivity;
+            m_editor.camPitch -= d.y * m_preferences.cameraOrbitSensitivity;
             m_editor.camPitch  = glm::clamp(m_editor.camPitch, -1.5f, 1.5f);
         }
 
         // Перемещение стрелками
         if (cameraControllable && !ImGui::GetIO().WantTextInput) {
-            float panSpeed = 10.0f * dt;
+            float panSpeed = m_preferences.cameraPanSpeed * dt;
             float yaw = m_editor.camYaw;
             glm::vec3 forward(std::sin(yaw), 0.0f, std::cos(yaw));
             glm::vec3 right(forward.z, 0.0f, -forward.x);
@@ -540,7 +654,7 @@ protected:
         }
 
         const float aspect = m_viewportH ? static_cast<float>(m_viewportW) / m_viewportH : 16.0f / 9.0f;
-        m_camera.SetPerspective(glm::radians(60.0f), aspect, 0.1f, 1000.0f);
+        m_camera.SetPerspective(glm::radians(m_preferences.cameraFovDegrees), aspect, 0.1f, 1000.0f);
         m_camera.Orbit(m_editor.camTarget, m_editor.camYaw, m_editor.camPitch, m_editor.camRadius);
     }
 
@@ -563,6 +677,11 @@ protected:
         DrawMainMenuBar();
 
         // Hotkeys
+        // Preferences works even while a text field is active.
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Comma)) {
+            m_showPreferences = true;
+        }
+
         // Focus Camera on F (works even if some widget is active)
         if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F)) {
             Galeshi::Entity sel = m_editor.Selected(&m_scene);
@@ -604,6 +723,7 @@ protected:
         DrawLuaEditor();
         DrawLuaConsole();
         DrawScriptComponents();
+        DrawPreferencesWindow();
 
         // File Picker (модальный)
         
@@ -644,6 +764,8 @@ protected:
 
         // Автосохранение ОТКЛЮЧЕНО. Сцена сохраняется только вручную
         // через File -> Save Scene (Ctrl+S).
+
+        SavePreferences();
 
         // Выходим без очистки GPU (иначе NVIDIA deadlock)
         SDL_Quit();
@@ -876,6 +998,270 @@ private:
         ImGui::PopStyleVar();
     }
 
+    // -------------------------------------------------------------------
+    // Preferences
+    // -------------------------------------------------------------------
+    void DrawPreferencesWindow() {
+        if (!m_showPreferences) return;
+
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(
+            ImVec2(viewport->Pos.x + viewport->Size.x * 0.5f,
+                   viewport->Pos.y + viewport->Size.y * 0.5f),
+            ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(920.0f, 600.0f), ImGuiCond_FirstUseEver);
+
+        if (!ImGui::Begin("Preferences", &m_showPreferences,
+                          ImGuiWindowFlags_NoDocking |
+                              ImGuiWindowFlags_NoCollapse)) {
+            ImGui::End();
+            if (!m_showPreferences) SavePreferences();
+            return;
+        }
+
+        ImGui::BeginChild("##PreferencesSidebar", ImVec2(210.0f, 0.0f), true);
+        ImGui::TextDisabled("PREFERENCES");
+        ImGui::Spacing();
+
+        auto sidebarItem = [this](const char* label, PreferencesSection section) {
+            if (ImGui::Selectable(label, m_preferencesSection == section,
+                                  ImGuiSelectableFlags_None, ImVec2(0.0f, 28.0f))) {
+                m_preferencesSection = section;
+            }
+        };
+
+        sidebarItem("General", PreferencesSection::General);
+        sidebarItem("Viewport", PreferencesSection::Viewport);
+        sidebarItem("Input Axes", PreferencesSection::InputAxes);
+        sidebarItem("About", PreferencesSection::About);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextDisabled("Camera and input settings");
+        ImGui::TextDisabled("apply immediately.");
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+        ImGui::BeginChild("##PreferencesContent", ImVec2(0.0f, 0.0f), false);
+
+        switch (m_preferencesSection) {
+        case PreferencesSection::General: {
+            ImGui::Text("General");
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            const std::string projectName =
+                Galeshi::ProjectManager::IsProjectOpen()
+                    ? Galeshi::ProjectManager::GetProjectName()
+                    : std::string();
+            const std::string projectPath =
+                Galeshi::ProjectManager::IsProjectOpen()
+                    ? Galeshi::ProjectManager::GetProjectPath()
+                    : std::string();
+
+            ImGui::Text("Project");
+            ImGui::TextDisabled("%s",
+                                projectName.empty() ? "No project open"
+                                                    : projectName.c_str());
+            if (!projectPath.empty()) {
+                ImGui::TextWrapped("Path: %s", projectPath.c_str());
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Text("Editor");
+            if (ImGui::Button("Reset Editor Layout", ImVec2(190.0f, 0.0f))) {
+                m_resetLayout = true;
+            }
+            ImGui::TextDisabled("The dock layout is rebuilt on the next frame.");
+
+            ImGui::Spacing();
+            if (ImGui::Button("Reset All Preferences", ImVec2(190.0f, 0.0f))) {
+                m_preferences = EditorPreferences{};
+                GetInput().ResetDefaults();
+                m_selectedAxis = 0;
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::TextWrapped(
+                "Preferences are saved when this window closes and when the "
+                "editor exits.");
+            const std::filesystem::path path = PreferencesPath();
+            if (!path.empty()) {
+                ImGui::TextDisabled("%s", path.string().c_str());
+            }
+            break;
+        }
+
+        case PreferencesSection::Viewport: {
+            ImGui::Text("Viewport");
+            ImGui::Separator();
+            ImGui::TextWrapped(
+                "Control the editor camera. These settings do not change the "
+                "game camera.");
+            ImGui::Spacing();
+
+            ImGui::SetNextItemWidth(260.0f);
+            ImGui::SliderFloat("Orbit sensitivity",
+                               &m_preferences.cameraOrbitSensitivity,
+                               0.001f, 0.05f, "%.3f");
+            ImGui::SetNextItemWidth(260.0f);
+            ImGui::SliderFloat("Pan speed", &m_preferences.cameraPanSpeed,
+                               1.0f, 50.0f, "%.1f");
+            ImGui::SetNextItemWidth(260.0f);
+            ImGui::SliderFloat("Zoom speed", &m_preferences.cameraZoomSpeed,
+                               0.05f, 3.0f, "%.2f");
+            ImGui::SetNextItemWidth(260.0f);
+            ImGui::SliderFloat("Field of view", &m_preferences.cameraFovDegrees,
+                               30.0f, 110.0f, "%.0f deg");
+
+            ImGui::Spacing();
+            if (ImGui::Button("Restore Viewport Defaults",
+                              ImVec2(190.0f, 0.0f))) {
+                m_preferences = EditorPreferences{};
+            }
+            ImGui::TextDisabled("Right mouse drag orbits; arrow keys pan.");
+            break;
+        }
+
+        case PreferencesSection::InputAxes: {
+            ImGui::Text("Input Axes");
+            ImGui::Separator();
+            ImGui::TextWrapped(
+                "Axes combine keyboard keys and mouse input. Scripts can read "
+                "them with get_axis(name); use get_axis_raw(name) for the value "
+                "before the dead zone.");
+
+            ImGui::Spacing();
+            if (ImGui::Button("Reset Input Axes", ImVec2(150.0f, 0.0f))) {
+                GetInput().ResetDefaults();
+                m_selectedAxis = 0;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("Defaults: Horizontal, Vertical, Jump, Mouse X/Y, Wheel");
+
+            auto& axes = GetInput().Axes();
+            if (axes.empty()) {
+                ImGui::TextDisabled("No axes registered.");
+                break;
+            }
+
+            if (m_selectedAxis < 0 ||
+                m_selectedAxis >= static_cast<int>(axes.size())) {
+                m_selectedAxis = 0;
+            }
+
+            const ImGuiTableFlags tableFlags =
+                ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg |
+                ImGuiTableFlags_SizingStretchProp;
+            if (ImGui::BeginTable("##InputAxes", 3, tableFlags)) {
+                ImGui::TableSetupColumn("Axis");
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthFixed,
+                                        70.0f);
+                ImGui::TableSetupColumn("Sensitivity",
+                                        ImGuiTableColumnFlags_WidthFixed, 150.0f);
+                ImGui::TableHeadersRow();
+
+                for (int i = 0; i < static_cast<int>(axes.size()); ++i) {
+                    Galeshi::InputAxis& axis = axes[static_cast<size_t>(i)];
+                    ImGui::PushID(i);
+                    ImGui::TableNextRow();
+
+                    ImGui::TableSetColumnIndex(0);
+                    if (ImGui::Selectable(axis.name.c_str(),
+                                          m_selectedAxis == i,
+                                          ImGuiSelectableFlags_None,
+                                          ImVec2(0.0f, 22.0f))) {
+                        m_selectedAxis = i;
+                    }
+
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::Text("%+.2f", axis.value);
+
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::DragFloat("##sensitivity", &axis.sensitivity,
+                                     0.01f, 0.01f, 10.0f, "%.2f");
+                    ImGui::PopID();
+                }
+                ImGui::EndTable();
+            }
+
+            Galeshi::InputAxis& selected =
+                axes[static_cast<size_t>(m_selectedAxis)];
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Text("%s settings", selected.name.c_str());
+
+            ImGui::SetNextItemWidth(220.0f);
+            ImGui::SliderFloat("Dead zone", &selected.deadZone, 0.0f, 0.95f,
+                               "%.3f");
+            ImGui::Checkbox("Invert value", &selected.invert);
+
+            std::string positive;
+            std::string negative;
+            for (const Galeshi::InputAxisBinding& binding : selected.bindings) {
+                const std::string label =
+                    Galeshi::InputAxisSystem::BindingLabel(binding);
+                if (binding.direction >= 0.0f) {
+                    if (!positive.empty()) positive += ", ";
+                    positive += label;
+                } else {
+                    if (!negative.empty()) negative += ", ";
+                    negative += label;
+                }
+            }
+            if (selected.mouseSource != Galeshi::InputMouseSource::None) {
+                if (!positive.empty()) positive += ", ";
+                positive += Galeshi::InputAxisSystem::MouseSourceLabel(
+                    selected.mouseSource);
+            }
+
+            ImGui::Text("Positive: %s", positive.empty() ? "None" : positive.c_str());
+            ImGui::Text("Negative: %s", negative.empty() ? "None" : negative.c_str());
+
+            const glm::vec2 mouse = GetInput().MousePosition();
+            const glm::vec2 mouseDelta = GetInput().MouseDelta();
+            ImGui::Spacing();
+            ImGui::TextDisabled("Mouse: (%.0f, %.0f)  delta: (%.1f, %.1f)  wheel: %.2f",
+                                mouse.x, mouse.y, mouseDelta.x, mouseDelta.y,
+                                GetInput().MouseWheel());
+            ImGui::TextDisabled(
+                "Mouse axes report per-frame deltas; use them directly for "
+                "look input.");
+            break;
+        }
+
+        case PreferencesSection::About: {
+            ImGui::Text("About");
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::Text("GaleshiEngine");
+            ImGui::TextDisabled("Version 0.2.0 - pre-alpha");
+            ImGui::Separator();
+            ImGui::TextWrapped(
+                "A minimalist ECS game engine and editor written in C++20. "
+                "It targets Linux/X11 and uses bgfx with a Vulkan backend.");
+            ImGui::Spacing();
+            ImGui::TextDisabled("Renderer: bgfx / Vulkan");
+            ImGui::TextDisabled("Scripting: Lua (sol2)");
+            ImGui::TextDisabled("Dear ImGui %s", IMGUI_VERSION);
+            ImGui::Spacing();
+            ImGui::TextDisabled("Input axes: %d",
+                              static_cast<int>(GetInput().Axes().size()));
+            break;
+        }
+        }
+
+        ImGui::EndChild();
+        ImGui::End();
+
+        if (!m_showPreferences) {
+            SavePreferences();
+        }
+    }
+
     void DrawMainMenuBar() {
         // The initial 22 px badge plus the requested size increases.
         constexpr float kLogoSize = 57.0f;
@@ -978,7 +1364,7 @@ if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Load Scene", "Ctrl+O")) LoadScene();
                 if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveScene();
             ImGui::Separator();
-            if (ImGui::MenuItem("Exit")) std::exit(0);
+            if (ImGui::MenuItem("Exit")) RequestExit();
             ImGui::EndMenu();
         }
         
@@ -989,6 +1375,8 @@ if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Translate", "W")) m_editor.SetMode(Galeshi::GizmoMode::Translate);
             if (ImGui::MenuItem("Rotate",    "E")) m_editor.SetMode(Galeshi::GizmoMode::Rotate);
             if (ImGui::MenuItem("Scale",     "R")) m_editor.SetMode(Galeshi::GizmoMode::Scale);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Preferences...", "Ctrl+,")) m_showPreferences = true;
             ImGui::EndMenu();
         }
 
@@ -2144,7 +2532,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 glm::vec3 camPos = m_camera.Position();
                 float dist = glm::length(selWorldPos - camPos);
                 dist = std::max(dist, 0.5f);
-                const float fovY = glm::radians(60.0f);  // matches SetPerspective
+                const float fovY = glm::radians(m_preferences.cameraFovDegrees);  // matches SetPerspective
                 const float worldPerPx = (2.0f * std::tan(fovY * 0.5f) * dist) /
                                          static_cast<float>(h);
 

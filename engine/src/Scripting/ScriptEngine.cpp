@@ -100,6 +100,43 @@ void ScriptEngine::BindInput(std::function<bool(const std::string&)> isKeyDown) 
     m_lua.set_function("is_key_down", isKeyDown);
 }
 
+void ScriptEngine::BindInputAxes(
+    std::function<float(const std::string&)> getAxis,
+    std::function<float(const std::string&)> getAxisRaw,
+    std::function<glm::vec2()> getMousePosition,
+    std::function<glm::vec2()> getMouseDelta,
+    std::function<float()> getMouseWheel,
+    std::function<bool(const std::string&)> isMouseButtonDown) {
+    m_lua.set_function("get_axis", [getAxis](const std::string& name) {
+        return getAxis ? getAxis(name) : 0.0f;
+    });
+    m_lua.set_function("get_axis_raw", [getAxisRaw](const std::string& name) {
+        return getAxisRaw ? getAxisRaw(name) : 0.0f;
+    });
+
+    m_lua.set_function("get_mouse_position", [this, getMousePosition]() -> sol::table {
+        sol::table t = m_lua.create_table();
+        const glm::vec2 position = getMousePosition ? getMousePosition() : glm::vec2(0.0f);
+        t["x"] = position.x;
+        t["y"] = position.y;
+        return t;
+    });
+    m_lua.set_function("get_mouse_delta", [this, getMouseDelta]() -> sol::table {
+        sol::table t = m_lua.create_table();
+        const glm::vec2 delta = getMouseDelta ? getMouseDelta() : glm::vec2(0.0f);
+        t["x"] = delta.x;
+        t["y"] = delta.y;
+        return t;
+    });
+    m_lua.set_function("get_mouse_wheel", [getMouseWheel]() {
+        return getMouseWheel ? getMouseWheel() : 0.0f;
+    });
+    m_lua.set_function("is_mouse_button_down",
+                       [isMouseButtonDown](const std::string& button) {
+                           return isMouseButtonDown ? isMouseButtonDown(button) : false;
+                       });
+}
+
 void ScriptEngine::BindVelocity(std::function<glm::vec3(uint32_t)> getVel, std::function<void(uint32_t, const glm::vec3&)> setVel) {
     m_lua.set_function("get_velocity", [this, getVel](uint32_t eid) -> sol::table {
         sol::table t = m_lua.create_table();

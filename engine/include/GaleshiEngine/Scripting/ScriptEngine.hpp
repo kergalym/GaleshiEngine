@@ -22,6 +22,13 @@ public:
     void BindAI();
     void BindECS(Scene& scene);
     void BindInput(std::function<bool(const std::string&)> isKeyDown);
+    void BindInputAxes(
+        std::function<float(const std::string&)> getAxis,
+        std::function<float(const std::string&)> getAxisRaw,
+        std::function<glm::vec2()> getMousePosition,
+        std::function<glm::vec2()> getMouseDelta,
+        std::function<float()> getMouseWheel,
+        std::function<bool(const std::string&)> isMouseButtonDown);
     void BindVelocity(std::function<glm::vec3(uint32_t)> getVel, std::function<void(uint32_t, const glm::vec3&)> setVel);
     void BindAudio(std::function<void(const std::string&)> playSound);
     void BindPhysics(std::function<uint32_t(const glm::vec3&, const glm::vec3&, entt::entity)> createBox);

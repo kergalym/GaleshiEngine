@@ -15,6 +15,7 @@ GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20
 | System | Status | Notes |
 | --- | --- | --- |
 | Window and input | Working | SDL3 |
+| Input axes | Working | Keyboard, mouse movement, wheel; tunable in Edit -> Preferences |
 | Scene and ECS | Working | EnTT, parent-child transforms, entity lifecycle |
 | Renderer core | Working | bgfx with the Vulkan backend |
 | Deferred PBR | Working | Metallic-roughness PBR with G-Buffer |
@@ -28,7 +29,7 @@ GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20
 | Scripting | Working | Lua 5.4 through sol2, hot reload, animation/AI state control |
 | Audio | Working | miniaudio, 2D playback and looping |
 | Asset import | Working | Assimp FBX/glTF, PBR materials, skeletal animation |
-| Editor | Working | Docking UI, viewport, outliner, details, content browser |
+| Editor | Working | Docking UI, viewport, outliner, details, content browser, and Preferences |
 | Gizmo | Partial | ImGuizmo is rendered, but its transform is not applied |
 | Glass material | WIP | Shader and UI flag exist, render pass is not connected |
 | Scene serialization | Working | ECS, materials, landscape/vegetation, animation, and AI components |
@@ -107,7 +108,8 @@ Squad coordination and shared blackboards are not implemented.
 - Lifecycle callbacks: `RunOnce()` runs once after the script is loaded (and again after each successful hot reload), then `RunAlways(dt)` runs every frame. The legacy `update(dt)` callback is used as a fallback when `RunAlways` is not defined.
 - Entity creation and destruction.
 - Transform access: `set_position`, `get_position`, `translate`.
-- Input queries and physics helpers.
+- Input axes and mouse helpers. `get_axis(name)` and `get_axis_raw(name)` read the configured axes; `get_mouse_position()`, `get_mouse_delta()`, `get_mouse_wheel()`, and `is_mouse_button_down(button)` expose raw mouse state.
+- The default axes are `Horizontal`, `Vertical`, `Jump`, `Mouse X`, `Mouse Y`, and `Mouse ScrollWheel`. Axes can be tuned in Edit -> Preferences (sensitivity, dead zone, inversion).
 - Impulse and velocity control.
 - Sound playback.
 - Navigation commands for AI agents.
@@ -286,6 +288,7 @@ Packaging is experimental:
 | Ctrl+S | Save the scene |
 | Ctrl+O | Load a scene |
 | Ctrl+Z / Ctrl+Y | Undo / Redo |
+| Ctrl+, | Open Preferences |
 | F5 | Hot-reload `assets/scripts/init.lua` |
 
 The ImGuizmo handles are visible, but only the center-marker drag currently modifies the scene.
@@ -306,7 +309,6 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 ### Editor and data
 
 - [x] Complete scene serialization for all ECS components.
-- [ ] Add project/start-scene loading to game mode.
 - [x] Landscape formation tools and tree/grass instancing
 - [x] Scene loading progress bar dialog
 - [x] Separate project implementation and resources (show project creating or selecting window at startup)
@@ -315,7 +317,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [x] Add logo to the left up corner of an editor
 - [x] Add naming labels to Outliner and Properties panels
 - [x] Show small splash window at startup
-- [ ] Add input axis system for keyboard and mouse ()
+- [x] Add input axis system for keyboard and mouse
 - [x] Add RunOnce and RunAlways system functions
 - [ ] UI designing system
 - [x] Standalone one file container build (AppImage for the editor)

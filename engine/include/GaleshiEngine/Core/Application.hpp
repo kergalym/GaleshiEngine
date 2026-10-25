@@ -6,6 +6,7 @@
 namespace Galeshi {
 
 class Renderer;
+class InputAxisSystem;
 
 struct ApplicationSpec {
     std::string name   = "GaleshiEngine App";
@@ -26,8 +27,10 @@ public:
     Application& operator=(const Application&) = delete;
 
     int Run();
+    void RequestExit();
 
     Renderer* GetRenderer() const;
+    InputAxisSystem& GetInput();
 
 protected:
     virtual void OnStart()          {}

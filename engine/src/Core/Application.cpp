@@ -1,4 +1,5 @@
 #include "GaleshiEngine/Core/Application.hpp"
+#include "GaleshiEngine/Input/InputAxisSystem.hpp"
 #include "GaleshiEngine/Renderer/Renderer.hpp"
 #include "GaleshiEngine/Renderer/ImGuiBgfx.hpp"
 
@@ -214,6 +215,7 @@ struct Application::Impl {
     Uint64          lastCounter = 0;
     double          freq = 0.0;
     std::unique_ptr<Renderer> renderer;
+    InputAxisSystem input;
 };
 
 Application::Application(const ApplicationSpec& spec)
@@ -336,7 +338,11 @@ Application::~Application() {
     SDL_Quit();
 }
 
+void Application::RequestExit() { m_impl->running = false; }
+
 Renderer* Application::GetRenderer() const { return m_impl->renderer.get(); }
+
+InputAxisSystem& Application::GetInput() { return m_impl->input; }
 
 int Application::Run() {
     OnStart();
@@ -345,6 +351,7 @@ int Application::Run() {
     while (m_impl->running && !Galeshi::g_interrupted.load()) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            m_impl->input.ProcessEvent(e);
             ImGui_ImplSDL3_ProcessEvent(&e);
             if (e.type == SDL_EVENT_QUIT) m_impl->running = false;
             if (e.type == SDL_EVENT_DROP_FILE) OnFileDrop(e.drop.data);
@@ -363,6 +370,7 @@ int Application::Run() {
         const float dt = static_cast<float>((now - m_impl->lastCounter) / m_impl->freq);
         m_impl->lastCounter = now;
 
+        m_impl->input.Update(dt);
         OnUpdate(dt);
 
         ImGui_ImplSDL3_NewFrame();
