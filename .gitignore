@@ -34,3 +34,6 @@ build/**/shaders/*.bin
 aider_run.sh
 galeshi_chat
 engine/assets/meshes/*
+# Local packaging tools and artifacts
+.tools/
+dist/

@@ -281,6 +281,7 @@ Application::Application(const ApplicationSpec& spec)
 #endif
 
     const char* fontPaths[] = {
+        "assets/fonts/DejaVuSans.ttf",
         "/usr/share/fonts/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/TTF/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",

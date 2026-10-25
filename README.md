@@ -32,7 +32,7 @@ GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20
 | Gizmo | Partial | ImGuizmo is rendered, but its transform is not applied |
 | Glass material | WIP | Shader and UI flag exist, render pass is not connected |
 | Scene serialization | Working | ECS, materials, landscape/vegetation, animation, and AI components |
-| Runtime and packaging | Partial | Runtime target is a stub; packaging uses the editor binary |
+| Runtime and packaging | Partial | Runtime target is a stub; the editor can be packaged as an AppImage |
 | Automated tests | None | `BUILD_TESTING` is disabled |
 
 ---
@@ -202,8 +202,26 @@ Optional flags:
 ```bash
 cmake --preset release --fresh
 cmake --build --preset release -j"$(nproc)"
-./build/debug/bin/GaleshiEditor
+./build/release/bin/GaleshiEditor
 ```
+
+### AppImage (single-file editor)
+
+The editor can be packaged as a single-file AppImage that contains the executable, engine assets, shaders, the bundled DejaVu Sans font, and the non-system shared libraries:
+
+```bash
+./scripts/package_engine_appimage.sh
+./dist/GaleshiEngine-x86_64.AppImage
+```
+
+The script builds the release preset by default. Set `SKIP_BUILD=1` to reuse an existing `build/release`. On first use it downloads `linuxdeploy` and `appimagetool` into `.tools/` and produces the image in `dist/`.
+
+Requirements and caveats:
+
+- Linux x86_64 with a working Vulkan driver and X11 or XWayland. GPU drivers, Vulkan ICDs, FreeType, and core system libraries are host-provided and cannot be bundled.
+- Direct execution uses FUSE. On systems without it, run the image with `--appimage-extract-and-run` or set `APPIMAGE_EXTRACT_AND_RUN=1`.
+- The image is built against the host glibc. For distribution to older systems, build it in an older environment such as Ubuntu 22.04.
+- The AppImage bundles the editor, not a game project. Project files remain external and are opened through the Project Manager.
 
 ### CLI helper
 
@@ -285,7 +303,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [ ] Add input axis system for keyboard and mouse ()
 - [ ] Add RunOnce and RunAlways system functions
 - [ ] UI designing system
-- [ ] Standalone one file container build
+- [x] Standalone one file container build (AppImage for the editor)
 
 ### Rendering
 
@@ -336,6 +354,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 | Lua | [Lua](https://www.lua.org/) | MIT |
 | Audio | [miniaudio](https://github.com/mackron/miniaudio) | Public domain / MIT-0 |
 | Font rendering | [FreeType](https://freetype.org/) | FreeType License / GPLv2 |
+| UI font | [DejaVu Sans](https://dejavu-fonts.github.io/) | Bitstream Vera License / public domain |
 
 ## Credits
 

@@ -117,6 +117,14 @@ set(ASSIMP_BUILD_ZLIB                 OFF CACHE BOOL "" FORCE)
 set(ASSIMP_USE_HUNTER                 OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(assimp)
 
+# Some distributions install minizip headers under include/minizip while their
+# minizip.pc still advertises include/. assimp includes <unzip.h> directly, so
+# point it at the directory that actually contains the header.
+find_path(GALESHI_MINIZIP_INCLUDE_DIR NAMES unzip.h PATH_SUFFIXES minizip)
+if(GALESHI_MINIZIP_INCLUDE_DIR AND TARGET assimp)
+    target_include_directories(assimp PRIVATE "${GALESHI_MINIZIP_INCLUDE_DIR}")
+endif()
+
 
 
 # --- RecastNavigation ---

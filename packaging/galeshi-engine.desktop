@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Galeshi Engine
+GenericName=Game Engine Editor
+Comment=Galeshi Engine editor
+Exec=GaleshiEditor
+Icon=galeshi-engine
+Terminal=false
+Categories=Development;IDE;
+Keywords=game;engine;editor;galeshi;
+StartupWMClass=GaleshiEditor
