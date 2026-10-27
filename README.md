@@ -30,10 +30,11 @@ GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20
 | Audio | Working | miniaudio, 2D playback and looping |
 | Asset import | Working | Assimp FBX/glTF, PBR materials, skeletal animation |
 | Editor | Working | Docking UI, viewport, outliner, details, content browser, and Preferences |
+| UI Designer | ✅ Done | Canvas overlay, widget palette (Panel, Text, Button, Image, Slider, Checkbox, Progress, Input, Dropdown, Scroll, Toggle, Layout), live preview, and serialized UI widgets |
 | Gizmo | Partial | ImGuizmo is rendered, but its transform is not applied |
 | Glass material | WIP | Shader and UI flag exist, render pass is not connected |
 | Scene serialization | Working | ECS, materials, landscape/vegetation, animation, and AI components |
-| Runtime and packaging | Partial | Runtime target is a stub; the editor can be packaged as an AppImage |
+| Runtime and packaging | ✅ Done | GameMode is a real editor runtime (`--game <gproj>`) that opens the project, loads `startScene`, and starts playing; AppImage packaging is available |
 | Automated tests | None | `BUILD_TESTING` is disabled |
 
 ---
@@ -214,6 +215,16 @@ Optional flags:
 
 `--debug` enables verbose logging. `--game` hides the editor panels and runs the viewport in game mode, but it still uses the editor executable.
 
+### GaleshiRuntime
+
+```bash
+cmake --preset debug --fresh
+cmake --build --preset debug -j"$(nproc)"
+./build/debug/bin/GaleshiRuntime
+```
+
+`GaleshiRuntime` is a standalone editor runtime target. It accepts `--game <path>.gproj` to open a project and load its `startScene`, and runs the scene directly without the full editor UI.
+
 ### Release build
 
 ```bash
@@ -319,7 +330,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [x] Show small splash window at startup
 - [x] Add input axis system for keyboard and mouse
 - [x] Add RunOnce and RunAlways system functions
-- [ ] UI designing system
+- [x] UI designing system
 - [x] Standalone one file container build (AppImage for the editor)
 
 ### Rendering
