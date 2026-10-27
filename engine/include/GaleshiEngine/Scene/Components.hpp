@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "GaleshiEngine/UI/UIWidgets.hpp"
+
 namespace Galeshi {
 
 class Mesh;
@@ -311,4 +313,11 @@ struct SpotLightComponent {
     glm::vec3 color = {1.0f, 1.0f, 1.0f};      // Цвет
     float intensity = 1.0f;        // Интенсивность
 };
+
+// Screen-space UI canvas.  Rendered by UIRuntime through ImGui; the widget
+// list is authored in the editor or loaded from the scene file.
+struct UICanvasComponent {
+    UICanvas canvas;
+};
+
 } // namespace Galeshi

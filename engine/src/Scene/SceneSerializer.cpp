@@ -429,6 +429,66 @@ std::string SceneSerializer::SaveToString() const {
                 {"autoplay", audio.autoplay}
             };
         }
+        if (reg.all_of<UICanvasComponent>(handle)) {
+            const auto& uiCanvas = reg.get<UICanvasComponent>(handle).canvas;
+            json widgets = json::array();
+            for (const auto& widget : uiCanvas.widgets) {
+                widgets.push_back({
+                    {"id", widget.id},
+                    {"label", widget.label},
+                    {"type", static_cast<int>(widget.type)},
+                    {"parent", widget.parent},
+                    {"zOrder", widget.zOrder},
+                    {"position", {widget.position.x, widget.position.y}},
+                    {"size", {widget.size.x, widget.size.y}},
+                    {"anchorPreset", static_cast<int>(widget.anchorPreset)},
+                    {"anchorMin", {widget.anchorMin.x, widget.anchorMin.y}},
+                    {"anchorMax", {widget.anchorMax.x, widget.anchorMax.y}},
+                    {"pivot", {widget.pivot.x, widget.pivot.y}},
+                    {"visible", widget.visible},
+                    {"enabled", widget.enabled},
+                    {"interactable", widget.interactable},
+                    {"blockInput", widget.blockInput},
+                    {"locked", widget.locked},
+                    {"opacity", widget.opacity},
+                    {"buttonHeight", widget.buttonHeight},
+                    {"sliderMin", widget.sliderMin},
+                    {"sliderMax", widget.sliderMax},
+                    {"sliderValue", widget.sliderValue},
+                    {"checked", widget.checked},
+                    {"maxChars", widget.maxChars},
+                    {"imagePath", widget.imagePath},
+                    {"useColor", widget.useColor},
+                    {"color", Vec4ToJson(widget.color)},
+                    {"radius", widget.radius},
+                    {"border", widget.border},
+                    {"onShow", widget.onShow},
+                    {"onHover", widget.onHover},
+                    {"onClick", widget.onClick}
+                });
+            }
+            je["uiCanvas"] = {
+                {"canvasId", uiCanvas.canvasId},
+                {"title", uiCanvas.title},
+                {"screenPosition", {uiCanvas.screenPosition.x, uiCanvas.screenPosition.y}},
+                {"screenSize", {uiCanvas.screenSize.x, uiCanvas.screenSize.y}},
+                {"resizable", uiCanvas.resizable},
+                {"movable", uiCanvas.movable},
+                {"closeable", uiCanvas.closeable},
+                {"visible", uiCanvas.visible},
+                {"backgroundAlpha", uiCanvas.backgroundAlpha},
+                {"renderMode", static_cast<int>(uiCanvas.renderMode)},
+                {"referenceResolution", {uiCanvas.referenceResolution.x, uiCanvas.referenceResolution.y}},
+                {"scaleMode", static_cast<int>(uiCanvas.scaleMode)},
+                {"matchWidthOrHeight", uiCanvas.matchWidthOrHeight},
+                {"pixelPerfect", uiCanvas.pixelPerfect},
+                {"sortOrder", uiCanvas.sortOrder},
+                {"onMenuOpen", uiCanvas.onMenuOpen},
+                {"onMenuHover", uiCanvas.onMenuHover},
+                {"onMenuClick", uiCanvas.onMenuClick},
+                {"widgets", std::move(widgets)}
+            };
+        }
         if (reg.all_of<RigidBodyComponent>(handle)) {
             const auto& rb = reg.get<RigidBodyComponent>(handle);
             const char* motionType = "Dynamic";
@@ -912,6 +972,103 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             audio.loop = ja.value("loop", false);
             audio.autoplay = ja.value("autoplay", false);
             audio.playing = false;
+        }
+        if (je.contains("uiCanvas") && je["uiCanvas"].is_object()) {
+            const auto& jc = je["uiCanvas"];
+            auto& uiCanvas = e.AddComponent<UICanvasComponent>().canvas;
+            uiCanvas.canvasId = jc.value("canvasId", std::string("Canvas"));
+            uiCanvas.title = jc.value("title", std::string("UI"));
+            if (jc.contains("screenPosition") && jc["screenPosition"].is_array() &&
+                jc["screenPosition"].size() >= 2) {
+                uiCanvas.screenPosition = {jc["screenPosition"][0].get<float>(),
+                                           jc["screenPosition"][1].get<float>()};
+            }
+            if (jc.contains("screenSize") && jc["screenSize"].is_array() &&
+                jc["screenSize"].size() >= 2) {
+                uiCanvas.screenSize = {jc["screenSize"][0].get<float>(),
+                                       jc["screenSize"][1].get<float>()};
+            }
+            uiCanvas.resizable = jc.value("resizable", true);
+            uiCanvas.movable = jc.value("movable", true);
+            uiCanvas.closeable = jc.value("closeable", true);
+            uiCanvas.visible = jc.value("visible", true);
+            uiCanvas.backgroundAlpha = jc.value("backgroundAlpha", 1.0f);
+            uiCanvas.renderMode = static_cast<UICanvasRenderMode>(
+                std::clamp(jc.value("renderMode", 0), 0, 2));
+            if (jc.contains("referenceResolution") &&
+                jc["referenceResolution"].is_array() &&
+                jc["referenceResolution"].size() >= 2) {
+                uiCanvas.referenceResolution = {
+                    jc["referenceResolution"][0].get<int>(),
+                    jc["referenceResolution"][1].get<int>()};
+            }
+            uiCanvas.scaleMode = static_cast<UICanvasScaleMode>(
+                std::clamp(jc.value("scaleMode", 0), 0, 1));
+            uiCanvas.matchWidthOrHeight = jc.value("matchWidthOrHeight", 0.5f);
+            uiCanvas.pixelPerfect = jc.value("pixelPerfect", false);
+            uiCanvas.sortOrder = jc.value("sortOrder", 0);
+            uiCanvas.onMenuOpen = jc.value("onMenuOpen", std::string{});
+            uiCanvas.onMenuHover = jc.value("onMenuHover", std::string{});
+            uiCanvas.onMenuClick = jc.value("onMenuClick", std::string{});
+            if (jc.contains("widgets") && jc["widgets"].is_array()) {
+                for (const auto& jw : jc["widgets"]) {
+                    UIWidget widget;
+                    widget.id = jw.value("id", std::string("widget"));
+                    widget.label = jw.value("label", std::string("Widget"));
+                    widget.type = static_cast<UIWidgetType>(
+                        std::clamp(jw.value("type", 0), 0, 12));
+                    widget.parent = jw.value("parent", -1);
+                    widget.zOrder = jw.value("zOrder", 0);
+                    if (jw.contains("position") && jw["position"].is_array() &&
+                        jw["position"].size() >= 2) {
+                        widget.position = {jw["position"][0].get<float>(),
+                                           jw["position"][1].get<float>()};
+                    }
+                    if (jw.contains("size") && jw["size"].is_array() &&
+                        jw["size"].size() >= 2) {
+                        widget.size = {jw["size"][0].get<float>(),
+                                       jw["size"][1].get<float>()};
+                    }
+                    widget.anchorPreset = static_cast<UIAnchorPreset>(
+                        std::clamp(jw.value("anchorPreset", 0), 0, 11));
+                    if (jw.contains("anchorMin") && jw["anchorMin"].is_array() &&
+                        jw["anchorMin"].size() >= 2) {
+                        widget.anchorMin = {jw["anchorMin"][0].get<float>(),
+                                            jw["anchorMin"][1].get<float>()};
+                    }
+                    if (jw.contains("anchorMax") && jw["anchorMax"].is_array() &&
+                        jw["anchorMax"].size() >= 2) {
+                        widget.anchorMax = {jw["anchorMax"][0].get<float>(),
+                                            jw["anchorMax"][1].get<float>()};
+                    }
+                    if (jw.contains("pivot") && jw["pivot"].is_array() &&
+                        jw["pivot"].size() >= 2) {
+                        widget.pivot = {jw["pivot"][0].get<float>(),
+                                        jw["pivot"][1].get<float>()};
+                    }
+                    widget.visible = jw.value("visible", true);
+                    widget.enabled = jw.value("enabled", true);
+                    widget.interactable = jw.value("interactable", true);
+                    widget.blockInput = jw.value("blockInput", true);
+                    widget.locked = jw.value("locked", false);
+                    widget.opacity = jw.value("opacity", 1.0f);
+                    widget.buttonHeight = jw.value("buttonHeight", 30.0f);
+                    widget.sliderMin = jw.value("sliderMin", 0.0f);
+                    widget.sliderMax = jw.value("sliderMax", 1.0f);
+                    widget.sliderValue = jw.value("sliderValue", 0.5f);
+                    widget.checked = jw.value("checked", false);
+                    widget.maxChars = jw.value("maxChars", 128);
+                    widget.imagePath = jw.value("imagePath", std::string{});
+                    widget.useColor = jw.value("useColor", false);
+                    if (jw.contains("color")) widget.color = Vec4FromJson(jw.at("color"));
+                    widget.radius = jw.value("radius", 0.0f);
+                    widget.border = jw.value("border", 0.0f);
+                    widget.onShow = jw.value("onShow", std::string{});
+                    widget.onHover = jw.value("onHover", std::string{});
+                    widget.onClick = jw.value("onClick", std::string{});
+                    uiCanvas.widgets.push_back(std::move(widget));
+                }
+            }
         }
 
         if (je.contains("rigidBody")) {
