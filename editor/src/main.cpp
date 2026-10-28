@@ -4811,7 +4811,13 @@ void DrawDetails() {
             }
         }
 
-        if (ImGui::CollapsingHeader("AI & Gameplay")) {
+        // The AI & Gameplay section is only relevant for AI agents (both the
+        // Behavior Tree and Lua Patrol templates add NavAgentComponent).
+        const bool isAiAgent =
+            selected[0].HasComponent<Galeshi::NavAgentComponent>() ||
+            selected[0].HasComponent<Galeshi::AIControllerComponent>();
+
+        if (isAiAgent && ImGui::CollapsingHeader("AI & Gameplay")) {
             if (!selected[0].HasComponent<Galeshi::PerceptionComponent>()) {
                 if (ImGui::Button("+ Add Perception")) {
                     PushHistory();
