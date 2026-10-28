@@ -8,6 +8,7 @@
 #include "GaleshiEngine/Renderer/Framebuffer.hpp"
 #include "GaleshiEngine/Renderer/RayPick.hpp"
 #include "GaleshiEngine/Renderer/DebugRenderer.hpp"
+#include "GaleshiEngine/Renderer/ParticleSystem.hpp"
 #include "GaleshiEngine/Scene/Scene.hpp"
 #include "GaleshiEngine/Scene/SceneSerializer.hpp"
 #include "GaleshiEngine/Assets/AssetManager.hpp"
@@ -633,6 +634,8 @@ protected:
         
         m_render  = std::make_unique<Galeshi::RenderSystem>();
         m_render->Init(m_assets.get());
+        m_particles = std::make_unique<Galeshi::ParticleSystem>();
+        m_particles->Init();
         m_postProcess.Init();
         m_render->SetDeferredEnabled(true);
         // SSAO/SSR включим на 2-м кадре — чтобы первый кадр прошёл
@@ -725,6 +728,9 @@ protected:
         // Skeletal playback and animation state machines. This samples the
         // active clip and blends the previous state when a transition fires.
         Galeshi::AnimationSystem::Update(m_scene, *m_assets, dt);
+
+        // Particle simulation (world-space billboards).
+        if (m_particles) m_particles->Update(m_scene, dt);
 
         // Логика камеры
         const bool cameraControllable = m_viewportHovered && !m_editor.GizmoLocked() && !ImGuizmo::IsUsing() && !ImGuizmo::IsOver();
@@ -1032,6 +1038,7 @@ private:
 
         m_scene.Registry().clear();
         m_assets->Clear();
+        if (m_particles) m_particles->Reset();
 
         m_history.clear();
         m_historyIndex = -1;
@@ -1434,6 +1441,7 @@ private:
             } else {
                 m_editor.isPlaying = false;
                 m_physics->Reset();
+                if (m_particles) m_particles->Reset();
                 if (m_historyIndex >= 0) m_serializer->LoadFromString(m_history[m_historyIndex]);
             }
         }
@@ -1663,6 +1671,13 @@ if (ImGui::BeginMenu("File")) {
                 tc.position = {0, 3, 0};
                 m_editor.Select(e);
             }
+            if (ImGui::MenuItem("Particle Emitter")) {
+                auto e = m_scene.CreateEntity("ParticleEmitter");
+                e.AddComponent<Galeshi::ParticleEmitterComponent>();
+                auto& tc = e.GetComponent<Galeshi::TransformComponent>();
+                tc.position = {0, 2, 0};
+                m_editor.Select(e);
+            }
             ImGui::EndMenu();
         }
 
@@ -1674,6 +1689,7 @@ if (ImGui::BeginMenu("File")) {
                 m_editor.isPlaying = false;
                 m_physics->Reset();
                 m_scene.Registry().clear();
+                if (m_particles) m_particles->Reset();
                 m_assets->Clear();
                 StartAsyncLoad("Built Scene", [this]() {
                     BuildTestScene();
@@ -1718,6 +1734,7 @@ if (ImGui::BeginMenu("File")) {
         m_isRestoringHistory = true;
         m_editor.ClearSelection();
         m_serializer->LoadFromString(m_history[m_historyIndex]);
+        if (m_particles) m_particles->Reset();
         m_isRestoringHistory = false;
     }
 
@@ -1727,6 +1744,7 @@ if (ImGui::BeginMenu("File")) {
         m_isRestoringHistory = true;
         m_editor.ClearSelection();
         m_serializer->LoadFromString(m_history[m_historyIndex]);
+        if (m_particles) m_particles->Reset();
         m_isRestoringHistory = false;
     }
 
@@ -3520,6 +3538,13 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     slPos, slDir, slCol, slCount,
                     20, w, h);
 
+                // Particles are drawn after lighting into the HDR output
+                // target (view 21), so bloom/tonemapping pick them up.
+                if (m_particles) {
+                    m_particles->Render(m_scene, m_camera, 21,
+                                        m_postProcess.OutputFbo(), w, h);
+                }
+
                 // The post-processing passes are submitted in increasing view
                 // ID order. The ping-pong swaps happen on the CPU, so the call
                 // order must match the GPU view order exactly.
@@ -5186,6 +5211,32 @@ void DrawDetails() {
             ImGui::SliderFloat("Outer Cone", &sl.outerConeAngle, 0.0f, 90.0f);
         }
 
+        if (selected[0].HasComponent<Galeshi::ParticleEmitterComponent>() &&
+            ImGui::CollapsingHeader("Particle Emitter", ImGuiTreeNodeFlags_DefaultOpen)) {
+            auto& pe = m_scene.Registry().get<Galeshi::ParticleEmitterComponent>(selected[0].Handle());
+            ImGui::Checkbox("Enabled", &pe.enabled);
+            ImGui::DragFloat("Emit Rate", &pe.emitRate, 0.5f, 0.0f, 500.0f);
+            ImGui::DragFloat("Lifetime", &pe.lifetime, 0.01f, 0.05f, 30.0f);
+            ImGui::DragFloat("Lifetime Variance", &pe.lifetimeVariance, 0.01f, 0.0f, 10.0f);
+            ImGui::DragFloat("Start Size", &pe.startSize, 0.01f, 0.0f, 10.0f);
+            ImGui::DragFloat("End Size", &pe.endSize, 0.01f, 0.0f, 10.0f);
+            ImGui::ColorEdit4("Start Color", glm::value_ptr(pe.startColor));
+            ImGui::ColorEdit4("End Color", glm::value_ptr(pe.endColor));
+            ImGui::DragFloat3("Velocity", glm::value_ptr(pe.velocity), 0.05f, -50.0f, 50.0f);
+            ImGui::DragFloat("Velocity Variance", &pe.velocityVariance, 0.05f, 0.0f, 50.0f);
+            ImGui::DragFloat("Spawn Radius", &pe.spawnRadius, 0.01f, 0.0f, 10.0f);
+            ImGui::DragFloat3("Gravity", glm::value_ptr(pe.gravity), 0.05f, -50.0f, 50.0f);
+            ImGui::DragFloat("Drag", &pe.drag, 0.01f, 0.0f, 10.0f);
+            int maxParticles = static_cast<int>(pe.maxParticles);
+            if (ImGui::DragInt("Max Particles", &maxParticles, 1.0f, 1, 20000)) {
+                pe.maxParticles = static_cast<uint32_t>(std::max(maxParticles, 1));
+            }
+            if (m_particles) {
+                ImGui::TextDisabled("Live particles: %zu",
+                                    m_particles->ParticleCount(selected[0].Handle()));
+            }
+        }
+
         if (selected[0].HasComponent<Galeshi::UICanvasComponent>()) {
             auto& uiCanvas = selected[0].GetComponent<Galeshi::UICanvasComponent>().canvas;
             if (m_uiCanvasEntity != selected[0].Handle()) {
@@ -5638,6 +5689,11 @@ void DrawDetails() {
         if (!pl.HasComponent<Galeshi::PointLightComponent>())
             pl.AddComponent<Galeshi::PointLightComponent>();
         pl.GetComponent<Galeshi::TransformComponent>().position = {0.0f, 5.0f, 0.0f};
+
+        // Demo fire emitter next to the material grid.
+        auto emitter = m_scene.CreateEntity("FireParticles");
+        emitter.AddComponent<Galeshi::ParticleEmitterComponent>();
+        emitter.GetComponent<Galeshi::TransformComponent>().position = {4.5f, 0.2f, -1.5f};
     }
 
     // --- Состояние ---
@@ -5657,6 +5713,7 @@ void DrawDetails() {
     std::unique_ptr<Galeshi::EnginePhysicsSystem>   m_physics;
     std::unique_ptr<Galeshi::NavigationSystem> m_navSystem;
     std::unique_ptr<Galeshi::DebugRenderer> m_debug;
+    std::unique_ptr<Galeshi::ParticleSystem> m_particles;
     bgfx::TextureHandle m_shadowMaps[3] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
     bgfx::FrameBufferHandle m_shadowFbos[3] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
     bgfx::FrameBufferHandle m_pointShadowFbos[6] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };

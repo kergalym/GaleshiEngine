@@ -24,6 +24,7 @@ GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20
 | Tiled light culling | Working | 16x16 tiles, up to 64 point lights in the deferred path |
 | Post-processing | Working | DoF, motion blur, atmosphere, and the full stack are tested; effects can be isolated with `GALESHI_EFFECTS` |
 | Physics | Working | Jolt rigid bodies and cloth/soft-body simulation |
+| Particles | Working | CPU-simulated billboard emitters, editable in Details and serialized in scenes |
 | AI and navigation | Working | Recast/Detour NavMesh, path following, behavior trees, and perception |
 | Landscape and vegetation | Working | Heightfield sculpting tools and deterministic instanced trees/grass |
 | Scripting | Working | Lua 5.4 through sol2, hot reload, animation/AI state control |
@@ -345,7 +346,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [x] Add texture compression and compressed texture loading/reading
 - [x] Add two sided mode for normals option as checkbox to Material properties
 - [x] Rename material slots to their names in FBX file format
-- [ ] Add Particles system
+- [x] Add Particles system
 - [ ] Add Postprocessing volume
 
 ### Physics 

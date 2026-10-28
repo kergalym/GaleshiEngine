@@ -421,6 +421,25 @@ std::string SceneSerializer::SaveToString() const {
                 {"intensity", sl.intensity}
             };
         }
+        if (reg.all_of<ParticleEmitterComponent>(handle)) {
+            const auto& pe = reg.get<ParticleEmitterComponent>(handle);
+            je["particleEmitter"] = {
+                {"enabled", pe.enabled},
+                {"emitRate", pe.emitRate},
+                {"lifetime", pe.lifetime},
+                {"lifetimeVariance", pe.lifetimeVariance},
+                {"startSize", pe.startSize},
+                {"endSize", pe.endSize},
+                {"startColor", Vec4ToJson(pe.startColor)},
+                {"endColor", Vec4ToJson(pe.endColor)},
+                {"velocity", Vec3ToJson(pe.velocity)},
+                {"velocityVariance", pe.velocityVariance},
+                {"spawnRadius", pe.spawnRadius},
+                {"gravity", Vec3ToJson(pe.gravity)},
+                {"drag", pe.drag},
+                {"maxParticles", pe.maxParticles}
+            };
+        }
         if (reg.all_of<AudioSourceComponent>(handle)) {
             const auto& audio = reg.get<AudioSourceComponent>(handle);
             je["audioSource"] = {
@@ -964,6 +983,24 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             sl.radius = jl.value("radius", 10.0f);
             sl.color = jl.contains("color") ? Vec3FromJson(jl.at("color")) : glm::vec3(1.0f);
             sl.intensity = jl.value("intensity", 1.0f);
+        }
+        if (je.contains("particleEmitter") && je["particleEmitter"].is_object()) {
+            const auto& jp = je["particleEmitter"];
+            auto& pe = e.AddComponent<ParticleEmitterComponent>();
+            pe.enabled = jp.value("enabled", true);
+            pe.emitRate = jp.value("emitRate", 40.0f);
+            pe.lifetime = jp.value("lifetime", 2.0f);
+            pe.lifetimeVariance = jp.value("lifetimeVariance", 0.4f);
+            pe.startSize = jp.value("startSize", 0.30f);
+            pe.endSize = jp.value("endSize", 0.05f);
+            if (jp.contains("startColor")) pe.startColor = Vec4FromJson(jp.at("startColor"));
+            if (jp.contains("endColor")) pe.endColor = Vec4FromJson(jp.at("endColor"));
+            if (jp.contains("velocity")) pe.velocity = Vec3FromJson(jp.at("velocity"));
+            pe.velocityVariance = jp.value("velocityVariance", 1.2f);
+            pe.spawnRadius = jp.value("spawnRadius", 0.2f);
+            if (jp.contains("gravity")) pe.gravity = Vec3FromJson(jp.at("gravity"));
+            pe.drag = jp.value("drag", 0.4f);
+            pe.maxParticles = jp.value("maxParticles", 512u);
         }
         if (je.contains("audioSource")) {
             const auto& ja = je["audioSource"];

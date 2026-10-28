@@ -314,6 +314,25 @@ struct SpotLightComponent {
     float intensity = 1.0f;        // Интенсивность
 };
 
+// CPU-simulated camera-facing billboard emitter.  Particles are spawned in
+// world space around the entity origin and simulated by ParticleSystem.
+struct ParticleEmitterComponent {
+    bool      enabled          = true;
+    float     emitRate         = 40.0f;   // particles per second
+    float     lifetime         = 2.0f;    // average particle lifetime (s)
+    float     lifetimeVariance = 0.4f;    // +/- random lifetime (s)
+    float     startSize        = 0.30f;   // billboard half-extent at birth
+    float     endSize          = 0.05f;   // billboard half-extent at death
+    glm::vec4 startColor       = {1.0f, 0.65f, 0.20f, 1.0f};
+    glm::vec4 endColor         = {0.9f, 0.15f, 0.02f, 0.0f};
+    glm::vec3 velocity         = {0.0f, 1.5f, 0.0f};  // base spawn velocity (m/s)
+    float     velocityVariance = 1.2f;    // random velocity spread (m/s)
+    float     spawnRadius      = 0.2f;    // spawn sphere radius around origin
+    glm::vec3 gravity          = {0.0f, -1.5f, 0.0f};
+    float     drag             = 0.4f;    // velocity damping per second
+    uint32_t  maxParticles     = 512;
+};
+
 // Screen-space UI canvas.  Rendered by UIRuntime through ImGui; the widget
 // list is authored in the editor or loaded from the scene file.
 struct UICanvasComponent {
