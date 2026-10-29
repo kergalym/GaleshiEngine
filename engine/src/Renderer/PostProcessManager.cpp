@@ -170,6 +170,8 @@ void PostProcessManager::Init() {
         };
 
         m_aoSampleProg   = makeProg("shaders/fs_ao_sample.bin");
+        m_hbaoProg       = makeProg("shaders/fs_hbao.bin");
+        m_gtaoProg       = makeProg("shaders/fs_gtao.bin");
         m_aoUpsampleProg = makeProg("shaders/fs_ao_upsample.bin");
         m_aoDetailProg   = makeProg("shaders/fs_ao_detail.bin");
         m_aoBlurProg     = makeProg("shaders/fs_ao_blur.bin");
@@ -177,14 +179,16 @@ void PostProcessManager::Init() {
         u_aoView       = bgfx::createUniform("u_aoView",       bgfx::UniformType::Mat4);
         u_aoProj       = bgfx::createUniform("u_aoProj",       bgfx::UniformType::Mat4);
         u_aoParams     = bgfx::createUniform("u_aoParams",     bgfx::UniformType::Vec4);
+        u_aoParams2    = bgfx::createUniform("u_aoParams2",    bgfx::UniformType::Vec4);
         u_aoViewport   = bgfx::createUniform("u_aoViewport",   bgfx::UniformType::Vec4);
         u_aoBlurParams = bgfx::createUniform("u_aoBlurParams", bgfx::UniformType::Vec4);
         u_aoBlurDir    = bgfx::createUniform("u_aoBlurDir",    bgfx::UniformType::Vec4);
         s_aoSource     = bgfx::createUniform("s_aoSource",     bgfx::UniformType::Sampler);
         s_aoTex        = bgfx::createUniform("s_aoTex",        bgfx::UniformType::Sampler);
 
-        spdlog::info("[PP] AO programs: sample={} upsample={} detail={} blur={}",
-            bgfx::isValid(m_aoSampleProg), bgfx::isValid(m_aoUpsampleProg),
+        spdlog::info("[PP] AO programs: ssao={} hbao={} gtao={} upsample={} detail={} blur={}",
+            bgfx::isValid(m_aoSampleProg), bgfx::isValid(m_hbaoProg),
+            bgfx::isValid(m_gtaoProg), bgfx::isValid(m_aoUpsampleProg),
             bgfx::isValid(m_aoDetailProg), bgfx::isValid(m_aoBlurProg));
     }
 
@@ -491,7 +495,8 @@ void PostProcessManager::Shutdown() {
     if (bgfx::isValid(m_tileLightIndexBuffer)) bgfx::destroy(m_tileLightIndexBuffer);
     destroyUni(u_cullParams); destroyUni(u_cullViewProj);
     destroyUni(u_cullPointLightPosRadius); destroyUni(u_cullPointLightCount); destroyUni(u_tileParams);
-    destroyProg(m_aoSampleProg); destroyProg(m_aoUpsampleProg);
+    destroyProg(m_aoSampleProg); destroyProg(m_hbaoProg); destroyProg(m_gtaoProg);
+    destroyProg(m_aoUpsampleProg);
     destroyProg(m_aoDetailProg); destroyProg(m_aoBlurProg);
     destroyProg(m_ssrProg); destroyProg(m_taaProg);
     destroyProg(m_dofCocProg); destroyProg(m_dofBlurProg); destroyProg(m_dofCompositeProg);
@@ -567,6 +572,7 @@ void PostProcessManager::Shutdown() {
     if (bgfx::isValid(m_pointShadowMap)) bgfx::destroy(m_pointShadowMap);
     destroyUni(s_pointShadowMap); destroyUni(u_pointLightFarPlane);
     destroyUni(u_aoView); destroyUni(u_aoProj); destroyUni(u_aoParams);
+    destroyUni(u_aoParams2);
     destroyUni(u_aoViewport); destroyUni(u_aoBlurParams); destroyUni(u_aoBlurDir);
     destroyUni(s_aoSource); destroyUni(s_aoTex);
     destroyTex(m_aoHalfTex); destroyTex(m_aoFullTexA); destroyTex(m_aoFullTexB);
@@ -858,20 +864,30 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     return m_outputColor;
 }
 
-void PostProcessManager::RenderSSAO(bgfx::TextureHandle worldPos, bgfx::TextureHandle normal,
-                                    const glm::mat4& view, const glm::mat4& proj,
-                                    bgfx::ViewId viewId, uint16_t width, uint16_t height,
-                                    bool enabled, float radius, float bias,
-                                    float maxDistance, float strength)
+void PostProcessManager::RenderAmbientOcclusion(bgfx::TextureHandle worldPos,
+                                                bgfx::TextureHandle normal,
+                                                const glm::mat4& view,
+                                                const glm::mat4& proj,
+                                                bgfx::ViewId viewId,
+                                                uint16_t width, uint16_t height,
+                                                const AmbientOcclusionParams& params)
 {
-    if (!enabled) {
+    if (!params.enabled) {
         m_aoValid = false;
         return;
     }
 
-    if (!bgfx::isValid(m_aoSampleProg) || !bgfx::isValid(m_aoUpsampleProg) ||
-        !bgfx::isValid(m_aoDetailProg) || !bgfx::isValid(m_aoBlurProg) ||
-        width == 0 || height == 0) {
+    int mode = params.mode;
+    if (mode < 0 || mode > 2) mode = 0;
+
+    bgfx::ProgramHandle sampleProg = m_aoSampleProg;
+    if (mode == 1) sampleProg = m_hbaoProg;
+    else if (mode == 2) sampleProg = m_gtaoProg;
+    // Keep ambient occlusion functional if an optional shader is missing.
+    if (!bgfx::isValid(sampleProg)) sampleProg = m_aoSampleProg;
+
+    if (!bgfx::isValid(sampleProg) || !bgfx::isValid(m_aoUpsampleProg) ||
+        !bgfx::isValid(m_aoBlurProg) || width == 0 || height == 0) {
         m_aoValid = false;
         return;
     }
@@ -885,15 +901,24 @@ void PostProcessManager::RenderSSAO(bgfx::TextureHandle worldPos, bgfx::TextureH
     const uint16_t halfW = width > 2 ? (uint16_t)(width / 2) : 1;
     const uint16_t halfH = height > 2 ? (uint16_t)(height / 2) : 1;
 
+    int directions = params.directions < 1 ? 1 : params.directions;
+    if (directions > 16) directions = 16;
+    int steps = params.steps < 1 ? 1 : params.steps;
+    if (steps > 16) steps = 16;
+
     float viewport[4] = { (float)width, (float)height, 1.0f / width, 1.0f / height };
-    float aoParams[4] = { std::max(radius, 0.0f), std::max(bias, 0.0f),
-                          std::max(maxDistance, 0.0f), std::max(strength, 0.0f) };
+    float aoParams[4] = { std::max(params.radius, 0.0f), std::max(params.bias, 0.0f),
+                          std::max(params.maxDistance, 0.0f), std::max(params.strength, 0.0f) };
+    // x = directions/slices, y = steps, z = GTAO falloff start,
+    // w = GTAO thickness (view-space depth rejection).
+    float aoParams2[4] = { (float)directions, (float)steps, 0.75f,
+                           std::max(params.thickness, 0.001f) };
     float upsampleParams[4] = { 0.5f, 32.0f, 0.0f, 0.0f };
     float blurParams[4] = { 1.0f, 0.2f, 0.0f, 0.0f };
     float blurDirH[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
     float blurDirV[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
 
-    // View viewId + 0: half-resolution SSAO.
+    // View viewId + 0: half-resolution ambient occlusion (SSAO/HBAO/GTAO).
     bgfx::setViewFrameBuffer(viewId, m_aoHalfFbo);
     bgfx::setViewRect(viewId, 0, 0, halfW, halfH);
     bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR, 0xffffffff);
@@ -903,10 +928,11 @@ void PostProcessManager::RenderSSAO(bgfx::TextureHandle worldPos, bgfx::TextureH
     bgfx::setUniform(u_aoProj, glm::value_ptr(proj));
     bgfx::setUniform(u_aoViewport, viewport);
     bgfx::setUniform(u_aoParams, aoParams);
+    if (bgfx::isValid(u_aoParams2)) bgfx::setUniform(u_aoParams2, aoParams2);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
-    bgfx::submit(viewId, m_aoSampleProg);
+    bgfx::submit(viewId, sampleProg);
 
     // View viewId + 1: bilateral upsample to full resolution.
     bgfx::setViewFrameBuffer(viewId + 1, m_aoFullFboA);

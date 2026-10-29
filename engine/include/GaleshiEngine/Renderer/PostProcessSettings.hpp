@@ -2,6 +2,13 @@
 
 namespace Galeshi {
 
+// Screen-space ambient-occlusion algorithm used by the post-process stack.
+enum class AmbientOcclusionMode : int {
+    SSAO = 0,
+    HBAO = 1,
+    GTAO = 2
+};
+
 // Tuning parameters for every post-processing effect. A
 // PostProcessVolumeComponent overrides these values while the camera is inside
 // its bounds; otherwise the editor's global toggles/defaults are used.
@@ -39,12 +46,25 @@ struct PostProcessSettings {
     // Chromatic aberration
     float chromaticAberration = 0.004f;
 
-    // SSAO
+    // Ambient occlusion. ssaoEnabled is the shared on/off switch for all
+    // three algorithms; the SSAO fields are kept for existing scenes.
     bool  ssaoEnabled     = false;
+    AmbientOcclusionMode aoMode = AmbientOcclusionMode::SSAO;
+
+    // Legacy SSAO parameters.
     float ssaoRadius      = 80.0f;
     float ssaoBias        = 0.0333f;
     float ssaoMaxDistance = 6.9f;
     float ssaoStrength    = 1.1f;
+
+    // HBAO/GTAO parameters (radius and distances are in world units).
+    float aoRadius       = 1.5f;
+    float aoBias         = 0.05f;
+    float aoThickness    = 1.0f; // GTAO depth-rejection thickness
+    float aoMaxDistance  = 50.0f;
+    float aoStrength     = 1.0f;
+    int   aoDirections   = 8;   // HBAO directions / GTAO slices
+    int   aoSteps        = 4;   // HBAO samples per direction / GTAO steps per side
 
     // SSR
     bool  ssrEnabled  = false;

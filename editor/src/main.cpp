@@ -112,6 +112,9 @@ class GaleshiEditorApp final : public Galeshi::Application {
     Galeshi::AudioSystem m_audio;
     Galeshi::ScriptEngine m_scripts;
     Galeshi::PostProcessManager m_postProcess;
+    // AO method used when no post-process volume overrides the settings.
+    Galeshi::AmbientOcclusionMode m_globalAoMode =
+        Galeshi::AmbientOcclusionMode::SSAO;
     LoadingState m_loadingState;
     float m_displayProgress = 0.0f; // UI thread only, smoothed copy of progress
     std::unique_ptr<Galeshi::Texture> m_logoTexture;
@@ -1497,8 +1500,22 @@ private:
             if (ImGui::MenuItem("Invert Colors", nullptr, &inv)) m_postProcess.SetInvertEnabled(inv);
             bool fxaa = m_postProcess.FxaaEnabled();
             if (ImGui::MenuItem("FXAA", nullptr, &fxaa)) m_postProcess.SetFxaaEnabled(fxaa);
-            bool ssao = m_postProcess.SsaoEnabled();
-            if (ImGui::MenuItem("SSAO", nullptr, &ssao)) m_postProcess.SetSsaoEnabled(ssao);
+            if (ImGui::BeginMenu("Ambient Occlusion")) {
+                bool ao = m_postProcess.SsaoEnabled();
+                if (ImGui::MenuItem("Enabled", nullptr, &ao))
+                    m_postProcess.SetSsaoEnabled(ao);
+                ImGui::Separator();
+                if (ImGui::MenuItem("SSAO", nullptr,
+                        m_globalAoMode == Galeshi::AmbientOcclusionMode::SSAO))
+                    m_globalAoMode = Galeshi::AmbientOcclusionMode::SSAO;
+                if (ImGui::MenuItem("HBAO", nullptr,
+                        m_globalAoMode == Galeshi::AmbientOcclusionMode::HBAO))
+                    m_globalAoMode = Galeshi::AmbientOcclusionMode::HBAO;
+                if (ImGui::MenuItem("GTAO", nullptr,
+                        m_globalAoMode == Galeshi::AmbientOcclusionMode::GTAO))
+                    m_globalAoMode = Galeshi::AmbientOcclusionMode::GTAO;
+                ImGui::EndMenu();
+            }
             bool smaa = m_postProcess.SmaaEnabled();
             if (ImGui::MenuItem("SMAA", nullptr, &smaa)) m_postProcess.SetSmaaEnabled(smaa);
             bool taa = m_postProcess.TaaEnabled();
@@ -3319,6 +3336,7 @@ if (ImGui::BeginMenu("File")) {
         s.dofEnabled         = m_postProcess.DofEnabled();
         s.motionBlurEnabled  = m_postProcess.MotionBlurEnabled();
         s.ssaoEnabled        = m_postProcess.SsaoEnabled();
+        s.aoMode             = m_globalAoMode;
         s.ssrEnabled         = m_postProcess.SsrEnabled();
         s.fxaaEnabled        = m_postProcess.FxaaEnabled();
         s.smaaEnabled        = m_postProcess.SmaaEnabled();
@@ -3439,16 +3457,46 @@ if (ImGui::BeginMenu("File")) {
             ImGui::TreePop();
         }
 
-        if (ImGui::TreeNode("SSAO")) {
-            ImGui::Checkbox("Enabled##ssao", &s.ssaoEnabled);
-            ImGui::DragFloat("Radius", &s.ssaoRadius,
-                             0.5f, 0.0f, 1000.0f);
-            ImGui::DragFloat("Bias", &s.ssaoBias,
-                             0.0001f, 0.0f, 1.0f, "%.4f");
-            ImGui::DragFloat("Max Distance", &s.ssaoMaxDistance,
-                             0.1f, 0.0f, 1000.0f);
-            ImGui::DragFloat("Strength", &s.ssaoStrength,
-                             0.01f, 0.0f, 10.0f);
+        if (ImGui::TreeNode("Ambient Occlusion")) {
+            ImGui::Checkbox("Enabled##ao", &s.ssaoEnabled);
+            int aoMode = static_cast<int>(s.aoMode);
+            const char* aoModes[] = { "SSAO", "HBAO", "GTAO" };
+            if (ImGui::Combo("Method", &aoMode, aoModes, 3)) {
+                if (aoMode < 0) aoMode = 0;
+                if (aoMode > 2) aoMode = 2;
+                s.aoMode = static_cast<Galeshi::AmbientOcclusionMode>(aoMode);
+            }
+
+            if (s.aoMode == Galeshi::AmbientOcclusionMode::SSAO) {
+                ImGui::DragFloat("Radius", &s.ssaoRadius,
+                                 0.5f, 0.0f, 1000.0f);
+                ImGui::DragFloat("Bias", &s.ssaoBias,
+                                 0.0001f, 0.0f, 1.0f, "%.4f");
+                ImGui::DragFloat("Max Distance", &s.ssaoMaxDistance,
+                                 0.1f, 0.0f, 1000.0f);
+                ImGui::DragFloat("Strength", &s.ssaoStrength,
+                                 0.01f, 0.0f, 10.0f);
+            } else {
+                ImGui::DragFloat("Radius##ao", &s.aoRadius,
+                                 0.01f, 0.01f, 100.0f);
+                ImGui::DragFloat("Bias##ao", &s.aoBias,
+                                 0.001f, 0.0f, 1.0f, "%.4f");
+                if (s.aoMode == Galeshi::AmbientOcclusionMode::GTAO) {
+                    ImGui::DragFloat("Thickness##ao", &s.aoThickness,
+                                     0.01f, 0.01f, 20.0f);
+                }
+                ImGui::DragFloat("Max Distance##ao", &s.aoMaxDistance,
+                                 0.1f, 0.1f, 10000.0f);
+                ImGui::DragFloat("Strength##ao", &s.aoStrength,
+                                 0.01f, 0.0f, 10.0f);
+                if (s.aoMode == Galeshi::AmbientOcclusionMode::HBAO) {
+                    ImGui::SliderInt("Directions", &s.aoDirections, 2, 16);
+                    ImGui::SliderInt("Steps per Direction", &s.aoSteps, 1, 12);
+                } else {
+                    ImGui::SliderInt("Slices", &s.aoDirections, 2, 16);
+                    ImGui::SliderInt("Steps per Side", &s.aoSteps, 1, 12);
+                }
+            }
             ImGui::TreePop();
         }
 
@@ -3841,11 +3889,26 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 }
                 // Ambient occlusion must be resolved before lighting so the
                 // result can modulate ambient/IBL and not replace final color.
-                m_postProcess.RenderSSAO(m_framebuffer->WorldPos(), m_framebuffer->Normal(),
-                                         m_camera.View(), proj, 15, w, h,
-                                         pp.ssaoEnabled, pp.ssaoRadius,
-                                         pp.ssaoBias, pp.ssaoMaxDistance,
-                                         pp.ssaoStrength);
+                Galeshi::AmbientOcclusionParams ao;
+                ao.enabled = pp.ssaoEnabled;
+                ao.mode = static_cast<int>(pp.aoMode);
+                if (pp.aoMode == Galeshi::AmbientOcclusionMode::SSAO) {
+                    ao.radius      = pp.ssaoRadius;
+                    ao.bias        = pp.ssaoBias;
+                    ao.maxDistance = pp.ssaoMaxDistance;
+                    ao.strength    = pp.ssaoStrength;
+                } else {
+                    ao.radius      = pp.aoRadius;
+                    ao.bias        = pp.aoBias;
+                    ao.thickness   = pp.aoThickness;
+                    ao.maxDistance = pp.aoMaxDistance;
+                    ao.strength    = pp.aoStrength;
+                    ao.directions  = pp.aoDirections;
+                    ao.steps       = pp.aoSteps;
+                }
+                m_postProcess.RenderAmbientOcclusion(
+                    m_framebuffer->WorldPos(), m_framebuffer->Normal(),
+                    m_camera.View(), proj, 15, w, h, ao);
 
                 m_postProcess.RenderLightCulling(plCount, plPosA, currVP, w, h);
                 m_postProcess.RenderLighting(

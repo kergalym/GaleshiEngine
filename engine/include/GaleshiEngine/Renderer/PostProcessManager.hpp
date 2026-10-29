@@ -6,6 +6,20 @@
 
 namespace Galeshi {
 
+// Mode-independent parameters passed to the AO evaluation pass. The editor
+// fills the SSAO fields for mode 0 and the generic fields for HBAO/GTAO.
+struct AmbientOcclusionParams {
+    bool  enabled     = false;
+    int   mode        = 0;       // 0 = SSAO, 1 = HBAO, 2 = GTAO
+    float radius      = 80.0f;
+    float bias        = 0.0333f;
+    float thickness   = 1.0f;
+    float maxDistance = 6.9f;
+    float strength    = 1.1f;
+    int   directions  = 8;
+    int   steps       = 4;
+};
+
 class PostProcessManager {
 public:
     PostProcessManager();
@@ -46,11 +60,10 @@ public:
                                        const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], int spotLightCount,
                                        bgfx::ViewId viewId, uint16_t width, uint16_t height);
 
-    void RenderSSAO(bgfx::TextureHandle worldPos, bgfx::TextureHandle normal,
-                    const glm::mat4& view, const glm::mat4& proj,
-                    bgfx::ViewId viewId, uint16_t width, uint16_t height,
-                    bool enabled, float radius, float bias,
-                    float maxDistance, float strength);
+    void RenderAmbientOcclusion(bgfx::TextureHandle worldPos, bgfx::TextureHandle normal,
+                                const glm::mat4& view, const glm::mat4& proj,
+                                bgfx::ViewId viewId, uint16_t width, uint16_t height,
+                                const AmbientOcclusionParams& params);
     bgfx::TextureHandle AOTexture() const { return m_aoValid ? m_aoFullTexA : m_whiteTex2D; }
     bgfx::TextureHandle RenderSSR(bgfx::TextureHandle color, bgfx::TextureHandle normal, bgfx::TextureHandle depth, bgfx::FrameBufferHandle targetFbo, const glm::mat4& proj, const glm::mat4& invProj, const float camPos[4], bgfx::ViewId viewId, uint16_t width, uint16_t height, float intensity);
     void SetBloomEnabled(bool v) { m_bloomEnabled = v; }
@@ -145,6 +158,8 @@ private:
     bgfx::ProgramHandle m_fxaaProg    = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_lightingProg= BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_aoSampleProg   = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_hbaoProg       = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_gtaoProg       = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_aoUpsampleProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_aoDetailProg   = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_aoBlurProg     = BGFX_INVALID_HANDLE;
@@ -190,6 +205,7 @@ private:
     bgfx::UniformHandle u_aoView       = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_aoProj       = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_aoParams     = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_aoParams2    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_aoViewport   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_aoBlurParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_aoBlurDir    = BGFX_INVALID_HANDLE;

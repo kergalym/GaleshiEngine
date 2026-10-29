@@ -58,7 +58,7 @@ There is also a forward PBR fallback in `RenderSystem`, but the deferred path is
 
 Implemented post-processing passes:
 
-- SSAO
+- SSAO, HBAO, and GTAO ambient occlusion
 - SSR, using an approximate screen-space raymarch
 - Bloom
 - TAA
@@ -73,7 +73,7 @@ Implemented post-processing passes:
 - Vignette
 - Chromatic aberration
 - Invert
-- Spatial post-processing volumes with per-effect tuning for bloom, DoF, motion blur, tonemap, color correction, vignette, SSAO, SSR, anti-aliasing, god rays, and atmosphere.
+- Spatial post-processing volumes with per-effect tuning for bloom, DoF, motion blur, tonemap, color correction, vignette, ambient occlusion (SSAO/HBAO/GTAO), SSR, anti-aliasing, god rays, and atmosphere.
 
 ---
 
@@ -393,7 +393,8 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - Dear ImGui for the editor tooling.
 - Jolt Physics for rigid bodies and soft bodies.
 - Recast and Detour for navigation.
-- The SSAO and camera motion blur implementations follow the approach used by [tobspr/renderpipeline](https://github.com/tobspr/renderpipeline).
+- The SSAO chain and camera motion blur implementations follow the approach used by [tobspr/renderpipeline](https://github.com/tobspr/renderpipeline).
+- HBAO follows the horizon-based formulation of Bavoil and Sainz; GTAO follows the horizon-integration formulation of Jimenez et al. (2016).
 - All library authors listed above.
 
 ## License

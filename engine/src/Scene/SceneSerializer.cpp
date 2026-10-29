@@ -506,10 +506,18 @@ std::string SceneSerializer::SaveToString() const {
                     {"vignetteSmoothness", s.vignetteSmoothness},
                     {"chromaticAberration", s.chromaticAberration},
                     {"ssaoEnabled", s.ssaoEnabled},
+                    {"aoMode", static_cast<int>(s.aoMode)},
                     {"ssaoRadius", s.ssaoRadius},
                     {"ssaoBias", s.ssaoBias},
                     {"ssaoMaxDistance", s.ssaoMaxDistance},
                     {"ssaoStrength", s.ssaoStrength},
+                    {"aoRadius", s.aoRadius},
+                    {"aoBias", s.aoBias},
+                    {"aoThickness", s.aoThickness},
+                    {"aoMaxDistance", s.aoMaxDistance},
+                    {"aoStrength", s.aoStrength},
+                    {"aoDirections", s.aoDirections},
+                    {"aoSteps", s.aoSteps},
                     {"ssrEnabled", s.ssrEnabled},
                     {"ssrIntensity", s.ssrIntensity},
                     {"fxaaEnabled", s.fxaaEnabled},
@@ -1192,10 +1200,25 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                 s.vignetteSmoothness = js.value("vignetteSmoothness", s.vignetteSmoothness);
                 s.chromaticAberration = js.value("chromaticAberration", s.chromaticAberration);
                 s.ssaoEnabled = js.value("ssaoEnabled", s.ssaoEnabled);
+                int aoMode = js.value("aoMode", static_cast<int>(s.aoMode));
+                if (aoMode < 0) aoMode = 0;
+                if (aoMode > 2) aoMode = 2;
+                s.aoMode = static_cast<AmbientOcclusionMode>(aoMode);
                 s.ssaoRadius = js.value("ssaoRadius", s.ssaoRadius);
                 s.ssaoBias = js.value("ssaoBias", s.ssaoBias);
                 s.ssaoMaxDistance = js.value("ssaoMaxDistance", s.ssaoMaxDistance);
                 s.ssaoStrength = js.value("ssaoStrength", s.ssaoStrength);
+                s.aoRadius = js.value("aoRadius", s.aoRadius);
+                s.aoBias = js.value("aoBias", s.aoBias);
+                s.aoThickness = js.value("aoThickness", s.aoThickness);
+                s.aoMaxDistance = js.value("aoMaxDistance", s.aoMaxDistance);
+                s.aoStrength = js.value("aoStrength", s.aoStrength);
+                s.aoDirections = js.value("aoDirections", s.aoDirections);
+                s.aoSteps = js.value("aoSteps", s.aoSteps);
+                if (s.aoDirections < 1) s.aoDirections = 1;
+                if (s.aoDirections > 16) s.aoDirections = 16;
+                if (s.aoSteps < 1) s.aoSteps = 1;
+                if (s.aoSteps > 16) s.aoSteps = 16;
                 s.ssrEnabled = js.value("ssrEnabled", s.ssrEnabled);
                 s.ssrIntensity = js.value("ssrIntensity", s.ssrIntensity);
                 s.fxaaEnabled = js.value("fxaaEnabled", s.fxaaEnabled);
