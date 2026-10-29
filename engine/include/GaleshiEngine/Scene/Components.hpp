@@ -142,6 +142,10 @@ struct RigidBodyComponent {
     float      restitution = 0.0f;
     bool       useGravity = true;
 
+    // Keeps the body upright by disabling rotational degrees of freedom.
+    // Enabled by default for PhysicsCapsule.
+    bool       lockRotation = false;
+
     // Runtime handle to Jolt body; 0xFFFFFFFF = not created.
     uint32_t   bodyId     = 0xFFFFFFFFu;
 };

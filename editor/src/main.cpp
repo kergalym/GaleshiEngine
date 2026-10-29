@@ -4948,6 +4948,7 @@ void DrawDetails() {
                 bool changed = false;
                 changed |= ImGui::DragFloat("Mass", &rb.mass, 0.05f, 0.001f, 100000.0f);
                 changed |= ImGui::Checkbox("Use Gravity", &rb.useGravity);
+                changed |= ImGui::Checkbox("Lock Rotation", &rb.lockRotation);
                 if (changed) RebuildPhysicsBody(sel);
 
                 ImGui::TextDisabled("Runtime body: %s",
@@ -6273,7 +6274,10 @@ void DrawDetails() {
         auto& rb = e.AddComponent<Galeshi::RigidBodyComponent>();
         rb.motionType = Galeshi::RigidBodyComponent::MotionType::Dynamic;
         rb.mass = 1.0f;
-        rb.bodyId = m_physics->CreateCapsule(halfHeight, radius, pos, static_cast<entt::entity>(e), false);
+        rb.lockRotation = true;
+        rb.bodyId = m_physics->CreateCollider(collider, rb, pos,
+                                              glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+                                              static_cast<entt::entity>(e));
         spdlog::info("[Physics] Spawned {} bodyId=0x{:08x}", name, rb.bodyId);
         return e;
     }

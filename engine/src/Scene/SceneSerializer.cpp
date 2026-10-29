@@ -546,7 +546,8 @@ std::string SceneSerializer::SaveToString() const {
                 {"mass", rb.mass},
                 {"friction", rb.friction},
                 {"restitution", rb.restitution},
-                {"useGravity", rb.useGravity}
+                {"useGravity", rb.useGravity},
+                {"lockRotation", rb.lockRotation}
             };
         }
         if (reg.all_of<ColliderComponent>(handle)) {
@@ -1216,6 +1217,7 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             rb.friction = jr.value("friction", 0.5f);
             rb.restitution = jr.value("restitution", 0.0f);
             rb.useGravity = jr.value("useGravity", true);
+            rb.lockRotation = jr.value("lockRotation", false);
             rb.bodyId = 0xFFFFFFFFu;
         }
         if (je.contains("collider")) {
@@ -1231,6 +1233,14 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             collider.restitution = jc.value("restitution", 0.0f);
             collider.isTrigger = jc.value("isTrigger", false);
             collider.visibleInEditor = jc.value("visibleInEditor", true);
+            // Older scenes did not store a rotation lock; capsules were prone
+            // to tipping over, so keep them upright by default.
+            if (collider.shapeType == ColliderShapeType::Capsule &&
+                e.HasComponent<RigidBodyComponent>() &&
+                (!je.contains("rigidBody") ||
+                 !je["rigidBody"].contains("lockRotation"))) {
+                e.GetComponent<RigidBodyComponent>().lockRotation = true;
+            }
         } else if (je.contains("boxCollider")) {
             // Legacy scenes stored only a box collider.
             const auto& jc = je["boxCollider"];

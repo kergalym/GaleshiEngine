@@ -232,6 +232,14 @@ uint32_t EnginePhysicsSystem::CreateCapsule(float halfHeight, float radius, cons
         JPH::RVec3(position.x, position.y, position.z),
         JPH::Quat::sIdentity(),
         motion, layer);
+    // Capsules standing on their rounded end are unstable; keep legacy
+    // dynamic capsules upright unless a collider/rigid-body pair is used.
+    if (motion == JPH::EMotionType::Dynamic) {
+        s.mAllowedDOFs =
+            JPH::EAllowedDOFs::TranslationX |
+            JPH::EAllowedDOFs::TranslationY |
+            JPH::EAllowedDOFs::TranslationZ;
+    }
     JPH::BodyID id = m_impl->bodyInterface->CreateAndAddBody(s, JPH::EActivation::Activate);
     if (id.IsInvalid()) return 0xFFFFFFFFu;
     uint32_t rawId = id.GetIndexAndSequenceNumber();
@@ -299,6 +307,13 @@ uint32_t EnginePhysicsSystem::CreateCollider(const ColliderComponent& collider,
     settings.mIsSensor = collider.isTrigger;
     settings.mAllowSleeping = true;
     settings.mGravityFactor = body.useGravity ? 1.0f : 0.0f;
+
+    if (motion == JPH::EMotionType::Dynamic && body.lockRotation) {
+        settings.mAllowedDOFs =
+            JPH::EAllowedDOFs::TranslationX |
+            JPH::EAllowedDOFs::TranslationY |
+            JPH::EAllowedDOFs::TranslationZ;
+    }
 
     if (motion != JPH::EMotionType::Static && body.mass > 0.0f) {
         JPH::MassProperties massProperties = shape->GetMassProperties();
