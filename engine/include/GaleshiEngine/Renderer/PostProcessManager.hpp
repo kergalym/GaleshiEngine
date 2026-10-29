@@ -337,7 +337,7 @@ private:
     bgfx::UniformHandle s_dofDepth     = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_dofBlur      = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_dofCoc       = BGFX_INVALID_HANDLE;
-    bool m_dofEnabled = true;
+    bool m_dofEnabled = false;
     std::shared_ptr<class Texture> m_brdfTexture;
     bgfx::FrameBufferHandle m_envFbo = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_irradianceFbo = BGFX_INVALID_HANDLE;

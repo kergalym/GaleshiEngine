@@ -368,6 +368,12 @@ struct PostProcessVolumeComponent {
     bool      visibleInEditor = true;
 
     PostProcessSettings settings;
+
+    // DoF is off globally by default. A volume opts into it so adding a
+    // post-process volume immediately produces the intended look.
+    PostProcessVolumeComponent() {
+        settings.dofEnabled = true;
+    }
 };
 
 // Tag: entity was created by a Lua script and should be cleaned on hot-reload.

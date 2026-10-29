@@ -19,9 +19,11 @@ struct PostProcessSettings {
     float bloomIntensity = 0.8f;
     float bloomRadius    = 1.0f;
 
-    // Depth of Field
-    bool  dofEnabled       = true;
-    float dofFocusDistance = 1.4f;
+    // Depth of Field. Disabled globally by default; post-process volumes
+    // enable it for their own settings.
+    bool  dofEnabled       = false;
+    bool  dofAutoFocus     = true;   // focus on the player/character target
+    float dofFocusDistance = 1.4f;   // manual focus distance in world units
     float dofBlur          = 13.5f;  // maximum circle-of-confusion size in pixels
 
     // Motion Blur

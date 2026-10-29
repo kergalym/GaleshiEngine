@@ -64,7 +64,7 @@ Implemented post-processing passes:
 - TAA
 - SMAA
 - FXAA
-- Depth of Field
+- Depth of Field, off globally and enabled by post-process volumes, with automatic focus on the player/nearest character or selected mesh
 - Motion Blur
 - Atmosphere
 - God Rays

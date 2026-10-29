@@ -491,6 +491,7 @@ std::string SceneSerializer::SaveToString() const {
                     {"bloomIntensity", s.bloomIntensity},
                     {"bloomRadius", s.bloomRadius},
                     {"dofEnabled", s.dofEnabled},
+                    {"dofAutoFocus", s.dofAutoFocus},
                     {"dofFocusDistance", s.dofFocusDistance},
                     {"dofBlur", s.dofBlur},
                     {"motionBlurEnabled", s.motionBlurEnabled},
@@ -1185,6 +1186,7 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                 s.bloomIntensity = js.value("bloomIntensity", s.bloomIntensity);
                 s.bloomRadius = js.value("bloomRadius", s.bloomRadius);
                 s.dofEnabled = js.value("dofEnabled", s.dofEnabled);
+                s.dofAutoFocus = js.value("dofAutoFocus", s.dofAutoFocus);
                 s.dofFocusDistance = js.value("dofFocusDistance", s.dofFocusDistance);
                 s.dofBlur = js.value("dofBlur", s.dofBlur);
                 s.motionBlurEnabled = js.value("motionBlurEnabled", s.motionBlurEnabled);

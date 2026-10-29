@@ -729,8 +729,9 @@ protected:
         m_renderFrameCounter++;
         if (m_pendingEffectsEnable && m_renderFrameCounter >= 2) {
             // Temporary debug hook: GALESHI_EFFECTS is a bitmask used to
-            // bisect Vulkan layout problems. Without it every effect is on.
-            int effectMask = 0x3FF;
+            // bisect Vulkan layout problems. DoF is intentionally off here:
+            // post-process volumes enable it for their own settings.
+            int effectMask = 0x3EF;
             if (const char* env = std::getenv("GALESHI_EFFECTS")) {
                 effectMask = std::atoi(env);
             }
@@ -3381,6 +3382,151 @@ if (ImGui::BeginMenu("File")) {
         return result;
     }
 
+    glm::vec3 CameraForward() const {
+        return glm::normalize(-glm::vec3(
+            m_camera.View()[0][2],
+            m_camera.View()[1][2],
+            m_camera.View()[2][2]));
+    }
+
+    float ViewSpaceDepth(const glm::vec3& worldPoint) const {
+        const glm::vec3 cameraPos = m_camera.Position();
+        const float distance = glm::dot(worldPoint - cameraPos, CameraForward());
+        return std::max(distance, 0.05f);
+    }
+
+    // Returns the world-space centre of all mesh bounds below a root entity.
+    // For skeletal characters the meshes live on child entities, so the root
+    // alone usually only has a feet-level transform.
+    bool EntityWorldBoundsCenter(entt::entity root, glm::vec3& outCenter) {
+        auto& reg = m_scene.Registry();
+        glm::vec3 boundsMin(std::numeric_limits<float>::max());
+        glm::vec3 boundsMax(-std::numeric_limits<float>::max());
+        bool haveBounds = false;
+
+        for (auto entity : m_scene.AllEntities()) {
+            const entt::entity handle = entity.Handle();
+            entt::entity current = handle;
+            bool belongsToRoot = false;
+            int depth = 0;
+            while (current != entt::null && depth++ < 128) {
+                if (current == root) {
+                    belongsToRoot = true;
+                    break;
+                }
+                if (reg.all_of<Galeshi::ParentComponent>(current)) {
+                    current = reg.get<Galeshi::ParentComponent>(current).parent;
+                } else {
+                    break;
+                }
+            }
+            if (!belongsToRoot || !reg.all_of<Galeshi::MeshComponent>(handle)) {
+                continue;
+            }
+
+            const auto& mesh = reg.get<Galeshi::MeshComponent>(handle).mesh;
+            if (!mesh || !mesh->Valid()) continue;
+
+            glm::vec3 localMin, localMax;
+            mesh->LocalAABB(localMin, localMax);
+            const glm::mat4 world = EntityWorldMatrix(handle);
+            for (int corner = 0; corner < 8; ++corner) {
+                const glm::vec3 local{
+                    (corner & 1) ? localMax.x : localMin.x,
+                    (corner & 2) ? localMax.y : localMin.y,
+                    (corner & 4) ? localMax.z : localMin.z,
+                };
+                const glm::vec3 point =
+                    glm::vec3(world * glm::vec4(local, 1.0f));
+                boundsMin = glm::min(boundsMin, point);
+                boundsMax = glm::max(boundsMax, point);
+            }
+            haveBounds = true;
+        }
+
+        if (haveBounds) {
+            outCenter = (boundsMin + boundsMax) * 0.5f;
+            return true;
+        }
+
+        const glm::mat4 world = EntityWorldMatrix(root);
+        outCenter = glm::vec3(world[3]);
+        if (reg.all_of<Galeshi::SkeletalComponent>(root)) {
+            outCenter.y += 1.0f;
+        }
+        return false;
+    }
+
+    entt::entity FindAutoFocusEntity() {
+        auto& reg = m_scene.Registry();
+
+        // A tagged player is the intended subject in both editor preview and
+        // gameplay.
+        auto playerView =
+            reg.view<Galeshi::PlayerTagComponent, Galeshi::TransformComponent>();
+        for (auto entity : playerView) {
+            return entity;
+        }
+
+        // A selected character or mesh is an explicit focus request. Ignore
+        // volumes, lights and other editor helpers that happen to be selected.
+        Galeshi::Entity selected = m_editor.Selected(&m_scene);
+        if (selected) {
+            const entt::entity handle = selected.Handle();
+            if (reg.all_of<Galeshi::SkeletalComponent>(handle) ||
+                reg.all_of<Galeshi::MeshComponent>(handle)) {
+                return handle;
+            }
+        }
+
+        // Otherwise focus the closest skeletal character. This keeps actors
+        // sharp when the camera target is not exactly on them.
+        const glm::vec3 cameraPos = m_camera.Position();
+        const glm::vec3 forward = CameraForward();
+        const glm::mat4 viewProj = m_camera.Projection() * m_camera.View();
+        float bestDistance = std::numeric_limits<float>::max();
+        entt::entity best = entt::null;
+
+        auto characterView =
+            reg.view<Galeshi::SkeletalComponent, Galeshi::TransformComponent>();
+        for (auto entity : characterView) {
+            const glm::mat4 world = EntityWorldMatrix(entity);
+            // Root transforms are usually at the feet. Use a rough chest
+            // position for visibility/nearest tests so a cropped close-up
+            // still selects the character whose feet are below the frame.
+            const glm::vec3 approxCenter =
+                glm::vec3(world[3]) + glm::vec3(0.0f, 1.0f, 0.0f);
+            const float depth = glm::dot(approxCenter - cameraPos, forward);
+            if (depth <= 0.05f || depth >= bestDistance) continue;
+
+            // Ignore characters clearly outside the visible frame. Keep a
+            // generous margin because the exact AABB centre is computed later.
+            const glm::vec4 clip = viewProj * glm::vec4(approxCenter, 1.0f);
+            if (clip.w <= 0.0f) continue;
+            const glm::vec3 ndc = glm::vec3(clip) / clip.w;
+            if (std::abs(ndc.x) > 1.5f || std::abs(ndc.y) > 1.5f) continue;
+
+            bestDistance = depth;
+            best = entity;
+        }
+        return best;
+    }
+
+    float AutoFocusDistance() {
+        const entt::entity target = FindAutoFocusEntity();
+        glm::vec3 focusPoint = m_editor.camTarget;
+
+        if (target != entt::null) {
+            EntityWorldBoundsCenter(target, focusPoint);
+        }
+
+        return ViewSpaceDepth(focusPoint);
+    }
+
+    float ResolveDofFocusDistance(const Galeshi::PostProcessSettings& s) {
+        return s.dofAutoFocus ? AutoFocusDistance() : s.dofFocusDistance;
+    }
+
     void DrawPostProcessVolumeSettings(Galeshi::PostProcessVolumeComponent& volume) {
         auto& s = volume.settings;
 
@@ -3410,8 +3556,24 @@ if (ImGui::BeginMenu("File")) {
 
         if (ImGui::TreeNode("Depth of Field")) {
             ImGui::Checkbox("Enabled##dof", &s.dofEnabled);
-            ImGui::DragFloat("Focus Distance", &s.dofFocusDistance,
-                             0.1f, 0.0f, 10000.0f);
+            ImGui::Checkbox("Auto Focus (Target)", &s.dofAutoFocus);
+            if (ImGui::IsItemHovered() && s.dofAutoFocus) {
+                ImGui::SetTooltip("Focus follows the tagged player, the selected\n"
+                                  "character/mesh, or the nearest skeletal character.\n"
+                                  "Falls back to the camera orbit target.");
+            }
+
+            if (s.dofAutoFocus) {
+                float autoFocus = ResolveDofFocusDistance(s);
+                ImGui::BeginDisabled();
+                ImGui::DragFloat("Focus Distance##dof", &autoFocus,
+                                 0.1f, 0.05f, 10000.0f, "%.3f");
+                ImGui::EndDisabled();
+                ImGui::TextDisabled("Auto: %.3f m", autoFocus);
+            } else {
+                ImGui::DragFloat("Focus Distance##dof", &s.dofFocusDistance,
+                                 0.1f, 0.05f, 10000.0f, "%.3f");
+            }
             ImGui::DragFloat("Blur (px)", &s.dofBlur,
                              0.1f, 0.0f, 64.0f);
             ImGui::TreePop();
@@ -3540,6 +3702,7 @@ if (ImGui::BeginMenu("File")) {
 
         if (ImGui::Button("Reset Post-Process Settings")) {
             volume.settings = Galeshi::PostProcessSettings{};
+            volume.settings.dofEnabled = true;
         }
     }
 
@@ -3983,10 +4146,11 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
 
                 // 5. Depth of Field (Views 28..31)
                 if (pp.dofEnabled) {
+                    const float dofFocusDistance = ResolveDofFocusDistance(pp);
                     if (bgfx::isValid(m_postProcess.RenderDof(
                             m_postProcess.OutputTexture(), m_framebuffer->Depth(),
                             proj, invProj, m_postProcess.PingFbo(), 28, w, h,
-                            pp.dofFocusDistance, pp.dofBlur))) {
+                            dofFocusDistance, pp.dofBlur))) {
                         m_postProcess.SwapFbos();
                     }
                 }
