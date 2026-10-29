@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "GaleshiEngine/Audio/AudioTypes.hpp"
 #include "GaleshiEngine/UI/UIWidgets.hpp"
 
 namespace Galeshi {
@@ -329,7 +330,27 @@ struct AudioSourceComponent {
     std::string soundPath;
     bool        loop     = false;
     bool        autoplay = false;
-    bool        playing  = false;
+    bool        playing  = false;  // Runtime state, not serialized.
+
+    // 3D spatialization. Non-spatial sources play as 2D through their bus.
+    bool        spatial = true;
+    AudioBus    bus     = AudioBus::SFX;
+    AudioAttenuationModel attenuation = AudioAttenuationModel::Inverse;
+    float       volume        = 1.0f;
+    float       pitch         = 1.0f;
+    float       minDistance   = 1.0f;
+    float       maxDistance   = 50.0f;
+    float       rolloff       = 1.0f;
+    float       dopplerFactor = 1.0f;
+
+    // Local-space offset from the entity origin.
+    glm::vec3   offset{0.0f};
+};
+
+// Marks an entity as the 3D audio listener. If no primary listener exists the
+// editor/game camera is used instead.
+struct AudioListenerComponent {
+    bool primary = true;
 };
 
 // Tag: entity was created by a Lua script and should be cleaned on hot-reload.

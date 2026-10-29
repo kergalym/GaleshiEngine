@@ -128,6 +128,7 @@ class GaleshiEditorApp final : public Galeshi::Application {
     };
     PreferencesSection m_preferencesSection = PreferencesSection::General;
     bool m_showPreferences = false;
+    bool m_showAudioMixer = false;
     int m_selectedAxis = 0;
     std::vector<std::string> m_recentProjects;
     bool m_pickingScene = false;
@@ -648,8 +649,18 @@ protected:
                 if (reg.valid(e) && reg.all_of<Galeshi::AudioSourceComponent>(e)) {
                     auto& a = reg.get<Galeshi::AudioSourceComponent>(e);
                     if (!a.soundPath.empty()) {
-                        m_audio.PlaySound(a.soundPath, a.loop);
-                        a.playing = true;
+                        glm::vec3 position(0.0f);
+                        if (reg.all_of<Galeshi::TransformComponent>(e)) {
+                            const glm::mat4 world = EntityWorldMatrix(e);
+                            glm::vec3 scale, translation, skew;
+                            glm::vec4 perspective;
+                            glm::quat rotation;
+                            glm::decompose(world, scale, rotation, translation,
+                                           skew, perspective);
+                            position = translation + rotation * a.offset;
+                        }
+                        m_audio.PlaySource(e, a, position);
+                        a.playing = m_audio.IsSourcePlaying(e);
                     }
                 }
             }
@@ -741,19 +752,8 @@ protected:
             m_physics->SyncTransformsToECS(m_scene);
         }
 
-        // Audio: auto-play & state sync
-        {
-            auto view = m_scene.Registry().view<Galeshi::AudioSourceComponent>();
-            for (auto e : view) {
-                auto& a = view.get<Galeshi::AudioSourceComponent>(e);
-                bool playingNow = !a.soundPath.empty() && m_audio.IsSoundPlaying(a.soundPath);
-                if (a.playing != playingNow) a.playing = playingNow;
-                if (a.autoplay && !a.playing && !a.soundPath.empty()) {
-                    m_audio.PlaySound(a.soundPath, a.loop);
-                    a.playing = true;
-                }
-            }
-        }
+        // Audio: listener, 3D source positions, autoplay and mixer sync.
+        UpdateAudio(dt);
         // --- End auto-inserted ---
 
         m_time += dt;
@@ -877,6 +877,7 @@ protected:
         DrawLuaConsole();
         DrawScriptComponents();
         DrawUIDesigner();
+        DrawAudioMixer();
         DrawPreferencesWindow();
 
         // Play mode draws the authored canvases inside the viewport image.
@@ -1066,6 +1067,7 @@ private:
 
         m_editor.ClearSelection();
         m_editor.isPlaying = false;
+        m_audio.StopAll();
 
         if (m_physics) m_physics->Reset();
         if (m_navSystem) {
@@ -1478,6 +1480,7 @@ private:
                 EnsurePhysicsBodies();
             } else {
                 m_editor.isPlaying = false;
+                m_audio.StopAll();
                 m_physics->Reset();
                 if (m_particles) m_particles->Reset();
                 if (m_historyIndex >= 0) m_serializer->LoadFromString(m_history[m_historyIndex]);
@@ -1541,6 +1544,11 @@ if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Scale",     "R")) m_editor.SetMode(Galeshi::GizmoMode::Scale);
             ImGui::Separator();
             if (ImGui::MenuItem("Preferences...", "Ctrl+,")) m_showPreferences = true;
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Audio")) {
+            ImGui::MenuItem("Audio Mixer", nullptr, &m_showAudioMixer);
             ImGui::EndMenu();
         }
 
@@ -1719,6 +1727,20 @@ if (ImGui::BeginMenu("File")) {
                 e.AddComponent<Galeshi::ParticleEmitterComponent>();
                 auto& tc = e.GetComponent<Galeshi::TransformComponent>();
                 tc.position = {0, 2, 0};
+                m_editor.Select(e);
+            }
+            if (ImGui::MenuItem("Audio Source")) {
+                auto e = m_scene.CreateEntity("AudioSource");
+                e.AddComponent<Galeshi::AudioSourceComponent>();
+                e.GetComponent<Galeshi::TransformComponent>().position =
+                    m_editor.camTarget;
+                m_editor.Select(e);
+            }
+            if (ImGui::MenuItem("Audio Listener")) {
+                auto e = m_scene.CreateEntity("AudioListener");
+                e.AddComponent<Galeshi::AudioListenerComponent>();
+                e.GetComponent<Galeshi::TransformComponent>().position =
+                    m_editor.camTarget;
                 m_editor.Select(e);
             }
             ImGui::EndMenu();
@@ -3278,6 +3300,69 @@ if (ImGui::BeginMenu("File")) {
         }
         ImGui::DockSpace(dockspaceId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
         ImGui::End();
+    }
+
+    // -------------------------------------------------------------------
+    // Audio
+    // -------------------------------------------------------------------
+    void UpdateAudio(float dt) {
+        if (!m_audio.IsInitialized()) return;
+
+        // Mixer values live on the scene so they are serialized with it.
+        m_audio.ApplyMixerSettings(m_scene.AudioBuses());
+        m_audio.PruneSources(m_scene.Registry());
+
+        // Listener: a primary AudioListenerComponent wins; otherwise the
+        // editor/game camera acts as the listener.
+        glm::vec3 listenerPos = m_camera.Position();
+        glm::vec3 listenerForward = -glm::vec3(m_camera.View()[0][2],
+                                               m_camera.View()[1][2],
+                                               m_camera.View()[2][2]);
+        glm::vec3 listenerUp = glm::vec3(m_camera.View()[0][1],
+                                         m_camera.View()[1][1],
+                                         m_camera.View()[2][1]);
+
+        auto listenerView = m_scene.Registry().view<Galeshi::AudioListenerComponent,
+                                                     Galeshi::TransformComponent>();
+        for (auto e : listenerView) {
+            const auto& listener =
+                listenerView.get<Galeshi::AudioListenerComponent>(e);
+            if (!listener.primary) continue;
+
+            const glm::mat4 world = EntityWorldMatrix(e);
+            glm::vec3 scale, translation, skew;
+            glm::vec4 perspective;
+            glm::quat rotation;
+            glm::decompose(world, scale, rotation, translation, skew, perspective);
+            listenerPos = translation;
+            listenerForward = glm::normalize(rotation * glm::vec3(0.0f, 0.0f, -1.0f));
+            listenerUp = glm::normalize(rotation * glm::vec3(0.0f, 1.0f, 0.0f));
+            break;
+        }
+        m_audio.SetListener(listenerPos, listenerForward, listenerUp, dt);
+
+        auto view = m_scene.Registry().view<Galeshi::AudioSourceComponent>();
+        for (auto e : view) {
+            auto& source = view.get<Galeshi::AudioSourceComponent>(e);
+
+            glm::vec3 position(0.0f);
+            if (m_scene.Registry().all_of<Galeshi::TransformComponent>(e)) {
+                const glm::mat4 world = EntityWorldMatrix(e);
+                glm::vec3 scale, translation, skew;
+                glm::vec4 perspective;
+                glm::quat rotation;
+                glm::decompose(world, scale, rotation, translation, skew, perspective);
+                position = translation + rotation * source.offset;
+            }
+
+            const bool playing = m_audio.IsSourcePlaying(e);
+            if (source.autoplay && !playing && !source.soundPath.empty()) {
+                m_audio.PlaySource(e, source, position);
+            } else if (playing) {
+                m_audio.UpdateSource(e, source, position, dt);
+            }
+            source.playing = m_audio.IsSourcePlaying(e);
+        }
     }
 
     // -------------------------------------------------------------------
@@ -4886,28 +4971,97 @@ void DrawDetails() {
                 } else {
                     auto& audio = sel.GetComponent<Galeshi::AudioSourceComponent>();
                     if (ImGui::CollapsingHeader("Audio Source")) {
-                        char buf[256];
+                        char buf[512];
                         snprintf(buf, sizeof buf, "%s", audio.soundPath.c_str());
                         if (ImGui::InputText("Sound Path", buf, sizeof buf)) {
                             audio.soundPath = buf;
                         }
+
+                        const char* busNames[Galeshi::kAudioBusCount] = {
+                            "Master", "Music", "SFX", "Voice", "Ambient"};
+                        int bus = static_cast<int>(audio.bus);
+                        if (ImGui::Combo("Bus", &bus, busNames,
+                                         Galeshi::kAudioBusCount)) {
+                            audio.bus = static_cast<Galeshi::AudioBus>(bus);
+                        }
+
                         ImGui::Checkbox("Autoplay", &audio.autoplay);
                         ImGui::Checkbox("Loop", &audio.loop);
+                        ImGui::Checkbox("3D Spatialization", &audio.spatial);
+                        ImGui::DragFloat("Volume", &audio.volume, 0.01f, 0.0f, 2.0f);
+                        ImGui::DragFloat("Pitch", &audio.pitch, 0.01f, 0.05f, 4.0f);
+
+                        if (audio.spatial) {
+                            const char* attenuationNames[3] = {
+                                "Inverse", "Linear", "Exponential"};
+                            int attenuation = static_cast<int>(audio.attenuation);
+                            if (ImGui::Combo("Attenuation", &attenuation,
+                                             attenuationNames, 3)) {
+                                audio.attenuation =
+                                    static_cast<Galeshi::AudioAttenuationModel>(
+                                        attenuation);
+                            }
+                            ImGui::DragFloat("Min Distance", &audio.minDistance,
+                                             0.05f, 0.0f, 1000.0f);
+                            ImGui::DragFloat("Max Distance", &audio.maxDistance,
+                                             0.5f, 0.0f, 10000.0f);
+                            ImGui::DragFloat("Rolloff", &audio.rolloff,
+                                             0.01f, 0.01f, 10.0f);
+                            ImGui::DragFloat("Doppler Factor", &audio.dopplerFactor,
+                                             0.01f, 0.0f, 10.0f);
+                            ImGui::DragFloat3("3D Offset",
+                                              glm::value_ptr(audio.offset), 0.05f);
+                        }
+
+                        // World-space position of the sound for manual play.
+                        glm::vec3 soundPosition(0.0f);
+                        {
+                            const glm::mat4 world = EntityWorldMatrix(sel.Handle());
+                            glm::vec3 scale, translation, skew;
+                            glm::vec4 perspective;
+                            glm::quat rotation;
+                            glm::decompose(world, scale, rotation, translation,
+                                           skew, perspective);
+                            soundPosition = translation + rotation * audio.offset;
+                        }
+
                         if (ImGui::Button(audio.playing ? "Stop" : "Play")) {
                             if (audio.playing) {
-                                m_audio.StopSound(audio.soundPath);
+                                m_audio.StopSource(sel.Handle());
                                 audio.playing = false;
                             } else {
-                                m_audio.PlaySound(audio.soundPath, audio.loop);
-                                audio.playing = true;
+                                m_audio.PlaySource(sel.Handle(), audio,
+                                                   soundPosition);
+                                audio.playing =
+                                    m_audio.IsSourcePlaying(sel.Handle());
                             }
                         }
                         ImGui::SameLine();
-                        ImGui::Text("State: %s", audio.playing ? "playing" : "idle");
+                        ImGui::Text("State: %s",
+                                    audio.playing ? "playing" : "idle");
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("(bus: %s)",
+                                            Galeshi::AudioBusName(audio.bus));
                         if (ImGui::Button("Remove Audio Source")) {
+                            m_audio.StopSource(sel.Handle());
                             sel.RemoveComponent<Galeshi::AudioSourceComponent>();
                         }
                     }
+                }
+
+                if (sel.HasComponent<Galeshi::AudioListenerComponent>()) {
+                    auto& listener =
+                        sel.GetComponent<Galeshi::AudioListenerComponent>();
+                    if (ImGui::CollapsingHeader("Audio Listener")) {
+                        ImGui::Checkbox("Primary Listener", &listener.primary);
+                        ImGui::TextDisabled(
+                            "Uses this entity's world position and orientation.");
+                        if (ImGui::Button("Remove Audio Listener")) {
+                            sel.RemoveComponent<Galeshi::AudioListenerComponent>();
+                        }
+                    }
+                } else if (ImGui::Button("+ Add Audio Listener")) {
+                    sel.AddComponent<Galeshi::AudioListenerComponent>();
                 }
             }
         }
@@ -5672,6 +5826,49 @@ void DrawDetails() {
             ImGui::TextDisabled("%s", m_currentLuaFile.c_str());
             ImGui::Separator();
             m_luaEditor.Render("LuaEditor");
+        }
+        ImGui::End();
+    }
+
+    void DrawAudioMixer() {
+        if (!m_showAudioMixer) return;
+        if (ImGui::Begin("Audio Mixer", &m_showAudioMixer)) {
+            auto& buses = m_scene.AudioBuses();
+            ImGui::TextDisabled(
+                "Audio Sources are routed through these buses. "
+                "Values are saved with the scene.");
+            ImGui::Separator();
+
+            for (int i = 0; i < Galeshi::kAudioBusCount; ++i) {
+                const auto bus = static_cast<Galeshi::AudioBus>(i);
+                ImGui::PushID(i);
+                ImGui::TextUnformatted(Galeshi::AudioBusName(bus));
+                ImGui::SameLine(110.0f);
+                ImGui::SetNextItemWidth(200.0f);
+                float volume = buses[static_cast<size_t>(i)].volume;
+                if (ImGui::SliderFloat("##Volume", &volume, 0.0f, 1.0f,
+                                       "%.2f")) {
+                    buses[static_cast<size_t>(i)].volume = volume;
+                }
+                ImGui::SameLine();
+                bool muted = buses[static_cast<size_t>(i)].muted;
+                if (ImGui::Checkbox("Mute", &muted)) {
+                    buses[static_cast<size_t>(i)].muted = muted;
+                }
+                if (i == static_cast<int>(Galeshi::AudioBus::Master)) {
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(final output)");
+                }
+                ImGui::PopID();
+            }
+
+            ImGui::Separator();
+            if (ImGui::Button("Reset Mixer")) {
+                for (auto& bus : buses) {
+                    bus.volume = 1.0f;
+                    bus.muted = false;
+                }
+            }
         }
         ImGui::End();
     }

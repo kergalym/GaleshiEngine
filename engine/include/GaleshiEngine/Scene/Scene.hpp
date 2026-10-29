@@ -4,6 +4,7 @@
 #include "GaleshiEngine/Scene/Components.hpp"
 
 #include <entt/entt.hpp>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -27,8 +28,17 @@ public:
     std::vector<Entity> AllEntities();
     Entity FindEntityByName(const std::string& name);
 
+    // Scene-level mixer state (serialized with the scene).
+    std::array<AudioBusSettings, kAudioBusCount>& AudioBuses() {
+        return m_audioBuses;
+    }
+    const std::array<AudioBusSettings, kAudioBusCount>& AudioBuses() const {
+        return m_audioBuses;
+    }
+
 private:
     entt::registry m_registry;
+    std::array<AudioBusSettings, kAudioBusCount> m_audioBuses{};
 };
 
 } // namespace Galeshi

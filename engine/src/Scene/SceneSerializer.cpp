@@ -277,6 +277,16 @@ std::string SceneSerializer::SaveToString() const {
         }
     }
 
+    root["audioMixer"] = json::array();
+    for (int i = 0; i < kAudioBusCount; ++i) {
+        const auto& bus = m_scene.AudioBuses()[static_cast<size_t>(i)];
+        root["audioMixer"].push_back({
+            {"name", AudioBusName(static_cast<AudioBus>(i))},
+            {"volume", bus.volume},
+            {"muted", bus.muted}
+        });
+    }
+
     for (size_t i = 0; i < entities.size(); ++i) {
         const entt::entity handle = entities[i];
         const auto& reg = m_scene.Registry();
@@ -449,8 +459,22 @@ std::string SceneSerializer::SaveToString() const {
             je["audioSource"] = {
                 {"soundPath", audio.soundPath},
                 {"loop", audio.loop},
-                {"autoplay", audio.autoplay}
+                {"autoplay", audio.autoplay},
+                {"spatial", audio.spatial},
+                {"bus", static_cast<int>(audio.bus)},
+                {"attenuation", static_cast<int>(audio.attenuation)},
+                {"volume", audio.volume},
+                {"pitch", audio.pitch},
+                {"minDistance", audio.minDistance},
+                {"maxDistance", audio.maxDistance},
+                {"rolloff", audio.rolloff},
+                {"dopplerFactor", audio.dopplerFactor},
+                {"offset", Vec3ToJson(audio.offset)}
             };
+        }
+        if (reg.all_of<AudioListenerComponent>(handle)) {
+            const auto& listener = reg.get<AudioListenerComponent>(handle);
+            je["audioListener"] = { {"primary", listener.primary} };
         }
         if (reg.all_of<UICanvasComponent>(handle)) {
             const auto& uiCanvas = reg.get<UICanvasComponent>(handle).canvas;
@@ -662,6 +686,37 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
 
     const int formatVersion = root.value("version", 1);
     const auto& jsonEntities = root["entities"];
+
+    // Start from defaults so scenes saved before the mixer existed do not
+    // inherit bus state from the previously loaded scene.
+    m_scene.AudioBuses().fill(AudioBusSettings{});
+
+    if (root.contains("audioMixer") && root["audioMixer"].is_array()) {
+        auto& buses = m_scene.AudioBuses();
+        const auto& mixer = root["audioMixer"];
+        for (size_t elementIndex = 0; elementIndex < mixer.size(); ++elementIndex) {
+            const auto& jb = mixer[elementIndex];
+            if (!jb.is_object()) continue;
+            const std::string name = jb.value("name", std::string{});
+            int index = -1;
+            if (!name.empty()) {
+                for (int i = 0; i < kAudioBusCount; ++i) {
+                    if (name == AudioBusName(static_cast<AudioBus>(i))) {
+                        index = i;
+                        break;
+                    }
+                }
+            }
+            if (index < 0) {
+                index = static_cast<int>(elementIndex);
+            }
+            if (index < 0 || index >= kAudioBusCount) continue;
+            buses[static_cast<size_t>(index)].volume =
+                std::clamp(jb.value("volume", 1.0f), 0.0f, 1.0f);
+            buses[static_cast<size_t>(index)].muted =
+                jb.value("muted", false);
+        }
+    }
 
     struct LoadedEntity {
         Entity entity;
@@ -1025,13 +1080,32 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                 pe.texture = m_assets.LoadTexture(texturePath, true);
             }
         }
-        if (je.contains("audioSource")) {
+        if (je.contains("audioSource") && je["audioSource"].is_object()) {
             const auto& ja = je["audioSource"];
             auto& audio = e.AddComponent<AudioSourceComponent>();
             audio.soundPath = ja.value("soundPath", std::string{});
             audio.loop = ja.value("loop", false);
             audio.autoplay = ja.value("autoplay", false);
+            // Old scenes were 2D-only; keep them that way unless spatial was
+            // saved explicitly.
+            audio.spatial = ja.value("spatial", false);
+            audio.bus = static_cast<AudioBus>(std::clamp(
+                ja.value("bus", static_cast<int>(AudioBus::SFX)),
+                0, kAudioBusCount - 1));
+            audio.attenuation = static_cast<AudioAttenuationModel>(std::clamp(
+                ja.value("attenuation", 0), 0, 2));
+            audio.volume = ja.value("volume", 1.0f);
+            audio.pitch = ja.value("pitch", 1.0f);
+            audio.minDistance = ja.value("minDistance", 1.0f);
+            audio.maxDistance = ja.value("maxDistance", 50.0f);
+            audio.rolloff = ja.value("rolloff", 1.0f);
+            audio.dopplerFactor = ja.value("dopplerFactor", 1.0f);
+            if (ja.contains("offset")) audio.offset = Vec3FromJson(ja.at("offset"));
             audio.playing = false;
+        }
+        if (je.contains("audioListener") && je["audioListener"].is_object()) {
+            auto& listener = e.AddComponent<AudioListenerComponent>();
+            listener.primary = je["audioListener"].value("primary", true);
         }
         if (je.contains("uiCanvas") && je["uiCanvas"].is_object()) {
             const auto& jc = je["uiCanvas"];

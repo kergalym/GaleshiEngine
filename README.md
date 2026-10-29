@@ -136,9 +136,10 @@ end
 - miniaudio.
 - File-based playback, looping, stopping, and playback state checks.
 - `AudioSourceComponent` in ECS.
+- 3D positional audio with inverse, linear, and exponential attenuation, min/max distance, rolloff, doppler, and a local offset.
+- Listener follows the camera or an entity with `AudioListenerComponent`.
+- Mixer buses: Master, Music, SFX, Voice, and Ambient, with per-source routing and volume/mute controls in the Audio Mixer window.
 - Playback can be triggered from Lua, editor actions, or collision callbacks.
-
-The current implementation is 2D only. There is no spatial audio, mixer, or bus system.
 
 ## Assets
 
@@ -357,7 +358,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 ### Content systems
 
 - [x] Animation blending and state machines.
-- [ ] 3D audio and mixer buses.
+- [x] 3D audio and mixer buses.
 - [x] Improve AI with behavior trees and perception.
 
 ---
