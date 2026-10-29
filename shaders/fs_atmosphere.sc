@@ -24,10 +24,11 @@ bool raySphereIntersect(vec3 ro, vec3 rd, float r, out float t0, out float t1) {
 }
 
 void main() {
+    vec3 baseColor = texture2D(s_texColor, v_texcoord0).rgb;
     float depth = texture2D(s_texDepth, v_texcoord0).r;
     // Если это не небо (есть геометрия), оставляем как есть
     if (depth < 0.9999) {
-        gl_FragColor = texture2D(s_texColor, v_texcoord0);
+        gl_FragColor = vec4(baseColor, 1.0);
         return;
     }
 
@@ -35,7 +36,7 @@ void main() {
     vec4 clip = vec4(ndc, 1.0, 1.0);
     vec4 world = mul(u_atmoInvVP, clip);
     if (abs(world.w) < 1e-5) {
-        gl_FragColor = texture2D(s_texColor, v_texcoord0);
+        gl_FragColor = vec4(baseColor, 1.0);
         return;
     }
     vec3 farWorld = world.xyz / world.w;
@@ -50,7 +51,7 @@ void main() {
     if (!raySphereIntersect(ro, rd, u_atmoParams.y, tAtmo, tAtmoMax)) {
         // The ray missed the atmosphere shell (possible for upward rays).
         // Keep the already rendered sky instead of replacing it with black.
-        gl_FragColor = texture2D(s_texColor, v_texcoord0);
+        gl_FragColor = vec4(baseColor, 1.0);
         return;
     }
     tAtmo = max(tAtmo, 0.0);
@@ -114,8 +115,16 @@ void main() {
         color += vec3(1.0, 0.9, 0.8) * 20.0;
     }
 
-    // Тонмаппинг для неба
-    color = 1.0 - exp(-color * 2.0);
-
-    gl_FragColor = vec4(color, 1.0);
+    // Keep the atmosphere in linear HDR; the main tonemap pass runs later.
+    // A horizon / below-horizon sun makes the single-scattering integral go
+    // almost to zero. Keep a fraction of the procedural sky and a small
+    // twilight-blue floor so enabling the atmosphere can never turn the
+    // whole sky black.
+    vec3 sky = mix(baseColor, color, 0.8);
+    vec3 minSky = mix(vec3(0.015, 0.035, 0.085),
+                      vec3(0.10, 0.20, 0.38),
+                      clamp(rd.y, 0.0, 1.0));
+    minSky += vec3(0.06, 0.03, 0.015) * exp(-abs(rd.y) * 8.0);
+    sky = max(sky, minSky);
+    gl_FragColor = vec4(sky, 1.0);
 }

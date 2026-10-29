@@ -9,35 +9,39 @@ uniform vec4 u_godraysParams; // x = decay, y = density, z = weight, w = exposur
 void main() {
     vec2 uv = v_texcoord0;
     vec3 baseColor = texture2D(s_texColor, uv).rgb;
-    float depth = texture2D(s_texDepth, uv).r;
-
-    if (depth < 0.999) {
-        gl_FragColor = vec4(baseColor, 1.0);
-        return;
-    }
 
     vec2 sunPos = u_sunScreenPos.xy;
-    // Если солнце за экраном, не рисуем лучи
-    if (sunPos.x < 0.0 || sunPos.x > 1.0 || sunPos.y < 0.0 || sunPos.y > 1.0) {
-        gl_FragColor = vec4(baseColor, 1.0);
-        return;
-    }
-
-    // Radial blur в сторону солнца
-    vec2 delta = (sunPos - uv) * u_godraysParams.y;
+    // Density is the fraction of the path to the light source covered by the
+    // samples, not a per-sample multiplier. The old code multiplied every
+    // step by density, so values like 2.23 jumped off-screen after one tap.
+    const int kSamples = 32;
+    vec2 delta = (sunPos - uv) *
+                 (clamp(u_godraysParams.y, 0.0, 1.0) / float(kSamples));
     vec2 coord = uv;
     float illuminationDecay = 1.0;
     vec3 lightAccum = vec3(0.0);
 
-    for (int i = 0; i < 32; ++i) {
+    for (int i = 0; i < kSamples; ++i) {
         coord += delta;
+        if (coord.x < 0.0 || coord.x > 1.0 ||
+            coord.y < 0.0 || coord.y > 1.0) {
+            break;
+        }
+
         float sampleDepth = texture2D(s_texDepth, coord).r;
         if (sampleDepth >= 0.999) {
             vec3 sky = texture2D(s_texColor, coord).rgb;
-            lightAccum += sky * illuminationDecay * u_godraysParams.z;
+            lightAccum += sky * illuminationDecay;
         }
         illuminationDecay *= u_godraysParams.x;
     }
 
-    gl_FragColor = vec4(baseColor + lightAccum * u_sunScreenPos.z * u_godraysParams.w, 1.0);
+    // Composite the light shafts over the whole image. The old shader
+    // returned on geometry pixels, so the effect only brightened the sky and
+    // was invisible whenever the sun was off-screen or behind an object.
+    vec3 rays = lightAccum * (1.0 / float(kSamples)) *
+                u_sunScreenPos.z * u_godraysParams.z * u_godraysParams.w;
+    // Keep the shafts readable without washing out the whole scene at the
+    // inspector's default intensity/weight values.
+    gl_FragColor = vec4(baseColor + rays * 0.25, 1.0);
 }

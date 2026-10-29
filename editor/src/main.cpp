@@ -3685,7 +3685,7 @@ if (ImGui::BeginMenu("File")) {
             ImGui::DragFloat("Decay", &s.godRaysDecay,
                              0.005f, 0.0f, 1.0f);
             ImGui::DragFloat("Density", &s.godRaysDensity,
-                             0.01f, 0.0f, 10.0f);
+                             0.01f, 0.0f, 1.0f);
             ImGui::DragFloat("Weight", &s.godRaysWeight,
                              0.01f, 0.0f, 10.0f);
             ImGui::TreePop();
@@ -3951,8 +3951,46 @@ if (ImGui::BeginMenu("File")) {
                 slIdx++;
             }
 
-bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
-            m_render->Render(m_scene, m_camera, 1, w, h);
+            const Galeshi::PostProcessSettings pp =
+                ResolvePostProcessSettings();
+
+            // Do not carry stale history across a period where TAA was off.
+            if (!pp.taaEnabled) m_postProcess.ResetTaaHistory();
+
+            // Reprojection is done in the unjittered screen space. The
+            // scene itself uses the jittered projection, but history samples
+            // must land on the same pixel grid; otherwise edges acquire dark
+            // one-pixel ghosts from the previous jitter offset.
+            const glm::mat4 taaVP = m_camera.Projection() * m_camera.View();
+            const glm::mat4 taaInvVP = glm::inverse(taaVP);
+
+            // TAA needs a fresh sub-pixel projection offset every frame. The
+            // offset is applied only to the scene camera; editor picking,
+            // gizmos and auto-focus keep using the unjittered camera.
+            Galeshi::Camera renderCamera = m_camera;
+            if (m_render->DeferredEnabled() && pp.taaEnabled) {
+                auto halton = [](uint32_t index, uint32_t base) {
+                    float f = 1.0f;
+                    float r = 0.0f;
+                    while (index > 0) {
+                        f /= static_cast<float>(base);
+                        r += f * static_cast<float>(index % base);
+                        index /= base;
+                    }
+                    return r;
+                };
+                const uint32_t jitterIndex =
+                    static_cast<uint32_t>(m_renderFrameCounter % 8) + 1u;
+                const float jx = halton(jitterIndex, 2u) - 0.5f;
+                const float jy = halton(jitterIndex, 3u) - 0.5f;
+                glm::mat4 jitteredProj = m_camera.Projection();
+                jitteredProj[2][0] += (2.0f * jx) / static_cast<float>(w);
+                jitteredProj[2][1] += (2.0f * jy) / static_cast<float>(h);
+                renderCamera.SetProjection(jitteredProj);
+            }
+
+            bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
+            m_render->Render(m_scene, renderCamera, 1, w, h);
 
             if (m_render->DeferredEnabled()) {
                 glm::vec3 ldir{-0.4f,-0.8f,-0.5f}, lcol{1.0f};
@@ -4025,12 +4063,10 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     slCount++;
                 }
 
-                glm::mat4 proj = m_camera.Projection();
+                glm::mat4 proj = renderCamera.Projection();
                 glm::mat4 invProj = glm::inverse(proj);
                 glm::mat4 invViewProj = glm::inverse(proj * m_camera.View());
                 glm::mat4 currVP = proj * m_camera.View(); // True VP matrix for post-processing
-                const Galeshi::PostProcessSettings pp =
-                    ResolvePostProcessSettings();
                 
 
                 // Pass spot shadow matrices
@@ -4114,7 +4150,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 if (pp.motionBlurEnabled && m_postProcess.HasPrevViewProj()) {
                     if (bgfx::isValid(m_postProcess.RenderMotionBlur(
                             m_postProcess.OutputTexture(), m_framebuffer->WorldPos(),
-                            m_postProcess.GetPrevViewProj(), glm::inverse(currVP),
+                            m_postProcess.GetPrevViewProj(), taaInvVP,
                             m_postProcess.PingFbo(), 23, 25, w, h, m_frameDelta,
                             pp.motionBlurAmount, pp.motionBlurMaxVelocity))) {
                         m_postProcess.SwapFbos();
@@ -4169,7 +4205,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 if (pp.taaEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderTaa(
                             m_postProcess.OutputTexture(), m_framebuffer->Depth(),
-                            m_postProcess.GetPrevViewProj(), glm::inverse(currVP),
+                            m_postProcess.GetPrevViewProj(), taaInvVP,
                             m_postProcess.PingFbo(), 36, w, h, pp.taaBlend))) {
                         m_postProcess.SwapFbos();
                     }
@@ -4217,9 +4253,9 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     }
                 }
 
-                // Store the camera matrices for the next frame's motion blur
-                // and TAA reprojection (regardless of whether TAA is on).
-                m_postProcess.SetPrevViewProj(currVP);
+                // Store the unjittered camera matrix for the next frame's
+                // motion blur and TAA reprojection.
+                m_postProcess.SetPrevViewProj(taaVP);
             } else {
                 // View 2 is reserved for the first directional shadow cascade.
                 m_postProcess.Render(46, m_framebuffer->Color(), w, h);

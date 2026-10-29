@@ -706,7 +706,10 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
 
         if(bgfx::isValid(m_historyFbo)) bgfx::destroy(m_historyFbo);
     if(bgfx::isValid(m_historyColor)) bgfx::destroy(m_historyColor);
-    m_historyColor = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
+    // History is accumulated in HDR; using RGBA8 here clipped bright pixels
+    // and made TAA darken highlights over time.
+    m_historyColor = bgfx::createTexture2D(
+        w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags);
     m_historyFbo = bgfx::createFrameBuffer(1, &m_historyColor, false);
         m_historyValid = false;
     if (bgfx::isValid(m_blitFboA)) bgfx::destroy(m_blitFboA);
@@ -1263,6 +1266,12 @@ bgfx::TextureHandle PostProcessManager::RenderGodRays(bgfx::TextureHandle color,
     glm::vec2 sunScreen = glm::vec2(sunNdc.x * 0.5f + 0.5f,
                                     0.5f - sunNdc.y * 0.5f);
 
+    // Clamp the projected light source just outside the viewport. The
+    // direction toward an off-screen sun still defines the shaft pattern,
+    // and clamping keeps the radial samples on screen instead of making the
+    // effect disappear completely.
+    sunScreen = glm::clamp(sunScreen, glm::vec2(-0.20f), glm::vec2(1.20f));
+
     bgfx::setViewFrameBuffer(viewId, target);
     bgfx::setViewRect(viewId, 0, 0, w, h);
     bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR, 0x000000ff);
@@ -1272,11 +1281,15 @@ bgfx::TextureHandle PostProcessManager::RenderGodRays(bgfx::TextureHandle color,
     float sunPos[4] = { sunScreen.x, sunScreen.y, std::max(intensity, 0.0f),
                         (float)w / (float)h };
     bgfx::setUniform(u_sunScreenPos, sunPos);
-    float params[4] = { std::clamp(decay, 0.0f, 1.0f), std::max(density, 0.0f),
+    // Density is a fraction of the distance to the light source. Clamping it
+    // prevents values above 1 from making every radial sample step off-screen.
+    float params[4] = { std::clamp(decay, 0.0f, 1.0f),
+                        std::clamp(density, 0.0f, 1.0f),
                         std::max(weight, 0.0f), 1.0f };
     bgfx::setUniform(u_godraysParams, params);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId, m_godraysProg);
     return m_pingColor;
 }

@@ -86,6 +86,7 @@ public:
     bool SsrEnabled() const { return m_ssrEnabled; }
     void SetTaaEnabled(bool v) { m_taaEnabled = v; }
     bool TaaEnabled() const { return m_taaEnabled; }
+    void ResetTaaHistory() { m_historyValid = false; }
     bgfx::TextureHandle RenderTaa(bgfx::TextureHandle color, bgfx::TextureHandle depth, const glm::mat4& prevVP, const glm::mat4& invVP, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float blend);
     bgfx::TextureHandle RenderGodRays(bgfx::TextureHandle color, bgfx::TextureHandle depth,
                                       const glm::mat4& viewProj, const float camPos[4], const float sunDir[4],

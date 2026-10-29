@@ -9,6 +9,7 @@ public:
     Camera() = default;
 
     void SetPerspective(float fovYRadians, float aspect, float nearZ, float farZ);
+    void SetProjection(const glm::mat4& projection) { m_proj = projection; }
     void SetView(const glm::vec3& eye, const glm::vec3& target, const glm::vec3& up);
     void Orbit(const glm::vec3& target, float yawRad, float pitchRad, float radius);
 

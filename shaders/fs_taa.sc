@@ -15,12 +15,6 @@ void main() {
     vec4 current = texture2D(s_texColor, uv);
     float depth = texture2D(s_texDepth, uv).r;
     
-    // Фон (небо) не нужно сглаживать, отдаем как есть
-    if (depth >= 0.9999) { 
-        gl_FragColor = current; 
-        return; 
-    }
-    
     // Reproject using depth (Vulkan: Z in [0,1], so we don't flip Y)
     vec4 clip = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
     vec4 world = mul(u_taaInvViewProj, clip);
@@ -52,7 +46,9 @@ void main() {
     // Ограничиваем историю цветом текущей сцены (защита от размазывания)
     history.rgb = clamp(history.rgb, minC, maxC);
     
-    // Смешиваем с историей (Adjusted blend)
-    float blend = u_taaParams.x;
-    gl_FragColor = mix(current, history, blend);
+    // u_taaParams.x is the current-frame contribution. A small value keeps
+    // most of the accumulated history, which is what actually resolves the
+    // sub-pixel jitter introduced by the renderer.
+    float blend = clamp(u_taaParams.x, 0.01, 1.0);
+    gl_FragColor = vec4(mix(history.rgb, current.rgb, blend), 1.0);
 }
