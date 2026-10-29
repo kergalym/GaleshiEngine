@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "GaleshiEngine/Audio/AudioTypes.hpp"
+#include "GaleshiEngine/Renderer/PostProcessSettings.hpp"
 #include "GaleshiEngine/UI/UIWidgets.hpp"
 
 namespace Galeshi {
@@ -355,6 +356,18 @@ struct AudioSourceComponent {
 // editor/game camera is used instead.
 struct AudioListenerComponent {
     bool primary = true;
+};
+
+// Spatial post-processing volume. When the camera is inside the box (or when
+// Global is enabled) its settings override the editor's post-process defaults.
+struct PostProcessVolumeComponent {
+    bool      enabled  = true;
+    bool      global   = false;
+    int       priority = 0;
+    glm::vec3 size{20.0f, 10.0f, 20.0f};
+    bool      visibleInEditor = true;
+
+    PostProcessSettings settings;
 };
 
 // Tag: entity was created by a Lua script and should be cleaned on hot-reload.

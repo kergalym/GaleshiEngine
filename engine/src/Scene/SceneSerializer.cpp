@@ -476,6 +476,57 @@ std::string SceneSerializer::SaveToString() const {
             const auto& listener = reg.get<AudioListenerComponent>(handle);
             je["audioListener"] = { {"primary", listener.primary} };
         }
+        if (reg.all_of<PostProcessVolumeComponent>(handle)) {
+            const auto& volume = reg.get<PostProcessVolumeComponent>(handle);
+            const auto& s = volume.settings;
+            je["postProcessVolume"] = {
+                {"enabled", volume.enabled},
+                {"global", volume.global},
+                {"priority", volume.priority},
+                {"size", Vec3ToJson(volume.size)},
+                {"visibleInEditor", volume.visibleInEditor},
+                {"settings", {
+                    {"bloomEnabled", s.bloomEnabled},
+                    {"bloomThreshold", s.bloomThreshold},
+                    {"bloomIntensity", s.bloomIntensity},
+                    {"bloomRadius", s.bloomRadius},
+                    {"dofEnabled", s.dofEnabled},
+                    {"dofFocusDistance", s.dofFocusDistance},
+                    {"dofBlur", s.dofBlur},
+                    {"motionBlurEnabled", s.motionBlurEnabled},
+                    {"motionBlurAmount", s.motionBlurAmount},
+                    {"motionBlurMaxVelocity", s.motionBlurMaxVelocity},
+                    {"exposure", s.exposure},
+                    {"contrast", s.contrast},
+                    {"saturation", s.saturation},
+                    {"colorExposure", s.colorExposure},
+                    {"colorContrast", s.colorContrast},
+                    {"colorSaturation", s.colorSaturation},
+                    {"vignetteIntensity", s.vignetteIntensity},
+                    {"vignetteSmoothness", s.vignetteSmoothness},
+                    {"chromaticAberration", s.chromaticAberration},
+                    {"ssaoEnabled", s.ssaoEnabled},
+                    {"ssaoRadius", s.ssaoRadius},
+                    {"ssaoBias", s.ssaoBias},
+                    {"ssaoMaxDistance", s.ssaoMaxDistance},
+                    {"ssaoStrength", s.ssaoStrength},
+                    {"ssrEnabled", s.ssrEnabled},
+                    {"ssrIntensity", s.ssrIntensity},
+                    {"fxaaEnabled", s.fxaaEnabled},
+                    {"smaaEnabled", s.smaaEnabled},
+                    {"taaEnabled", s.taaEnabled},
+                    {"taaBlend", s.taaBlend},
+                    {"godRaysEnabled", s.godRaysEnabled},
+                    {"godRaysIntensity", s.godRaysIntensity},
+                    {"godRaysDecay", s.godRaysDecay},
+                    {"godRaysDensity", s.godRaysDensity},
+                    {"godRaysWeight", s.godRaysWeight},
+                    {"atmosphereEnabled", s.atmosphereEnabled},
+                    {"atmosphereIntensity", s.atmosphereIntensity},
+                    {"invertEnabled", s.invertEnabled}
+                }}
+            };
+        }
         if (reg.all_of<UICanvasComponent>(handle)) {
             const auto& uiCanvas = reg.get<UICanvasComponent>(handle).canvas;
             json widgets = json::array();
@@ -1107,6 +1158,59 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
         if (je.contains("audioListener") && je["audioListener"].is_object()) {
             auto& listener = e.AddComponent<AudioListenerComponent>();
             listener.primary = je["audioListener"].value("primary", true);
+        }
+        if (je.contains("postProcessVolume") &&
+            je["postProcessVolume"].is_object()) {
+            const auto& jv = je["postProcessVolume"];
+            auto& volume = e.AddComponent<PostProcessVolumeComponent>();
+            volume.enabled = jv.value("enabled", true);
+            volume.global = jv.value("global", false);
+            volume.priority = jv.value("priority", 0);
+            if (jv.contains("size")) volume.size = Vec3FromJson(jv.at("size"));
+            volume.visibleInEditor = jv.value("visibleInEditor", true);
+
+            if (jv.contains("settings") && jv["settings"].is_object()) {
+                const auto& js = jv["settings"];
+                auto& s = volume.settings;
+                s.bloomEnabled = js.value("bloomEnabled", s.bloomEnabled);
+                s.bloomThreshold = js.value("bloomThreshold", s.bloomThreshold);
+                s.bloomIntensity = js.value("bloomIntensity", s.bloomIntensity);
+                s.bloomRadius = js.value("bloomRadius", s.bloomRadius);
+                s.dofEnabled = js.value("dofEnabled", s.dofEnabled);
+                s.dofFocusDistance = js.value("dofFocusDistance", s.dofFocusDistance);
+                s.dofBlur = js.value("dofBlur", s.dofBlur);
+                s.motionBlurEnabled = js.value("motionBlurEnabled", s.motionBlurEnabled);
+                s.motionBlurAmount = js.value("motionBlurAmount", s.motionBlurAmount);
+                s.motionBlurMaxVelocity = js.value("motionBlurMaxVelocity", s.motionBlurMaxVelocity);
+                s.exposure = js.value("exposure", s.exposure);
+                s.contrast = js.value("contrast", s.contrast);
+                s.saturation = js.value("saturation", s.saturation);
+                s.colorExposure = js.value("colorExposure", s.colorExposure);
+                s.colorContrast = js.value("colorContrast", s.colorContrast);
+                s.colorSaturation = js.value("colorSaturation", s.colorSaturation);
+                s.vignetteIntensity = js.value("vignetteIntensity", s.vignetteIntensity);
+                s.vignetteSmoothness = js.value("vignetteSmoothness", s.vignetteSmoothness);
+                s.chromaticAberration = js.value("chromaticAberration", s.chromaticAberration);
+                s.ssaoEnabled = js.value("ssaoEnabled", s.ssaoEnabled);
+                s.ssaoRadius = js.value("ssaoRadius", s.ssaoRadius);
+                s.ssaoBias = js.value("ssaoBias", s.ssaoBias);
+                s.ssaoMaxDistance = js.value("ssaoMaxDistance", s.ssaoMaxDistance);
+                s.ssaoStrength = js.value("ssaoStrength", s.ssaoStrength);
+                s.ssrEnabled = js.value("ssrEnabled", s.ssrEnabled);
+                s.ssrIntensity = js.value("ssrIntensity", s.ssrIntensity);
+                s.fxaaEnabled = js.value("fxaaEnabled", s.fxaaEnabled);
+                s.smaaEnabled = js.value("smaaEnabled", s.smaaEnabled);
+                s.taaEnabled = js.value("taaEnabled", s.taaEnabled);
+                s.taaBlend = js.value("taaBlend", s.taaBlend);
+                s.godRaysEnabled = js.value("godRaysEnabled", s.godRaysEnabled);
+                s.godRaysIntensity = js.value("godRaysIntensity", s.godRaysIntensity);
+                s.godRaysDecay = js.value("godRaysDecay", s.godRaysDecay);
+                s.godRaysDensity = js.value("godRaysDensity", s.godRaysDensity);
+                s.godRaysWeight = js.value("godRaysWeight", s.godRaysWeight);
+                s.atmosphereEnabled = js.value("atmosphereEnabled", s.atmosphereEnabled);
+                s.atmosphereIntensity = js.value("atmosphereIntensity", s.atmosphereIntensity);
+                s.invertEnabled = js.value("invertEnabled", s.invertEnabled);
+            }
         }
         if (je.contains("uiCanvas") && je["uiCanvas"].is_object()) {
             const auto& jc = je["uiCanvas"];

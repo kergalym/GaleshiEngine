@@ -1743,6 +1743,15 @@ if (ImGui::BeginMenu("File")) {
                     m_editor.camTarget;
                 m_editor.Select(e);
             }
+            if (ImGui::MenuItem("Post-Process Volume")) {
+                auto e = m_scene.CreateEntity("PostProcessVolume");
+                auto& volume =
+                    e.AddComponent<Galeshi::PostProcessVolumeComponent>();
+                volume.settings = DefaultPostProcessSettings();
+                e.GetComponent<Galeshi::TransformComponent>().position =
+                    m_editor.camTarget;
+                m_editor.Select(e);
+            }
             ImGui::EndMenu();
         }
 
@@ -3303,6 +3312,191 @@ if (ImGui::BeginMenu("File")) {
     }
 
     // -------------------------------------------------------------------
+    // Post-processing volumes
+    // -------------------------------------------------------------------
+    Galeshi::PostProcessSettings DefaultPostProcessSettings() const {
+        Galeshi::PostProcessSettings s;
+        s.bloomEnabled       = m_postProcess.BloomEnabled();
+        s.dofEnabled         = m_postProcess.DofEnabled();
+        s.motionBlurEnabled  = m_postProcess.MotionBlurEnabled();
+        s.ssaoEnabled        = m_postProcess.SsaoEnabled();
+        s.ssrEnabled         = m_postProcess.SsrEnabled();
+        s.fxaaEnabled        = m_postProcess.FxaaEnabled();
+        s.smaaEnabled        = m_postProcess.SmaaEnabled();
+        s.taaEnabled         = m_postProcess.TaaEnabled();
+        s.godRaysEnabled     = m_postProcess.GodRaysEnabled();
+        s.atmosphereEnabled  = m_postProcess.AtmosphereEnabled();
+        s.invertEnabled      = m_postProcess.InvertEnabled();
+        return s;
+    }
+
+    Galeshi::PostProcessSettings ResolvePostProcessSettings() {
+        Galeshi::PostProcessSettings result = DefaultPostProcessSettings();
+
+        const auto& reg = m_scene.Registry();
+        auto view = reg.view<Galeshi::PostProcessVolumeComponent,
+                             Galeshi::TransformComponent>();
+        int bestPriority = std::numeric_limits<int>::min();
+        const glm::vec3 cameraPos = m_camera.Position();
+
+        for (auto e : view) {
+            const auto& volume =
+                view.get<Galeshi::PostProcessVolumeComponent>(e);
+            if (!volume.enabled) continue;
+
+            bool active = volume.global;
+            if (!active) {
+                const glm::mat4 world = EntityWorldMatrix(e);
+                const glm::mat4 invWorld = glm::inverse(world);
+                const glm::vec3 local =
+                    glm::vec3(invWorld * glm::vec4(cameraPos, 1.0f));
+                const glm::vec3 half = volume.size * 0.5f;
+                active = std::abs(local.x) <= half.x &&
+                         std::abs(local.y) <= half.y &&
+                         std::abs(local.z) <= half.z;
+            }
+
+            if (active && volume.priority > bestPriority) {
+                bestPriority = volume.priority;
+                result = volume.settings;
+            }
+        }
+        return result;
+    }
+
+    void DrawPostProcessVolumeSettings(Galeshi::PostProcessVolumeComponent& volume) {
+        auto& s = volume.settings;
+
+        ImGui::Checkbox("Enabled", &volume.enabled);
+        ImGui::SameLine();
+        ImGui::Checkbox("Global", &volume.global);
+        ImGui::DragInt("Priority", &volume.priority, 1.0f, -100, 100);
+        if (!volume.global) {
+            ImGui::DragFloat3("Size", glm::value_ptr(volume.size),
+                              0.1f, 0.1f, 10000.0f);
+        }
+        ImGui::Checkbox("Visible in Editor", &volume.visibleInEditor);
+        ImGui::TextDisabled(
+            "The highest-priority volume containing the camera overrides "
+            "global Post-Process toggles.");
+
+        if (ImGui::TreeNode("Bloom")) {
+            ImGui::Checkbox("Enabled##bloom", &s.bloomEnabled);
+            ImGui::DragFloat("Threshold", &s.bloomThreshold,
+                             0.01f, 0.0f, 20.0f);
+            ImGui::DragFloat("Intensity", &s.bloomIntensity,
+                             0.01f, 0.0f, 10.0f);
+            ImGui::DragFloat("Radius", &s.bloomRadius,
+                             0.01f, 0.01f, 10.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Depth of Field")) {
+            ImGui::Checkbox("Enabled##dof", &s.dofEnabled);
+            ImGui::DragFloat("Focus Distance", &s.dofFocusDistance,
+                             0.1f, 0.0f, 10000.0f);
+            ImGui::DragFloat("Blur (px)", &s.dofBlur,
+                             0.1f, 0.0f, 64.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Motion Blur")) {
+            ImGui::Checkbox("Enabled##motionblur", &s.motionBlurEnabled);
+            ImGui::DragFloat("Amount", &s.motionBlurAmount,
+                             0.01f, 0.0f, 10.0f);
+            ImGui::DragFloat("Max Velocity (px)", &s.motionBlurMaxVelocity,
+                             0.5f, 0.0f, 1000.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Tonemap")) {
+            ImGui::DragFloat("Exposure", &s.exposure, 0.01f, 0.0f, 20.0f);
+            ImGui::DragFloat("Contrast", &s.contrast, 0.01f, 0.0f, 5.0f);
+            ImGui::DragFloat("Saturation", &s.saturation, 0.01f, 0.0f, 5.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Color Correction")) {
+            ImGui::DragFloat("Exposure##cc", &s.colorExposure,
+                             0.01f, 0.0f, 20.0f);
+            ImGui::DragFloat("Contrast##cc", &s.colorContrast,
+                             0.01f, 0.0f, 5.0f);
+            ImGui::DragFloat("Saturation##cc", &s.colorSaturation,
+                             0.01f, 0.0f, 5.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Vignette")) {
+            ImGui::DragFloat("Intensity##vignette", &s.vignetteIntensity,
+                             0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Smoothness", &s.vignetteSmoothness,
+                             0.01f, 0.26f, 1.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Chromatic Aberration")) {
+            ImGui::DragFloat("Intensity##chroma", &s.chromaticAberration,
+                             0.0001f, 0.0f, 0.1f, "%.4f");
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("SSAO")) {
+            ImGui::Checkbox("Enabled##ssao", &s.ssaoEnabled);
+            ImGui::DragFloat("Radius", &s.ssaoRadius,
+                             0.5f, 0.0f, 1000.0f);
+            ImGui::DragFloat("Bias", &s.ssaoBias,
+                             0.0001f, 0.0f, 1.0f, "%.4f");
+            ImGui::DragFloat("Max Distance", &s.ssaoMaxDistance,
+                             0.1f, 0.0f, 1000.0f);
+            ImGui::DragFloat("Strength", &s.ssaoStrength,
+                             0.01f, 0.0f, 10.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("SSR")) {
+            ImGui::Checkbox("Enabled##ssr", &s.ssrEnabled);
+            ImGui::DragFloat("Intensity##ssr", &s.ssrIntensity,
+                             0.01f, 0.0f, 5.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Anti-Aliasing")) {
+            ImGui::Checkbox("FXAA", &s.fxaaEnabled);
+            ImGui::Checkbox("SMAA", &s.smaaEnabled);
+            ImGui::Checkbox("TAA", &s.taaEnabled);
+            ImGui::DragFloat("TAA Blend", &s.taaBlend,
+                             0.005f, 0.0f, 1.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("God Rays")) {
+            ImGui::Checkbox("Enabled##godrays", &s.godRaysEnabled);
+            ImGui::DragFloat("Intensity##godrays", &s.godRaysIntensity,
+                             0.01f, 0.0f, 20.0f);
+            ImGui::DragFloat("Decay", &s.godRaysDecay,
+                             0.005f, 0.0f, 1.0f);
+            ImGui::DragFloat("Density", &s.godRaysDensity,
+                             0.01f, 0.0f, 10.0f);
+            ImGui::DragFloat("Weight", &s.godRaysWeight,
+                             0.01f, 0.0f, 10.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Atmosphere")) {
+            ImGui::Checkbox("Enabled##atmosphere", &s.atmosphereEnabled);
+            ImGui::DragFloat("Intensity##atmosphere", &s.atmosphereIntensity,
+                             0.1f, 0.0f, 1000.0f);
+            ImGui::TreePop();
+        }
+
+        ImGui::Checkbox("Invert Colors", &s.invertEnabled);
+
+        if (ImGui::Button("Reset Post-Process Settings")) {
+            volume.settings = Galeshi::PostProcessSettings{};
+        }
+    }
+
+    // -------------------------------------------------------------------
     // Audio
     // -------------------------------------------------------------------
     void UpdateAudio(float dt) {
@@ -3625,6 +3819,8 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 glm::mat4 invProj = glm::inverse(proj);
                 glm::mat4 invViewProj = glm::inverse(proj * m_camera.View());
                 glm::mat4 currVP = proj * m_camera.View(); // True VP matrix for post-processing
+                const Galeshi::PostProcessSettings pp =
+                    ResolvePostProcessSettings();
                 
 
                 // Pass spot shadow matrices
@@ -3646,10 +3842,11 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 }
                 // Ambient occlusion must be resolved before lighting so the
                 // result can modulate ambient/IBL and not replace final color.
-                if (m_postProcess.SsaoEnabled()) {
-                    m_postProcess.RenderSSAO(m_framebuffer->WorldPos(), m_framebuffer->Normal(),
-                                             m_camera.View(), proj, 15, w, h);
-                }
+                m_postProcess.RenderSSAO(m_framebuffer->WorldPos(), m_framebuffer->Normal(),
+                                         m_camera.View(), proj, 15, w, h,
+                                         pp.ssaoEnabled, pp.ssaoRadius,
+                                         pp.ssaoBias, pp.ssaoMaxDistance,
+                                         pp.ssaoStrength);
 
                 m_postProcess.RenderLightCulling(plCount, plPosA, currVP, w, h);
                 m_postProcess.RenderLighting(
@@ -3678,94 +3875,98 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 // order must match the GPU view order exactly.
 
                 // 1. SSR (View 24)
-                if (m_postProcess.SsrEnabled()) {
+                if (pp.ssrEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderSSR(
                             m_postProcess.OutputTexture(), m_framebuffer->Normal(),
                             m_framebuffer->Depth(), m_postProcess.PingFbo(),
-                            proj, invProj, camPos, 24, w, h))) {
+                            proj, invProj, camPos, 24, w, h,
+                            pp.ssrIntensity))) {
                         m_postProcess.SwapFbos();
                     }
                 }
 
                 // 2. Motion Blur (velocity view 23, blur view 25)
-                if (m_postProcess.MotionBlurEnabled() && m_postProcess.HasPrevViewProj()) {
+                if (pp.motionBlurEnabled && m_postProcess.HasPrevViewProj()) {
                     if (bgfx::isValid(m_postProcess.RenderMotionBlur(
                             m_postProcess.OutputTexture(), m_framebuffer->WorldPos(),
                             m_postProcess.GetPrevViewProj(), glm::inverse(currVP),
-                            m_postProcess.PingFbo(), 23, 25, w, h, m_frameDelta))) {
+                            m_postProcess.PingFbo(), 23, 25, w, h, m_frameDelta,
+                            pp.motionBlurAmount, pp.motionBlurMaxVelocity))) {
                         m_postProcess.SwapFbos();
                     }
                 }
 
                 // 3. Atmosphere (View 26)
-                if (m_postProcess.AtmosphereEnabled()) {
+                if (pp.atmosphereEnabled) {
                     float sunDir[4] = { -lDirA[0], -lDirA[1], -lDirA[2], 20.0f };
                     if (bgfx::isValid(m_postProcess.RenderAtmosphere(
                             m_postProcess.OutputTexture(), m_framebuffer->Depth(),
                             glm::inverse(currVP), camPos, sunDir, m_postProcess.PingFbo(),
-                            26, w, h))) {
+                            26, w, h, pp.atmosphereIntensity))) {
                         m_postProcess.SwapFbos();
                     }
                 }
 
                 // 4. Volumetric Light / god rays (View 27)
-                if (m_postProcess.GodRaysEnabled()) {
+                if (pp.godRaysEnabled) {
                     float sunDir[4] = { -lDirA[0], -lDirA[1], -lDirA[2], 20.0f };
                     if (bgfx::isValid(m_postProcess.RenderGodRays(
                             m_postProcess.OutputTexture(), m_framebuffer->Depth(),
                             currVP, camPos, sunDir, m_postProcess.PingFbo(),
-                            27, w, h))) {
+                            27, w, h, pp.godRaysIntensity, pp.godRaysDecay,
+                            pp.godRaysDensity, pp.godRaysWeight))) {
                         m_postProcess.SwapFbos();
                     }
                 }
 
                 // 5. Depth of Field (Views 28..31)
-                if (m_postProcess.DofEnabled()) {
+                if (pp.dofEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderDof(
                             m_postProcess.OutputTexture(), m_framebuffer->Depth(),
                             proj, invProj, m_postProcess.PingFbo(), 28, w, h,
-                            10.0f, 2.8f))) {
+                            pp.dofFocusDistance, pp.dofBlur))) {
                         m_postProcess.SwapFbos();
                     }
                 }
 
                 // 6. Bloom (Views 32..35)
-                if (m_postProcess.BloomEnabled()) {
+                if (pp.bloomEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderBloom(
                             m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
-                            32, w, h, 1.2f, 0.8f))) {
+                            32, w, h, pp.bloomThreshold, pp.bloomIntensity,
+                            pp.bloomRadius))) {
                         m_postProcess.SwapFbos();
                     }
                 }
 
                 // 7. TAA (Views 36..37)
-                if (m_postProcess.TaaEnabled()) {
+                if (pp.taaEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderTaa(
                             m_postProcess.OutputTexture(), m_framebuffer->Depth(),
                             m_postProcess.GetPrevViewProj(), glm::inverse(currVP),
-                            m_postProcess.PingFbo(), 36, w, h))) {
+                            m_postProcess.PingFbo(), 36, w, h, pp.taaBlend))) {
                         m_postProcess.SwapFbos();
                     }
                 }
 
                 // 8. Tonemap (View 38)
-                m_postProcess.RenderTonemap(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 38, w, h, 1.0f, 1.0f, 1.0f);
+                m_postProcess.RenderTonemap(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 38, w, h, pp.exposure, pp.contrast, pp.saturation);
                 m_postProcess.SwapFbos();
 
                 // 9. Color Correction (View 39)
-                m_postProcess.RenderColorCorrection(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 39, w, h);
+                m_postProcess.RenderColorCorrection(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 39, w, h, pp.colorExposure, pp.colorContrast, pp.colorSaturation);
                 m_postProcess.SwapFbos();
 
                 // 10. Vignette (View 40)
-                m_postProcess.RenderVignette(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 40, w, h);
+                m_postProcess.RenderVignette(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 40, w, h, pp.vignetteIntensity, pp.vignetteSmoothness);
                 m_postProcess.SwapFbos();
 
                 // 11. Chromatic Aberration (View 41)
-                m_postProcess.RenderChromatic(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 41, w, h);
+                m_postProcess.RenderChromatic(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 41, w, h, pp.chromaticAberration);
                 m_postProcess.SwapFbos();
 
                 // 12. SMAA (Views 42..43)
-                if (m_postProcess.SmaaEnabled()) {
+                if (pp.smaaEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderSmaa(
                             m_postProcess.OutputTexture(), 42, w, h))) {
                         m_postProcess.SwapFbos();
@@ -3773,7 +3974,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 }
 
                 // 13. FXAA (View 44)
-                if (m_postProcess.FxaaEnabled()) {
+                if (pp.fxaaEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderFxaa(
                             m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
                             44, w, h))) {
@@ -3782,7 +3983,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 }
 
                 // 14. Invert (View 45)
-                if (m_postProcess.InvertEnabled()) {
+                if (pp.invertEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderInvert(
                             m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
                             45, w, h))) {
@@ -4073,6 +4274,52 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                             break;
                         }
                     }
+                }
+            }
+
+            // Post-process volume bounds.
+            if (!m_editor.isPlaying) {
+                auto volumeView = m_scene.Registry()
+                    .view<Galeshi::PostProcessVolumeComponent>();
+                for (auto e : volumeView) {
+                    const auto& volume =
+                        volumeView.get<Galeshi::PostProcessVolumeComponent>(e);
+                    if (!volume.visibleInEditor) continue;
+
+                    const bool isSelected = sel && sel.Handle() == e;
+                    const glm::vec4 color = isSelected
+                        ? glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)
+                        : (volume.global
+                               ? glm::vec4(0.20f, 0.80f, 1.00f, 0.85f)
+                               : glm::vec4(0.65f, 0.30f, 1.00f, 0.85f));
+
+                    const glm::mat4 world = EntityWorldMatrix(e);
+                    glm::vec3 worldScale, translation, worldSkew;
+                    glm::vec4 worldPerspective;
+                    glm::quat rotation;
+                    glm::decompose(world, worldScale, rotation, translation,
+                                   worldSkew, worldPerspective);
+
+                    const glm::vec3 h = volume.size * 0.5f;
+                    auto toWorld = [&](const glm::vec3& p) {
+                        return translation + rotation * p;
+                    };
+                    glm::vec3 p[8] = {
+                        toWorld({-h.x, -h.y, -h.z}),
+                        toWorld({ h.x, -h.y, -h.z}),
+                        toWorld({ h.x, -h.y,  h.z}),
+                        toWorld({-h.x, -h.y,  h.z}),
+                        toWorld({-h.x,  h.y, -h.z}),
+                        toWorld({ h.x,  h.y, -h.z}),
+                        toWorld({ h.x,  h.y,  h.z}),
+                        toWorld({-h.x,  h.y,  h.z}),
+                    };
+                    auto edge = [&](int a, int b) {
+                        m_debug->AddLine(p[a], p[b], color);
+                    };
+                    edge(0, 1); edge(1, 2); edge(2, 3); edge(3, 0);
+                    edge(4, 5); edge(5, 6); edge(6, 7); edge(7, 4);
+                    edge(0, 4); edge(1, 5); edge(2, 6); edge(3, 7);
                 }
             }
             if (m_framebuffer && bgfx::isValid(m_framebuffer->Handle())) {
@@ -4872,6 +5119,17 @@ void DrawDetails() {
         
             if (ImGui::DragFloat3("Scale", glm::value_ptr(scl), 0.05f)) { for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().scale = scl; }
             if (ImGui::DragFloat3("Rotation", glm::value_ptr(rot), 1.0f)) { glm::quat q = glm::quat(glm::radians(rot)); for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().rotation = q; }
+        }
+
+        // --- Post-process volume inspector --------------------------------
+        if (auto sel = m_editor.Selected(&m_scene); sel &&
+            sel.HasComponent<Galeshi::PostProcessVolumeComponent>()) {
+            auto& volume =
+                sel.GetComponent<Galeshi::PostProcessVolumeComponent>();
+            if (ImGui::CollapsingHeader("Post-Process Volume",
+                                        ImGuiTreeNodeFlags_DefaultOpen)) {
+                DrawPostProcessVolumeSettings(volume);
+            }
         }
 
         // --- Collision shape inspector -----------------------------------

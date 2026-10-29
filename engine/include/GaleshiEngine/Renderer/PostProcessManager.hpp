@@ -48,16 +48,18 @@ public:
 
     void RenderSSAO(bgfx::TextureHandle worldPos, bgfx::TextureHandle normal,
                     const glm::mat4& view, const glm::mat4& proj,
-                    bgfx::ViewId viewId, uint16_t width, uint16_t height);
+                    bgfx::ViewId viewId, uint16_t width, uint16_t height,
+                    bool enabled, float radius, float bias,
+                    float maxDistance, float strength);
     bgfx::TextureHandle AOTexture() const { return m_aoValid ? m_aoFullTexA : m_whiteTex2D; }
-    bgfx::TextureHandle RenderSSR(bgfx::TextureHandle color, bgfx::TextureHandle normal, bgfx::TextureHandle depth, bgfx::FrameBufferHandle targetFbo, const glm::mat4& proj, const glm::mat4& invProj, const float camPos[4], bgfx::ViewId viewId, uint16_t width, uint16_t height);
+    bgfx::TextureHandle RenderSSR(bgfx::TextureHandle color, bgfx::TextureHandle normal, bgfx::TextureHandle depth, bgfx::FrameBufferHandle targetFbo, const glm::mat4& proj, const glm::mat4& invProj, const float camPos[4], bgfx::ViewId viewId, uint16_t width, uint16_t height, float intensity);
     void SetBloomEnabled(bool v) { m_bloomEnabled = v; }
     bool BloomEnabled() const { return m_bloomEnabled; }
-    bgfx::TextureHandle RenderBloom(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float threshold, float intensity);
+    bgfx::TextureHandle RenderBloom(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float threshold, float intensity, float radius);
 
-    bgfx::TextureHandle RenderColorCorrection(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height);
-    bgfx::TextureHandle RenderVignette(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height);
-    bgfx::TextureHandle RenderChromatic(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height);
+    bgfx::TextureHandle RenderColorCorrection(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height, float exposure, float contrast, float saturation);
+    bgfx::TextureHandle RenderVignette(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height, float intensity, float smoothness);
+    bgfx::TextureHandle RenderChromatic(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height, float intensity);
     bgfx::TextureHandle RenderTonemap(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float exposure, float contrast, float saturation);
     bgfx::TextureHandle RenderFxaa(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height);
     bgfx::TextureHandle RenderInvert(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height);
@@ -71,31 +73,33 @@ public:
     bool SsrEnabled() const { return m_ssrEnabled; }
     void SetTaaEnabled(bool v) { m_taaEnabled = v; }
     bool TaaEnabled() const { return m_taaEnabled; }
-    bgfx::TextureHandle RenderTaa(bgfx::TextureHandle color, bgfx::TextureHandle depth, const glm::mat4& prevVP, const glm::mat4& invVP, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h);
+    bgfx::TextureHandle RenderTaa(bgfx::TextureHandle color, bgfx::TextureHandle depth, const glm::mat4& prevVP, const glm::mat4& invVP, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float blend);
     bgfx::TextureHandle RenderGodRays(bgfx::TextureHandle color, bgfx::TextureHandle depth,
                                       const glm::mat4& viewProj, const float camPos[4], const float sunDir[4],
                                       bgfx::FrameBufferHandle target,
-                                      bgfx::ViewId viewId, uint16_t w, uint16_t h);
+                                      bgfx::ViewId viewId, uint16_t w, uint16_t h,
+                                      float intensity, float decay, float density, float weight);
     void SetGodRaysEnabled(bool v) { m_godraysEnabled = v; }
     bool GodRaysEnabled() const { return m_godraysEnabled; }
     bgfx::TextureHandle RenderAtmosphere(bgfx::TextureHandle color, bgfx::TextureHandle depth,
                                            const glm::mat4& invVP, const float camPos[4], const float sunDir[4],
                                            bgfx::FrameBufferHandle target,
-                                           bgfx::ViewId viewId, uint16_t w, uint16_t h);
+                                           bgfx::ViewId viewId, uint16_t w, uint16_t h, float intensity);
     void SetAtmosphereEnabled(bool v) { m_atmosphereEnabled = v; }
     bool AtmosphereEnabled() const { return m_atmosphereEnabled; }
     bgfx::TextureHandle RenderMotionBlur(bgfx::TextureHandle color, bgfx::TextureHandle worldPos,
                                               const glm::mat4& prevVP, const glm::mat4& invVP,
                                               bgfx::FrameBufferHandle target,
                                               bgfx::ViewId velocityViewId, bgfx::ViewId blurViewId,
-                                              uint16_t w, uint16_t h, float frameDelta);
+                                              uint16_t w, uint16_t h, float frameDelta,
+                                              float amount, float maxVelocityPx);
     void SetMotionBlurEnabled(bool v) { m_motionBlurEnabled = v; }
     bool MotionBlurEnabled() const { return m_motionBlurEnabled; }
     bgfx::TextureHandle RenderDof(bgfx::TextureHandle color, bgfx::TextureHandle depth,
                                   const glm::mat4& proj, const glm::mat4& invProj,
                                   bgfx::FrameBufferHandle target,
                                   bgfx::ViewId viewId, uint16_t w, uint16_t h,
-                                  float focusDistance, float aperture);
+                                  float focusDistance, float blurAmount);
     void SetDofEnabled(bool v) { m_dofEnabled = v; }
     bool DofEnabled() const { return m_dofEnabled; }
     void GenerateIBL(const float sunDir[4]);
@@ -195,6 +199,7 @@ private:
 
     bgfx::UniformHandle u_ssrInvProj  = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_ssrProj     = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_ssrParams   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_ssrNormal   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_smaaEdges   = BGFX_INVALID_HANDLE;
 

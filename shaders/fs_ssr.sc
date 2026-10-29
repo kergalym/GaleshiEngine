@@ -7,6 +7,7 @@ SAMPLER2D(s_texDepth, 2);
 
 uniform mat4 u_ssrInvProj;
 uniform mat4 u_ssrProj;
+uniform vec4 u_ssrParams; // x = intensity
 uniform vec4 u_cameraPosition;
 uniform vec4 u_texelSize;
 
@@ -83,6 +84,7 @@ void main() {
         // Fresnel — отражение усиливается на скользящих углах
         float fresnel = pow(1.0 - max(dot(N, -V), 0.0), 3.0);
         float blend = fresnel * (1.0 - roughness) * hitFade * 0.5;
+        blend *= max(u_ssrParams.x, 0.0);
         col.rgb = mix(col.rgb, hitColor, blend);
     }
 

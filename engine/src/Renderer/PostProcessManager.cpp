@@ -196,6 +196,7 @@ void PostProcessManager::Init() {
             m_ssrProg = bgfx::createProgram(vs, fs, true);
             u_ssrInvProj = bgfx::createUniform("u_ssrInvProj", bgfx::UniformType::Mat4);
             u_ssrProj = bgfx::createUniform("u_ssrProj", bgfx::UniformType::Mat4);
+            u_ssrParams = bgfx::createUniform("u_ssrParams", bgfx::UniformType::Vec4);
             s_ssrNormal  = bgfx::createUniform("s_ssrNormal",     bgfx::UniformType::Sampler);
             s_smaaEdges  = bgfx::createUniform("s_edges",         bgfx::UniformType::Sampler);
         }
@@ -570,7 +571,7 @@ void PostProcessManager::Shutdown() {
     destroyUni(s_aoSource); destroyUni(s_aoTex);
     destroyTex(m_aoHalfTex); destroyTex(m_aoFullTexA); destroyTex(m_aoFullTexB);
     destroyFbo(m_aoHalfFbo); destroyFbo(m_aoFullFboA); destroyFbo(m_aoFullFboB);
-    destroyUni(u_ssrInvProj); destroyUni(s_ssrNormal);
+    destroyUni(u_ssrInvProj); destroyUni(u_ssrProj); destroyUni(u_ssrParams); destroyUni(s_ssrNormal);
     destroyUni(s_smaaEdges);
     if (bgfx::isValid(m_blitFboA)) { bgfx::destroy(m_blitFboA); m_blitFboA = BGFX_INVALID_HANDLE; }
     destroyTex(m_blitTexA); destroyTex(m_blitTexB);
@@ -859,9 +860,11 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
 
 void PostProcessManager::RenderSSAO(bgfx::TextureHandle worldPos, bgfx::TextureHandle normal,
                                     const glm::mat4& view, const glm::mat4& proj,
-                                    bgfx::ViewId viewId, uint16_t width, uint16_t height)
+                                    bgfx::ViewId viewId, uint16_t width, uint16_t height,
+                                    bool enabled, float radius, float bias,
+                                    float maxDistance, float strength)
 {
-    if (!m_ssaoEnabled) {
+    if (!enabled) {
         m_aoValid = false;
         return;
     }
@@ -883,7 +886,8 @@ void PostProcessManager::RenderSSAO(bgfx::TextureHandle worldPos, bgfx::TextureH
     const uint16_t halfH = height > 2 ? (uint16_t)(height / 2) : 1;
 
     float viewport[4] = { (float)width, (float)height, 1.0f / width, 1.0f / height };
-    float aoParams[4] = { 80.0f, 0.0333f, 6.9f, 1.1f };
+    float aoParams[4] = { std::max(radius, 0.0f), std::max(bias, 0.0f),
+                          std::max(maxDistance, 0.0f), std::max(strength, 0.0f) };
     float upsampleParams[4] = { 0.5f, 32.0f, 0.0f, 0.0f };
     float blurParams[4] = { 1.0f, 0.2f, 0.0f, 0.0f };
     float blurDirH[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
@@ -954,7 +958,7 @@ void PostProcessManager::RenderSSAO(bgfx::TextureHandle worldPos, bgfx::TextureH
     m_aoValid = true;
 }
 
-bgfx::TextureHandle PostProcessManager::RenderSSR(bgfx::TextureHandle color, bgfx::TextureHandle normal, bgfx::TextureHandle depth, bgfx::FrameBufferHandle targetFbo, const glm::mat4& proj, const glm::mat4& invProj, const float camPos[4], bgfx::ViewId viewId, uint16_t width, uint16_t height) {
+bgfx::TextureHandle PostProcessManager::RenderSSR(bgfx::TextureHandle color, bgfx::TextureHandle normal, bgfx::TextureHandle depth, bgfx::FrameBufferHandle targetFbo, const glm::mat4& proj, const glm::mat4& invProj, const float camPos[4], bgfx::ViewId viewId, uint16_t width, uint16_t height, float intensity) {
     if (!bgfx::isValid(m_ssrProg) || !bgfx::isValid(u_ssrInvProj)) return BGFX_INVALID_HANDLE;
     bgfx::setViewFrameBuffer(viewId, targetFbo);
     bgfx::setViewRect(viewId, 0, 0, width, height);
@@ -963,6 +967,8 @@ bgfx::TextureHandle PostProcessManager::RenderSSR(bgfx::TextureHandle color, bgf
     bgfx::setTexture(2, s_texDepth,  depth);
     bgfx::setUniform(u_ssrInvProj, glm::value_ptr(invProj));
     bgfx::setUniform(u_ssrProj, glm::value_ptr(proj));
+    float ssrParams[4] = { std::max(intensity, 0.0f), 0.0f, 0.0f, 0.0f };
+    bgfx::setUniform(u_ssrParams, ssrParams);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
@@ -970,7 +976,7 @@ bgfx::TextureHandle PostProcessManager::RenderSSR(bgfx::TextureHandle color, bgf
     return m_pingColor;
 }
 
-bgfx::TextureHandle PostProcessManager::RenderBloom(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float threshold, float intensity) {
+bgfx::TextureHandle PostProcessManager::RenderBloom(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float threshold, float intensity, float radius) {
     if (!bgfx::isValid(m_bloomExtractProg) || !bgfx::isValid(m_bloomBlurProg) || !bgfx::isValid(m_bloomCombineProg)) return BGFX_INVALID_HANDLE;
     if (!bgfx::isValid(s_bloomTex) || !bgfx::isValid(m_bloomFboA) || !bgfx::isValid(m_bloomFboB)) return BGFX_INVALID_HANDLE;
     // FBOs are recreated once per frame in RenderLighting. Recreating them
@@ -979,7 +985,8 @@ bgfx::TextureHandle PostProcessManager::RenderBloom(bgfx::TextureHandle color, b
 
     const uint16_t bw = (uint16_t)glm::max(1u, (unsigned)(w / 2));
     const uint16_t bh = (uint16_t)glm::max(1u, (unsigned)(h / 2));
-    float ts[4]  = { 1.0f / (float)bw, 1.0f / (float)bh, 0.0f, 0.0f };
+    const float radiusScale = std::max(radius, 0.01f);
+    float ts[4]  = { radiusScale / (float)bw, radiusScale / (float)bh, 0.0f, 0.0f };
     float th[4]  = { threshold, 0, 0, 0 };
     float dirH[4] = { 1.0f, 0.0f, 0, 0 };
     float dirV[4] = { 0.0f, 1.0f, 0, 0 };
@@ -1028,12 +1035,12 @@ bgfx::TextureHandle PostProcessManager::RenderBloom(bgfx::TextureHandle color, b
 }
 
 
-bgfx::TextureHandle PostProcessManager::RenderColorCorrection(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
+bgfx::TextureHandle PostProcessManager::RenderColorCorrection(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height, float exposure, float contrast, float saturation) {
     if (!bgfx::isValid(m_colorCorrectionProg) || !bgfx::isValid(u_colorCorrectionParams)) return color;
     bgfx::setViewFrameBuffer(viewId, targetFbo);
     bgfx::setViewRect(viewId, 0, 0, width, height);
     bgfx::setTexture(0, s_texColor, color);
-    float params[4] = { 1.0f, 1.0f, 1.0f, 0.0f };
+    float params[4] = { exposure, contrast, saturation, 0.0f };
     bgfx::setUniform(u_colorCorrectionParams, params);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
@@ -1042,12 +1049,12 @@ bgfx::TextureHandle PostProcessManager::RenderColorCorrection(bgfx::TextureHandl
     return m_pingColor;
 }
 
-bgfx::TextureHandle PostProcessManager::RenderVignette(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
+bgfx::TextureHandle PostProcessManager::RenderVignette(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height, float intensity, float smoothness) {
     if (!bgfx::isValid(m_vignetteProg) || !bgfx::isValid(u_vignetteParams)) return color;
     bgfx::setViewFrameBuffer(viewId, targetFbo);
     bgfx::setViewRect(viewId, 0, 0, width, height);
     bgfx::setTexture(0, s_texColor, color);
-    float params[4] = { 0.35f, 0.9f, 0.0f, 0.0f };
+    float params[4] = { intensity, smoothness, 0.0f, 0.0f };
     bgfx::setUniform(u_vignetteParams, params);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
@@ -1056,12 +1063,12 @@ bgfx::TextureHandle PostProcessManager::RenderVignette(bgfx::TextureHandle color
     return m_pingColor;
 }
 
-bgfx::TextureHandle PostProcessManager::RenderChromatic(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
+bgfx::TextureHandle PostProcessManager::RenderChromatic(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height, float intensity) {
     if (!bgfx::isValid(m_chromaticProg) || !bgfx::isValid(u_chromaParams)) return color;
     bgfx::setViewFrameBuffer(viewId, targetFbo);
     bgfx::setViewRect(viewId, 0, 0, width, height);
     bgfx::setTexture(0, s_texColor, color);
-    float params[4] = { 0.004f, 0.0f, 0.0f, 0.0f };
+    float params[4] = { intensity, 0.0f, 0.0f, 0.0f };
     bgfx::setUniform(u_chromaParams, params);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
@@ -1156,7 +1163,7 @@ bgfx::TextureHandle PostProcessManager::RenderSky(const glm::mat4& invProj, cons
 }
 
 
-bgfx::TextureHandle PostProcessManager::RenderTaa(bgfx::TextureHandle color, bgfx::TextureHandle depth, const glm::mat4& prevVP, const glm::mat4& invVP, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h) {
+bgfx::TextureHandle PostProcessManager::RenderTaa(bgfx::TextureHandle color, bgfx::TextureHandle depth, const glm::mat4& prevVP, const glm::mat4& invVP, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float blend) {
     if (!bgfx::isValid(m_taaProg) || !bgfx::isValid(u_taaParams)) return BGFX_INVALID_HANDLE;
     if (m_width != w || m_height != h) return BGFX_INVALID_HANDLE;
 
@@ -1191,7 +1198,7 @@ bgfx::TextureHandle PostProcessManager::RenderTaa(bgfx::TextureHandle color, bgf
     bgfx::setTexture(2, s_texDepth, depth); // Сэмплируем глубину напрямую
     bgfx::setUniform(u_taaPrevVP, glm::value_ptr(prevVP));
     bgfx::setUniform(u_taaInvVP, glm::value_ptr(invVP));
-    float params[4] = { 0.05f, 0, 0, 0 };
+    float params[4] = { std::clamp(blend, 0.0f, 1.0f), 0, 0, 0 };
     bgfx::setUniform(u_taaParams, params);
     float ts[4] = { 1.0f / (float)w, 1.0f / (float)h, 0.0f, 0.0f };
     bgfx::setUniform(u_taaTexelSize, ts);
@@ -1215,7 +1222,8 @@ bgfx::TextureHandle PostProcessManager::RenderTaa(bgfx::TextureHandle color, bgf
 bgfx::TextureHandle PostProcessManager::RenderGodRays(bgfx::TextureHandle color, bgfx::TextureHandle depth,
                                                      const glm::mat4& viewProj, const float camPos[4], const float sunDir[4],
                                                      bgfx::FrameBufferHandle target,
-                                                     bgfx::ViewId viewId, uint16_t w, uint16_t h) {
+                                                     bgfx::ViewId viewId, uint16_t w, uint16_t h,
+                                                     float intensity, float decay, float density, float weight) {
     if (!bgfx::isValid(m_godraysProg)) return BGFX_INVALID_HANDLE;
 
     // Project a point far along the sun direction. The previous code
@@ -1235,9 +1243,11 @@ bgfx::TextureHandle PostProcessManager::RenderGodRays(bgfx::TextureHandle color,
     bgfx::setTexture(0, s_texColor, color);
     bgfx::setTexture(1, s_texDepth, depth);
 
-    float sunPos[4] = { sunScreen.x, sunScreen.y, 1.0f, (float)w / (float)h };
+    float sunPos[4] = { sunScreen.x, sunScreen.y, std::max(intensity, 0.0f),
+                        (float)w / (float)h };
     bgfx::setUniform(u_sunScreenPos, sunPos);
-    float params[4] = { 0.95f, 0.5f, 0.4f, 1.0f }; // decay, density, weight, exposure
+    float params[4] = { std::clamp(decay, 0.0f, 1.0f), std::max(density, 0.0f),
+                        std::max(weight, 0.0f), 1.0f };
     bgfx::setUniform(u_godraysParams, params);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
@@ -1249,7 +1259,8 @@ bgfx::TextureHandle PostProcessManager::RenderAtmosphere(bgfx::TextureHandle col
                                                           const glm::mat4& invVP, const float camPos[4],
                                                           const float sunDir[4],
                                                           bgfx::FrameBufferHandle target,
-                                                          bgfx::ViewId viewId, uint16_t w, uint16_t h) {
+                                                          bgfx::ViewId viewId, uint16_t w, uint16_t h,
+                                                          float intensity) {
     if (!bgfx::isValid(m_atmosphereProg)) return BGFX_INVALID_HANDLE;
     bgfx::setViewFrameBuffer(viewId, target);
     bgfx::setViewRect(viewId, 0, 0, w, h);
@@ -1258,7 +1269,8 @@ bgfx::TextureHandle PostProcessManager::RenderAtmosphere(bgfx::TextureHandle col
     bgfx::setTexture(1, s_texDepth, depth);
     bgfx::setUniform(u_atmoInvVP, glm::value_ptr(invVP));
     bgfx::setUniform(u_camPos, camPos);
-    bgfx::setUniform(u_atmoSunDir, sunDir);
+    float sun[4] = { sunDir[0], sunDir[1], sunDir[2], intensity };
+    bgfx::setUniform(u_atmoSunDir, sun);
     float params[4] = { 6371e3f, 6471e3f, 8000.0f, 1200.0f };
     bgfx::setUniform(u_atmoParams, params);
     bgfx::setVertexBuffer(0, m_vbh);
@@ -1272,7 +1284,8 @@ bgfx::TextureHandle PostProcessManager::RenderMotionBlur(bgfx::TextureHandle col
                                                          const glm::mat4& prevVP, const glm::mat4& invVP,
                                                          bgfx::FrameBufferHandle target,
                                                          bgfx::ViewId velocityViewId, bgfx::ViewId blurViewId,
-                                                         uint16_t w, uint16_t h, float frameDelta) {
+                                                         uint16_t w, uint16_t h, float frameDelta,
+                                                         float amount, float maxVelocityPx) {
     if (!bgfx::isValid(m_motionBlurProg) || !bgfx::isValid(m_mbVelocityProg) ||
         !bgfx::isValid(m_mbVelocityFbo) || !bgfx::isValid(m_mbVelocityTex)) {
         return BGFX_INVALID_HANDLE;
@@ -1286,8 +1299,8 @@ bgfx::TextureHandle PostProcessManager::RenderMotionBlur(bgfx::TextureHandle col
     if (dt < (1.0f / 1000.0f)) dt = (1.0f / 1000.0f);
     if (dt > 0.1f) dt = 0.1f;
     // RenderPipeline scales velocity by (1/60) / frame_delta and by a
-    // user-facing camera blur factor (0.4 by default).
-    float velocityScale = 0.4f * (1.0f / 60.0f) / dt;
+    // user-facing camera blur factor.
+    float velocityScale = std::max(amount, 0.0f) * (1.0f / 60.0f) / dt;
 
     // View [velocityViewId]: camera velocity in UV space.
     bgfx::setViewFrameBuffer(velocityViewId, m_mbVelocityFbo);
@@ -1310,7 +1323,8 @@ bgfx::TextureHandle PostProcessManager::RenderMotionBlur(bgfx::TextureHandle col
     bgfx::setViewClear(blurViewId, BGFX_CLEAR_COLOR, 0x000000ff);
     bgfx::setTexture(0, s_texColor, color);
     bgfx::setTexture(1, s_mbVelocity, m_mbVelocityTex);
-    float blurParams[4] = { 70.0f / (float)w, 0.5f / (float)w, (float)w, 0.0f };
+    float blurParams[4] = { std::max(maxVelocityPx, 0.0f) / (float)w,
+                            0.5f / (float)w, (float)w, 0.0f };
     bgfx::setUniform(u_motionBlurParams, blurParams);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
@@ -1324,7 +1338,7 @@ bgfx::TextureHandle PostProcessManager::RenderDof(bgfx::TextureHandle color, bgf
                                                     const glm::mat4& proj, const glm::mat4& invProj,
                                                     bgfx::FrameBufferHandle target,
                                                     bgfx::ViewId viewId, uint16_t w, uint16_t h,
-                                                    float focusDistance, float aperture) {
+                                                    float focusDistance, float blurAmount) {
     (void)invProj;
     if (!bgfx::isValid(m_dofCocProg) || !bgfx::isValid(m_dofBlurProg) || !bgfx::isValid(m_dofCompositeProg))
         return BGFX_INVALID_HANDLE;
@@ -1345,8 +1359,8 @@ bgfx::TextureHandle PostProcessManager::RenderDof(bgfx::TextureHandle color, bgf
     float farV  = proj[3][2] / (proj[2][2] + 1.0f);
     if (nearV <= 0.0f)  nearV = 0.1f;
     if (farV  <= nearV) farV  = 1000.0f;
-    (void)aperture; // TODO: UI-слайдер в следующей итерации
-    float dofParams[4] = { focusDistance, 1.0f/nearV, 1.0f/farV, 8.0f };
+    const float maxCoC = std::max(blurAmount, 0.0f);
+    float dofParams[4] = { focusDistance, 1.0f/nearV, 1.0f/farV, maxCoC };
     bgfx::setUniform(u_dofParams, dofParams);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
@@ -1359,7 +1373,7 @@ bgfx::TextureHandle PostProcessManager::RenderDof(bgfx::TextureHandle color, bgf
     bgfx::setViewClear(viewId + 1, BGFX_CLEAR_COLOR, 0x000000ff);
     bgfx::setTexture(0, s_dofColor, color);
     bgfx::setTexture(1, s_dofCoc, m_dofCocTex);
-    float texel[4] = { texelX, texelY, 0.0f, 0.0f };
+    float texel[4] = { texelX, texelY, maxCoC, 0.0f };
     bgfx::setUniform(u_dofTexelSize, texel);
     float dirH[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
     bgfx::setUniform(u_dofDir, dirH);

@@ -3,12 +3,12 @@ $input v_texcoord0
 
 SAMPLER2D(s_dofColor, 0);
 SAMPLER2D(s_dofCoc,   1);
-uniform vec4 u_dofTexelSize; // xy = 1/w, 1/h
+uniform vec4 u_dofTexelSize; // xy = 1/w, 1/h, z = maxCoC (px)
 uniform vec4 u_dofDir;       // (1,0) H-blur  или (0,1) V-blur
 
 void main() {
-    // maxCoC должен совпадать с u_dofParams.w в CoC-пассе
-    const float maxCoC = 8.0;
+    // Must match u_dofParams.w in the CoC pass.
+    float maxCoC = max(u_dofTexelSize.z, 0.0);
 
     vec2  dir   = u_dofDir.xy;
     vec2  texel = u_dofTexelSize.xy;

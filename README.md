@@ -73,6 +73,7 @@ Implemented post-processing passes:
 - Vignette
 - Chromatic aberration
 - Invert
+- Spatial post-processing volumes with per-effect tuning for bloom, DoF, motion blur, tonemap, color correction, vignette, SSAO, SSR, anti-aliasing, god rays, and atmosphere.
 
 ---
 
@@ -348,7 +349,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [x] Add two sided mode for normals option as checkbox to Material properties
 - [x] Rename material slots to their names in FBX file format
 - [x] Add Particles system
-- [ ] Add Postprocessing volume
+- [x] Add Postprocessing volume
 
 ### Physics 
 - [x] Add various physics properties to collision shapes
