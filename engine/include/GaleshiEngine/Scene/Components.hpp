@@ -145,9 +145,39 @@ struct RigidBodyComponent {
     uint32_t   bodyId     = 0xFFFFFFFFu;
 };
 
-struct BoxColliderComponent {
-    glm::vec3 halfExtents{0.5f};
+enum class ColliderShapeType {
+    Box = 0,
+    Sphere = 1,
+    Capsule = 2,
 };
+
+// Editor-authored collision volume. A collider can be attached to a mesh
+// entity or live on its own as an invisible collision shape. Physics
+// properties are applied when the Jolt body is created.
+struct ColliderComponent {
+    ColliderShapeType shapeType = ColliderShapeType::Box;
+
+    glm::vec3 halfExtents{0.5f};  // Box half extents
+    float     radius     = 0.5f;  // Sphere / capsule radius
+    float     halfHeight = 0.5f;  // Capsule cylinder half height
+
+    // Local-space offset from the entity origin. X/Y are the primary axes
+    // used to place shapes in the editor.
+    glm::vec3 offset{0.0f};
+
+    // Physics material.
+    float friction    = 0.5f;
+    float restitution = 0.0f;
+    bool  isTrigger   = false;
+
+    // Editor-only visualization. Collider wireframes are always hidden while
+    // the scene is playing, regardless of this flag.
+    bool visibleInEditor = true;
+};
+
+// Backwards-compatible alias for scenes and code that still refer to the
+// original box-only collider.
+using BoxColliderComponent = ColliderComponent;
 
 struct LandscapeComponent {
     int sizeX = 100;

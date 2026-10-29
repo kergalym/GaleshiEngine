@@ -350,9 +350,9 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [ ] Add Postprocessing volume
 
 ### Physics 
-- [ ] Add various physics properties to collision shapes
-- [ ] Allow move collission shapes on XY coordinates
-- [ ] Set collission shapes invisible when user press play
+- [x] Add various physics properties to collision shapes
+- [x] Allow move collission shapes on XY coordinates
+- [x] Set collission shapes invisible when user press play
 
 ### Content systems
 

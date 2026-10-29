@@ -525,9 +525,23 @@ std::string SceneSerializer::SaveToString() const {
                 {"useGravity", rb.useGravity}
             };
         }
-        if (reg.all_of<BoxColliderComponent>(handle)) {
-            const auto& collider = reg.get<BoxColliderComponent>(handle);
-            je["boxCollider"] = { {"halfExtents", Vec3ToJson(collider.halfExtents)} };
+        if (reg.all_of<ColliderComponent>(handle)) {
+            const auto& collider = reg.get<ColliderComponent>(handle);
+            je["collider"] = {
+                {"shapeType", static_cast<int>(collider.shapeType)},
+                {"halfExtents", Vec3ToJson(collider.halfExtents)},
+                {"radius", collider.radius},
+                {"halfHeight", collider.halfHeight},
+                {"offset", Vec3ToJson(collider.offset)},
+                {"friction", collider.friction},
+                {"restitution", collider.restitution},
+                {"isTrigger", collider.isTrigger},
+                {"visibleInEditor", collider.visibleInEditor}
+            };
+            // Keep the legacy key for older builds that only understand boxes.
+            if (collider.shapeType == ColliderShapeType::Box) {
+                je["boxCollider"] = { {"halfExtents", Vec3ToJson(collider.halfExtents)} };
+            }
         }
         if (reg.all_of<NavAgentComponent>(handle)) {
             const auto& agent = reg.get<NavAgentComponent>(handle);
@@ -1130,9 +1144,24 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             rb.useGravity = jr.value("useGravity", true);
             rb.bodyId = 0xFFFFFFFFu;
         }
-        if (je.contains("boxCollider")) {
+        if (je.contains("collider")) {
+            const auto& jc = je["collider"];
+            auto& collider = e.AddComponent<ColliderComponent>();
+            collider.shapeType = static_cast<ColliderShapeType>(
+                std::clamp(jc.value("shapeType", 0), 0, 2));
+            if (jc.contains("halfExtents")) collider.halfExtents = Vec3FromJson(jc.at("halfExtents"));
+            collider.radius = jc.value("radius", 0.5f);
+            collider.halfHeight = jc.value("halfHeight", 0.5f);
+            if (jc.contains("offset")) collider.offset = Vec3FromJson(jc.at("offset"));
+            collider.friction = jc.value("friction", 0.5f);
+            collider.restitution = jc.value("restitution", 0.0f);
+            collider.isTrigger = jc.value("isTrigger", false);
+            collider.visibleInEditor = jc.value("visibleInEditor", true);
+        } else if (je.contains("boxCollider")) {
+            // Legacy scenes stored only a box collider.
             const auto& jc = je["boxCollider"];
-            auto& collider = e.AddComponent<BoxColliderComponent>();
+            auto& collider = e.AddComponent<ColliderComponent>();
+            collider.shapeType = ColliderShapeType::Box;
             if (jc.contains("halfExtents")) collider.halfExtents = Vec3FromJson(jc.at("halfExtents"));
         }
         if (je.contains("navAgent")) {

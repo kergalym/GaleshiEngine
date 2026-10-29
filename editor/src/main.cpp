@@ -297,6 +297,7 @@ protected:
 
         m_currentScenePath = fs::absolute(scenePath).lexically_normal().string();
         m_editor.isPlaying = true;
+        EnsurePhysicsBodies();
         m_uiCanvasEntity = entt::null;
         m_uiWidgetIndex = -1;
         spdlog::info("[Game] Loaded start scene {}", m_currentScenePath);
@@ -1474,6 +1475,7 @@ private:
             if (!m_editor.isPlaying) {
                 PushHistory();
                 m_editor.isPlaying = true;
+                EnsurePhysicsBodies();
             } else {
                 m_editor.isPlaying = false;
                 m_physics->Reset();
@@ -1593,6 +1595,12 @@ if (ImGui::BeginMenu("File")) {
                 auto e = SpawnPhysicsCapsule("PhysicsCapsule", {0, 5, 0}, 0.5f, 0.5f);
                 m_editor.Select(e);
             }
+            if (ImGui::BeginMenu("Collision Shapes")) {
+                if (ImGui::MenuItem("Box"))    SpawnCollisionShape("CollisionBox", Galeshi::ColliderShapeType::Box);
+                if (ImGui::MenuItem("Sphere")) SpawnCollisionShape("CollisionSphere", Galeshi::ColliderShapeType::Sphere);
+                if (ImGui::MenuItem("Capsule"))SpawnCollisionShape("CollisionCapsule", Galeshi::ColliderShapeType::Capsule);
+                ImGui::EndMenu();
+            }
             if (ImGui::MenuItem("Cloth (SoftBody)")) {
                 auto e = m_scene.CreateEntity("Cloth");
                 auto& sb = e.AddComponent<Galeshi::SoftBodyComponent>();
@@ -1632,7 +1640,6 @@ if (ImGui::BeginMenu("File")) {
             }
             if (ImGui::MenuItem("Physics Cube")) {
                 auto e = SpawnPhysicsCube("PhysicsCube", {0, 5, 0});
-                e.AddComponent<Galeshi::BoxColliderComponent>();
                 m_editor.Select(e);
             }
             if (ImGui::MenuItem("AI Agent (Behavior Tree)")) {
@@ -3832,7 +3839,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 }
             }
             Galeshi::Entity sel = m_editor.Selected(&m_scene);
-            if (sel && sel.HasComponent<Galeshi::TransformComponent>() && !sel.HasComponent<Galeshi::SkeletalComponent>()) {
+            if (!m_editor.isPlaying && sel && sel.HasComponent<Galeshi::TransformComponent>() && !sel.HasComponent<Galeshi::SkeletalComponent>()) {
                 auto& tc = sel.GetComponent<Galeshi::TransformComponent>();
                 m_debug->AddBox(tc.position, tc.scale + glm::vec3(0.1f), {1, 1, 0, 1});
             }
@@ -3841,7 +3848,8 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             // Matches the ParticleSystem: the spawn area is centred on the
             // emitter's world position (parent chain applied) and is either an
             // axis-aligned box or a sphere.
-            if (sel && sel.HasComponent<Galeshi::ParticleEmitterComponent>() &&
+            if (!m_editor.isPlaying && sel &&
+                sel.HasComponent<Galeshi::ParticleEmitterComponent>() &&
                 sel.HasComponent<Galeshi::TransformComponent>()) {
                 const auto& pe = sel.GetComponent<Galeshi::ParticleEmitterComponent>();
 
@@ -3886,6 +3894,99 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                                          origin + glm::vec3(c2, 0.0f, s2), yellow);
                         m_debug->AddLine(origin + glm::vec3(0.0f, c1, s1),
                                          origin + glm::vec3(0.0f, c2, s2), yellow);
+                    }
+                }
+            }
+
+            // Collision shape gizmos. Hidden during Play so authored volumes
+            // never leak into the running game.
+            if (!m_editor.isPlaying) {
+                auto colliderView =
+                    m_scene.Registry().view<Galeshi::ColliderComponent>();
+                for (auto e : colliderView) {
+                    const auto& collider =
+                        colliderView.get<Galeshi::ColliderComponent>(e);
+                    if (!collider.visibleInEditor) continue;
+
+                    const bool isSelected = sel && sel.Handle() == e;
+                    const glm::vec4 color = isSelected
+                        ? glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)
+                        : (collider.isTrigger
+                               ? glm::vec4(0.30f, 0.60f, 1.00f, 0.90f)
+                               : glm::vec4(0.20f, 1.00f, 0.40f, 0.75f));
+
+                    const glm::mat4 world = EntityWorldMatrix(e);
+                    auto toWorld = [&world](const glm::vec3& p) {
+                        return glm::vec3(world * glm::vec4(p, 1.0f));
+                    };
+                    const glm::vec3 c = collider.offset;
+
+                    switch (collider.shapeType) {
+                        case Galeshi::ColliderShapeType::Box: {
+                            const glm::vec3 h = collider.halfExtents;
+                            glm::vec3 p[8] = {
+                                toWorld(c + glm::vec3(-h.x, -h.y, -h.z)),
+                                toWorld(c + glm::vec3( h.x, -h.y, -h.z)),
+                                toWorld(c + glm::vec3( h.x, -h.y,  h.z)),
+                                toWorld(c + glm::vec3(-h.x, -h.y,  h.z)),
+                                toWorld(c + glm::vec3(-h.x,  h.y, -h.z)),
+                                toWorld(c + glm::vec3( h.x,  h.y, -h.z)),
+                                toWorld(c + glm::vec3( h.x,  h.y,  h.z)),
+                                toWorld(c + glm::vec3(-h.x,  h.y,  h.z)),
+                            };
+                            auto edge = [&](int a, int b) {
+                                m_debug->AddLine(p[a], p[b], color);
+                            };
+                            edge(0, 1); edge(1, 2); edge(2, 3); edge(3, 0);
+                            edge(4, 5); edge(5, 6); edge(6, 7); edge(7, 4);
+                            edge(0, 4); edge(1, 5); edge(2, 6); edge(3, 7);
+                            break;
+                        }
+                        case Galeshi::ColliderShapeType::Sphere: {
+                            const int segments = 32;
+                            const float r = collider.radius;
+                            for (int i = 0; i < segments; ++i) {
+                                const float a1 = static_cast<float>(i) / segments * 6.2831853f;
+                                const float a2 = static_cast<float>(i + 1) / segments * 6.2831853f;
+                                m_debug->AddLine(
+                                    toWorld(c + glm::vec3(std::cos(a1) * r, std::sin(a1) * r, 0.0f)),
+                                    toWorld(c + glm::vec3(std::cos(a2) * r, std::sin(a2) * r, 0.0f)),
+                                    color);
+                                m_debug->AddLine(
+                                    toWorld(c + glm::vec3(std::cos(a1) * r, 0.0f, std::sin(a1) * r)),
+                                    toWorld(c + glm::vec3(std::cos(a2) * r, 0.0f, std::sin(a2) * r)),
+                                    color);
+                                m_debug->AddLine(
+                                    toWorld(c + glm::vec3(0.0f, std::cos(a1) * r, std::sin(a1) * r)),
+                                    toWorld(c + glm::vec3(0.0f, std::cos(a2) * r, std::sin(a2) * r)),
+                                    color);
+                            }
+                            break;
+                        }
+                        case Galeshi::ColliderShapeType::Capsule: {
+                            const int segments = 24;
+                            const float r = collider.radius;
+                            const float hh = collider.halfHeight;
+                            for (int ring = 0; ring < 2; ++ring) {
+                                const float y = c.y + (ring == 0 ? -hh : hh);
+                                for (int i = 0; i < segments; ++i) {
+                                    const float a1 = static_cast<float>(i) / segments * 6.2831853f;
+                                    const float a2 = static_cast<float>(i + 1) / segments * 6.2831853f;
+                                    m_debug->AddLine(
+                                        toWorld({c.x + std::cos(a1) * r, y, c.z + std::sin(a1) * r}),
+                                        toWorld({c.x + std::cos(a2) * r, y, c.z + std::sin(a2) * r}),
+                                        color);
+                                }
+                            }
+                            for (int i = 0; i < 4; ++i) {
+                                const float a = static_cast<float>(i) * 1.5707963f;
+                                m_debug->AddLine(
+                                    toWorld({c.x + std::cos(a) * r, c.y - hh, c.z + std::sin(a) * r}),
+                                    toWorld({c.x + std::cos(a) * r, c.y + hh, c.z + std::sin(a) * r}),
+                                    color);
+                            }
+                            break;
+                        }
                     }
                 }
             }
@@ -4279,6 +4380,13 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
 
                 auto view = m_scene.Registry().view<Galeshi::TransformComponent>();
                 for (auto e : view) {
+                    // Invisible standalone collision shapes must not be
+                    // selectable during Play.
+                    if (m_editor.isPlaying &&
+                        m_scene.Registry().all_of<Galeshi::ColliderComponent>(e) &&
+                        !m_scene.Registry().all_of<Galeshi::MeshComponent>(e)) {
+                        continue;
+                    }
                     auto& tc = view.get<Galeshi::TransformComponent>(e);
                     
                     // 1. Вычисляем МИРОВУЮ позицию (проходим вверх по родителям)
@@ -4326,6 +4434,72 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     if (tmin < bestDist) {
                         bestDist = tmin;
                         bestHit = Galeshi::Entity(curr, &m_scene); // Выделяем корень, а не кость
+                    }
+                }
+
+                // Collision shapes have no mesh, so pick their authored volume
+                // directly. This also makes standalone shapes selectable.
+                auto colliderPickView = m_scene.Registry()
+                    .view<Galeshi::ColliderComponent, Galeshi::TransformComponent>();
+                for (auto e : colliderPickView) {
+                    if (m_editor.isPlaying) continue;
+                    const auto& collider =
+                        colliderPickView.get<Galeshi::ColliderComponent>(e);
+                    if (!collider.visibleInEditor) continue;
+
+                    const glm::mat4 world = EntityWorldMatrix(e);
+                    const glm::mat4 invWorld = glm::inverse(world);
+                    const glm::vec3 localOrigin =
+                        glm::vec3(invWorld * glm::vec4(rayOrigin, 1.0f));
+                    const glm::vec3 localDir =
+                        glm::vec3(invWorld * glm::vec4(rayDir, 0.0f));
+
+                    glm::vec3 half;
+                    switch (collider.shapeType) {
+                        case Galeshi::ColliderShapeType::Sphere:
+                            half = glm::vec3(collider.radius);
+                            break;
+                        case Galeshi::ColliderShapeType::Capsule:
+                            half = glm::vec3(collider.radius,
+                                             collider.halfHeight + collider.radius,
+                                             collider.radius);
+                            break;
+                        case Galeshi::ColliderShapeType::Box:
+                        default:
+                            half = collider.halfExtents;
+                            break;
+                    }
+                    const glm::vec3 minB = collider.offset - half;
+                    const glm::vec3 maxB = collider.offset + half;
+
+                    float tmin = -std::numeric_limits<float>::infinity();
+                    float tmax =  std::numeric_limits<float>::infinity();
+                    bool miss = false;
+                    for (int axis = 0; axis < 3 && !miss; ++axis) {
+                        if (std::abs(localDir[axis]) < 1e-8f) {
+                            if (localOrigin[axis] < minB[axis] ||
+                                localOrigin[axis] > maxB[axis]) {
+                                miss = true;
+                            }
+                        } else {
+                            float t1 = (minB[axis] - localOrigin[axis]) / localDir[axis];
+                            float t2 = (maxB[axis] - localOrigin[axis]) / localDir[axis];
+                            if (t1 > t2) std::swap(t1, t2);
+                            tmin = std::max(tmin, t1);
+                            tmax = std::min(tmax, t2);
+                            if (tmin > tmax) miss = true;
+                        }
+                    }
+                    if (miss || tmax < 0.0f) continue;
+
+                    const float tHit = tmin > 0.0f ? tmin : tmax;
+                    const glm::vec3 localHit = localOrigin + localDir * tHit;
+                    const glm::vec3 worldHit =
+                        glm::vec3(world * glm::vec4(localHit, 1.0f));
+                    const float worldDist = glm::length(worldHit - rayOrigin);
+                    if (worldDist < bestDist) {
+                        bestDist = worldDist;
+                        bestHit = Galeshi::Entity(e, &m_scene);
                     }
                 }
 
@@ -4608,6 +4782,91 @@ void DrawDetails() {
         
             if (ImGui::DragFloat3("Scale", glm::value_ptr(scl), 0.05f)) { for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().scale = scl; }
             if (ImGui::DragFloat3("Rotation", glm::value_ptr(rot), 1.0f)) { glm::quat q = glm::quat(glm::radians(rot)); for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().rotation = q; }
+        }
+
+        // --- Collision shape inspector -----------------------------------
+        if (auto sel = m_editor.Selected(&m_scene); sel &&
+            sel.HasComponent<Galeshi::ColliderComponent>()) {
+            auto& collider = sel.GetComponent<Galeshi::ColliderComponent>();
+            if (ImGui::CollapsingHeader("Collision Shape",
+                                        ImGuiTreeNodeFlags_DefaultOpen)) {
+                const char* shapeNames[] = {"Box", "Sphere", "Capsule"};
+                int shapeType = static_cast<int>(collider.shapeType);
+                if (ImGui::Combo("Shape", &shapeType, shapeNames, 3)) {
+                    collider.shapeType =
+                        static_cast<Galeshi::ColliderShapeType>(shapeType);
+                    RebuildPhysicsBody(sel);
+                }
+
+                bool changed = false;
+                switch (collider.shapeType) {
+                    case Galeshi::ColliderShapeType::Box:
+                        changed |= ImGui::DragFloat3("Half Extents",
+                            glm::value_ptr(collider.halfExtents), 0.01f, 0.001f, 1000.0f);
+                        break;
+                    case Galeshi::ColliderShapeType::Sphere:
+                        changed |= ImGui::DragFloat("Radius", &collider.radius,
+                                                    0.01f, 0.001f, 1000.0f);
+                        break;
+                    case Galeshi::ColliderShapeType::Capsule:
+                        changed |= ImGui::DragFloat("Half Height", &collider.halfHeight,
+                                                    0.01f, 0.001f, 1000.0f);
+                        changed |= ImGui::DragFloat("Radius", &collider.radius,
+                                                    0.01f, 0.001f, 1000.0f);
+                        break;
+                }
+
+                // Collider placement relative to the entity. X/Y are exposed
+                // separately for quick top-down placement.
+                changed |= ImGui::DragFloat2("Offset XY", glm::value_ptr(collider.offset),
+                                             0.01f);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Moves the collision shape on local X/Y\n"
+                                      "without moving the entity.");
+                }
+                changed |= ImGui::DragFloat("Offset Z", &collider.offset.z,
+                                            0.01f);
+
+                changed |= ImGui::DragFloat("Friction", &collider.friction,
+                                            0.01f, 0.0f, 2.0f);
+                changed |= ImGui::DragFloat("Restitution", &collider.restitution,
+                                            0.01f, 0.0f, 1.0f);
+                changed |= ImGui::Checkbox("Is Trigger", &collider.isTrigger);
+                changed |= ImGui::Checkbox("Visible in Editor", &collider.visibleInEditor);
+
+                if (changed) RebuildPhysicsBody(sel);
+
+                if (ImGui::Button("Remove Collision Shape")) {
+                    sel.RemoveComponent<Galeshi::ColliderComponent>();
+                }
+            }
+        }
+
+        // --- Rigid body inspector ----------------------------------------
+        if (auto sel = m_editor.Selected(&m_scene); sel &&
+            sel.HasComponent<Galeshi::RigidBodyComponent>()) {
+            auto& rb = sel.GetComponent<Galeshi::RigidBodyComponent>();
+            if (ImGui::CollapsingHeader("Rigid Body")) {
+                const char* motionNames[] = {"Static", "Dynamic", "Kinematic"};
+                int motionType = static_cast<int>(rb.motionType);
+                if (ImGui::Combo("Motion Type", &motionType, motionNames, 3)) {
+                    rb.motionType =
+                        static_cast<Galeshi::RigidBodyComponent::MotionType>(motionType);
+                    RebuildPhysicsBody(sel);
+                }
+
+                bool changed = false;
+                changed |= ImGui::DragFloat("Mass", &rb.mass, 0.05f, 0.001f, 100000.0f);
+                changed |= ImGui::Checkbox("Use Gravity", &rb.useGravity);
+                if (changed) RebuildPhysicsBody(sel);
+
+                ImGui::TextDisabled("Runtime body: %s",
+                    rb.bodyId == 0xFFFFFFFFu ? "not created (created on Play)"
+                                             : "active");
+                if (ImGui::Button("Rebuild Physics Body")) {
+                    RebuildPhysicsBody(sel);
+                }
+            }
         }
 
         if (auto sel = m_editor.Selected(&m_scene); sel) {
@@ -5654,6 +5913,99 @@ void DrawDetails() {
     }
 
     // -------------------------------------------------------------------
+    // Collision shapes
+    // -------------------------------------------------------------------
+    glm::mat4 EntityWorldMatrix(entt::entity handle) {
+        glm::mat4 world(1.0f);
+        std::vector<entt::entity> chain;
+        entt::entity cur = handle;
+        int depth = 0;
+        while (cur != entt::null && depth++ < 128) {
+            chain.push_back(cur);
+            if (m_scene.Registry().all_of<Galeshi::ParentComponent>(cur))
+                cur = m_scene.Registry().get<Galeshi::ParentComponent>(cur).parent;
+            else
+                break;
+        }
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            if (m_scene.Registry().all_of<Galeshi::TransformComponent>(*it))
+                world = world * m_scene.Registry()
+                    .get<Galeshi::TransformComponent>(*it).LocalMatrix();
+        }
+        return world;
+    }
+
+    Galeshi::Entity SpawnCollisionShape(const std::string& name,
+                                        Galeshi::ColliderShapeType type) {
+        auto e = m_scene.CreateEntity(name);
+        auto& collider = e.AddComponent<Galeshi::ColliderComponent>();
+        collider.shapeType = type;
+
+        auto& rb = e.AddComponent<Galeshi::RigidBodyComponent>();
+        rb.motionType = Galeshi::RigidBodyComponent::MotionType::Static;
+        rb.bodyId = 0xFFFFFFFFu;
+
+        auto& tf = e.GetComponent<Galeshi::TransformComponent>();
+        tf.position = m_editor.camTarget;
+        m_editor.Select(e);
+        spdlog::info("[Physics] Created collision shape '{}'", name);
+        return e;
+    }
+
+    // Recreate the Jolt body after shape or rigid-body properties changed.
+    // Bodies are only created when the scene is playing, so entities without
+    // a runtime body are left alone.
+    void RebuildPhysicsBody(Galeshi::Entity entity) {
+        if (!m_physics || !entity) return;
+        auto& reg = m_scene.Registry();
+        const entt::entity handle = entity.Handle();
+        if (!reg.all_of<Galeshi::ColliderComponent, Galeshi::RigidBodyComponent,
+                        Galeshi::TransformComponent>(handle)) {
+            return;
+        }
+        auto& rb = reg.get<Galeshi::RigidBodyComponent>(handle);
+        if (rb.bodyId == 0xFFFFFFFFu) return;
+
+        m_physics->DestroyBody(rb.bodyId);
+        rb.bodyId = 0xFFFFFFFFu;
+
+        const auto& collider = reg.get<Galeshi::ColliderComponent>(handle);
+        const glm::mat4 world = EntityWorldMatrix(handle);
+        glm::vec3 scale, translation, skew;
+        glm::vec4 perspective;
+        glm::quat rotation;
+        glm::decompose(world, scale, rotation, translation, skew, perspective);
+        rb.bodyId = m_physics->CreateCollider(collider, rb, translation,
+                                              glm::normalize(rotation), handle);
+    }
+
+    // Creates runtime bodies for every authored collider that does not have
+    // one yet. Called when Play starts.
+    void EnsurePhysicsBodies() {
+        if (!m_physics) return;
+        auto& reg = m_scene.Registry();
+        auto view = reg.view<Galeshi::ColliderComponent, Galeshi::RigidBodyComponent,
+                             Galeshi::TransformComponent>();
+        int created = 0;
+        for (auto e : view) {
+            auto& rb = view.get<Galeshi::RigidBodyComponent>(e);
+            if (rb.bodyId != 0xFFFFFFFFu) continue;
+            const auto& collider = view.get<Galeshi::ColliderComponent>(e);
+            const glm::mat4 world = EntityWorldMatrix(e);
+            glm::vec3 scale, translation, skew;
+            glm::vec4 perspective;
+            glm::quat rotation;
+            glm::decompose(world, scale, rotation, translation, skew, perspective);
+            rb.bodyId = m_physics->CreateCollider(collider, rb, translation,
+                                                  glm::normalize(rotation), e);
+            if (rb.bodyId != 0xFFFFFFFFu) ++created;
+        }
+        if (created > 0) {
+            spdlog::info("[Physics] Created {} runtime collider bodies", created);
+        }
+    }
+
+    // -------------------------------------------------------------------
     // Spawn a cube with a Jolt rigid body attached.
     // Always use this for physics cubes — it wires RigidBodyComponent,
     // motionType, mass, AND the Jolt body (CreateBox), so SyncTransformsToECS
@@ -5664,6 +6016,10 @@ void DrawDetails() {
         auto e = MakeCube(name, pos);
         auto& tf = e.GetComponent<Galeshi::TransformComponent>();
         tf.scale = scale;
+
+        auto& collider = e.AddComponent<Galeshi::ColliderComponent>();
+        collider.shapeType = Galeshi::ColliderShapeType::Box;
+        collider.halfExtents = scale * 0.5f;
 
         auto& rb = e.AddComponent<Galeshi::RigidBodyComponent>();
         rb.motionType = Galeshi::RigidBodyComponent::MotionType::Dynamic;
@@ -5684,6 +6040,9 @@ void DrawDetails() {
         auto& tf = e.GetComponent<Galeshi::TransformComponent>();
         tf.position = pos;
         tf.scale = glm::vec3(radius * 2.0f);  // unit sphere (r=0.5) * scale = diameter
+        auto& collider = e.AddComponent<Galeshi::ColliderComponent>();
+        collider.shapeType = Galeshi::ColliderShapeType::Sphere;
+        collider.radius = radius;
         auto& rb = e.AddComponent<Galeshi::RigidBodyComponent>();
         rb.motionType = Galeshi::RigidBodyComponent::MotionType::Dynamic;
         rb.mass = 1.0f;
@@ -5702,6 +6061,10 @@ void DrawDetails() {
         auto& tf = e.GetComponent<Galeshi::TransformComponent>();
         tf.position = pos;
         tf.scale = glm::vec3(1.0f);  // mesh baked with correct size
+        auto& collider = e.AddComponent<Galeshi::ColliderComponent>();
+        collider.shapeType = Galeshi::ColliderShapeType::Capsule;
+        collider.halfHeight = halfHeight;
+        collider.radius = radius;
         auto& rb = e.AddComponent<Galeshi::RigidBodyComponent>();
         rb.motionType = Galeshi::RigidBodyComponent::MotionType::Dynamic;
         rb.mass = 1.0f;
@@ -5726,6 +6089,9 @@ void DrawDetails() {
             auto& rb = ground.AddComponent<Galeshi::RigidBodyComponent>();
             rb.motionType = Galeshi::RigidBodyComponent::MotionType::Static;
             rb.bodyId = m_physics->CreateBox(glm::vec3(100.0f, 10.0f, 100.0f) * 0.5f, ground.GetComponent<Galeshi::TransformComponent>().position, static_cast<entt::entity>(ground), true);
+            auto& collider = ground.AddComponent<Galeshi::ColliderComponent>();
+            collider.shapeType = Galeshi::ColliderShapeType::Box;
+            collider.halfExtents = glm::vec3(100.0f, 10.0f, 100.0f) * 0.5f;
         }
         // --- PBR material test grid ---
         // Front row: albedo comparison. Next three rows: metallic sweep
@@ -5802,6 +6168,9 @@ void DrawDetails() {
             rb.motionType = Galeshi::RigidBodyComponent::MotionType::Dynamic;
             rb.mass = 1.0f;
             rb.bodyId = m_physics->CreateBox(tf.scale * 0.5f, pos, static_cast<entt::entity>(e), false);
+            auto& collider = e.AddComponent<Galeshi::ColliderComponent>();
+            collider.shapeType = Galeshi::ColliderShapeType::Box;
+            collider.halfExtents = tf.scale * 0.5f;
             return e;
         };
         spawnDynamicCube("Physics_Orange", { 6.0f, 3.0f, -1.0f}, {0.85f, 0.55f, 0.25f}, 0.0f, 0.6f);

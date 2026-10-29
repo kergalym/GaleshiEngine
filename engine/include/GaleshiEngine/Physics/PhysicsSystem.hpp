@@ -9,6 +9,8 @@
 namespace Galeshi {
 
 class Scene;
+struct ColliderComponent;
+struct RigidBodyComponent;
 
 class EnginePhysicsSystem {
 public:
@@ -27,6 +29,16 @@ public:
     uint32_t CreateBox(const glm::vec3& halfExtents, const glm::vec3& position, entt::entity entity = entt::null, bool isStatic = false);
     uint32_t CreateSphere(float radius, const glm::vec3& position, entt::entity entity = entt::null, bool isStatic = false);
     uint32_t CreateCapsule(float halfHeight, float radius, const glm::vec3& position, entt::entity entity = entt::null, bool isStatic = false);
+
+    // Creates a body from an authored collider + rigid body. The collider
+    // shape, offset and material are applied, and the rigid body controls
+    // motion type, mass and gravity.
+    uint32_t CreateCollider(const ColliderComponent& collider,
+                            const RigidBodyComponent& body,
+                            const glm::vec3& position,
+                            const glm::quat& rotation,
+                            entt::entity entity = entt::null);
+    void DestroyBody(uint32_t bodyId);
 
     void SyncTransformsToECS(Scene& scene);
     uint32_t CreateCloth(int gridX, int gridY, float spacing, const glm::vec3& origin, entt::entity entity);

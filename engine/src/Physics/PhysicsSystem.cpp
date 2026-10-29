@@ -12,6 +12,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/SoftBody/SoftBodySharedSettings.h>
 #include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
@@ -236,6 +237,93 @@ uint32_t EnginePhysicsSystem::CreateCapsule(float halfHeight, float radius, cons
     uint32_t rawId = id.GetIndexAndSequenceNumber();
     if (entity != entt::null) m_impl->bodyToEntity[rawId] = entity;
     return rawId;
+}
+
+uint32_t EnginePhysicsSystem::CreateCollider(const ColliderComponent& collider,
+                                             const RigidBodyComponent& body,
+                                             const glm::vec3& position,
+                                             const glm::quat& rotation,
+                                             entt::entity entity) {
+    if (!m_impl->initialized) return 0xFFFFFFFFu;
+
+    JPH::EMotionType motion = JPH::EMotionType::Dynamic;
+    JPH::ObjectLayer layer = LAYER_MOVING;
+    switch (body.motionType) {
+        case RigidBodyComponent::MotionType::Static:
+            motion = JPH::EMotionType::Static;
+            layer = LAYER_NON_MOVING;
+            break;
+        case RigidBodyComponent::MotionType::Kinematic:
+            motion = JPH::EMotionType::Kinematic;
+            break;
+        case RigidBodyComponent::MotionType::Dynamic:
+        default:
+            break;
+    }
+
+    JPH::Shape* shape = nullptr;
+    switch (collider.shapeType) {
+        case ColliderShapeType::Sphere:
+            shape = new JPH::SphereShape(std::max(collider.radius, 0.001f));
+            break;
+        case ColliderShapeType::Capsule:
+            shape = new JPH::CapsuleShape(std::max(collider.halfHeight, 0.001f),
+                                          std::max(collider.radius, 0.001f));
+            break;
+        case ColliderShapeType::Box:
+        default:
+            shape = new JPH::BoxShape(JPH::Vec3(
+                std::max(collider.halfExtents.x, 0.001f),
+                std::max(collider.halfExtents.y, 0.001f),
+                std::max(collider.halfExtents.z, 0.001f)));
+            break;
+    }
+
+    // Jolt quaternions are XYZW, glm uses WXYZ.
+    const JPH::Quat joltRot(rotation.x, rotation.y, rotation.z, rotation.w);
+
+    // Keep the body origin at the entity origin: bake the collider offset into
+    // a decorated shape so transform synchronization stays consistent.
+    if (collider.offset != glm::vec3(0.0f)) {
+        shape = new JPH::RotatedTranslatedShape(
+            JPH::Vec3(collider.offset.x, collider.offset.y, collider.offset.z),
+            JPH::Quat::sIdentity(), shape);
+    }
+
+    JPH::BodyCreationSettings settings(
+        shape,
+        JPH::RVec3(position.x, position.y, position.z),
+        joltRot, motion, layer);
+    settings.mFriction = std::max(collider.friction, 0.0f);
+    settings.mRestitution = std::clamp(collider.restitution, 0.0f, 1.0f);
+    settings.mIsSensor = collider.isTrigger;
+    settings.mAllowSleeping = true;
+    settings.mGravityFactor = body.useGravity ? 1.0f : 0.0f;
+
+    if (motion != JPH::EMotionType::Static && body.mass > 0.0f) {
+        JPH::MassProperties massProperties = shape->GetMassProperties();
+        massProperties.ScaleToMass(body.mass);
+        settings.mOverrideMassProperties =
+            JPH::EOverrideMassProperties::MassAndInertiaProvided;
+        settings.mMassPropertiesOverride = massProperties;
+    }
+
+    JPH::BodyID id = m_impl->bodyInterface->CreateAndAddBody(
+        settings, JPH::EActivation::Activate);
+    if (id.IsInvalid()) return 0xFFFFFFFFu;
+    const uint32_t rawId = id.GetIndexAndSequenceNumber();
+    if (entity != entt::null) m_impl->bodyToEntity[rawId] = entity;
+    return rawId;
+}
+
+void EnginePhysicsSystem::DestroyBody(uint32_t bodyId) {
+    if (!m_impl->initialized || bodyId == 0xFFFFFFFFu) return;
+    JPH::BodyID id(bodyId);
+    if (m_impl->bodyInterface->IsAdded(id)) {
+        m_impl->bodyInterface->RemoveBody(id);
+    }
+    m_impl->bodyInterface->DestroyBody(id);
+    m_impl->bodyToEntity.erase(bodyId);
 }
 
 
