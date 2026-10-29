@@ -1747,7 +1747,6 @@ if (ImGui::BeginMenu("File")) {
                 auto e = m_scene.CreateEntity("PostProcessVolume");
                 auto& volume =
                     e.AddComponent<Galeshi::PostProcessVolumeComponent>();
-                volume.settings = DefaultPostProcessSettings();
                 e.GetComponent<Galeshi::TransformComponent>().position =
                     m_editor.camTarget;
                 m_editor.Select(e);
@@ -4087,41 +4086,43 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                     }
                 }
             }
-            auto plviewViz = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::PointLightComponent>();
-            for (auto e : plviewViz) {
-                auto& tc = plviewViz.get<Galeshi::TransformComponent>(e);
-                auto& pl = plviewViz.get<Galeshi::PointLightComponent>(e);
-                float r = pl.radius;
-                glm::vec4 c = {1.0f, 1.0f, 0.0f, 1.0f};
-                for (int i = 0; i < 32; ++i) {
-                    float a1 = i * 2.0f * 3.14159f / 32.0f;
-                    float a2 = (i + 1) * 2.0f * 3.14159f / 32.0f;
-                    m_debug->AddLine(tc.position + glm::vec3(cos(a1), 0, sin(a1))*r, tc.position + glm::vec3(cos(a2), 0, sin(a2))*r, c);
-                    m_debug->AddLine(tc.position + glm::vec3(0, cos(a1), sin(a1))*r, tc.position + glm::vec3(0, cos(a2), sin(a2))*r, c);
-                    m_debug->AddLine(tc.position + glm::vec3(cos(a1), sin(a1), 0)*r, tc.position + glm::vec3(cos(a2), sin(a2), 0)*r, c);
+            if (!m_editor.isPlaying) {
+                auto plviewViz = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::PointLightComponent>();
+                for (auto e : plviewViz) {
+                    auto& tc = plviewViz.get<Galeshi::TransformComponent>(e);
+                    auto& pl = plviewViz.get<Galeshi::PointLightComponent>(e);
+                    float r = pl.radius;
+                    glm::vec4 c = {1.0f, 1.0f, 0.0f, 1.0f};
+                    for (int i = 0; i < 32; ++i) {
+                        float a1 = i * 2.0f * 3.14159f / 32.0f;
+                        float a2 = (i + 1) * 2.0f * 3.14159f / 32.0f;
+                        m_debug->AddLine(tc.position + glm::vec3(cos(a1), 0, sin(a1))*r, tc.position + glm::vec3(cos(a2), 0, sin(a2))*r, c);
+                        m_debug->AddLine(tc.position + glm::vec3(0, cos(a1), sin(a1))*r, tc.position + glm::vec3(0, cos(a2), sin(a2))*r, c);
+                        m_debug->AddLine(tc.position + glm::vec3(cos(a1), sin(a1), 0)*r, tc.position + glm::vec3(cos(a2), sin(a2), 0)*r, c);
+                    }
                 }
-            }
-            auto slviewViz = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::SpotLightComponent>();
-            for (auto e : slviewViz) {
-                auto& tc = slviewViz.get<Galeshi::TransformComponent>(e);
-                auto& sl = slviewViz.get<Galeshi::SpotLightComponent>(e);
-                glm::vec3 dir = glm::normalize(sl.direction);
-                float r = sl.radius;
-                float outer = glm::radians(sl.outerConeAngle);
-                float coneR = tan(outer) * r;
-                glm::vec3 endPos = tc.position + dir * r;
-                glm::vec3 up = glm::vec3(0, 1, 0);
-                if (abs(dot(dir, up)) > 0.99f) up = glm::vec3(1, 0, 0);
-                glm::vec3 right = glm::normalize(glm::cross(dir, up));
-                glm::vec3 forward = glm::normalize(glm::cross(right, dir));
-                glm::vec4 c = {1.0f, 0.5f, 0.0f, 1.0f};
-                for (int i = 0; i < 16; ++i) {
-                    float a1 = i * 2.0f * 3.14159f / 16.0f;
-                    float a2 = (i + 1) * 2.0f * 3.14159f / 16.0f;
-                    glm::vec3 p1 = endPos + (cos(a1)*right + sin(a1)*forward) * coneR;
-                    glm::vec3 p2 = endPos + (cos(a2)*right + sin(a2)*forward) * coneR;
-                    m_debug->AddLine(tc.position, p1, c);
-                    m_debug->AddLine(p1, p2, c);
+                auto slviewViz = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::SpotLightComponent>();
+                for (auto e : slviewViz) {
+                    auto& tc = slviewViz.get<Galeshi::TransformComponent>(e);
+                    auto& sl = slviewViz.get<Galeshi::SpotLightComponent>(e);
+                    glm::vec3 dir = glm::normalize(sl.direction);
+                    float r = sl.radius;
+                    float outer = glm::radians(sl.outerConeAngle);
+                    float coneR = tan(outer) * r;
+                    glm::vec3 endPos = tc.position + dir * r;
+                    glm::vec3 up = glm::vec3(0, 1, 0);
+                    if (abs(dot(dir, up)) > 0.99f) up = glm::vec3(1, 0, 0);
+                    glm::vec3 right = glm::normalize(glm::cross(dir, up));
+                    glm::vec3 forward = glm::normalize(glm::cross(right, dir));
+                    glm::vec4 c = {1.0f, 0.5f, 0.0f, 1.0f};
+                    for (int i = 0; i < 16; ++i) {
+                        float a1 = i * 2.0f * 3.14159f / 16.0f;
+                        float a2 = (i + 1) * 2.0f * 3.14159f / 16.0f;
+                        glm::vec3 p1 = endPos + (cos(a1)*right + sin(a1)*forward) * coneR;
+                        glm::vec3 p2 = endPos + (cos(a2)*right + sin(a2)*forward) * coneR;
+                        m_debug->AddLine(tc.position, p1, c);
+                        m_debug->AddLine(p1, p2, c);
+                    }
                 }
             }
             Galeshi::Entity sel = m_editor.Selected(&m_scene);
@@ -4526,7 +4527,8 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             }
 
             // --- Gizmo: apply translation/rotation/scale to the ECS. ---
-            if (selHasTf && !landscapeSculptActive && !selectedIsUICanvas) {
+            if (selHasTf && !landscapeSculptActive && !selectedIsUICanvas &&
+                !m_editor.isPlaying) {
                 ImGuizmo::SetDrawlist();
                 ImGuizmo::SetRect(imgMin.x, imgMin.y, w, h);
                 ImGuizmo::SetGizmoSizeClipSpace(0.12f);
@@ -4624,6 +4626,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
 
             // Begin drag on LMB down over center
             if (!landscapeSculptActive && !selectedIsUICanvas && !uiOverlayConsumed &&
+                !m_editor.isPlaying &&
                 ImGui::IsItemHovered() && !m_isDragging &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left) && overCenter &&
                 !ImGuizmo::IsOver() && !ImGuizmo::IsUsing()) {
@@ -4634,7 +4637,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
 
             // Perform drag while LMB held
             if (m_isDragging && ImGui::IsMouseDown(ImGuiMouseButton_Left) && selHasTf &&
-                !ImGuizmo::IsUsing()) {
+                !m_editor.isPlaying && !ImGuizmo::IsUsing()) {
                 const float dx = mouse.x - m_dragStartMouse.x;
                 const float dy = mouse.y - m_dragStartMouse.y;
 
@@ -4680,7 +4683,7 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             }
 
             // Center hint circle (drag affordance)
-            if (selOnScreen && !selectedIsUICanvas) {
+            if (selOnScreen && !selectedIsUICanvas && !m_editor.isPlaying) {
                 ImU32 hintColor = overCenter ? IM_COL32(255, 220, 40, 220)
                                              : IM_COL32(255, 255, 255, 110);
                 ImGui::GetWindowDrawList()->AddCircle(
@@ -5077,23 +5080,6 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
 void DrawDetails() {
         ImGui::Begin("Details");
 
-        // Global texture-loading option. Compression is off by default so
-        // scenes load quickly; BC7 encoding is CPU-expensive.
-        if (ImGui::CollapsingHeader("Texture Settings")) {
-            bool compress = Galeshi::Texture::CompressionEnabled();
-            if (ImGui::Checkbox("Compress textures on load (BC7)", &compress)) {
-                Galeshi::Texture::SetCompressionEnabled(compress);
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("BC7 compression lowers VRAM usage but makes\n"
-                                  "loading significantly slower. Disabled by\n"
-                                  "default for fast scene loading.");
-            }
-            ImGui::TextDisabled("Current: %s",
-                                Galeshi::Texture::CompressionEnabled() ? "compressed" : "uncompressed");
-        }
-        ImGui::Separator();
-
         auto selected = m_editor.SelectedAll(&m_scene);
         if (selected.empty()) { ImGui::TextDisabled("No selection"); ImGui::End(); return; }
 
@@ -5102,10 +5088,69 @@ void DrawDetails() {
         const bool selectedIsCollisionShape =
             selected[0].HasComponent<Galeshi::ColliderComponent>();
 
+        // Texture Settings is a global texture-loading option, but it is only
+        // relevant while inspecting a 3D model that actually uses textures.
+        auto materialHasTextures = [](const Galeshi::MaterialComponent& matc) {
+            if (!matc.material) return false;
+            const auto& m = *matc.material;
+            return m.albedoMap || m.normalMap || m.metallicRoughnessMap ||
+                   m.metallicMap || m.roughnessMap || m.emissiveMap ||
+                   m.occlusionMap || m.opacityMap || m.specularMap;
+        };
+
+        auto& reg = m_scene.Registry();
+        const entt::entity selectedHandle = selected[0].Handle();
+        bool selectionHasMesh = false;
+        bool selectionHasTextures = false;
+        for (auto entity : m_scene.AllEntities()) {
+            entt::entity cur = entity.Handle();
+            bool belongsToSelection = false;
+            int depth = 0;
+            while (cur != entt::null && depth++ < 128) {
+                if (cur == selectedHandle) {
+                    belongsToSelection = true;
+                    break;
+                }
+                if (reg.all_of<Galeshi::ParentComponent>(cur)) {
+                    cur = reg.get<Galeshi::ParentComponent>(cur).parent;
+                } else {
+                    break;
+                }
+            }
+            if (!belongsToSelection) continue;
+
+            const entt::entity handle = entity.Handle();
+            if (reg.all_of<Galeshi::MeshComponent>(handle) ||
+                reg.all_of<Galeshi::SkeletalComponent>(handle)) {
+                selectionHasMesh = true;
+            }
+            if (reg.all_of<Galeshi::MaterialComponent>(handle) &&
+                materialHasTextures(reg.get<Galeshi::MaterialComponent>(handle))) {
+                selectionHasTextures = true;
+            }
+        }
+
         if (!selected.empty() && selected[0].HasComponent<Galeshi::NameComponent>()) {
             auto& nc = selected[0].GetComponent<Galeshi::NameComponent>();
             char buf[256]; std::snprintf(buf, sizeof(buf), "%s", nc.name.c_str());
             if (ImGui::InputText("Name", buf, sizeof(buf))) nc.name = buf;
+        }
+
+        if (selectionHasMesh && selectionHasTextures) {
+            if (ImGui::CollapsingHeader("Texture Settings")) {
+                bool compress = Galeshi::Texture::CompressionEnabled();
+                if (ImGui::Checkbox("Compress textures on load (BC7)", &compress)) {
+                    Galeshi::Texture::SetCompressionEnabled(compress);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("BC7 compression lowers VRAM usage but makes\n"
+                                      "loading significantly slower. Disabled by\n"
+                                      "default for fast scene loading.");
+                }
+                ImGui::TextDisabled("Current: %s",
+                                    Galeshi::Texture::CompressionEnabled() ? "compressed" : "uncompressed");
+            }
+            ImGui::Separator();
         }
 
         if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {

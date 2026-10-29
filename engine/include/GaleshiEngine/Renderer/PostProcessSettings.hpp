@@ -13,12 +13,12 @@ struct PostProcessSettings {
     float bloomRadius    = 1.0f;
 
     // Depth of Field
-    bool  dofEnabled       = false;
-    float dofFocusDistance = 10.0f;
-    float dofBlur          = 8.0f;   // maximum circle-of-confusion size in pixels
+    bool  dofEnabled       = true;
+    float dofFocusDistance = 1.4f;
+    float dofBlur          = 13.5f;  // maximum circle-of-confusion size in pixels
 
     // Motion Blur
-    bool  motionBlurEnabled    = false;
+    bool  motionBlurEnabled    = true;
     float motionBlurAmount     = 0.4f;  // camera velocity scale
     float motionBlurMaxVelocity = 70.0f; // clamp in pixels
 

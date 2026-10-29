@@ -311,7 +311,7 @@ private:
     bgfx::UniformHandle s_mbVelocity = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_mbVelocityTex = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_mbVelocityFbo = BGFX_INVALID_HANDLE;
-    bool m_motionBlurEnabled = false;
+    bool m_motionBlurEnabled = true;
     bgfx::ProgramHandle m_dofBlurProg      = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_dofCompositeProg = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_dofParams    = BGFX_INVALID_HANDLE;
@@ -321,7 +321,7 @@ private:
     bgfx::UniformHandle s_dofDepth     = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_dofBlur      = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_dofCoc       = BGFX_INVALID_HANDLE;
-    bool m_dofEnabled = false;
+    bool m_dofEnabled = true;
     std::shared_ptr<class Texture> m_brdfTexture;
     bgfx::FrameBufferHandle m_envFbo = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_irradianceFbo = BGFX_INVALID_HANDLE;
