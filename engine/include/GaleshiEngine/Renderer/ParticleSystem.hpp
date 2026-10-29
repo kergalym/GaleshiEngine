@@ -72,6 +72,12 @@ private:
     std::unordered_map<entt::entity, EmitterRuntime> m_emitters;
     std::mt19937        m_rng{0x9E3779B9u};
     size_t              m_totalParticles = 0;
+
+    // Texture resources: 1x1 white fallback used when an emitter has no
+    // texture, plus the sampler/parameter uniforms shared by the shader.
+    bgfx::TextureHandle m_whiteTex     = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle m_texUniform   = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle m_paramsUniform = BGFX_INVALID_HANDLE;
 };
 
 } // namespace Galeshi

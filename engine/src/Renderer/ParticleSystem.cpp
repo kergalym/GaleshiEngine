@@ -3,6 +3,7 @@
 #include "GaleshiEngine/Renderer/ShaderManager.hpp"
 #include "GaleshiEngine/Scene/Scene.hpp"
 #include "GaleshiEngine/Scene/Components.hpp"
+#include "GaleshiEngine/Assets/Texture.hpp"
 
 #include <glm/gtc/type_ptr.hpp>
 #include <spdlog/spdlog.h>
@@ -80,12 +81,36 @@ void ParticleSystem::Init() {
     } else {
         spdlog::info("[ParticleSystem] Particle program loaded");
     }
+
+    m_texUniform    = bgfx::createUniform("s_particleTex", bgfx::UniformType::Sampler);
+    m_paramsUniform = bgfx::createUniform("u_particleParams", bgfx::UniformType::Vec4);
+
+    // 1x1 white fallback texture so the shader can always sample slot 0.
+    const uint32_t whitePixel = 0xFFFFFFFFu;
+    m_whiteTex = bgfx::createTexture2D(1, 1, false, 1,
+        bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE,
+        bgfx::copy(&whitePixel, sizeof(whitePixel)));
+    if (!bgfx::isValid(m_whiteTex)) {
+        spdlog::error("[ParticleSystem] Failed to create white fallback texture");
+    }
 }
 
 void ParticleSystem::Shutdown() {
     if (bgfx::isValid(m_program)) {
         bgfx::destroy(m_program);
         m_program = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(m_whiteTex)) {
+        bgfx::destroy(m_whiteTex);
+        m_whiteTex = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(m_texUniform)) {
+        bgfx::destroy(m_texUniform);
+        m_texUniform = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(m_paramsUniform)) {
+        bgfx::destroy(m_paramsUniform);
+        m_paramsUniform = BGFX_INVALID_HANDLE;
     }
     m_emitters.clear();
     m_totalParticles = 0;
@@ -157,10 +182,22 @@ void ParticleSystem::UpdateEmitter(Scene& scene, entt::entity entity,
         runtime.spawnAccumulator -= 1.0f;
 
         Particle p;
-        // Uniform point inside the spawn sphere.
-        const glm::vec3 dir = RandomUnitVector(m_rng);
-        const float radius = emitter.spawnRadius * std::cbrt(unit(m_rng));
-        p.position = origin + dir * radius;
+        // Spawn either inside a box volume (when configured) or the sphere.
+        const bool useBox = emitter.spawnBoxSize.x > 0.0f ||
+                            emitter.spawnBoxSize.y > 0.0f ||
+                            emitter.spawnBoxSize.z > 0.0f;
+        if (useBox) {
+            std::uniform_real_distribution<float> sym(-1.0f, 1.0f);
+            p.position = origin + glm::vec3(
+                sym(m_rng) * emitter.spawnBoxSize.x,
+                sym(m_rng) * emitter.spawnBoxSize.y,
+                sym(m_rng) * emitter.spawnBoxSize.z);
+        } else {
+            // Uniform point inside the spawn sphere.
+            const glm::vec3 dir = RandomUnitVector(m_rng);
+            const float radius = emitter.spawnRadius * std::cbrt(unit(m_rng));
+            p.position = origin + dir * radius;
+        }
 
         p.velocity = baseVelocity +
                      RandomUnitVector(m_rng) * (emitter.velocityVariance * unit(m_rng));
@@ -202,14 +239,14 @@ void ParticleSystem::Render(Scene& scene, const Camera& camera,
     auto& reg = scene.Registry();
     auto view = reg.view<ParticleEmitterComponent>();
 
-    size_t quadCount = 0;
+    size_t totalParticles = 0;
     for (auto entity : view) {
         auto it = m_emitters.find(entity);
         if (it != m_emitters.end()) {
-            quadCount += it->second.particles.size();
+            totalParticles += it->second.particles.size();
         }
     }
-    if (quadCount == 0) {
+    if (totalParticles == 0) {
         return;
     }
 
@@ -217,31 +254,41 @@ void ParticleSystem::Render(Scene& scene, const Camera& camera,
     const glm::vec3 right = glm::normalize(glm::vec3(v[0][0], v[1][0], v[2][0]));
     const glm::vec3 up    = glm::normalize(glm::vec3(v[0][1], v[1][1], v[2][1]));
 
-    uint32_t quads = static_cast<uint32_t>(std::min<size_t>(quadCount, 1u << 20));
+    bgfx::setViewFrameBuffer(viewId, target);
+    bgfx::setViewRect(viewId, 0, 0, width, height);
+    bgfx::setViewClear(viewId, BGFX_CLEAR_NONE);
+    bgfx::setViewTransform(viewId, glm::value_ptr(camera.View()),
+                           glm::value_ptr(camera.Projection()));
 
-    // Clamp to what the transient buffers can currently hold.
-    const uint32_t availVerts = bgfx::getAvailTransientVertexBuffer(quads * 4, m_layout);
-    const uint32_t availIndices = bgfx::getAvailTransientIndexBuffer(quads * 6, true);
-    quads = std::min(quads, std::min(availVerts / 4, availIndices / 6));
-    if (quads == 0) {
-        return;
-    }
-
-    bgfx::TransientVertexBuffer tvb;
-    bgfx::TransientIndexBuffer tib;
-    bgfx::allocTransientVertexBuffer(&tvb, quads * 4, m_layout);
-    bgfx::allocTransientIndexBuffer(&tib, quads * 6, true);
-
-    auto* vertices = reinterpret_cast<Vertex*>(tvb.data);
-    auto* indices = reinterpret_cast<uint32_t*>(tib.data);
-
-    uint32_t q = 0;
+    // Each emitter is submitted as its own batch so it can bind its own
+    // particle texture (or the white fallback) to sampler slot 0.
     for (auto entity : view) {
-        if (q >= quads) break;
         auto it = m_emitters.find(entity);
-        if (it == m_emitters.end()) continue;
+        if (it == m_emitters.end() || it->second.particles.empty()) continue;
+
         const auto& emitter = view.get<ParticleEmitterComponent>(entity);
-        for (const auto& p : it->second.particles) {
+        const auto& particles = it->second.particles;
+
+        uint32_t quads = static_cast<uint32_t>(
+            std::min<size_t>(particles.size(), 1u << 20));
+
+        // Clamp to what the transient buffers can currently hold.
+        const uint32_t availVerts = bgfx::getAvailTransientVertexBuffer(quads * 4, m_layout);
+        const uint32_t availIndices = bgfx::getAvailTransientIndexBuffer(quads * 6, true);
+        quads = std::min(quads, std::min(availVerts / 4, availIndices / 6));
+        if (quads == 0) continue;
+
+        bgfx::TransientVertexBuffer tvb;
+        bgfx::TransientIndexBuffer tib;
+        bgfx::allocTransientVertexBuffer(&tvb, quads * 4, m_layout);
+        bgfx::allocTransientIndexBuffer(&tib, quads * 6, true);
+        if (!tvb.data || !tib.data) continue;
+
+        auto* vertices = reinterpret_cast<Vertex*>(tvb.data);
+        auto* indices = reinterpret_cast<uint32_t*>(tib.data);
+
+        uint32_t q = 0;
+        for (const auto& p : particles) {
             if (q >= quads) break;
 
             const float t = glm::clamp(p.age / p.lifetime, 0.0f, 1.0f);
@@ -265,23 +312,25 @@ void ParticleSystem::Render(Scene& scene, const Camera& camera,
             idx[3] = base + 0; idx[4] = base + 2; idx[5] = base + 3;
             ++q;
         }
+
+        const bool useTexture = emitter.texture && emitter.texture->Valid();
+        const bgfx::TextureHandle tex =
+            useTexture ? emitter.texture->Handle() : m_whiteTex;
+
+        bgfx::setTexture(0, m_texUniform, tex);
+        const glm::vec4 particleParams(useTexture ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+        bgfx::setUniform(m_paramsUniform, glm::value_ptr(particleParams));
+
+        bgfx::setVertexBuffer(0, &tvb);
+        bgfx::setIndexBuffer(&tib);
+        // The output FBO depth attachment is not the scene depth, so particles
+        // are drawn without depth testing.  Alpha blending keeps them soft.
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                       BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA,
+                                             BGFX_STATE_BLEND_INV_SRC_ALPHA) |
+                       BGFX_STATE_MSAA);
+        bgfx::submit(viewId, m_program);
     }
-
-    bgfx::setViewFrameBuffer(viewId, target);
-    bgfx::setViewRect(viewId, 0, 0, width, height);
-    bgfx::setViewClear(viewId, BGFX_CLEAR_NONE);
-    bgfx::setViewTransform(viewId, glm::value_ptr(camera.View()),
-                           glm::value_ptr(camera.Projection()));
-
-    bgfx::setVertexBuffer(0, &tvb);
-    bgfx::setIndexBuffer(&tib);
-    // The output FBO depth attachment is not the scene depth, so particles are
-    // drawn without depth testing.  Alpha blending keeps them soft.
-    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
-                   BGFX_STATE_BLEND_FUNC(BGFX_STATE_BLEND_SRC_ALPHA,
-                                         BGFX_STATE_BLEND_INV_SRC_ALPHA) |
-                   BGFX_STATE_MSAA);
-    bgfx::submit(viewId, m_program);
 }
 
 } // namespace Galeshi

@@ -308,8 +308,28 @@ protected:
         std::string ext = fs::path(filepath).extension().string();
         for (auto& c : ext) c = std::tolower(c);
         if (ext == ".fbx" || ext == ".gltf" || ext == ".glb" || ext == ".png" || ext == ".jpg" || ext == ".wav" || ext == ".mp3") {
-            fs::path dest = fs::path(Galeshi::ProjectManager::GetProjectPath()) / "assets" / fs::path(filepath).filename();
-            fs::copy_file(filepath, dest, fs::copy_options::overwrite_existing);
+            const std::string projectPath = Galeshi::ProjectManager::GetProjectPath();
+            if (projectPath.empty()) {
+                spdlog::error("[Editor] Cannot import '{}': no project is open", filepath);
+                return;
+            }
+
+            const fs::path dest = fs::path(projectPath) / "assets" / fs::path(filepath).filename();
+            std::error_code ec;
+            fs::create_directories(dest.parent_path(), ec);
+            if (ec) {
+                spdlog::error("[Editor] Cannot create asset directory '{}': {}",
+                              dest.parent_path().string(), ec.message());
+                return;
+            }
+
+            fs::copy_file(filepath, dest, fs::copy_options::overwrite_existing, ec);
+            if (ec) {
+                spdlog::error("[Editor] Failed to import '{}' to '{}': {}",
+                              filepath, dest.string(), ec.message());
+                return;
+            }
+
             if (m_browser) m_browser->Refresh();
             spdlog::info("[Editor] Imported asset: {}", dest.string());
         }
@@ -537,6 +557,12 @@ protected:
     }
 
     void InitializeEditor() {
+        // Scene loading must stay fast: keep BC7 texture compression off by
+        // default. It can be enabled from Details -> Texture Settings.
+        Galeshi::Texture::SetCompressionEnabled(false);
+        spdlog::info("[Editor] Texture compression on load: {}",
+                     Galeshi::Texture::CompressionEnabled() ? "on" : "off");
+
         // --- Auto-inserted subsystem init ---
         spdlog::info("[Subsystem] m_audio.Init() begin");
         if (!m_audio.Init()) spdlog::error("[Subsystem] m_audio.Init() failed");
@@ -648,7 +674,17 @@ protected:
         
 
 
-        m_browser    = std::make_unique<Galeshi::ContentBrowser>("assets");
+        // Content Browser shows the open project's assets folder, not the
+        // engine's own assets directory.
+        const std::string projectPath = Galeshi::ProjectManager::GetProjectPath();
+        const std::string browserRoot = projectPath.empty()
+            ? std::string("assets")
+            : (std::filesystem::path(projectPath) / "assets").string();
+        {
+            std::error_code ec;
+            std::filesystem::create_directories(browserRoot, ec);
+        }
+        m_browser    = std::make_unique<Galeshi::ContentBrowser>(browserRoot);
         m_serializer = std::make_unique<Galeshi::SceneSerializer>(m_scene, *m_assets);
 
         // The editor deliberately starts with an empty scene.  Scenes are
@@ -3800,6 +3836,59 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
                 auto& tc = sel.GetComponent<Galeshi::TransformComponent>();
                 m_debug->AddBox(tc.position, tc.scale + glm::vec3(0.1f), {1, 1, 0, 1});
             }
+
+            // Yellow outline of the selected particle emitter's spawn volume.
+            // Matches the ParticleSystem: the spawn area is centred on the
+            // emitter's world position (parent chain applied) and is either an
+            // axis-aligned box or a sphere.
+            if (sel && sel.HasComponent<Galeshi::ParticleEmitterComponent>() &&
+                sel.HasComponent<Galeshi::TransformComponent>()) {
+                const auto& pe = sel.GetComponent<Galeshi::ParticleEmitterComponent>();
+
+                glm::mat4 world(1.0f);
+                std::vector<entt::entity> chain;
+                entt::entity cur = sel.Handle();
+                int depth = 0;
+                while (cur != entt::null && depth++ < 128) {
+                    chain.push_back(cur);
+                    if (m_scene.Registry().all_of<Galeshi::ParentComponent>(cur)) {
+                        cur = m_scene.Registry().get<Galeshi::ParentComponent>(cur).parent;
+                    } else {
+                        break;
+                    }
+                }
+                for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+                    if (m_scene.Registry().all_of<Galeshi::TransformComponent>(*it)) {
+                        world = world * m_scene.Registry().get<Galeshi::TransformComponent>(*it).LocalMatrix();
+                    }
+                }
+                const glm::vec3 origin(world[3]);
+                const glm::vec4 yellow = {1.0f, 1.0f, 0.0f, 1.0f};
+
+                const bool useBox = pe.spawnBoxSize.x > 0.0f ||
+                                    pe.spawnBoxSize.y > 0.0f ||
+                                    pe.spawnBoxSize.z > 0.0f;
+                if (useBox) {
+                    // AddBox() expects the full size, spawnBoxSize holds half extents.
+                    m_debug->AddBox(origin, pe.spawnBoxSize * 2.0f, yellow);
+                } else if (pe.spawnRadius > 0.0f) {
+                    const int segments = 48;
+                    for (int i = 0; i < segments; ++i) {
+                        const float a1 = static_cast<float>(i) / segments * 6.2831853f;
+                        const float a2 = static_cast<float>(i + 1) / segments * 6.2831853f;
+                        const float c1 = std::cos(a1) * pe.spawnRadius;
+                        const float s1 = std::sin(a1) * pe.spawnRadius;
+                        const float c2 = std::cos(a2) * pe.spawnRadius;
+                        const float s2 = std::sin(a2) * pe.spawnRadius;
+                        m_debug->AddLine(origin + glm::vec3(c1, s1, 0.0f),
+                                         origin + glm::vec3(c2, s2, 0.0f), yellow);
+                        m_debug->AddLine(origin + glm::vec3(c1, 0.0f, s1),
+                                         origin + glm::vec3(c2, 0.0f, s2), yellow);
+                        m_debug->AddLine(origin + glm::vec3(0.0f, c1, s1),
+                                         origin + glm::vec3(0.0f, c2, s2), yellow);
+                    }
+                }
+            }
             if (m_framebuffer && bgfx::isValid(m_framebuffer->Handle())) {
                 // Draw directly into the G-buffer FBO: it already owns the
                 // scene depth, and its color attachment has been filled with
@@ -4481,6 +4570,24 @@ bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
 
 void DrawDetails() {
         ImGui::Begin("Details");
+
+        // Global texture-loading option. Compression is off by default so
+        // scenes load quickly; BC7 encoding is CPU-expensive.
+        if (ImGui::CollapsingHeader("Texture Settings")) {
+            bool compress = Galeshi::Texture::CompressionEnabled();
+            if (ImGui::Checkbox("Compress textures on load (BC7)", &compress)) {
+                Galeshi::Texture::SetCompressionEnabled(compress);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("BC7 compression lowers VRAM usage but makes\n"
+                                  "loading significantly slower. Disabled by\n"
+                                  "default for fast scene loading.");
+            }
+            ImGui::TextDisabled("Current: %s",
+                                Galeshi::Texture::CompressionEnabled() ? "compressed" : "uncompressed");
+        }
+        ImGui::Separator();
+
         auto selected = m_editor.SelectedAll(&m_scene);
         if (selected.empty()) { ImGui::TextDisabled("No selection"); ImGui::End(); return; }
 
@@ -5231,12 +5338,23 @@ void DrawDetails() {
             ImGui::DragFloat3("Velocity", glm::value_ptr(pe.velocity), 0.05f, -50.0f, 50.0f);
             ImGui::DragFloat("Velocity Variance", &pe.velocityVariance, 0.05f, 0.0f, 50.0f);
             ImGui::DragFloat("Spawn Radius", &pe.spawnRadius, 0.01f, 0.0f, 10.0f);
+            ImGui::DragFloat3("Spawn Box Size", glm::value_ptr(pe.spawnBoxSize), 0.05f, 0.0f, 100.0f);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Half extents of a box-shaped spawn volume.\n"
+                                  "Any value > 0 switches from the sphere to the box.\n"
+                                  "Use it for rain/snow areas.");
+            }
             ImGui::DragFloat3("Gravity", glm::value_ptr(pe.gravity), 0.05f, -50.0f, 50.0f);
             ImGui::DragFloat("Drag", &pe.drag, 0.01f, 0.0f, 10.0f);
             int maxParticles = static_cast<int>(pe.maxParticles);
             if (ImGui::DragInt("Max Particles", &maxParticles, 1.0f, 1, 20000)) {
                 pe.maxParticles = static_cast<uint32_t>(std::max(maxParticles, 1));
             }
+
+            ImGui::Separator();
+            ImGui::Text("Particle Texture (drag from Content Browser):");
+            DrawTextureSlot("Particle Texture", pe.texture, true);
+
             if (m_particles) {
                 ImGui::TextDisabled("Live particles: %zu",
                                     m_particles->ParticleCount(selected[0].Handle()));

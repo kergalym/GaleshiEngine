@@ -435,9 +435,13 @@ std::string SceneSerializer::SaveToString() const {
                 {"velocity", Vec3ToJson(pe.velocity)},
                 {"velocityVariance", pe.velocityVariance},
                 {"spawnRadius", pe.spawnRadius},
+                {"spawnBoxSize", Vec3ToJson(pe.spawnBoxSize)},
                 {"gravity", Vec3ToJson(pe.gravity)},
                 {"drag", pe.drag},
-                {"maxParticles", pe.maxParticles}
+                {"maxParticles", pe.maxParticles},
+                {"particleTexturePath", pe.texture
+                    ? m_assets.MakeRelativePath(pe.texture->Path())
+                    : std::string{}}
             };
         }
         if (reg.all_of<AudioSourceComponent>(handle)) {
@@ -998,9 +1002,14 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             if (jp.contains("velocity")) pe.velocity = Vec3FromJson(jp.at("velocity"));
             pe.velocityVariance = jp.value("velocityVariance", 1.2f);
             pe.spawnRadius = jp.value("spawnRadius", 0.2f);
+            if (jp.contains("spawnBoxSize")) pe.spawnBoxSize = Vec3FromJson(jp.at("spawnBoxSize"));
             if (jp.contains("gravity")) pe.gravity = Vec3FromJson(jp.at("gravity"));
             pe.drag = jp.value("drag", 0.4f);
             pe.maxParticles = jp.value("maxParticles", 512u);
+            const std::string texturePath = jp.value("particleTexturePath", std::string{});
+            if (!texturePath.empty()) {
+                pe.texture = m_assets.LoadTexture(texturePath, true);
+            }
         }
         if (je.contains("audioSource")) {
             const auto& ja = je["audioSource"];

@@ -15,6 +15,7 @@ namespace Galeshi {
 
 class Mesh;
 class Material;
+class Texture;
 
 struct NameComponent {
     std::string name = "Entity";
@@ -328,9 +329,16 @@ struct ParticleEmitterComponent {
     glm::vec3 velocity         = {0.0f, 1.5f, 0.0f};  // base spawn velocity (m/s)
     float     velocityVariance = 1.2f;    // random velocity spread (m/s)
     float     spawnRadius      = 0.2f;    // spawn sphere radius around origin
+    // Half extents of a box-shaped spawn volume. When any component is
+    // greater than zero, particles spawn uniformly inside the box instead of
+    // the spawn sphere. Useful for rain/snow areas.
+    glm::vec3 spawnBoxSize     = {0.0f, 0.0f, 0.0f};
     glm::vec3 gravity          = {0.0f, -1.5f, 0.0f};
     float     drag             = 0.4f;    // velocity damping per second
     uint32_t  maxParticles     = 512;
+    // Optional sprite texture used to draw the particles. When empty the
+    // renderer uses the procedural soft round sprite.
+    std::shared_ptr<Texture> texture;
 };
 
 // Screen-space UI canvas.  Rendered by UIRuntime through ImGui; the widget

@@ -14,7 +14,9 @@ namespace fs = std::filesystem;
 namespace Galeshi {
 
 ContentBrowser::ContentBrowser(std::string rootDir, AssetManager* assets)
-    : m_root(std::move(rootDir)), m_assets(assets), m_current(m_root) {}
+    : m_root(std::move(rootDir)), m_assets(assets), m_current(m_root) {
+    Refresh();
+}
 
 void ContentBrowser::Refresh() {
     m_entries.clear();
@@ -33,10 +35,56 @@ void ContentBrowser::Refresh() {
             if (a.isDirectory != b.isDirectory) return a.isDirectory > b.isDirectory;
             return a.name < b.name;
         });
+
+    // Remember the directory timestamp so UpdateAutoRefresh() can detect
+    // external changes (new/deleted/renamed files).
+    std::error_code timeEc;
+    const auto writeTime = fs::last_write_time(m_current, timeEc);
+    if (!timeEc) {
+        m_lastWriteTime = writeTime;
+    }
+}
+
+void ContentBrowser::UpdateAutoRefresh() {
+    if (!m_autoRefresh) return;
+
+    // Polling instead of platform-specific watchers keeps this portable.
+    // 500 ms is fast enough to feel immediate without touching the FS on
+    // every frame.
+    const auto now = std::chrono::steady_clock::now();
+    if (now - m_lastCheck < std::chrono::milliseconds(500)) return;
+    m_lastCheck = now;
+
+    std::error_code ec;
+
+    // The directory we are viewing may have been deleted or moved.
+    if (!fs::exists(m_current, ec)) {
+        if (fs::exists(m_root, ec)) {
+            m_current = m_root;
+            Refresh();
+        }
+        return;
+    }
+
+    const auto writeTime = fs::last_write_time(m_current, ec);
+    if (ec) return;
+
+    if (m_lastWriteTime == fs::file_time_type{}) {
+        // First poll after construction/refresh failure: just record it.
+        m_lastWriteTime = writeTime;
+        return;
+    }
+
+    if (writeTime != m_lastWriteTime) {
+        Refresh();
+    }
 }
 
 std::string ContentBrowser::Draw() {
     std::string clicked;
+
+    // Pick up external changes to the assets folder before drawing.
+    UpdateAutoRefresh();
 
     ImGui::Text("Path: %s", m_current.string().c_str());
     ImGui::Separator();
@@ -50,6 +98,12 @@ std::string ContentBrowser::Draw() {
     }
     if (ImGui::Button("Refresh")) Refresh();
     ImGui::SameLine();
+    ImGui::Checkbox("Auto", &m_autoRefresh);
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Automatically refresh when files are added,\n"
+                          "removed or renamed in the assets folder.");
+    }
+    ImGui::SameLine();
     if (ImGui::Button("Import Asset")) {
         m_importPicker.Open(m_current.string(), "Import Asset", { ".fbx", ".gltf", ".glb", ".png", ".jpg", ".wav", ".mp3" });
     }
@@ -59,11 +113,21 @@ std::string ContentBrowser::Draw() {
     if (!importPath.empty()) {
         std::filesystem::path dest = m_current / std::filesystem::path(importPath).filename();
         std::error_code ec;
-        std::filesystem::copy_file(importPath, dest, std::filesystem::copy_options::overwrite_existing, ec);
-        if (!ec) Refresh();
+        std::filesystem::create_directories(dest.parent_path(), ec);
+        if (ec) {
+            spdlog::error("[ContentBrowser] Cannot create directory '{}': {}",
+                          dest.parent_path().string(), ec.message());
+        } else {
+            std::filesystem::copy_file(importPath, dest,
+                std::filesystem::copy_options::overwrite_existing, ec);
+            if (ec) {
+                spdlog::error("[ContentBrowser] Failed to import '{}' to '{}': {}",
+                              importPath, dest.string(), ec.message());
+            } else {
+                Refresh();
+            }
+        }
     }
-
-    if (m_entries.empty()) Refresh();
 
     ImGui::BeginChild("content_list", ImVec2(0, 0), true);
     for (const auto& e : m_entries) {
