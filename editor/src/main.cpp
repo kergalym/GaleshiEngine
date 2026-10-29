@@ -4850,6 +4850,11 @@ void DrawDetails() {
         auto selected = m_editor.SelectedAll(&m_scene);
         if (selected.empty()) { ImGui::TextDisabled("No selection"); ImGui::End(); return; }
 
+        // Collision-shape entities are physics-only: their details page should
+        // not expose rendering materials or audio source controls.
+        const bool selectedIsCollisionShape =
+            selected[0].HasComponent<Galeshi::ColliderComponent>();
+
         if (!selected.empty() && selected[0].HasComponent<Galeshi::NameComponent>()) {
             auto& nc = selected[0].GetComponent<Galeshi::NameComponent>();
             char buf[256]; std::snprintf(buf, sizeof(buf), "%s", nc.name.c_str());
@@ -4963,7 +4968,7 @@ void DrawDetails() {
                 isGround = true;
             }
 
-            if (!isLight && !isGround) {
+            if (!isLight && !isGround && !selectedIsCollisionShape) {
                 if (!sel.HasComponent<Galeshi::AudioSourceComponent>()) {
                     if (ImGui::Button("+ Add Audio Source")) {
                         sel.AddComponent<Galeshi::AudioSourceComponent>();
@@ -5283,7 +5288,8 @@ void DrawDetails() {
         };
 
         // 1. Draw material for the selected entity itself (if any)
-        if (selected[0].HasComponent<Galeshi::MaterialComponent>()) {
+        if (!selectedIsCollisionShape &&
+            selected[0].HasComponent<Galeshi::MaterialComponent>()) {
             auto& matc = selected[0].GetComponent<Galeshi::MaterialComponent>();
             std::string label = (matc.material && !matc.material->name.empty())
                 ? matc.material->name : std::string("Material");
@@ -5291,17 +5297,19 @@ void DrawDetails() {
         }
 
         // 2. Draw materials for all children (e.g., skeletal mesh sub-meshes)
-        for (auto e : m_scene.AllEntities()) {
-            if (e.HasComponent<Galeshi::ParentComponent>() && e.GetComponent<Galeshi::ParentComponent>().parent == selected[0].Handle()) {
-                if (e.HasComponent<Galeshi::MaterialComponent>()) {
-                    auto& matc = e.GetComponent<Galeshi::MaterialComponent>();
-                    std::string label = "Material Slot [" + std::to_string((uint32_t)e.Handle()) + "]";
-                    if (matc.material && !matc.material->name.empty()) {
-                        label = matc.material->name;
-                    } else if (e.HasComponent<Galeshi::NameComponent>()) {
-                        label = e.GetComponent<Galeshi::NameComponent>().name;
+        if (!selectedIsCollisionShape) {
+            for (auto e : m_scene.AllEntities()) {
+                if (e.HasComponent<Galeshi::ParentComponent>() && e.GetComponent<Galeshi::ParentComponent>().parent == selected[0].Handle()) {
+                    if (e.HasComponent<Galeshi::MaterialComponent>()) {
+                        auto& matc = e.GetComponent<Galeshi::MaterialComponent>();
+                        std::string label = "Material Slot [" + std::to_string((uint32_t)e.Handle()) + "]";
+                        if (matc.material && !matc.material->name.empty()) {
+                            label = matc.material->name;
+                        } else if (e.HasComponent<Galeshi::NameComponent>()) {
+                            label = e.GetComponent<Galeshi::NameComponent>().name;
+                        }
+                        DrawMaterialUI(label.c_str(), matc, (uint32_t)e.Handle());
                     }
-                    DrawMaterialUI(label.c_str(), matc, (uint32_t)e.Handle());
                 }
             }
         }
