@@ -109,6 +109,9 @@ void PostProcessManager::Init() {
         auto fsCull = LoadBinShader("shaders/cs_light_culling.bin");
         if (bgfx::isValid(fsCull)) m_lightCullingProg = bgfx::createProgram(fsCull, true);
             u_cascadeSplits = bgfx::createUniform("u_cascadeSplits", bgfx::UniformType::Vec4);
+            u_cascadeNormalOffsets = bgfx::createUniform("u_cascadeNormalOffsets", bgfx::UniformType::Vec4);
+            u_cascadeDepthBias = bgfx::createUniform("u_cascadeDepthBias", bgfx::UniformType::Vec4);
+            u_pssmParams = bgfx::createUniform("u_pssmParams", bgfx::UniformType::Vec4);
             u_lightDir    = bgfx::createUniform("u_lightDirection",     bgfx::UniformType::Vec4);
             u_lightCol    = bgfx::createUniform("u_lightColorIntensity",bgfx::UniformType::Vec4);
             s_albedoMr    = bgfx::createUniform("s_albedoMr",    bgfx::UniformType::Sampler);
@@ -550,7 +553,9 @@ void PostProcessManager::Shutdown() {
     
 
     destroyUni(s_texColor); destroyUni(s_texDepth); destroyUni(u_texelSize);
-    destroyUni(u_camPos); destroyUni(u_cascadeSplits); destroyUni(u_lightDir); destroyUni(u_lightCol);
+    destroyUni(u_camPos); destroyUni(u_cascadeSplits); destroyUni(u_cascadeNormalOffsets);
+    destroyUni(u_cascadeDepthBias); destroyUni(u_pssmParams);
+    destroyUni(u_lightDir); destroyUni(u_lightCol);
     destroyUni(s_albedoMr); destroyUni(s_normalRough); destroyUni(s_worldPos); destroyUni(s_materialTex);
     destroyUni(s_shadowMap0); destroyUni(s_shadowMap1); destroyUni(s_shadowMap2); destroyUni(u_lightVP0); destroyUni(u_lightVP1); destroyUni(u_lightVP2); 
     destroyUni(u_plPos); destroyUni(u_plCol); destroyUni(u_plCnt);
@@ -775,6 +780,9 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     const glm::mat4& lightMtx0, const glm::mat4& lightMtx1, const glm::mat4& lightMtx2,
     const glm::mat4& invViewProj, 
     const float cascadeSplits[4],
+    const float cascadeNormalOffsets[4],
+    const float cascadeDepthBias[4],
+    const float pssmParams[4],
     const float camPos[4], const float lightDir[4], const float lightColorIntensity[4],
     const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
     const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], int spotLightCount,
@@ -798,6 +806,9 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
 
     bgfx::setUniform(u_camPos,   camPos);
     bgfx::setUniform(u_cascadeSplits, cascadeSplits);
+    bgfx::setUniform(u_cascadeNormalOffsets, cascadeNormalOffsets);
+    bgfx::setUniform(u_cascadeDepthBias, cascadeDepthBias);
+    bgfx::setUniform(u_pssmParams, pssmParams);
     bgfx::setUniform(u_lightDir, lightDir);
     bgfx::setUniform(u_lightCol, lightColorIntensity);
     bgfx::setTexture(0, s_albedoMr,    albedoMr);

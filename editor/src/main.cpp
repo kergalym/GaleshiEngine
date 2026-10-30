@@ -116,6 +116,13 @@ class GaleshiEditorApp final : public Galeshi::Application {
     // AO method used when no post-process volume overrides the settings.
     Galeshi::AmbientOcclusionMode m_globalAoMode =
         Galeshi::AmbientOcclusionMode::SSAO;
+    // PSSM tuning. Normal offset and depth bias are expressed in shadow-map
+    // texels and converted to per-cascade world/NDC values each frame.
+    float m_pssmDepthBiasTexels = 0.75f;
+    float m_pssmSlopeBias = 0.00025f;
+    float m_pssmNormalOffsetTexels = 1.75f;
+    float m_pssmNormalOffsetSlope = 0.5f;
+    float m_pssmPcfRadius = 1.5f;
     LoadingState m_loadingState;
     float m_displayProgress = 0.0f; // UI thread only, smoothed copy of progress
     std::unique_ptr<Galeshi::Texture> m_logoTexture;
@@ -1560,6 +1567,28 @@ private:
             float lodBias = m_render->LodBias();
             if (ImGui::SliderFloat("LOD Bias", &lodBias, 0.25f, 4.0f, "%.2f"))
                 m_render->SetLodBias(lodBias);
+
+            if (ImGui::BeginMenu("PSSM Shadows")) {
+                ImGui::DragFloat("Depth Bias (texels)", &m_pssmDepthBiasTexels,
+                                 0.01f, 0.0f, 4.0f, "%.2f");
+                ImGui::DragFloat("Slope Bias", &m_pssmSlopeBias,
+                                 0.00001f, 0.0f, 0.002f, "%.5f");
+                ImGui::DragFloat("Normal Offset (texels)",
+                                 &m_pssmNormalOffsetTexels,
+                                 0.05f, 0.0f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Normal Slope", &m_pssmNormalOffsetSlope,
+                                   0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("PCF Radius", &m_pssmPcfRadius,
+                                   0.5f, 4.0f, "%.2f");
+                if (ImGui::Button("Reset PSSM Tuning")) {
+                    m_pssmDepthBiasTexels = 0.75f;
+                    m_pssmSlopeBias = 0.00025f;
+                    m_pssmNormalOffsetTexels = 1.75f;
+                    m_pssmNormalOffsetSlope = 0.5f;
+                    m_pssmPcfRadius = 1.5f;
+                }
+                ImGui::EndMenu();
+            }
 
             ImGui::Separator();
             ImGui::Text("Occluded: %u", m_render->OccludedObjectCount());
@@ -4160,6 +4189,8 @@ if (ImGui::BeginMenu("File")) {
             auto lview = m_scene.Registry().view<Galeshi::DirectionalLightComponent>();
             glm::mat4 lightMtx0, lightMtx1, lightMtx2;
             float cascadeSplits[4] = {15.0f, 40.0f, 100.0f, 0.0f}; // Fallback
+            float cascadeNormalOffsets[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            float cascadeDepthBias[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
             if (!lview.empty()) {
                 auto lh = *lview.begin();
@@ -4226,8 +4257,22 @@ if (ImGui::BeginMenu("File")) {
                         minZ = std::min(minZ, trf.z); maxZ = std::max(maxZ, trf.z);
                     }
 
+                    const float texelWorld =
+                        std::max(maxX - minX, maxY - minY) / 2048.0f;
+                    const float depthRange =
+                        std::max((-minZ + 10.0f) - (-maxZ - 10.0f), 1e-3f);
+                    const float ndcDepthScale = bgfx::getCaps()->homogeneousDepth
+                        ? 2.0f : 1.0f;
+                    cascadeNormalOffsets[i] = texelWorld * m_pssmNormalOffsetTexels;
+                    cascadeDepthBias[i] =
+                        (texelWorld * m_pssmDepthBiasTexels / depthRange) *
+                        ndcDepthScale;
+
                     glm::mat4 lightProj;
-                    bx::mtxOrtho(glm::value_ptr(lightProj), minX, maxX, minY, maxY, -maxZ - 10.0f, -minZ + 10.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
+                    bx::mtxOrtho(glm::value_ptr(lightProj), minX, maxX, minY, maxY,
+                                  -maxZ - 10.0f, -minZ + 10.0f, 0.0f,
+                                  bgfx::getCaps()->homogeneousDepth,
+                                  bx::Handedness::Right);
                     
                     const glm::mat4 lightMtx = lightProj * lightView;
                     if (i == 0) lightMtx0 = lightMtx;
@@ -4240,9 +4285,20 @@ if (ImGui::BeginMenu("File")) {
                 // Fallback (без света)
                 cascadeSplits[0] = 15.0f; cascadeSplits[1] = 40.0f; cascadeSplits[2] = 100.0f;
                 for (int i = 0; i < 3; ++i) {
-                    glm::mat4 lightView = glm::lookAt(glm::vec3(0,20,0), glm::vec3(0), glm::vec3(0,1,0));
+                    glm::mat4 lightView = glm::lookAt(glm::vec3(0,20,0), glm::vec3(0), glm::vec3(0,0,1));
                     glm::mat4 lightProj;
-                    bx::mtxOrtho(glm::value_ptr(lightProj), -15.0f, 15.0f, -15.0f, 15.0f, 0.1f, 50.0f, 0.0f, bgfx::getCaps()->homogeneousDepth);
+                    bx::mtxOrtho(glm::value_ptr(lightProj), -15.0f, 15.0f, -15.0f, 15.0f,
+                                  0.1f, 50.0f, 0.0f,
+                                  bgfx::getCaps()->homogeneousDepth,
+                                  bx::Handedness::Right);
+                    const float texelWorld = 30.0f / 2048.0f;
+                    const float depthRange = 49.9f;
+                    const float ndcDepthScale = bgfx::getCaps()->homogeneousDepth
+                        ? 2.0f : 1.0f;
+                    cascadeNormalOffsets[i] = texelWorld * m_pssmNormalOffsetTexels;
+                    cascadeDepthBias[i] =
+                        (texelWorld * m_pssmDepthBiasTexels / depthRange) *
+                        ndcDepthScale;
                     const glm::mat4 lightMtx = lightProj * lightView;
                     if (i == 0) lightMtx0 = lightMtx;
                     else if (i == 1) lightMtx1 = lightMtx;
@@ -4474,6 +4530,11 @@ if (ImGui::BeginMenu("File")) {
                     m_camera.View(), proj, 15, w, h, ao);
 
                 m_postProcess.RenderLightCulling(plCount, plPosA, currVP, w, h);
+                const float pssmParams[4] = {
+                    m_pssmSlopeBias, m_pssmPcfRadius,
+                    m_pssmNormalOffsetSlope,
+                    bgfx::getCaps()->originBottomLeft ? 0.0f : 1.0f
+                };
                 m_postProcess.RenderLighting(
                     m_framebuffer->Color(),
                     m_framebuffer->Normal(),
@@ -4483,6 +4544,7 @@ if (ImGui::BeginMenu("File")) {
                     lightMtx0, lightMtx1, lightMtx2,
                     invViewProj,
                     cascadeSplits,
+                    cascadeNormalOffsets, cascadeDepthBias, pssmParams,
                     camPos, lDirA, lColA,
                     plPosA, plColA, plCount,
                     slPos, slDir, slCol, slCount,

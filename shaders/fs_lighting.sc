@@ -23,6 +23,9 @@ SAMPLER2D(s_spotShadowMap3, 13);
 
 uniform vec4 u_cameraPosition;
 uniform vec4 u_cascadeSplits;
+uniform vec4 u_cascadeNormalOffsets; // xyz = world-space normal offset per cascade
+uniform vec4 u_cascadeDepthBias;     // xyz = NDC depth bias per cascade
+uniform vec4 u_pssmParams;           // x=slope bias, y=PCF radius, z=normal slope, w=Y flip
 uniform vec4 u_lightDirection;
 uniform vec4 u_lightColorIntensity;
 uniform mat4 u_lightViewProj0;
@@ -99,13 +102,21 @@ vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, float s
 float calculateShadow(vec4 lightSpacePos, float NdotL, int cascadeIdx) {
     vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    // Vulkan render targets use a top-left texture origin, while the
+    // projected NDC Y axis points up. OpenGL uses a bottom-left origin.
+    if (u_pssmParams.w > 0.5) projCoords.y = 1.0 - projCoords.y;
 
     if (projCoords.z > 1.0 || projCoords.z < 0.0 ||
         projCoords.x < 0.0 || projCoords.x > 1.0 ||
         projCoords.y < 0.0 || projCoords.y > 1.0) return 0.0;
 
     float currentDepth = projCoords.z;
-    float bias = max(0.0005 * (1.0 - NdotL), 0.0001);
+    float cascadeBias = 0.0;
+    if (cascadeIdx == 0) cascadeBias = u_cascadeDepthBias.x;
+    else if (cascadeIdx == 1) cascadeBias = u_cascadeDepthBias.y;
+    else cascadeBias = u_cascadeDepthBias.z;
+    float bias = max(cascadeBias + u_pssmParams.x * (1.0 - NdotL), 0.000001);
+    float pcfRadius = max(u_pssmParams.y, 0.5);
     float shadow = 0.0;
     vec2 texelSize = vec2(1.0 / 2048.0, 1.0 / 2048.0);
 
@@ -116,7 +127,7 @@ float calculateShadow(vec4 lightSpacePos, float NdotL, int cascadeIdx) {
     mat2 rot = mat2(c, -s, s, c);
 
     for (int i = 0; i < 8; ++i) {
-        vec2 offset = mul(rot, getPoissonDisk(i)) * texelSize * 1.5;
+        vec2 offset = mul(rot, getPoissonDisk(i)) * texelSize * pcfRadius;
         float pcfDepth;
         if (cascadeIdx == 0) pcfDepth = texture2D(s_shadowMap0, projCoords.xy + offset).r;
         else if (cascadeIdx == 1) pcfDepth = texture2D(s_shadowMap1, projCoords.xy + offset).r;
@@ -133,6 +144,9 @@ float calculateShadow(vec4 lightSpacePos, float NdotL, int cascadeIdx) {
 float calcSpotShadow0(vec4 lightSpacePos, float NdotL) {
     vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    // Vulkan render targets use a top-left texture origin, while the
+    // projected NDC Y axis points up. OpenGL uses a bottom-left origin.
+    if (u_pssmParams.w > 0.5) projCoords.y = 1.0 - projCoords.y;
 
     if (projCoords.z > 1.0 || projCoords.z < 0.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 0.0;
 
@@ -168,6 +182,9 @@ float calcSpotShadow0(vec4 lightSpacePos, float NdotL) {
 float calcSpotShadow1(vec4 lightSpacePos, float NdotL) {
     vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    // Vulkan render targets use a top-left texture origin, while the
+    // projected NDC Y axis points up. OpenGL uses a bottom-left origin.
+    if (u_pssmParams.w > 0.5) projCoords.y = 1.0 - projCoords.y;
 
     if (projCoords.z > 1.0 || projCoords.z < 0.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 0.0;
 
@@ -203,6 +220,9 @@ float calcSpotShadow1(vec4 lightSpacePos, float NdotL) {
 float calcSpotShadow2(vec4 lightSpacePos, float NdotL) {
     vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    // Vulkan render targets use a top-left texture origin, while the
+    // projected NDC Y axis points up. OpenGL uses a bottom-left origin.
+    if (u_pssmParams.w > 0.5) projCoords.y = 1.0 - projCoords.y;
 
     if (projCoords.z > 1.0 || projCoords.z < 0.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 0.0;
 
@@ -238,6 +258,9 @@ float calcSpotShadow2(vec4 lightSpacePos, float NdotL) {
 float calcSpotShadow3(vec4 lightSpacePos, float NdotL) {
     vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    // Vulkan render targets use a top-left texture origin, while the
+    // projected NDC Y axis points up. OpenGL uses a bottom-left origin.
+    if (u_pssmParams.w > 0.5) projCoords.y = 1.0 - projCoords.y;
 
     if (projCoords.z > 1.0 || projCoords.z < 0.0 || projCoords.x < 0.0 || projCoords.x > 1.0 || projCoords.y < 0.0 || projCoords.y > 1.0) return 0.0;
 
@@ -353,11 +376,19 @@ void main()
     if (camDist > u_cascadeSplits.y) cascadeIdx = 2;
     else if (camDist > u_cascadeSplits.x) cascadeIdx = 1;
 
-    // Normal Offset: сдвигаем позицию пикселя по нормали, чтобы избежать acne
+    // Normal offset is expressed in shadow-map texels on the CPU and grows
+    // with the cascade footprint, so near cascades do not over-offset small
+    // details and far cascades still avoid acne.
+    float normalOffset = u_cascadeNormalOffsets.z;
+    if (cascadeIdx == 0) normalOffset = u_cascadeNormalOffsets.x;
+    else if (cascadeIdx == 1) normalOffset = u_cascadeNormalOffsets.y;
+    normalOffset *= 1.0 + u_pssmParams.z * (1.0 - NdotL);
+
+    vec3 shadowWorldPos = wPos.xyz + N * normalOffset;
     vec4 lightSpacePos;
-    if (cascadeIdx == 0) lightSpacePos = mul(u_lightViewProj0, vec4(wPos.xyz + N * 0.1, 1.0));
-    else if (cascadeIdx == 1) lightSpacePos = mul(u_lightViewProj1, vec4(wPos.xyz + N * 0.1, 1.0));
-    else lightSpacePos = mul(u_lightViewProj2, vec4(wPos.xyz + N * 0.1, 1.0));
+    if (cascadeIdx == 0) lightSpacePos = mul(u_lightViewProj0, vec4(shadowWorldPos, 1.0));
+    else if (cascadeIdx == 1) lightSpacePos = mul(u_lightViewProj1, vec4(shadowWorldPos, 1.0));
+    else lightSpacePos = mul(u_lightViewProj2, vec4(shadowWorldPos, 1.0));
     float shadowFactor = calculateShadow(lightSpacePos, NdotL, cascadeIdx);
     float visibility = 1.0 - shadowFactor;
 

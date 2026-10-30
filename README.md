@@ -56,6 +56,7 @@ The primary rendering path is deferred:
 - Automatic instancing for repeated static meshes in the main, G-buffer, and shadow passes.
 - Automatic mesh LOD generation and distance-based LOD selection.
 - Conservative occlusion culling with GPU occlusion queries and a low-resolution occluder depth map.
+- Cascade-aware PSSM depth bias and normal-offset tuning.
 - Procedural groom hair with guide curves, dense skin-aware strands, spring/wind simulation, and anisotropic ribbon shading.
 - Skybox and debug line rendering.
 
@@ -346,7 +347,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [ ] Improve SSR quality and projection.
 - [x] Add instancing for repeated meshes.
 - [x] Add occlusion culling and LOD.
-- [ ] Tune PSSM bias and normal offsets.
+- [x] Tune PSSM bias and normal offsets.
 - [ ] Add per-object motion vectors for Motion Blur.
 - [ ] Add TAA motion vectors.
 - [ ] Add quality scaling and dynamic resolution.

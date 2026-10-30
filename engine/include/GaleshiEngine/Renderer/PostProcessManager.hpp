@@ -56,6 +56,9 @@ public:
                                        const glm::mat4& lightMtx0, const glm::mat4& lightMtx1, const glm::mat4& lightMtx2,
                                        const glm::mat4& invViewProj, 
                                        const float cascadeSplits[4],
+                                       const float cascadeNormalOffsets[4],
+                                       const float cascadeDepthBias[4],
+                                       const float pssmParams[4],
                                        const float camPos[4], const float lightDir[4], const float lightColorIntensity[4],
                                        const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
                                        const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], int spotLightCount,
@@ -205,6 +208,9 @@ private:
     bgfx::FrameBufferHandle m_pointShadowFbos[6] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
 
     bgfx::UniformHandle u_cascadeSplits = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_cascadeNormalOffsets = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_cascadeDepthBias = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_pssmParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_aoView       = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_aoProj       = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_aoParams     = BGFX_INVALID_HANDLE;
