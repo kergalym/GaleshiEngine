@@ -114,6 +114,9 @@ void PostProcessManager::Init() {
             u_pssmParams = bgfx::createUniform("u_pssmParams", bgfx::UniformType::Vec4);
             u_lightDir    = bgfx::createUniform("u_lightDirection",     bgfx::UniformType::Vec4);
             u_lightCol    = bgfx::createUniform("u_lightColorIntensity",bgfx::UniformType::Vec4);
+            u_fogColorDensity = bgfx::createUniform("u_fogColorDensity", bgfx::UniformType::Vec4);
+            u_fogParams   = bgfx::createUniform("u_fogParams", bgfx::UniformType::Vec4);
+            u_fogParams2  = bgfx::createUniform("u_fogParams2", bgfx::UniformType::Vec4);
             s_albedoMr    = bgfx::createUniform("s_albedoMr",    bgfx::UniformType::Sampler);
             s_normalRough = bgfx::createUniform("s_normalRough", bgfx::UniformType::Sampler);
             s_worldPos    = bgfx::createUniform("s_worldPos",    bgfx::UniformType::Sampler);
@@ -560,6 +563,7 @@ void PostProcessManager::Shutdown() {
     destroyUni(u_camPos); destroyUni(u_cascadeSplits); destroyUni(u_cascadeNormalOffsets);
     destroyUni(u_cascadeDepthBias); destroyUni(u_pssmParams);
     destroyUni(u_lightDir); destroyUni(u_lightCol);
+    destroyUni(u_fogColorDensity); destroyUni(u_fogParams); destroyUni(u_fogParams2);
     destroyUni(s_albedoMr); destroyUni(s_normalRough); destroyUni(s_worldPos); destroyUni(s_materialTex);
     destroyUni(s_shadowMap0); destroyUni(s_shadowMap1); destroyUni(s_shadowMap2); destroyUni(u_lightVP0); destroyUni(u_lightVP1); destroyUni(u_lightVP2); 
     destroyUni(u_plPos); destroyUni(u_plCol); destroyUni(u_plCnt);
@@ -788,6 +792,8 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     const float cascadeDepthBias[4],
     const float pssmParams[4],
     const float camPos[4], const float lightDir[4], const float lightColorIntensity[4],
+    const float fogColorDensity[4], const float fogParams[4],
+    const float fogParams2[4],
     const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
     const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], int spotLightCount,
     bgfx::ViewId viewId, uint16_t width, uint16_t height)
@@ -815,6 +821,9 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::setUniform(u_pssmParams, pssmParams);
     bgfx::setUniform(u_lightDir, lightDir);
     bgfx::setUniform(u_lightCol, lightColorIntensity);
+    bgfx::setUniform(u_fogColorDensity, fogColorDensity);
+    bgfx::setUniform(u_fogParams, fogParams);
+    bgfx::setUniform(u_fogParams2, fogParams2);
     bgfx::setTexture(0, s_albedoMr,    albedoMr);
     bgfx::setTexture(1, s_normalRough, normalRough);
     bgfx::setTexture(2, s_worldPos,    worldPos);

@@ -532,6 +532,17 @@ std::string SceneSerializer::SaveToString() const {
                     {"godRaysWeight", s.godRaysWeight},
                     {"atmosphereEnabled", s.atmosphereEnabled},
                     {"atmosphereIntensity", s.atmosphereIntensity},
+                    {"fogEnabled", s.fogEnabled},
+                    {"fogVolumetric", s.fogVolumetric},
+                    {"fogColor", Vec3ToJson(s.fogColor)},
+                    {"fogDensity", s.fogDensity},
+                    {"fogHeightFalloff", s.fogHeightFalloff},
+                    {"fogBaseHeight", s.fogBaseHeight},
+                    {"fogStartDistance", s.fogStartDistance},
+                    {"fogMaxDistance", s.fogMaxDistance},
+                    {"fogSunScattering", s.fogSunScattering},
+                    {"fogAnisotropy", s.fogAnisotropy},
+                    {"fogSteps", s.fogSteps},
                     {"invertEnabled", s.invertEnabled}
                 }}
             };
@@ -1304,6 +1315,19 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                 s.godRaysWeight = js.value("godRaysWeight", s.godRaysWeight);
                 s.atmosphereEnabled = js.value("atmosphereEnabled", s.atmosphereEnabled);
                 s.atmosphereIntensity = js.value("atmosphereIntensity", s.atmosphereIntensity);
+                s.fogEnabled = js.value("fogEnabled", s.fogEnabled);
+                s.fogVolumetric = js.value("fogVolumetric", s.fogVolumetric);
+                if (js.contains("fogColor")) s.fogColor = Vec3FromJson(js.at("fogColor"));
+                s.fogDensity = js.value("fogDensity", s.fogDensity);
+                s.fogHeightFalloff = js.value("fogHeightFalloff", s.fogHeightFalloff);
+                s.fogBaseHeight = js.value("fogBaseHeight", s.fogBaseHeight);
+                s.fogStartDistance = js.value("fogStartDistance", s.fogStartDistance);
+                s.fogMaxDistance = js.value("fogMaxDistance", s.fogMaxDistance);
+                s.fogSunScattering = js.value("fogSunScattering", s.fogSunScattering);
+                s.fogAnisotropy = js.value("fogAnisotropy", s.fogAnisotropy);
+                s.fogSteps = js.value("fogSteps", s.fogSteps);
+                if (s.fogSteps < 1) s.fogSteps = 1;
+                if (s.fogSteps > 64) s.fogSteps = 64;
                 s.invertEnabled = js.value("invertEnabled", s.invertEnabled);
             }
         }

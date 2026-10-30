@@ -60,6 +60,8 @@ public:
                                        const float cascadeDepthBias[4],
                                        const float pssmParams[4],
                                        const float camPos[4], const float lightDir[4], const float lightColorIntensity[4],
+                                       const float fogColorDensity[4], const float fogParams[4],
+                                       const float fogParams2[4],
                                        const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
                                        const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], int spotLightCount,
                                        bgfx::ViewId viewId, uint16_t width, uint16_t height);
@@ -109,6 +111,10 @@ public:
                                            bgfx::ViewId viewId, uint16_t w, uint16_t h, float intensity);
     void SetAtmosphereEnabled(bool v) { m_atmosphereEnabled = v; }
     bool AtmosphereEnabled() const { return m_atmosphereEnabled; }
+    void SetFogEnabled(bool v) { m_fogEnabled = v; }
+    bool FogEnabled() const { return m_fogEnabled; }
+    void SetFogVolumetric(bool v) { m_fogVolumetric = v; }
+    bool FogVolumetric() const { return m_fogVolumetric; }
     bgfx::TextureHandle RenderMotionBlur(bgfx::TextureHandle color,
                                               bgfx::TextureHandle worldPos,
                                               bgfx::TextureHandle motionVector,
@@ -183,6 +189,9 @@ private:
     bgfx::UniformHandle u_camPos      = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lightDir    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lightCol    = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_fogColorDensity = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_fogParams   = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_fogParams2  = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_albedoMr    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_normalRough = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_worldPos    = BGFX_INVALID_HANDLE;
@@ -336,6 +345,8 @@ private:
     bgfx::UniformHandle u_atmoSunDir = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_atmoParams = BGFX_INVALID_HANDLE;
     bool m_atmosphereEnabled = false;
+    bool m_fogEnabled = false;
+    bool m_fogVolumetric = false;
     bgfx::UniformHandle u_motionBlurParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_mbVelocityParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_mbPrevVP = BGFX_INVALID_HANDLE;

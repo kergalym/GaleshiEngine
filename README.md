@@ -22,7 +22,7 @@ GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20
 | IBL | Working | Irradiance and prefiltered environment cubemaps |
 | Shadow maps | Working | 3-cascade directional PSSM, point and spot shadows |
 | Tiled light culling | Working | 16x16 tiles, up to 64 point lights in the deferred path |
-| Post-processing | Working | DoF, motion blur, atmosphere, and the full stack are tested; effects can be isolated with `GALESHI_EFFECTS` |
+| Post-processing | Working | DoF, motion blur, atmosphere, fog, and the full stack are tested; effects can be isolated with `GALESHI_EFFECTS` |
 | Physics | Working | Jolt rigid bodies and cloth/soft-body simulation |
 | Particles | Working | CPU-simulated billboard emitters, editable in Details and serialized in scenes |
 | AI and navigation | Working | Recast/Detour NavMesh, path following, behavior trees, and perception |
@@ -59,6 +59,7 @@ The primary rendering path is deferred:
 - Cascade-aware PSSM depth bias and normal-offset tuning.
 - Per-object motion vectors for Motion Blur and TAA, with camera fallback for sky.
 - Scalable render resolution with optional dynamic-resolution scaling.
+- Analytical height fog plus an optional volumetric ray-marched mode with PSSM shadow shafts.
 - Procedural groom hair with guide curves, dense skin-aware strands, spring/wind simulation, and anisotropic ribbon shading.
 - Skybox and debug line rendering.
 
@@ -81,7 +82,7 @@ Implemented post-processing passes:
 - Vignette
 - Chromatic aberration
 - Invert
-- Spatial post-processing volumes with per-effect tuning for bloom, DoF, motion blur, tonemap, color correction, vignette, ambient occlusion (SSAO/HBAO/GTAO), SSR, anti-aliasing, god rays, and atmosphere.
+- Spatial post-processing volumes with per-effect tuning for bloom, DoF, motion blur, tonemap, color correction, vignette, ambient occlusion (SSAO/HBAO/GTAO), SSR, anti-aliasing, god rays, atmosphere, and fog.
 
 ---
 
@@ -358,6 +359,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [x] Rename material slots to their names in FBX file format
 - [x] Add Particles system
 - [x] Add Postprocessing volume
+- [x] Add analytical and volumetric height fog
 
 ### Physics 
 - [x] Add various physics properties to collision shapes

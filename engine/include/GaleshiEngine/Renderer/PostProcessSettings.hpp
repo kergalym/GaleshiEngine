@@ -1,5 +1,7 @@
 #pragma once
 
+#include <glm/glm.hpp>
+
 namespace Galeshi {
 
 // Screen-space ambient-occlusion algorithm used by the post-process stack.
@@ -88,6 +90,21 @@ struct PostProcessSettings {
     // Atmosphere
     bool  atmosphereEnabled   = false;
     float atmosphereIntensity = 20.0f;
+
+    // Fog. The analytical mode uses an exponential height-fog integral;
+    // volumetric mode ray-marches the same density and samples PSSM shadows
+    // for directional-light shafts.
+    bool      fogEnabled       = false;
+    bool      fogVolumetric    = false;
+    glm::vec3 fogColor{0.58f, 0.64f, 0.72f};
+    float     fogDensity       = 0.004f;
+    float     fogHeightFalloff = 0.020f;
+    float     fogBaseHeight    = 0.0f;
+    float     fogStartDistance = 5.0f;
+    float     fogMaxDistance   = 300.0f;
+    float     fogSunScattering  = 1.5f;
+    float     fogAnisotropy     = 0.55f;
+    int       fogSteps          = 24;
 
     // Invert
     bool invertEnabled = false;

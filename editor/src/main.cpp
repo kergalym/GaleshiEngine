@@ -1597,6 +1597,13 @@ private:
 
             bool gr = m_postProcess.GodRaysEnabled();
             if (ImGui::MenuItem("Volumetric Light", nullptr, &gr)) m_postProcess.SetGodRaysEnabled(gr);
+            bool fog = m_postProcess.FogEnabled();
+            if (ImGui::MenuItem("Fog", nullptr, &fog)) m_postProcess.SetFogEnabled(fog);
+            bool fogVolumetric = m_postProcess.FogVolumetric();
+            if (ImGui::MenuItem("Volumetric Fog", nullptr, &fogVolumetric)) {
+                m_postProcess.SetFogVolumetric(fogVolumetric);
+                if (fogVolumetric) m_postProcess.SetFogEnabled(true);
+            }
             bool ssr = m_postProcess.SsrEnabled();
             if (ImGui::MenuItem("SSR", nullptr, &ssr)) m_postProcess.SetSsrEnabled(ssr);
             ImGui::Separator();
@@ -1605,6 +1612,8 @@ private:
                 m_postProcess.SetFxaaEnabled(false);
                 m_postProcess.SetSsaoEnabled(false); // DEBUG
                 m_postProcess.SetSsrEnabled(false); // DEBUG
+                m_postProcess.SetFogEnabled(false);
+                m_postProcess.SetFogVolumetric(false);
             }
             ImGui::EndMenu();
         }
@@ -3490,6 +3499,8 @@ if (ImGui::BeginMenu("File")) {
         s.taaEnabled         = m_postProcess.TaaEnabled();
         s.godRaysEnabled     = m_postProcess.GodRaysEnabled();
         s.atmosphereEnabled  = m_postProcess.AtmosphereEnabled();
+        s.fogEnabled         = m_postProcess.FogEnabled();
+        s.fogVolumetric      = m_postProcess.FogVolumetric();
         s.invertEnabled      = m_postProcess.InvertEnabled();
         return s;
     }
@@ -3834,6 +3845,37 @@ if (ImGui::BeginMenu("File")) {
                              0.01f, 0.0f, 1.0f);
             ImGui::DragFloat("Weight", &s.godRaysWeight,
                              0.01f, 0.0f, 10.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Fog")) {
+            ImGui::Checkbox("Enabled##fog", &s.fogEnabled);
+            ImGui::SameLine();
+            if (ImGui::Checkbox("Volumetric", &s.fogVolumetric) && s.fogVolumetric) {
+                s.fogEnabled = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Ray-march the height fog and sample PSSM shadows\n"
+                                  "for directional-light shafts.");
+            }
+            ImGui::ColorEdit3("Color##fog", glm::value_ptr(s.fogColor));
+            ImGui::DragFloat("Density", &s.fogDensity,
+                             0.0005f, 0.0f, 1.0f, "%.4f");
+            ImGui::DragFloat("Height Falloff", &s.fogHeightFalloff,
+                             0.001f, 0.0f, 1.0f, "%.4f");
+            ImGui::DragFloat("Base Height", &s.fogBaseHeight,
+                             0.1f, -1000.0f, 1000.0f);
+            ImGui::DragFloat("Start Distance", &s.fogStartDistance,
+                             0.5f, 0.0f, 10000.0f);
+            ImGui::DragFloat("Max Distance", &s.fogMaxDistance,
+                             1.0f, 1.0f, 10000.0f);
+            ImGui::DragFloat("Sun Scattering", &s.fogSunScattering,
+                             0.01f, 0.0f, 10.0f);
+            ImGui::DragFloat("Anisotropy", &s.fogAnisotropy,
+                             0.01f, -0.95f, 0.95f);
+            if (s.fogVolumetric) {
+                ImGui::SliderInt("Steps", &s.fogSteps, 4, 64);
+            }
             ImGui::TreePop();
         }
 
@@ -4624,6 +4666,19 @@ if (ImGui::BeginMenu("File")) {
                     m_pssmNormalOffsetSlope,
                     bgfx::getCaps()->originBottomLeft ? 0.0f : 1.0f
                 };
+                const float fogDensity = pp.fogEnabled ? std::max(pp.fogDensity, 0.0f) : 0.0f;
+                const float fogColorDensity[4] = {
+                    pp.fogColor.r, pp.fogColor.g, pp.fogColor.b, fogDensity
+                };
+                const float fogParams[4] = {
+                    pp.fogHeightFalloff, pp.fogBaseHeight,
+                    pp.fogStartDistance, pp.fogMaxDistance
+                };
+                const float fogParams2[4] = {
+                    pp.fogSunScattering, pp.fogAnisotropy,
+                    pp.fogVolumetric ? 1.0f : 0.0f,
+                    static_cast<float>(std::clamp(pp.fogSteps, 1, 64))
+                };
                 m_postProcess.RenderLighting(
                     m_framebuffer->Color(),
                     m_framebuffer->Normal(),
@@ -4635,6 +4690,7 @@ if (ImGui::BeginMenu("File")) {
                     cascadeSplits,
                     cascadeNormalOffsets, cascadeDepthBias, pssmParams,
                     camPos, lDirA, lColA,
+                    fogColorDensity, fogParams, fogParams2,
                     plPosA, plColA, plCount,
                     slPos, slDir, slCol, slCount,
                     20, renderW, renderH);

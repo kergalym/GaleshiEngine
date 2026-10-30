@@ -28,6 +28,9 @@ uniform vec4 u_cascadeDepthBias;     // xyz = NDC depth bias per cascade
 uniform vec4 u_pssmParams;           // x=slope bias, y=PCF radius, z=normal slope, w=Y flip
 uniform vec4 u_lightDirection;
 uniform vec4 u_lightColorIntensity;
+uniform vec4 u_fogColorDensity; // rgb = fog color, w = density
+uniform vec4 u_fogParams;      // x = height falloff, y = base height, z = start distance, w = max distance
+uniform vec4 u_fogParams2;     // x = sun scattering, y = anisotropy, z = volumetric, w = steps
 uniform mat4 u_lightViewProj0;
 uniform mat4 u_lightViewProj1;
 uniform mat4 u_lightViewProj2;
@@ -135,6 +138,114 @@ float calculateShadow(vec4 lightSpacePos, float NdotL, int cascadeIdx) {
         shadow += (currentDepth - bias > pcfDepth) ? 1.0 : 0.0;
     }
     return shadow / 8.0;
+}
+
+// Cheap single-tap shadow lookup used inside the volumetric fog march. The
+// normal-offset PCF path above is intentionally not reused here: 24 steps
+// times 8 PCF taps would be far too expensive for a full-screen effect.
+float fogSunVisibility(vec3 worldPos) {
+    float cameraDistance = length(worldPos - u_cameraPosition.xyz);
+    int cascade = 0;
+    if (cameraDistance > u_cascadeSplits.y) cascade = 2;
+    else if (cameraDistance > u_cascadeSplits.x) cascade = 1;
+
+    vec4 lightSpacePos;
+    if (cascade == 0) lightSpacePos = mul(u_lightViewProj0, vec4(worldPos, 1.0));
+    else if (cascade == 1) lightSpacePos = mul(u_lightViewProj1, vec4(worldPos, 1.0));
+    else lightSpacePos = mul(u_lightViewProj2, vec4(worldPos, 1.0));
+
+    vec3 projCoords = lightSpacePos.xyz / max(lightSpacePos.w, 0.0001);
+    projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    if (u_pssmParams.w > 0.5) projCoords.y = 1.0 - projCoords.y;
+
+    if (projCoords.z < 0.0 || projCoords.z > 1.0 ||
+        projCoords.x < 0.0 || projCoords.x > 1.0 ||
+        projCoords.y < 0.0 || projCoords.y > 1.0) {
+        return 1.0;
+    }
+
+    float bias = 0.0015;
+    if (cascade == 0) bias += max(u_cascadeDepthBias.x, 0.0) * 0.5;
+    else if (cascade == 1) bias += max(u_cascadeDepthBias.y, 0.0) * 0.5;
+    else bias += max(u_cascadeDepthBias.z, 0.0) * 0.5;
+
+    float shadowDepth;
+    if (cascade == 0) shadowDepth = texture2D(s_shadowMap0, projCoords.xy).r;
+    else if (cascade == 1) shadowDepth = texture2D(s_shadowMap1, projCoords.xy).r;
+    else shadowDepth = texture2D(s_shadowMap2, projCoords.xy).r;
+    return (projCoords.z - bias > shadowDepth) ? 0.0 : 1.0;
+}
+
+float fogDensityAt(vec3 worldPos) {
+    float falloff = max(u_fogParams.x, 0.0);
+    float height = worldPos.y - u_fogParams.y;
+    float densityScale = max(u_fogColorDensity.w, 0.0);
+    return densityScale * exp(clamp(-falloff * height, -40.0, 40.0));
+}
+
+float fogPhase(float cosTheta) {
+    float g = clamp(u_fogParams2.y, -0.95, 0.95);
+    float g2 = g * g;
+    float denom = max(1.0 + g2 - 2.0 * g * cosTheta, 0.0001);
+    return (1.0 - g2) / (4.0 * PI * pow(denom, 1.5));
+}
+
+// Integral of densityScale * exp(-falloff * (y - base)) along a ray segment.
+float fogOpticalDepth(vec3 rayOrigin, vec3 rayDir, float t0, float t1) {
+    if (t1 <= t0) return 0.0;
+    float falloff = max(u_fogParams.x, 0.0);
+    float baseDensity = max(u_fogColorDensity.w, 0.0) *
+        exp(clamp(-falloff * (rayOrigin.y - u_fogParams.y), -40.0, 40.0));
+    float dy = rayDir.y;
+    if (falloff < 0.00001 || abs(dy) < 0.00001) {
+        return baseDensity * (t1 - t0);
+    }
+    float exponent0 = clamp(-falloff * dy * t0, -40.0, 40.0);
+    float exponent1 = clamp(-falloff * dy * t1, -40.0, 40.0);
+    return baseDensity * (exp(exponent0) - exp(exponent1)) /
+        (falloff * dy);
+}
+
+void applyFog(inout vec3 color, vec3 rayDir, float distance, float jitter) {
+    if (u_fogColorDensity.w <= 0.0) return;
+
+    float t0 = max(u_fogParams.z, 0.0);
+    float t1 = min(distance, max(u_fogParams.w, 0.0));
+    if (t1 <= t0) return;
+
+    vec3 sunDir = normalize(-u_lightDirection.xyz);
+    float phase = fogPhase(dot(rayDir, sunDir));
+    vec3 sunRadiance = u_lightColorIntensity.rgb * u_lightColorIntensity.a;
+
+    if (u_fogParams2.z < 0.5) {
+        float opticalDepth = fogOpticalDepth(u_cameraPosition.xyz, rayDir, t0, t1);
+        float transmittance = exp(-opticalDepth);
+        vec3 litFog = u_fogColorDensity.rgb +
+            sunRadiance * phase * u_fogParams2.x * 0.35;
+        color = color * transmittance + litFog * (1.0 - transmittance);
+        return;
+    }
+
+    int steps = int(clamp(u_fogParams2.w, 1.0, 64.0));
+    float stepLength = (t1 - t0) / float(steps);
+    float transmittance = 1.0;
+    vec3 accumulated = vec3(0.0);
+
+    for (int i = 0; i < 64; ++i) {
+        if (i >= steps) break;
+        float t = t0 + (float(i) + jitter) * stepLength;
+        vec3 samplePos = u_cameraPosition.xyz + rayDir * t;
+        float density = fogDensityAt(samplePos);
+        if (density <= 0.000001) continue;
+
+        float sunVisibility = fogSunVisibility(samplePos);
+        vec3 inscatter = u_fogColorDensity.rgb * 0.80 +
+            sunRadiance * sunVisibility * phase * u_fogParams2.x;
+        accumulated += transmittance * inscatter * density * stepLength;
+        transmittance *= exp(-density * stepLength);
+    }
+
+    color = color * transmittance + accumulated;
 }
 
 
@@ -304,6 +415,7 @@ vec2 EnvBRDFApprox(float NoV, float roughness)
 void main()
 {
     vec2 uv = v_texcoord0;
+    float fogJitter = fract(sin(dot(v_texcoord0.xy, vec2(12.9898, 78.233))) * 43758.5453);
     vec4 wPos = texture2D(s_worldPos, uv);
     
     if (wPos.w < 0.5) {
@@ -322,6 +434,19 @@ void main()
         float sun = max(dot(dir, sunDir), 0.0);
         skyColor += vec3(1.0, 0.88, 0.72) * pow(sun, 512.0) * 32.0;
         skyColor += vec3(1.0, 0.72, 0.45) * pow(sun, 12.0) * 0.35;
+
+        // Apply the same fog model to the sky. This makes volumetric shafts
+        // visible against empty air and gives distant geometry a consistent
+        // horizon when atmosphere rendering is disabled.
+        if (u_fogColorDensity.w > 0.0) {
+            float skyDistance = max(u_fogParams.w, 1.0);
+            vec3 foggedSky = skyColor;
+            applyFog(foggedSky, dir, skyDistance, fogJitter);
+            // Keep the upper sky translucent; fog mainly gathers along the
+            // horizon instead of turning the whole sky into a flat wall.
+            float horizonFog = 1.0 - smoothstep(0.0, 0.55, dir.y);
+            skyColor = mix(skyColor, foggedSky, horizonFog);
+        }
         gl_FragColor = vec4(skyColor, 1.0);
         return;
     }
@@ -523,6 +648,11 @@ void main()
     // Emissive comes from the material G-buffer RT (already scaled by the
     // emissive factor and emissive map in fs_gbuffer).
     finalColor += matData.rgb;
+
+    float fogDistance = length(wPos.xyz - u_cameraPosition.xyz);
+    vec3 fogRayDir = (wPos.xyz - u_cameraPosition.xyz) /
+        max(fogDistance, 0.0001);
+    applyFog(finalColor, fogRayDir, fogDistance, fogJitter);
 
     // Tonemapping moved to post-process
 
