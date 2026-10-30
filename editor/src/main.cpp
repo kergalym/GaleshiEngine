@@ -1548,6 +1548,23 @@ private:
             }
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Rendering")) {
+            bool lodEnabled = m_render->LodEnabled();
+            if (ImGui::MenuItem("LOD", nullptr, &lodEnabled))
+                m_render->SetLodEnabled(lodEnabled);
+
+            bool occlusionEnabled = m_render->OcclusionCullingEnabled();
+            if (ImGui::MenuItem("Occlusion Culling", nullptr, &occlusionEnabled))
+                m_render->SetOcclusionCullingEnabled(occlusionEnabled);
+
+            float lodBias = m_render->LodBias();
+            if (ImGui::SliderFloat("LOD Bias", &lodBias, 0.25f, 4.0f, "%.2f"))
+                m_render->SetLodBias(lodBias);
+
+            ImGui::Separator();
+            ImGui::Text("Occluded: %u", m_render->OccludedObjectCount());
+            ImGui::EndMenu();
+        }
 if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Import Model...", "Ctrl+I")) OpenFileDialog();
             if (ImGui::MenuItem("Load Scene", "Ctrl+O")) LoadScene();
@@ -4316,6 +4333,11 @@ if (ImGui::BeginMenu("File")) {
                 jitteredProj[2][1] += (2.0f * jy) / static_cast<float>(h);
                 renderCamera.SetProjection(jitteredProj);
             }
+
+            // View 0 is a small depth-only occluder pass. Hardware queries
+            // are read on the next frame, so this must run before the scene
+            // view without stalling the GPU.
+            m_render->RenderOcclusion(m_scene, renderCamera, 0, w, h);
 
             bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             m_render->Render(m_scene, renderCamera, 1, w, h);

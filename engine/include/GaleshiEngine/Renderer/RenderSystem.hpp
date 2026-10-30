@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
 
 namespace Galeshi {
 class Scene; class Camera; class AssetManager; class Frustum;
@@ -12,6 +13,10 @@ public:
     void Init(AssetManager* assets);
     void Shutdown();
     void Render(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height);
+    // Renders a small depth-only occluder map and updates the previous-frame
+    // occlusion queries. Must be submitted before the main scene view.
+    void RenderOcclusion(Scene& scene, const Camera& camera,
+                         bgfx::ViewId viewId, uint16_t width, uint16_t height);
     void RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx, const glm::vec3& lightPos, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo);
     void RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo);
     void RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height);
@@ -26,6 +31,15 @@ public:
                     const float sunDir[4], const float lightColorIntensity[4],
                     bgfx::ViewId viewId, uint16_t width, uint16_t height,
                     float nearZ, float farZ);
+
+    void SetOcclusionCullingEnabled(bool enabled);
+    bool OcclusionCullingEnabled() const { return m_occlusionEnabled; }
+    uint32_t OccludedObjectCount() const { return m_occludedObjectCount; }
+
+    void SetLodEnabled(bool enabled) { m_lodEnabled = enabled; }
+    bool LodEnabled() const { return m_lodEnabled; }
+    void SetLodBias(float bias);
+    float LodBias() const { return m_lodBias; }
     
     void SetSkipGlass(bool skip) { m_skipGlass = skip; }
     bool DeferredEnabled() const { return m_deferred; }
@@ -35,13 +49,37 @@ public:
     static constexpr int kMaxPointLights = 4;
     static constexpr int kMaxBones = 256;
 private:
+    struct OcclusionState {
+        bgfx::OcclusionQueryHandle query = BGFX_INVALID_HANDLE;
+        bool visible = true;
+        uint64_t lastTestedFrame = 0;
+        uint64_t lastSeenFrame = 0;
+    };
+
     void RenderVegetation(Scene& scene, const Frustum& frustum, bgfx::ViewId viewId);
     void RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle program,
                                  bgfx::ViewId viewId);
+    bool EnsureOcclusionTarget(uint16_t width, uint16_t height);
+    bool IsOccluded(uint32_t entityId) const;
+    void ResetOcclusionState();
 
     AssetManager* m_assets = nullptr;
     bool m_deferred = false;
     bool m_skipGlass = false;
+    bool m_lodEnabled = true;
+    float m_lodBias = 1.0f;
+    bool m_occlusionEnabled = true;
+    bool m_occlusionSupported = false;
+    uint32_t m_occludedObjectCount = 0;
+    uint64_t m_occlusionFrame = 0;
+    glm::vec3 m_lastOcclusionCameraPos{0.0f};
+    bool m_hasLastOcclusionCamera = false;
+    bgfx::TextureHandle m_occlusionColor = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_occlusionDepth = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_occlusionFbo = BGFX_INVALID_HANDLE;
+    uint16_t m_occlusionWidth = 0;
+    uint16_t m_occlusionHeight = 0;
+    std::unordered_map<uint32_t, OcclusionState> m_occlusionStates;
     bgfx::TextureHandle m_brdfLUT = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_brdfLUT = BGFX_INVALID_HANDLE;
 

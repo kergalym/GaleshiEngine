@@ -9,6 +9,7 @@
 #include "GaleshiEngine/Assets/Texture.hpp"
 #include "GaleshiEngine/Assets/VegetationGenerator.hpp"
 #include "GaleshiEngine/Renderer/GroomSystem.hpp"
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -16,6 +17,7 @@
 #include <cmath>
 #include <cstring>
 #include <functional>
+#include <limits>
 #include <unordered_map>
 #include <vector>
 
@@ -74,11 +76,41 @@ namespace {
         return model;
     }
 
+    float ProjectedSphereRadius(const glm::vec3& center, float radius,
+                                const glm::vec3& cameraPosition,
+                                const glm::mat4& projection) {
+        const float distance = std::max(glm::length(center - cameraPosition), 1e-4f);
+        const float tanHalfFov =
+            std::max(1.0f / std::max(std::abs(projection[1][1]), 1e-6f), 1e-4f);
+        return radius / (distance * tanHalfFov);
+    }
+
+    int SelectLod(const Mesh& mesh, float projectedRadius, float bias) {
+        const uint32_t lodCount = mesh.LodCount();
+        if (lodCount <= 1) return 0;
+
+        // Thresholds are in NDC half-height units. They are intentionally
+        // generous: even LOD 1 removes a large number of triangles while the
+        // object is still small on screen.
+        static constexpr float kThresholds[] = {0.18f, 0.07f, 0.025f};
+        const float safeBias = std::clamp(bias, 0.1f, 8.0f);
+        int lod = 0;
+        for (uint32_t level = 1; level < lodCount; ++level) {
+            const std::size_t thresholdIndex =
+                std::min<std::size_t>(level - 1, std::size(kThresholds) - 1);
+            if (projectedRadius < kThresholds[thresholdIndex] / safeBias) {
+                lod = static_cast<int>(level);
+            }
+        }
+        return lod;
+    }
+
     // Every field that affects the material uniforms, texture bindings or
     // render state participates in the key. Two separately authored material
     // instances with the same appearance can therefore share one batch.
     struct MeshMaterialKey {
         const Mesh* mesh = nullptr;
+        uint32_t lod = 0;
         glm::vec4 albedoFactor{1.0f};
         glm::vec3 emissiveFactor{0.0f};
         float metallicFactor = 0.0f;
@@ -91,6 +123,7 @@ namespace {
 
         bool operator==(const MeshMaterialKey& other) const {
             return mesh == other.mesh &&
+                   lod == other.lod &&
                    albedoFactor.x == other.albedoFactor.x &&
                    albedoFactor.y == other.albedoFactor.y &&
                    albedoFactor.z == other.albedoFactor.z &&
@@ -121,6 +154,7 @@ namespace {
     struct MeshMaterialKeyHash {
         std::size_t operator()(const MeshMaterialKey& key) const {
             std::size_t seed = std::hash<const void*>{}(key.mesh);
+            HashCombine(seed, std::hash<uint32_t>{}(key.lod));
             HashCombine(seed, HashFloat(key.albedoFactor.x));
             HashCombine(seed, HashFloat(key.albedoFactor.y));
             HashCombine(seed, HashFloat(key.albedoFactor.z));
@@ -142,9 +176,10 @@ namespace {
     };
 
     MeshMaterialKey MakeMeshMaterialKey(const MeshComponent& mc,
-                                        const Material& mat) {
+                                        const Material& mat, uint32_t lod) {
         MeshMaterialKey key;
         key.mesh = mc.mesh.get();
+        key.lod = lod;
         key.albedoFactor = mat.albedoFactor;
         key.emissiveFactor = mat.emissiveFactor;
         key.metallicFactor = mat.metallicFactor;
@@ -206,10 +241,10 @@ namespace {
     // shared u_model[0] transform is identity. Chunking keeps batches valid
     // even when the transient instance buffer cannot hold the whole group.
     void SubmitInstancedMesh(bgfx::ViewId viewId, bgfx::ProgramHandle program,
-                             const Mesh& mesh,
+                             const Mesh& mesh, uint32_t lod,
                              const std::vector<glm::mat4>& instances,
                              bool twoSided, uint64_t state) {
-        if (!bgfx::isValid(program) || !mesh.Valid() || instances.empty()) {
+        if (!bgfx::isValid(program) || !mesh.LodValid(lod) || instances.empty()) {
             return;
         }
         static const glm::mat4 identity(1.0f);
@@ -221,8 +256,8 @@ namespace {
 
             bgfx::setTransform(glm::value_ptr(identity));
             bgfx::setInstanceDataBuffer(&idb, 0, count);
-            bgfx::setVertexBuffer(0, mesh.VB());
-            bgfx::setIndexBuffer(mesh.IB());
+            bgfx::setVertexBuffer(0, mesh.LodVB(lod));
+            bgfx::setIndexBuffer(mesh.LodIB(lod));
             bgfx::setState(state | FaceState(twoSided));
             bgfx::submit(viewId, program);
             offset += count;
@@ -250,11 +285,15 @@ void RenderSystem::Init(AssetManager* assets) {
         "shaders/vs_mesh_shadow_instanced.bin", "shaders/fs_shadow.bin");
     m_instancedShadowPointProg = ShaderManager::LoadProgram(
         "shaders/vs_mesh_instanced.bin", "shaders/fs_shadow_point.bin");
-    spdlog::info("[RenderSystem] programs: pbr={} gbuffer={} shadow={} shadowPoint={} glass={} water={} hair={} vegetation={}",
+    m_occlusionSupported =
+        (bgfx::getCaps()->supported & BGFX_CAPS_OCCLUSION_QUERY) != 0;
+    m_occlusionEnabled = m_occlusionSupported;
+    spdlog::info("[RenderSystem] programs: pbr={} gbuffer={} shadow={} shadowPoint={} glass={} water={} hair={} vegetation={} occlusion={}",
         bgfx::isValid(m_program), bgfx::isValid(m_gbufferProg),
         bgfx::isValid(m_shadowProg), bgfx::isValid(m_shadowPointProg),
         bgfx::isValid(m_glassProg), bgfx::isValid(m_waterProg),
-        bgfx::isValid(m_hairProg), bgfx::isValid(m_instancedProg));
+        bgfx::isValid(m_hairProg), bgfx::isValid(m_instancedProg),
+        m_occlusionSupported);
     u_shadowLightPos = bgfx::createUniform("u_shadowLightPos", bgfx::UniformType::Vec4);
     if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
 
@@ -310,6 +349,16 @@ void RenderSystem::Init(AssetManager* assets) {
 }
 
 void RenderSystem::Shutdown() {
+    ResetOcclusionState();
+    if (bgfx::isValid(m_occlusionFbo)) bgfx::destroy(m_occlusionFbo);
+    if (bgfx::isValid(m_occlusionColor)) bgfx::destroy(m_occlusionColor);
+    if (bgfx::isValid(m_occlusionDepth)) bgfx::destroy(m_occlusionDepth);
+    m_occlusionFbo = BGFX_INVALID_HANDLE;
+    m_occlusionColor = BGFX_INVALID_HANDLE;
+    m_occlusionDepth = BGFX_INVALID_HANDLE;
+    m_occlusionWidth = 0;
+    m_occlusionHeight = 0;
+
     if (bgfx::isValid(m_program)) bgfx::destroy(m_program);
     if (bgfx::isValid(m_gbufferProg)) bgfx::destroy(m_gbufferProg);
     if (bgfx::isValid(m_shadowProg)) bgfx::destroy(m_shadowProg);
@@ -370,6 +419,266 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(s_specularMap)) bgfx::destroy(s_specularMap);
     if (bgfx::isValid(s_brdfLUT)) bgfx::destroy(s_brdfLUT);
     m_program = BGFX_INVALID_HANDLE;
+}
+
+void RenderSystem::SetOcclusionCullingEnabled(bool enabled) {
+    if (enabled && !m_occlusionSupported) enabled = false;
+    if (m_occlusionEnabled == enabled) return;
+    m_occlusionEnabled = enabled;
+    ResetOcclusionState();
+}
+
+void RenderSystem::SetLodBias(float bias) {
+    m_lodBias = std::clamp(bias, 0.1f, 8.0f);
+}
+
+void RenderSystem::ResetOcclusionState() {
+    for (auto& entry : m_occlusionStates) {
+        if (bgfx::isValid(entry.second.query)) {
+            bgfx::destroy(entry.second.query);
+        }
+    }
+    m_occlusionStates.clear();
+    m_occludedObjectCount = 0;
+    m_hasLastOcclusionCamera = false;
+}
+
+bool RenderSystem::IsOccluded(uint32_t entityId) const {
+    if (!m_occlusionEnabled) return false;
+    const auto found = m_occlusionStates.find(entityId);
+    return found != m_occlusionStates.end() && !found->second.visible;
+}
+
+bool RenderSystem::EnsureOcclusionTarget(uint16_t width, uint16_t height) {
+    if (!m_occlusionSupported || width == 0 || height == 0) return false;
+
+    // Keep the occluder pass cheap while preserving aspect ratio. The query
+    // result is only used for a conservative visible/invisible decision.
+    const float scale = std::min(0.25f, 640.0f / static_cast<float>(width));
+    const uint16_t targetWidth = static_cast<uint16_t>(
+        std::max(160, static_cast<int>(static_cast<float>(width) * scale)));
+    const uint16_t targetHeight = static_cast<uint16_t>(
+        std::max(90, static_cast<int>(static_cast<float>(height) * scale)));
+
+    if (bgfx::isValid(m_occlusionFbo) &&
+        m_occlusionWidth == targetWidth &&
+        m_occlusionHeight == targetHeight) {
+        return true;
+    }
+
+    if (bgfx::isValid(m_occlusionFbo)) bgfx::destroy(m_occlusionFbo);
+    if (bgfx::isValid(m_occlusionColor)) bgfx::destroy(m_occlusionColor);
+    if (bgfx::isValid(m_occlusionDepth)) bgfx::destroy(m_occlusionDepth);
+    m_occlusionFbo = BGFX_INVALID_HANDLE;
+    m_occlusionColor = BGFX_INVALID_HANDLE;
+    m_occlusionDepth = BGFX_INVALID_HANDLE;
+
+    const uint64_t flags = BGFX_TEXTURE_RT |
+                           BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
+    m_occlusionColor = bgfx::createTexture2D(
+        targetWidth, targetHeight, false, 1, bgfx::TextureFormat::RGBA8, flags);
+    m_occlusionDepth = bgfx::createTexture2D(
+        targetWidth, targetHeight, false, 1, bgfx::TextureFormat::D32F, flags);
+    if (!bgfx::isValid(m_occlusionColor) || !bgfx::isValid(m_occlusionDepth)) {
+        if (bgfx::isValid(m_occlusionColor)) bgfx::destroy(m_occlusionColor);
+        if (bgfx::isValid(m_occlusionDepth)) bgfx::destroy(m_occlusionDepth);
+        m_occlusionColor = BGFX_INVALID_HANDLE;
+        m_occlusionDepth = BGFX_INVALID_HANDLE;
+        return false;
+    }
+
+    const bgfx::TextureHandle attachments[] = {m_occlusionColor, m_occlusionDepth};
+    m_occlusionFbo = bgfx::createFrameBuffer(2, attachments, false);
+    if (!bgfx::isValid(m_occlusionFbo)) {
+        bgfx::destroy(m_occlusionColor);
+        bgfx::destroy(m_occlusionDepth);
+        m_occlusionColor = BGFX_INVALID_HANDLE;
+        m_occlusionDepth = BGFX_INVALID_HANDLE;
+        return false;
+    }
+
+    m_occlusionWidth = targetWidth;
+    m_occlusionHeight = targetHeight;
+    return true;
+}
+
+void RenderSystem::RenderOcclusion(Scene& scene, const Camera& camera,
+                                   bgfx::ViewId viewId, uint16_t width, uint16_t height) {
+    m_occludedObjectCount = 0;
+    if (!m_occlusionEnabled || !m_occlusionSupported || !m_assets ||
+        !bgfx::isValid(m_shadowProg)) {
+        return;
+    }
+    if (!EnsureOcclusionTarget(width, height)) {
+        ResetOcclusionState();
+        return;
+    }
+
+    ++m_occlusionFrame;
+
+    // Query results are available one frame later. If an object was not
+    // tested in the previous frame, force it visible rather than inheriting a
+    // stale result from before it entered the view.
+    for (auto& entry : m_occlusionStates) {
+        OcclusionState& state = entry.second;
+        if (state.lastTestedFrame + 1 == m_occlusionFrame &&
+            bgfx::isValid(state.query)) {
+            const bgfx::OcclusionQueryResult::Enum result =
+                bgfx::getResult(state.query);
+            if (result == bgfx::OcclusionQueryResult::Visible) {
+                state.visible = true;
+            } else if (result == bgfx::OcclusionQueryResult::Invisible) {
+                state.visible = false;
+            }
+        } else {
+            state.visible = true;
+        }
+    }
+
+    const glm::vec3 cameraPosition = camera.Position();
+    if (m_hasLastOcclusionCamera &&
+        glm::distance(cameraPosition, m_lastOcclusionCameraPos) > 5.0f) {
+        for (auto& entry : m_occlusionStates) {
+            entry.second.visible = true;
+        }
+    }
+    m_lastOcclusionCameraPos = cameraPosition;
+    m_hasLastOcclusionCamera = true;
+
+    bgfx::setViewFrameBuffer(viewId, m_occlusionFbo);
+    bgfx::setViewRect(viewId, 0, 0, m_occlusionWidth, m_occlusionHeight);
+    bgfx::setViewClear(viewId, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
+    bgfx::setViewTransform(viewId, glm::value_ptr(camera.View()),
+                           glm::value_ptr(camera.Projection()));
+    bgfx::setViewMode(viewId, bgfx::ViewMode::Sequential);
+
+    const Frustum frustum(camera.Projection() * camera.View());
+    const float tanHalfFov =
+        std::max(1.0f / std::max(std::abs(camera.Projection()[1][1]), 1e-6f), 1e-4f);
+
+    struct OccluderItem {
+        std::shared_ptr<Mesh> mesh;
+        glm::mat4 model{1.0f};
+        bool twoSided = false;
+    };
+    struct QueryItem {
+        uint32_t entityId = 0;
+        glm::mat4 proxy{1.0f};
+    };
+
+    std::vector<OccluderItem> occluders;
+    std::vector<QueryItem> queries;
+    occluders.reserve(32);
+    queries.reserve(64);
+
+    auto view = scene.Registry().view<TransformComponent, MeshComponent, MaterialComponent>();
+    for (auto handle : view) {
+        const auto& mc = view.get<MeshComponent>(handle);
+        const auto& matc = view.get<MaterialComponent>(handle);
+        if (!mc.mesh || !mc.mesh->Valid() || !matc.material ||
+            matc.material->isGlass || HasSkeletonRoot(scene, handle) ||
+            scene.Registry().all_of<SoftBodyComponent>(handle)) {
+            continue;
+        }
+
+        const glm::mat4 model = EntityWorldMatrix(scene, handle);
+        glm::vec3 localMin, localMax;
+        mc.mesh->LocalAABB(localMin, localMax);
+        const glm::vec3 localCenter = (localMin + localMax) * 0.5f;
+        const glm::vec3 localExtents = glm::max((localMax - localMin) * 0.5f,
+                                                glm::vec3(1e-4f));
+        const glm::vec3 worldCenter = glm::vec3(model * glm::vec4(localCenter, 1.0f));
+        const float maxScale = std::max(
+            std::max(glm::length(glm::vec3(model[0])),
+                     glm::length(glm::vec3(model[1]))),
+            glm::length(glm::vec3(model[2])));
+        const float worldRadius = glm::length(localMax - localMin) * 0.5f * maxScale;
+
+        const uint32_t entityId = static_cast<uint32_t>(entt::to_integral(handle));
+        OcclusionState& state = m_occlusionStates[entityId];
+        state.lastSeenFrame = m_occlusionFrame;
+
+        if (!frustum.TestSphere(worldCenter, worldRadius)) {
+            state.visible = true;
+            continue;
+        }
+
+        const float screenRadius = worldRadius /
+            std::max(glm::length(worldCenter - cameraPosition) * tanHalfFov, 1e-4f);
+
+        // Large opaque meshes form the occluder depth map. Alpha-cutout
+        // materials are excluded because fs_shadow does not sample alpha.
+        if (screenRadius >= 0.12f && !matc.material->opacityMap) {
+            OccluderItem item;
+            item.mesh = mc.mesh;
+            item.model = model;
+            item.twoSided = matc.material->twoSided;
+            occluders.push_back(std::move(item));
+            state.visible = true;
+            continue;
+        }
+
+        // Small objects are not worth a query; they are drawn normally and
+        // never inherit an old invisible result.
+        if (screenRadius < 0.035f) {
+            state.visible = true;
+            continue;
+        }
+
+        if (!bgfx::isValid(state.query)) {
+            state.query = bgfx::createOcclusionQuery();
+        }
+        if (!bgfx::isValid(state.query)) {
+            state.visible = true;
+            continue;
+        }
+
+        QueryItem item;
+        item.entityId = entityId;
+        item.proxy = model *
+            glm::translate(glm::mat4(1.0f), localCenter) *
+            glm::scale(glm::mat4(1.0f), localExtents * 2.0f);
+        queries.push_back(item);
+        state.lastTestedFrame = m_occlusionFrame;
+    }
+
+    for (const OccluderItem& item : occluders) {
+        bgfx::setTransform(glm::value_ptr(item.model));
+        bgfx::setVertexBuffer(0, item.mesh->LodVB(0));
+        bgfx::setIndexBuffer(item.mesh->LodIB(0));
+        bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
+                       FaceState(item.twoSided));
+        bgfx::submit(viewId, m_shadowProg);
+    }
+
+    const std::shared_ptr<Mesh> proxyMesh = m_assets->CreateCubeMesh();
+    if (proxyMesh && proxyMesh->Valid()) {
+        for (const QueryItem& item : queries) {
+            const auto found = m_occlusionStates.find(item.entityId);
+            if (found == m_occlusionStates.end() ||
+                !bgfx::isValid(found->second.query)) {
+                continue;
+            }
+            bgfx::setTransform(glm::value_ptr(item.proxy));
+            bgfx::setVertexBuffer(0, proxyMesh->LodVB(0));
+            bgfx::setIndexBuffer(proxyMesh->LodIB(0));
+            // Only the depth test is needed; neither color nor depth is
+            // written, so proxies cannot occlude one another.
+            bgfx::setState(BGFX_STATE_DEPTH_TEST_LEQUAL | FaceState(true));
+            bgfx::submit(viewId, m_shadowProg, found->second.query);
+        }
+    }
+
+    for (auto it = m_occlusionStates.begin(); it != m_occlusionStates.end();) {
+        OcclusionState& state = it->second;
+        if (state.lastSeenFrame + 120 < m_occlusionFrame) {
+            if (bgfx::isValid(state.query)) bgfx::destroy(state.query);
+            it = m_occlusionStates.erase(it);
+        } else {
+            if (!state.visible) ++m_occludedObjectCount;
+            ++it;
+        }
+    }
 }
 
 void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
@@ -492,29 +801,47 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
 
         const glm::mat4 model = EntityWorldMatrix(scene, h);
 
-        // Frustum Culling (before any bindings!)
-        {
-            glm::vec3 localMin, localMax;
-            mc.mesh->LocalAABB(localMin, localMax);
-            glm::vec3 localCenter = (localMin + localMax) * 0.5f;
-            float localRadius = glm::length(localMax - localMin) * 0.5f;
-            glm::vec3 worldCenter = glm::vec3(model * glm::vec4(localCenter, 1.0f));
-            float maxScale = std::max(std::max(glm::length(glm::vec3(model[0])),
-                                               glm::length(glm::vec3(model[1]))),
-                                      glm::length(glm::vec3(model[2])));
-            if (!frustum.TestSphere(worldCenter, localRadius * maxScale)) {
-                continue; // Skip culled object BEFORE any texture/uniform binding
-            }
+        // Frustum culling (before any bindings).
+        glm::vec3 localMin, localMax;
+        mc.mesh->LocalAABB(localMin, localMax);
+        const glm::vec3 localCenter = (localMin + localMax) * 0.5f;
+        const float localRadius = glm::length(localMax - localMin) * 0.5f;
+        const glm::vec3 worldCenter = glm::vec3(model * glm::vec4(localCenter, 1.0f));
+        const float maxScale = std::max(
+            std::max(glm::length(glm::vec3(model[0])),
+                     glm::length(glm::vec3(model[1]))),
+            glm::length(glm::vec3(model[2])));
+        const float worldRadius = localRadius * maxScale;
+        if (!frustum.TestSphere(worldCenter, worldRadius)) {
+            continue; // Skip culled object BEFORE any texture/uniform binding
         }
 
         const entt::entity root = FindRootEntity(scene, h);
         const bool hasSkeleton =
             scene.Registry().all_of<SkeletalComponent>(root);
+        const uint32_t entityId = static_cast<uint32_t>(entt::to_integral(h));
 
-        // Static meshes sharing geometry and material state are collected and
-        // submitted as one instanced draw after the per-object pass.
+        // The occlusion pass tests static entities before this pass. Results
+        // are one frame old, which keeps the query readback off the GPU
+        // critical path.
+        if (!hasSkeleton && IsOccluded(entityId)) {
+            continue;
+        }
+
+        uint32_t lod = 0;
+        if (m_lodEnabled && !hasSkeleton &&
+            !scene.Registry().all_of<SoftBodyComponent>(h)) {
+            mc.mesh->EnsureLods();
+            const float projectedRadius = ProjectedSphereRadius(
+                worldCenter, worldRadius, camera.Position(), camera.Projection());
+            lod = static_cast<uint32_t>(SelectLod(*mc.mesh, projectedRadius, m_lodBias));
+        }
+
+        // Static meshes sharing geometry, LOD and material state are
+        // collected and submitted as one instanced draw after the per-object
+        // pass.
         if (!hasSkeleton && canInstanceStatic) {
-            const MeshMaterialKey key = MakeMeshMaterialKey(mc, *matc.material);
+            const MeshMaterialKey key = MakeMeshMaterialKey(mc, *matc.material, lod);
             const auto result = instanceBatches.try_emplace(key);
             MeshInstanceBatch& batch = result.first->second;
             if (result.second) {
@@ -580,8 +907,8 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
             const MeshInstanceBatch& batch = entry.second;
             if (!batch.mesh || !batch.material) continue;
             bindMaterial(*batch.material);
-            SubmitInstancedMesh(viewId, program, *batch.mesh, batch.instances,
-                                entry.first.twoSided, state);
+            SubmitInstancedMesh(viewId, program, *batch.mesh, entry.first.lod,
+                                batch.instances, entry.first.twoSided, state);
         }
     }
 
@@ -804,9 +1131,9 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
         for (const auto& entry : instanceBatches) {
             const ShadowInstanceBatch& batch = entry.second;
             if (!batch.mesh) continue;
-            SubmitInstancedMesh(viewId, m_instancedShadowProg, *batch.mesh,
+            SubmitInstancedMesh(viewId, m_instancedShadowProg, *batch.mesh, 0,
                                 batch.singleSided, false, state);
-            SubmitInstancedMesh(viewId, m_instancedShadowProg, *batch.mesh,
+            SubmitInstancedMesh(viewId, m_instancedShadowProg, *batch.mesh, 0,
                                 batch.twoSided, true, state);
         }
     }
@@ -908,9 +1235,9 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
         for (const auto& entry : instanceBatches) {
             const ShadowInstanceBatch& batch = entry.second;
             if (!batch.mesh) continue;
-            SubmitInstancedMesh(viewId, m_instancedShadowPointProg, *batch.mesh,
+            SubmitInstancedMesh(viewId, m_instancedShadowPointProg, *batch.mesh, 0,
                                 batch.singleSided, false, state);
-            SubmitInstancedMesh(viewId, m_instancedShadowPointProg, *batch.mesh,
+            SubmitInstancedMesh(viewId, m_instancedShadowPointProg, *batch.mesh, 0,
                                 batch.twoSided, true, state);
         }
     }
