@@ -2025,9 +2025,6 @@ if (ImGui::BeginMenu("File")) {
         }
         
         if (ImGui::BeginMenu("Stats")) {
-            ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
-            ImGui::Text("Entities: %d", (int)m_scene.AllEntities().size());
-            ImGui::Separator();
             ImGui::MenuItem("AI Perception Debug", nullptr, &m_showAIDebug);
             ImGui::EndMenu();
         }
@@ -5420,6 +5417,42 @@ if (ImGui::BeginMenu("File")) {
             ImGui::Image(texId, ImVec2(static_cast<float>(w), static_cast<float>(h)), ImVec2(0, 0), ImVec2(1, 1));
             m_viewportImagePos = ImGui::GetItemRectMin();
             m_viewportImageSize = ImGui::GetItemRectSize();
+
+            // Keep the lightweight viewport stats visible instead of burying
+            // them in a menu. Draw them after the image so they overlay the
+            // rendered scene without becoming interactive viewport widgets.
+            {
+                char fpsText[64];
+                char entitiesText[64];
+                std::snprintf(fpsText, sizeof(fpsText), "FPS: %.1f",
+                              ImGui::GetIO().Framerate);
+                std::snprintf(entitiesText, sizeof(entitiesText), "Entities: %d",
+                              static_cast<int>(m_scene.AllEntities().size()));
+
+                const float lineHeight = ImGui::GetTextLineHeight();
+                const ImVec2 padding(8.0f, 5.0f);
+                const ImVec2 textPos(m_viewportImagePos.x + padding.x,
+                                     m_viewportImagePos.y + padding.y);
+                const float textWidth = std::max(
+                    ImGui::CalcTextSize(fpsText).x,
+                    ImGui::CalcTextSize(entitiesText).x);
+                const ImVec2 panelMin = m_viewportImagePos;
+                const ImVec2 panelMax(
+                    m_viewportImagePos.x + textWidth + padding.x * 2.0f,
+                    m_viewportImagePos.y + lineHeight * 2.0f + padding.y * 2.0f);
+
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                drawList->AddRectFilled(panelMin, panelMax,
+                                        IM_COL32(10, 12, 16, 150), 5.0f);
+                drawList->AddText(ImVec2(textPos.x + 1.0f, textPos.y + 1.0f),
+                                  IM_COL32(0, 0, 0, 180), fpsText);
+                drawList->AddText(textPos, IM_COL32(235, 240, 248, 255), fpsText);
+                drawList->AddText(ImVec2(textPos.x + 1.0f,
+                                         textPos.y + lineHeight + 1.0f),
+                                  IM_COL32(0, 0, 0, 180), entitiesText);
+                drawList->AddText(ImVec2(textPos.x, textPos.y + lineHeight),
+                                  IM_COL32(235, 240, 248, 255), entitiesText);
+            }
 
             // Accept assets dragged from the Content Browser. Models are
             // spawned under the cursor; textures are still applied to the
