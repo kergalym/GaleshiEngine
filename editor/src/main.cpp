@@ -48,6 +48,7 @@
 #include <bx/math.h>
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <cctype>
 #include <cmath>
@@ -103,6 +104,44 @@ static const char* LoadingStageText(LoadingState::Stage stage) {
         case LoadingState::Stage::Idle:       break;
     }
     return "";
+}
+
+using ProfileClock = std::chrono::steady_clock;
+
+inline float ProfileElapsedMs(ProfileClock::time_point begin,
+                              ProfileClock::time_point end) {
+    return std::chrono::duration<float, std::milli>(end - begin).count();
+}
+
+constexpr std::size_t kProfileHistorySize = 180;
+
+struct CpuProfileSample {
+    float frameMs = 0.0f;
+    float updateMs = 0.0f;
+    float physicsMs = 0.0f;
+    float audioMs = 0.0f;
+    float scriptsMs = 0.0f;
+    float aiMs = 0.0f;
+    float animationMs = 0.0f;
+    float groomMs = 0.0f;
+    float particlesMs = 0.0f;
+    float cameraMs = 0.0f;
+    float gameLogicMs = 0.0f;
+    float renderCpuMs = 0.0f;
+    float imguiMs = 0.0f;
+};
+
+struct GpuPassSample {
+    std::string name;
+    uint16_t view = 0;
+    float gpuMs = 0.0f;
+    float cpuMs = 0.0f;
+};
+
+template <std::size_t N>
+void PushProfileHistory(std::array<float, N>& values, float value) {
+    std::move(values.begin() + 1, values.end(), values.begin());
+    values.back() = value;
 }
 
 struct EditorPreferences {
@@ -725,6 +764,7 @@ protected:
         m_particles = std::make_unique<Galeshi::ParticleSystem>();
         m_particles->Init();
         m_postProcess.Init();
+        ConfigureProfilerViewNames();
         m_render->SetDeferredEnabled(true);
         // SSAO/SSR включим на 2-м кадре — чтобы первый кадр прошёл
         // без sampling render target (иначе Vulkan layout mismatch).
@@ -771,6 +811,10 @@ protected:
         if (m_loadingState.isLoading) return; // Pause engine during load
         if (!m_projectLoaded) return;
 
+        const auto updateStart = ProfileClock::now();
+        m_cpuProfile = CpuProfileSample{};
+        m_cpuProfile.frameMs = dt * 1000.0f;
+
         spdlog::trace("[Main] OnUpdate");
         // --- Deferred effect enable (frame 2+) ---
         m_renderFrameCounter++;
@@ -798,13 +842,21 @@ protected:
         }
 
         // --- Auto-inserted physics update ---
-        if (m_physics) {
-            m_physics->Update(m_scene, dt);
-            m_physics->SyncTransformsToECS(m_scene);
+        {
+            const auto physicsStart = ProfileClock::now();
+            if (m_physics) {
+                m_physics->Update(m_scene, dt);
+                m_physics->SyncTransformsToECS(m_scene);
+            }
+            m_cpuProfile.physicsMs = ProfileElapsedMs(physicsStart, ProfileClock::now());
         }
 
         // Audio: listener, 3D source positions, autoplay and mixer sync.
-        UpdateAudio(dt);
+        {
+            const auto audioStart = ProfileClock::now();
+            UpdateAudio(dt);
+            m_cpuProfile.audioMs = ProfileElapsedMs(audioStart, ProfileClock::now());
+        }
         // --- End auto-inserted ---
 
         m_time += dt;
@@ -826,20 +878,42 @@ protected:
                 m_dynamicFrameCounter = 0;
             }
         }
-        m_scripts.RunAIScripts(m_scene, dt);
-        Galeshi::AISystem::Update(m_scene, dt, m_navSystem.get());
-        m_scripts.Update(dt);
+        {
+            const auto scriptsStart = ProfileClock::now();
+            m_scripts.RunAIScripts(m_scene, dt);
+            m_scripts.Update(dt);
+            m_cpuProfile.scriptsMs = ProfileElapsedMs(scriptsStart, ProfileClock::now());
+        }
+
+        {
+            const auto aiStart = ProfileClock::now();
+            Galeshi::AISystem::Update(m_scene, dt, m_navSystem.get());
+            m_cpuProfile.aiMs = ProfileElapsedMs(aiStart, ProfileClock::now());
+        }
 
         // Skeletal playback and animation state machines. This samples the
         // active clip and blends the previous state when a transition fires.
-        Galeshi::AnimationSystem::Update(m_scene, *m_assets, dt);
+        {
+            const auto animationStart = ProfileClock::now();
+            Galeshi::AnimationSystem::Update(m_scene, *m_assets, dt);
+            m_cpuProfile.animationMs = ProfileElapsedMs(animationStart, ProfileClock::now());
+        }
         // Hair follows the freshly sampled skeleton, then simulates its own
         // spring chains before the render pass builds camera-facing ribbons.
-        Galeshi::GroomSystem::Update(m_scene, *m_assets, dt);
+        {
+            const auto groomStart = ProfileClock::now();
+            Galeshi::GroomSystem::Update(m_scene, *m_assets, dt);
+            m_cpuProfile.groomMs = ProfileElapsedMs(groomStart, ProfileClock::now());
+        }
 
         // Particle simulation (world-space billboards).
-        if (m_particles) m_particles->Update(m_scene, dt);
+        {
+            const auto particlesStart = ProfileClock::now();
+            if (m_particles) m_particles->Update(m_scene, dt);
+            m_cpuProfile.particlesMs = ProfileElapsedMs(particlesStart, ProfileClock::now());
+        }
 
+        const auto cameraStart = ProfileClock::now();
         // Логика камеры
         const bool cameraControllable = m_viewportHovered && !m_editor.GizmoLocked() && !ImGuizmo::IsUsing() && !ImGuizmo::IsOver();
         
@@ -885,6 +959,12 @@ protected:
         m_camera.SetPerspective(glm::radians(m_preferences.cameraFovDegrees),
                                 aspect, nearZ, farZ);
         m_camera.Orbit(m_editor.camTarget, m_editor.camYaw, m_editor.camPitch, m_editor.camRadius);
+        m_cpuProfile.cameraMs = ProfileElapsedMs(cameraStart, ProfileClock::now());
+        m_cpuProfile.updateMs = ProfileElapsedMs(updateStart, ProfileClock::now());
+        m_cpuProfile.gameLogicMs = m_cpuProfile.physicsMs + m_cpuProfile.audioMs +
+            m_cpuProfile.scriptsMs + m_cpuProfile.aiMs +
+            m_cpuProfile.animationMs + m_cpuProfile.groomMs +
+            m_cpuProfile.particlesMs + m_cpuProfile.cameraMs;
     }
 
     void OnRender() override {} // Всё во Viewport
@@ -906,7 +986,13 @@ protected:
             DrawLoadingModal();
             return;
         }
+
+        const auto imguiStart = ProfileClock::now();
+        if (!ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_F8)) {
+            m_showProfiler = !m_showProfiler;
+        }
         DrawMainMenuBar();
+        UpdateProfilerDebugState();
 
         // Hotkeys
         // Preferences works even while a text field is active.
@@ -948,7 +1034,11 @@ protected:
         }
 
         DrawDockspace();
-        DrawViewport();
+        {
+            const auto renderStart = ProfileClock::now();
+            DrawViewport();
+            m_cpuProfile.renderCpuMs = ProfileElapsedMs(renderStart, ProfileClock::now());
+        }
         DrawOutliner();
         DrawDetails();
         DrawContentBrowser();
@@ -992,6 +1082,15 @@ protected:
             m_editor.ClearSelection();
             StartAsyncLoad(chosenLoad);
         }
+
+        m_cpuProfile.imguiMs = ProfileElapsedMs(imguiStart, ProfileClock::now());
+        if (m_showProfiler) {
+            UpdateGpuProfilerStats();
+        } else {
+            m_gpuFrameMs = 0.0f;
+        }
+        PushProfilerHistory();
+        DrawProfilerWindow();
     }
 
     void OnShutdown() override {
@@ -1556,6 +1655,308 @@ private:
         }
     }
 
+    // -------------------------------------------------------------------
+    // Profiler
+    // -------------------------------------------------------------------
+    void ConfigureProfilerViewNames() {
+        if (!bgfx::getCaps()) return;
+        auto setView = [this](bgfx::ViewId id, const char* name) {
+            if (id < m_profilerViewNames.size()) m_profilerViewNames[id] = name;
+            bgfx::setViewName(id, name);
+        };
+        setView(0, "Occlusion Queries");
+        setView(1, "Main G-Buffer");
+        for (int i = 0; i < 3; ++i) {
+            char name[32];
+            std::snprintf(name, sizeof(name), "PSSM Cascade %d", i + 1);
+            setView(static_cast<bgfx::ViewId>(2 + i), name);
+        }
+        for (int face = 0; face < 6; ++face) {
+            char name[32];
+            std::snprintf(name, sizeof(name), "Point Shadow %d", face + 1);
+            setView(static_cast<bgfx::ViewId>(5 + face), name);
+        }
+        for (int i = 0; i < 4; ++i) {
+            char name[32];
+            std::snprintf(name, sizeof(name), "Spot Shadow %d", i + 1);
+            setView(static_cast<bgfx::ViewId>(11 + i), name);
+        }
+        setView(15, "AO Evaluate");
+        setView(16, "AO Upsample");
+        setView(17, "AO Blur H");
+        setView(18, "AO Blur V");
+        setView(19, "Planar Reflection");
+        setView(20, "Deferred Lighting");
+        setView(21, "Particles");
+        setView(23, "Motion Velocity");
+        setView(24, "SSR");
+        setView(25, "Motion Blur");
+        setView(26, "Atmosphere");
+        setView(27, "God Rays");
+        setView(28, "DoF CoC");
+        setView(29, "DoF Blur H");
+        setView(30, "DoF Blur V");
+        setView(31, "DoF Composite");
+        setView(32, "Bloom Extract");
+        setView(33, "Bloom Blur H");
+        setView(34, "Bloom Blur V");
+        setView(35, "Bloom Combine");
+        setView(36, "TAA Resolve");
+        setView(37, "TAA History");
+        setView(38, "Scene Color/Depth Copy");
+        setView(39, "Water & Hair");
+        setView(40, "Tonemap");
+        setView(41, "Color Correction");
+        setView(42, "Vignette");
+        setView(43, "Chromatic Aberration");
+        setView(44, "SMAA Edge Detection");
+        setView(45, "SMAA Blend");
+        setView(46, "FXAA");
+        setView(47, "Invert");
+        setView(48, "Final Scene Copy");
+        setView(49, "Glass");
+        setView(50, "Debug Lines");
+        setView(51, "ImGui");
+
+        // One-time IBL/BRDF passes use view IDs 190..254.
+        setView(190, "BRDF LUT");
+        for (int face = 0; face < 6; ++face) {
+            char name[32];
+            std::snprintf(name, sizeof(name), "IBL Sky %d", face + 1);
+            setView(static_cast<bgfx::ViewId>(200 + face), name);
+        }
+        setView(206, "IBL Sky Blit");
+        for (int face = 0; face < 6; ++face) {
+            char name[32];
+            std::snprintf(name, sizeof(name), "IBL Irradiance %d", face + 1);
+            setView(static_cast<bgfx::ViewId>(210 + face), name);
+        }
+        setView(216, "IBL Irradiance Blit");
+        for (int mip = 0; mip < 5; ++mip) {
+            for (int face = 0; face < 6; ++face) {
+                char name[40];
+                std::snprintf(name, sizeof(name), "IBL Prefilter Mip %d Face %d",
+                              mip, face + 1);
+                setView(static_cast<bgfx::ViewId>(220 + mip * 7 + face), name);
+            }
+            char name[40];
+            std::snprintf(name, sizeof(name), "IBL Prefilter Blit Mip %d", mip);
+            setView(static_cast<bgfx::ViewId>(220 + mip * 7 + 6), name);
+        }
+    }
+
+    void UpdateProfilerDebugState() {
+        if (m_profilerDebugEnabled == m_showProfiler) return;
+        bgfx::setDebug(m_showProfiler ? BGFX_DEBUG_PROFILER : BGFX_DEBUG_NONE);
+        m_profilerDebugEnabled = m_showProfiler;
+    }
+
+    void UpdateGpuProfilerStats() {
+        m_gpuPasses.clear();
+        m_gpuFrameMs = 0.0f;
+        const bgfx::Stats* stats = bgfx::getStats();
+        if (!stats) return;
+
+        const double gpuFreq = static_cast<double>(stats->gpuTimerFreq);
+        const double cpuFreq = static_cast<double>(stats->cpuTimerFreq);
+        if (gpuFreq > 0.0) {
+            const int64_t elapsed = stats->gpuTimeEnd - stats->gpuTimeBegin;
+            if (elapsed > 0) m_gpuFrameMs = static_cast<float>(
+                static_cast<double>(elapsed) * 1000.0 / gpuFreq);
+        }
+
+        if (!stats->viewStats) return;
+        for (uint16_t i = 0; i < stats->numViews; ++i) {
+            const bgfx::ViewStats& view = stats->viewStats[i];
+            std::string name = view.name;
+            if (name.empty() && view.view < m_profilerViewNames.size()) {
+                name = m_profilerViewNames[view.view];
+            }
+            if (name.empty()) name = "View " + std::to_string(view.view);
+
+            float gpuMs = 0.0f;
+            float cpuMs = 0.0f;
+            if (gpuFreq > 0.0) {
+                const int64_t elapsed = view.gpuTimeEnd - view.gpuTimeBegin;
+                if (elapsed > 0) gpuMs = static_cast<float>(
+                    static_cast<double>(elapsed) * 1000.0 / gpuFreq);
+            }
+            if (cpuFreq > 0.0) {
+                const int64_t elapsed = view.cpuTimeEnd - view.cpuTimeBegin;
+                if (elapsed > 0) cpuMs = static_cast<float>(
+                    static_cast<double>(elapsed) * 1000.0 / cpuFreq);
+            }
+            m_gpuPasses.push_back(GpuPassSample{std::move(name), view.view,
+                                                gpuMs, cpuMs});
+        }
+
+        std::sort(m_gpuPasses.begin(), m_gpuPasses.end(),
+                  [](const GpuPassSample& a, const GpuPassSample& b) {
+                      if (a.gpuMs != b.gpuMs) return a.gpuMs > b.gpuMs;
+                      return a.cpuMs > b.cpuMs;
+                  });
+    }
+
+    void PushProfilerHistory() {
+        PushProfileHistory(m_frameHistory, m_cpuProfile.frameMs);
+        PushProfileHistory(m_gameLogicHistory, m_cpuProfile.gameLogicMs);
+        PushProfileHistory(m_gpuHistory, m_gpuFrameMs);
+    }
+
+    void DrawProfilerWindow() {
+        if (!m_showProfiler) return;
+
+        ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const ImVec2 center(viewport->Pos.x + viewport->Size.x * 0.5f,
+                            viewport->Pos.y + viewport->Size.y * 0.5f);
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(
+            ImVec2(std::min(720.0f, viewport->Size.x - 40.0f),
+                   std::min(620.0f, viewport->Size.y - 40.0f)),
+            ImGuiCond_Appearing);
+        if (!ImGui::Begin("Profiler", &m_showProfiler,
+                          ImGuiWindowFlags_NoCollapse)) {
+            ImGui::End();
+            return;
+        }
+
+        const bgfx::Stats* stats = bgfx::getStats();
+        const bool gpuTimerAvailable = stats && stats->gpuTimerFreq > 0;
+        const CpuProfileSample& profile = m_cpuProfile;
+
+        ImGui::Text("FPS: %.1f   Frame: %.2f ms", ImGui::GetIO().Framerate,
+                    profile.frameMs);
+        ImGui::TextDisabled("CPU update %.2f ms | ImGui %.2f ms | "
+                            "Render submit %.2f ms | GPU %.2f ms",
+                            profile.updateMs, profile.imguiMs,
+                            profile.renderCpuMs, m_gpuFrameMs);
+        if (ImGui::Button("Reset History")) {
+            m_frameHistory.fill(0.0f);
+            m_gameLogicHistory.fill(0.0f);
+            m_gpuHistory.fill(0.0f);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("History: %d frames",
+                            static_cast<int>(kProfileHistorySize));
+
+        if (ImGui::BeginTabBar("##profiler_tabs")) {
+            if (ImGui::BeginTabItem("Overview")) {
+                auto plotMax = [](const std::array<float, kProfileHistorySize>& values) {
+                    const float maxValue = *std::max_element(values.begin(),
+                                                              values.end());
+                    return std::max(16.7f, maxValue * 1.15f);
+                };
+
+                ImGui::Text("Frame time (ms)");
+                ImGui::PlotLines("##cpu_frame_history", m_frameHistory.data(),
+                                 static_cast<int>(kProfileHistorySize), 0, nullptr,
+                                 0.0f, plotMax(m_frameHistory), ImVec2(-1, 90));
+                ImGui::Text("Game logic (ms)");
+                ImGui::PlotLines("##game_logic_history", m_gameLogicHistory.data(),
+                                 static_cast<int>(kProfileHistorySize), 0, nullptr,
+                                 0.0f, plotMax(m_gameLogicHistory), ImVec2(-1, 90));
+                ImGui::Text("GPU frame (ms)");
+                if (gpuTimerAvailable) {
+                    ImGui::PlotLines("##gpu_frame_history", m_gpuHistory.data(),
+                                     static_cast<int>(kProfileHistorySize), 0, nullptr,
+                                     0.0f, plotMax(m_gpuHistory), ImVec2(-1, 90));
+                } else {
+                    ImGui::TextDisabled("GPU timer queries are not available on this renderer.");
+                }
+                ImGui::Spacing();
+                ImGui::TextDisabled("Rolling history of the last submitted frames.");
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("CPU / Game Logic")) {
+                const ImGuiTableFlags cpuTableFlags =
+                    ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg |
+                    ImGuiTableFlags_SizingStretchProp;
+                if (ImGui::BeginTable("##cpu_profile_sections", 2, cpuTableFlags)) {
+                    ImGui::TableSetupColumn("Section");
+                    ImGui::TableSetupColumn("Time (ms)",
+                                            ImGuiTableColumnFlags_WidthFixed, 100.0f);
+                    ImGui::TableHeadersRow();
+                    auto row = [](const char* name, float ms) {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::TextUnformatted(name);
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::Text("%.2f", ms);
+                    };
+                    row("Update / Game Logic", profile.gameLogicMs);
+                    row("  Physics", profile.physicsMs);
+                    row("  Audio", profile.audioMs);
+                    row("  Scripts", profile.scriptsMs);
+                    row("  AI / Navigation", profile.aiMs);
+                    row("  Animation", profile.animationMs);
+                    row("  Groom Hair", profile.groomMs);
+                    row("  Particles", profile.particlesMs);
+                    row("  Camera / Input", profile.cameraMs);
+                    row("Update total", profile.updateMs);
+                    row("ImGui / Editor", profile.imguiMs);
+                    row("  Render submit", profile.renderCpuMs);
+                    ImGui::EndTable();
+                }
+                ImGui::Spacing();
+                ImGui::TextDisabled("Game logic is the sum of the update subsystems; "
+                                    "update total also includes editor overhead.");
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("GPU Render Passes")) {
+                if (stats) {
+                    ImGui::TextDisabled("Views: %u | Draws: %u | Compute: %u | "
+                                        "Textures: %u | GPU frame: %.2f ms",
+                                        static_cast<unsigned>(stats->numViews),
+                                        stats->numDraw, stats->numCompute,
+                                        stats->numTextures, m_gpuFrameMs);
+                }
+                if (!gpuTimerAvailable) {
+                    ImGui::TextDisabled("GPU timer queries are not available on "
+                                        "this renderer.");
+                } else if (m_gpuPasses.empty()) {
+                    ImGui::TextDisabled("Waiting for the first profiled frame...");
+                } else {
+                    ImGui::BeginChild("##gpu_pass_scroll", ImVec2(0.0f, 0.0f), true);
+                    const ImGuiTableFlags gpuTableFlags =
+                        ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_RowBg |
+                        ImGuiTableFlags_SizingStretchProp;
+                    if (ImGui::BeginTable("##gpu_profile_passes", 4, gpuTableFlags)) {
+                        ImGui::TableSetupColumn("Render Pass",
+                                                ImGuiTableColumnFlags_WidthStretch);
+                        ImGui::TableSetupColumn("View",
+                                                ImGuiTableColumnFlags_WidthFixed, 48.0f);
+                        ImGui::TableSetupColumn("GPU ms",
+                                                ImGuiTableColumnFlags_WidthFixed, 75.0f);
+                        ImGui::TableSetupColumn("CPU ms",
+                                                ImGuiTableColumnFlags_WidthFixed, 75.0f);
+                        ImGui::TableHeadersRow();
+                        for (const GpuPassSample& pass : m_gpuPasses) {
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::TextUnformatted(pass.name.c_str());
+                            ImGui::TableSetColumnIndex(1);
+                            ImGui::Text("%u", static_cast<unsigned>(pass.view));
+                            ImGui::TableSetColumnIndex(2);
+                            ImGui::Text("%.3f", pass.gpuMs);
+                            ImGui::TableSetColumnIndex(3);
+                            ImGui::Text("%.3f", pass.cpuMs);
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndChild();
+                }
+                ImGui::TextDisabled("Per-pass GPU timings are from the previous "
+                                    "submitted frame.");
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+
+        ImGui::End();
+    }
+
     void DrawMainMenuBar() {
         // The initial 22 px badge plus the requested size increases.
         constexpr float kLogoSize = 57.0f;
@@ -2025,6 +2426,7 @@ if (ImGui::BeginMenu("File")) {
         }
         
         if (ImGui::BeginMenu("Stats")) {
+            ImGui::MenuItem("Profiler", "F8", &m_showProfiler);
             ImGui::MenuItem("AI Perception Debug", nullptr, &m_showAIDebug);
             ImGui::EndMenu();
         }
@@ -4704,7 +5106,7 @@ if (ImGui::BeginMenu("File")) {
                     std::max(2, static_cast<int>(renderW / 2)));
                 const uint16_t reflectionH = static_cast<uint16_t>(
                     std::max(2, static_cast<int>(renderH / 2)));
-                m_render->RenderPlanarReflection(m_scene, m_camera, 16,
+                m_render->RenderPlanarReflection(m_scene, m_camera, 19,
                                                  reflectionW, reflectionH);
             }
 
@@ -7861,6 +8263,17 @@ void DrawDetails() {
     bool m_wasSculpting = false;
     float m_lastSculptHeight = 0.0f;
     bool m_showAIDebug = true;
+
+    // Profiler state and rolling frame history.
+    bool m_showProfiler = false;
+    bool m_profilerDebugEnabled = false;
+    CpuProfileSample m_cpuProfile;
+    std::vector<GpuPassSample> m_gpuPasses;
+    std::array<std::string, 256> m_profilerViewNames{};
+    float m_gpuFrameMs = 0.0f;
+    std::array<float, kProfileHistorySize> m_frameHistory{};
+    std::array<float, kProfileHistorySize> m_gameLogicHistory{};
+    std::array<float, kProfileHistorySize> m_gpuHistory{};
 
     // Screen-space translate drag (LMB-only, no W/E/R arrows)
     bool      m_isDragging = false;
