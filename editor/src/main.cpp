@@ -31,10 +31,12 @@
 #include "GaleshiEngine/UI/UIRuntime.hpp"
 #include "TextEditor/TextEditor.h"
 #include "GaleshiEngine/Renderer/PostProcessManager.hpp"
+#include "GaleshiEngine/Renderer/ImGuiBgfx.hpp"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <imgui_impl_sdl3.h>
 #include <spdlog/spdlog.h>
 #include <ImGuizmo.h>
 #include <bgfx/bgfx.h>
@@ -994,13 +996,37 @@ protected:
 
         // Автосохранение ОТКЛЮЧЕНО. Сцена сохраняется только вручную
         // через File -> Save Scene (Ctrl+S).
-
         SavePreferences();
 
-        // Выходим без очистки GPU (иначе NVIDIA deadlock)
+        // Release scene-owned resources while the Vulkan device is still
+        // alive. In particular, do not let SDL tear down the window/display
+        // before bgfx has waited for its GPU work.
+        ClearSceneForShutdown();
+        if (m_particles) m_particles->Shutdown();
+        if (m_debug) m_debug->Shutdown();
+        if (m_render) m_render->Shutdown();
+        m_postProcess.Shutdown();
+        if (m_framebuffer) m_framebuffer->Destroy();
+        for (auto& fbo : m_shadowFbos) {
+            if (bgfx::isValid(fbo)) bgfx::destroy(fbo);
+            fbo = BGFX_INVALID_HANDLE;
+        }
+        for (auto& map : m_shadowMaps) {
+            if (bgfx::isValid(map)) bgfx::destroy(map);
+            map = BGFX_INVALID_HANDLE;
+        }
+        m_audio.Shutdown();
+        if (m_navSystem) m_navSystem->Shutdown();
+
+        // ImGui owns bgfx buffers and its font texture; destroy those before
+        // bgfx shuts down. Then stop SDL only after the renderer is down.
+        Galeshi::ImGuiBgfx::Shutdown();
+        ImGui_ImplSDL3_Shutdown();
+        ImGui::DestroyContext();
+        if (auto* renderer = GetRenderer()) renderer->Shutdown();
         SDL_Quit();
-        bgfx::shutdown();
-        spdlog::info("[Editor] OnShutdown: exit (skip GPU cleanup)");
+
+        spdlog::info("[Editor] OnShutdown: complete");
         std::fflush(stdout);
         std::fflush(stderr);
         std::_Exit(0);
@@ -1125,6 +1151,29 @@ private:
         m_loadingState.cancelReturnsToProjectManager = false;
 
         spdlog::info("[Loading] Cancelled: scene data and video memory released");
+    }
+
+    // Shutdown variant of UnloadSceneContent: release all scene references
+    // and runtime state without pushing an undo snapshot or reinitializing
+    // navigation. Called while bgfx is still valid.
+    void ClearSceneForShutdown() {
+        m_editor.ClearSelection();
+        m_editor.isPlaying = false;
+        m_audio.StopAll();
+
+        if (m_physics) m_physics->Reset();
+        if (m_navSystem) m_navSystem->Shutdown();
+        if (m_particles) m_particles->Reset();
+
+        m_scene.Registry().clear();
+        m_scene.AudioBuses().fill(Galeshi::AudioBusSettings{});
+        if (m_assets) m_assets->Clear();
+
+        m_currentScenePath.clear();
+        m_uiCanvasEntity = entt::null;
+        m_uiWidgetIndex = -1;
+        m_history.clear();
+        m_historyIndex = -1;
     }
 
     // The scene must release its shared mesh/material/texture references
