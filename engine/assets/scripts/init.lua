@@ -4,12 +4,10 @@ log("init.lua: loaded player controller")
 --   RunOnce()          runs once after the script is loaded (and after a successful hot reload)
 --   RunAlways(dt)      runs every frame
 local player = nil
-local log_timer = 0
 
 function RunOnce()
     player = new_physics_cube("Player", 0.0, 5.0, 0.0, 2.0)
     log("init.lua: created player eid=" .. tostring(player))
-    log_timer = 0
 end
 
 function RunAlways(dt)
@@ -40,14 +38,4 @@ function RunAlways(dt)
         end
     end
 
-    -- Логируем раз в секунду, чтобы увидеть состояние
-    log_timer = log_timer + dt
-    if log_timer > 1.0 then
-        log_timer = 0
-        local pos = get_position(player)
-        log("Status: Horizontal=" .. string.format("%.2f", horizontal) ..
-            " Vertical=" .. string.format("%.2f", vertical) ..
-            " Jump=" .. string.format("%.2f", get_axis("Jump")) ..
-            " PosY=" .. string.format("%.2f", pos.y))
-    end
 end
