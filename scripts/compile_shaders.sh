@@ -44,8 +44,8 @@ varying_for() {
         vs_hair|fs_hair)                                     echo "$SRC_DIR/varying_hair.def.sc" ;;
         vs_pbr|fs_pbr|fs_gbuffer|fs_glass|fs_shadow_point)     echo "$SRC_DIR/varying_pbr.def.sc"   ;;
         vs_particles|fs_particles)             echo "$SRC_DIR/varying_particles.def.sc" ;;
-        vs_vegetation_instanced)               echo "$SRC_DIR/varying_vegetation.def.sc" ;;
-        vs_vegetation_shadow_instanced)        echo "$SRC_DIR/varying_vegetation_shadow.def.sc" ;;
+        vs_mesh_instanced)                     echo "$SRC_DIR/varying_mesh_instanced.def.sc" ;;
+        vs_mesh_shadow_instanced)              echo "$SRC_DIR/varying_mesh_shadow_instanced.def.sc" ;;
         vs_line|fs_line)                       echo "$SRC_DIR/varying_line.def.sc"  ;;
         vs_shadow|fs_shadow)                   echo "$SRC_DIR/varying_shadow.def.sc";;
         vs_imgui|fs_imgui) echo "$SRC_DIR/varying_imgui.def.sc" ;;

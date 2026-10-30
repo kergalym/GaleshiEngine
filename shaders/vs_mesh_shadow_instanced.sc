@@ -2,6 +2,7 @@ $input a_position, i_data0, i_data1, i_data2, i_data3
 
 #include <bgfx_shader.sh>
 
+// Generic instanced position-only vertex shader for shadow maps.
 void main()
 {
     mat4 instanceModel = mtxFromCols(i_data0, i_data1, i_data2, i_data3);

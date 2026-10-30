@@ -12,8 +12,11 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
+#include <functional>
+#include <unordered_map>
 #include <vector>
 
 namespace Galeshi {
@@ -34,6 +37,197 @@ namespace {
         if (!twoSided) state |= BGFX_STATE_CULL_CW;
         return state;
     }
+
+    entt::entity FindRootEntity(Scene& scene, entt::entity handle) {
+        entt::entity root = handle;
+        int depth = 0;
+        while (root != entt::null && depth++ < 128) {
+            if (!scene.Registry().all_of<ParentComponent>(root)) break;
+            root = scene.Registry().get<ParentComponent>(root).parent;
+        }
+        return root;
+    }
+
+    bool HasSkeletonRoot(Scene& scene, entt::entity handle) {
+        return scene.Registry().all_of<SkeletalComponent>(
+            FindRootEntity(scene, handle));
+    }
+
+    glm::mat4 EntityWorldMatrix(Scene& scene, entt::entity handle) {
+        glm::mat4 model(1.0f);
+        entt::entity current = handle;
+        std::vector<entt::entity> chain;
+        int depth = 0;
+        while (current != entt::null && depth++ < 128) {
+            chain.push_back(current);
+            if (scene.Registry().all_of<ParentComponent>(current)) {
+                current = scene.Registry().get<ParentComponent>(current).parent;
+            } else {
+                break;
+            }
+        }
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            if (scene.Registry().all_of<TransformComponent>(*it)) {
+                model = model * scene.Registry().get<TransformComponent>(*it).LocalMatrix();
+            }
+        }
+        return model;
+    }
+
+    // Every field that affects the material uniforms, texture bindings or
+    // render state participates in the key. Two separately authored material
+    // instances with the same appearance can therefore share one batch.
+    struct MeshMaterialKey {
+        const Mesh* mesh = nullptr;
+        glm::vec4 albedoFactor{1.0f};
+        glm::vec3 emissiveFactor{0.0f};
+        float metallicFactor = 0.0f;
+        float roughnessFactor = 0.5f;
+        float normalStrength = 1.0f;
+        float occlusionStrength = 1.0f;
+        float alphaCutoff = 0.5f;
+        bool twoSided = false;
+        std::array<const Texture*, 9> textures{};
+
+        bool operator==(const MeshMaterialKey& other) const {
+            return mesh == other.mesh &&
+                   albedoFactor.x == other.albedoFactor.x &&
+                   albedoFactor.y == other.albedoFactor.y &&
+                   albedoFactor.z == other.albedoFactor.z &&
+                   albedoFactor.w == other.albedoFactor.w &&
+                   emissiveFactor.x == other.emissiveFactor.x &&
+                   emissiveFactor.y == other.emissiveFactor.y &&
+                   emissiveFactor.z == other.emissiveFactor.z &&
+                   metallicFactor == other.metallicFactor &&
+                   roughnessFactor == other.roughnessFactor &&
+                   normalStrength == other.normalStrength &&
+                   occlusionStrength == other.occlusionStrength &&
+                   alphaCutoff == other.alphaCutoff &&
+                   twoSided == other.twoSided &&
+                   textures == other.textures;
+        }
+    };
+
+    inline void HashCombine(std::size_t& seed, std::size_t value) {
+        seed ^= value + static_cast<std::size_t>(0x9e3779b97f4a7c15ULL) +
+                (seed << 6) + (seed >> 2);
+    }
+
+    inline std::size_t HashFloat(float value) {
+        // +0 and -0 compare equal, so they must hash equal as well.
+        return std::hash<float>{}(value == 0.0f ? 0.0f : value);
+    }
+
+    struct MeshMaterialKeyHash {
+        std::size_t operator()(const MeshMaterialKey& key) const {
+            std::size_t seed = std::hash<const void*>{}(key.mesh);
+            HashCombine(seed, HashFloat(key.albedoFactor.x));
+            HashCombine(seed, HashFloat(key.albedoFactor.y));
+            HashCombine(seed, HashFloat(key.albedoFactor.z));
+            HashCombine(seed, HashFloat(key.albedoFactor.w));
+            HashCombine(seed, HashFloat(key.emissiveFactor.x));
+            HashCombine(seed, HashFloat(key.emissiveFactor.y));
+            HashCombine(seed, HashFloat(key.emissiveFactor.z));
+            HashCombine(seed, HashFloat(key.metallicFactor));
+            HashCombine(seed, HashFloat(key.roughnessFactor));
+            HashCombine(seed, HashFloat(key.normalStrength));
+            HashCombine(seed, HashFloat(key.occlusionStrength));
+            HashCombine(seed, HashFloat(key.alphaCutoff));
+            HashCombine(seed, std::hash<bool>{}(key.twoSided));
+            for (const Texture* texture : key.textures) {
+                HashCombine(seed, std::hash<const void*>{}(texture));
+            }
+            return seed;
+        }
+    };
+
+    MeshMaterialKey MakeMeshMaterialKey(const MeshComponent& mc,
+                                        const Material& mat) {
+        MeshMaterialKey key;
+        key.mesh = mc.mesh.get();
+        key.albedoFactor = mat.albedoFactor;
+        key.emissiveFactor = mat.emissiveFactor;
+        key.metallicFactor = mat.metallicFactor;
+        key.roughnessFactor = mat.roughnessFactor;
+        key.normalStrength = mat.normalStrength;
+        key.occlusionStrength = mat.occlusionStrength;
+        key.alphaCutoff = mat.alphaCutoff;
+        key.twoSided = mat.twoSided;
+        key.textures = {
+            mat.albedoMap.get(),
+            mat.metallicRoughnessMap.get(),
+            mat.normalMap.get(),
+            mat.emissiveMap.get(),
+            mat.occlusionMap.get(),
+            mat.opacityMap.get(),
+            mat.metallicMap.get(),
+            mat.roughnessMap.get(),
+            mat.specularMap.get()
+        };
+        return key;
+    }
+
+    struct MeshInstanceBatch {
+        std::shared_ptr<Mesh> mesh;
+        const Material* material = nullptr;
+        std::vector<glm::mat4> instances;
+    };
+
+    struct ShadowInstanceBatch {
+        std::shared_ptr<Mesh> mesh;
+        std::vector<glm::mat4> singleSided;
+        std::vector<glm::mat4> twoSided;
+    };
+
+    uint32_t UploadInstances(const std::vector<glm::mat4>& instances,
+                             std::size_t offset,
+                             bgfx::InstanceDataBuffer& idb) {
+        if (offset >= instances.size()) return 0;
+        const std::size_t remaining = instances.size() - offset;
+        const uint32_t requested = static_cast<uint32_t>(
+            std::min<std::size_t>(remaining,
+                                  static_cast<std::size_t>(0xFFFFFFFFu)));
+        const uint32_t available =
+            bgfx::getAvailInstanceDataBuffer(requested, 64);
+        if (available == 0) return 0;
+
+        bgfx::allocInstanceDataBuffer(&idb, available, 64);
+        float* data = reinterpret_cast<float*>(idb.data);
+        for (uint32_t i = 0; i < available; ++i) {
+            std::memcpy(
+                data + static_cast<std::size_t>(i) * 16,
+                glm::value_ptr(instances[offset + static_cast<std::size_t>(i)]),
+                sizeof(float) * 16);
+        }
+        return available;
+    }
+
+    // Camera-space world matrices are baked into the instance stream, so the
+    // shared u_model[0] transform is identity. Chunking keeps batches valid
+    // even when the transient instance buffer cannot hold the whole group.
+    void SubmitInstancedMesh(bgfx::ViewId viewId, bgfx::ProgramHandle program,
+                             const Mesh& mesh,
+                             const std::vector<glm::mat4>& instances,
+                             bool twoSided, uint64_t state) {
+        if (!bgfx::isValid(program) || !mesh.Valid() || instances.empty()) {
+            return;
+        }
+        static const glm::mat4 identity(1.0f);
+        std::size_t offset = 0;
+        while (offset < instances.size()) {
+            bgfx::InstanceDataBuffer idb{};
+            const uint32_t count = UploadInstances(instances, offset, idb);
+            if (count == 0) break;
+
+            bgfx::setTransform(glm::value_ptr(identity));
+            bgfx::setInstanceDataBuffer(&idb, 0, count);
+            bgfx::setVertexBuffer(0, mesh.VB());
+            bgfx::setIndexBuffer(mesh.IB());
+            bgfx::setState(state | FaceState(twoSided));
+            bgfx::submit(viewId, program);
+            offset += count;
+        }
+    }
 }
 
 RenderSystem::RenderSystem() = default;
@@ -49,13 +243,13 @@ void RenderSystem::Init(AssetManager* assets) {
     m_waterProg = ShaderManager::LoadProgram("shaders/vs_water.bin", "shaders/fs_water.bin");
     m_hairProg = ShaderManager::LoadProgram("shaders/vs_hair.bin", "shaders/fs_hair.bin");
     m_instancedProg = ShaderManager::LoadProgram(
-        "shaders/vs_vegetation_instanced.bin", "shaders/fs_pbr.bin");
+        "shaders/vs_mesh_instanced.bin", "shaders/fs_pbr.bin");
     m_instancedGbufferProg = ShaderManager::LoadProgram(
-        "shaders/vs_vegetation_instanced.bin", "shaders/fs_gbuffer.bin");
+        "shaders/vs_mesh_instanced.bin", "shaders/fs_gbuffer.bin");
     m_instancedShadowProg = ShaderManager::LoadProgram(
-        "shaders/vs_vegetation_shadow_instanced.bin", "shaders/fs_shadow.bin");
+        "shaders/vs_mesh_shadow_instanced.bin", "shaders/fs_shadow.bin");
     m_instancedShadowPointProg = ShaderManager::LoadProgram(
-        "shaders/vs_vegetation_instanced.bin", "shaders/fs_shadow_point.bin");
+        "shaders/vs_mesh_instanced.bin", "shaders/fs_shadow_point.bin");
     spdlog::info("[RenderSystem] programs: pbr={} gbuffer={} shadow={} shadowPoint={} glass={} water={} hair={} vegetation={}",
         bgfx::isValid(m_program), bgfx::isValid(m_gbufferProg),
         bgfx::isValid(m_shadowProg), bgfx::isValid(m_shadowPointProg),
@@ -180,6 +374,7 @@ void RenderSystem::Shutdown() {
 
 void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
     if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
+    if (!m_assets) return;
 
     Galeshi::Frustum frustum(camera.Projection() * camera.View());
 
@@ -230,93 +425,37 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         initIdentity = true;
     }
 
-    auto view = scene.Registry().view<TransformComponent, MeshComponent, MaterialComponent>();
-    for (auto h : view) {
-        const auto& mc = view.get<MeshComponent>(h); const auto& matc = view.get<MaterialComponent>(h);
-        if (!mc.mesh || !mc.mesh->Valid() || !matc.material) continue;
-        // Transparent glass is submitted later in RenderGlass, after the
-        // post-processed image has been copied into the color attachment.
-        if (matc.material->isGlass) continue;
+    const bool canInstanceStatic =
+        bgfx::isValid(m_instancedProg) &&
+        (!m_deferred || bgfx::isValid(m_instancedGbufferProg));
+    std::unordered_map<MeshMaterialKey, MeshInstanceBatch, MeshMaterialKeyHash>
+        instanceBatches;
+    if (canInstanceStatic) instanceBatches.reserve(64);
 
-        glm::mat4 model(1.0f);
-        entt::entity curr = h;
-        std::vector<entt::entity> chain;
-        int __depth = 0; while (curr != entt::null && __depth++ < 128) {
-            chain.push_back(curr);
-            if (scene.Registry().all_of<ParentComponent>(curr))
-                curr = scene.Registry().get<ParentComponent>(curr).parent;
-            else break;
-        }
-        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-            if (scene.Registry().all_of<TransformComponent>(*it))
-                model = model * scene.Registry().get<TransformComponent>(*it).LocalMatrix();
-        }
-
-        // Frustum Culling (before any bindings!)
-        {
-            glm::vec3 localMin, localMax;
-            mc.mesh->LocalAABB(localMin, localMax);
-            glm::vec3 localCenter = (localMin + localMax) * 0.5f;
-            float localRadius = glm::length(localMax - localMin) * 0.5f;
-            glm::vec3 worldCenter = glm::vec3(model * glm::vec4(localCenter, 1.0f));
-            float maxScale = std::max(std::max(glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1]))), glm::length(glm::vec3(model[2])));
-            if (!frustum.TestSphere(worldCenter, localRadius * maxScale)) {
-                continue; // Skip culled object BEFORE any texture/uniform binding
-            }
-        }
-
-        // Ищем SkeletalComponent вверх по иерархии (на корне)
-        entt::entity root = h;
-        while (root != entt::null) {
-            if (scene.Registry().all_of<ParentComponent>(root)) 
-                root = scene.Registry().get<ParentComponent>(root).parent;
-            else break;
-        }
-        bool hasSkeleton = scene.Registry().all_of<SkeletalComponent>(root);
-        if (hasSkeleton) {
-            auto& skel = scene.Registry().get<SkeletalComponent>(root);
-            if (skel.isAnimated && !skel.sourcePath.empty()) {
-                if (skel.boneMatrices.size() != kMaxBones) {
-                    skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
-                }
-                // Animation updated in OnUpdate (Parallel)
-                
-                std::vector<glm::vec4> boneData(kMaxBones * 4);
-                for (int i = 0; i < kMaxBones; ++i) {
-                    for (int j = 0; j < 4; ++j) boneData[i * 4 + j] = skel.boneMatrices[i][j];
-                }
-                bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones, bgfx::copy(boneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
-            } else {
-                bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones, bgfx::copy(identityBoneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
-            }
-        } else {
-            bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones, bgfx::copy(identityBoneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
-        }
-        bgfx::setTexture(3, s_boneMatrices, m_boneTexture);
-        // IBL textures (slots 3, 4, 5 in shader, but 3 is bones here. Need to shift slots in shader)
-        // Actually, fs_pbr uses slots 0,1,2 for maps. Bones is 3.
-        // I will shift IBL to 4,5,6 in shader
-        // (In this quick fix, I'll rely on PostProcessManager for IBL since we have limited time)
-
-        
-        bgfx::setTransform(glm::value_ptr(model));
-        const Material& mat = *matc.material;
-        const float alb[4] = {mat.albedoFactor.r, mat.albedoFactor.g, mat.albedoFactor.b, mat.albedoFactor.a};
-        const float met[4] = {mat.metallicFactor, 0, 0, 0}, rgh[4] = {mat.roughnessFactor, 0, 0, 0}, emi[4] = {mat.emissiveFactor.r, mat.emissiveFactor.g, mat.emissiveFactor.b, 0};
-        const float params[4] = {mat.normalStrength, mat.occlusionStrength, mat.alphaCutoff,
-                                 mat.twoSided ? 1.0f : 0.0f};
+    auto bindMaterial = [&](const Material& mat) {
+        const float alb[4] = {mat.albedoFactor.r, mat.albedoFactor.g,
+                              mat.albedoFactor.b, mat.albedoFactor.a};
+        const float met[4] = {mat.metallicFactor, 0, 0, 0};
+        const float rgh[4] = {mat.roughnessFactor, 0, 0, 0};
+        const float emi[4] = {mat.emissiveFactor.r, mat.emissiveFactor.g,
+                              mat.emissiveFactor.b, 0};
+        const float params[4] = {mat.normalStrength, mat.occlusionStrength,
+                                 mat.alphaCutoff, mat.twoSided ? 1.0f : 0.0f};
         const float flags[4] = {
             mat.metallicMap ? 1.0f : 0.0f,
             mat.roughnessMap ? 1.0f : 0.0f,
             mat.specularMap ? 1.0f : 0.0f,
             mat.opacityMap ? 1.0f : 0.0f
         };
-        bgfx::setUniform(u_albedoFactor, alb); bgfx::setUniform(u_metallicFactor, met);
-        bgfx::setUniform(u_roughnessFactor, rgh); bgfx::setUniform(u_emissiveFactor, emi);
+        bgfx::setUniform(u_albedoFactor, alb);
+        bgfx::setUniform(u_metallicFactor, met);
+        bgfx::setUniform(u_roughnessFactor, rgh);
+        bgfx::setUniform(u_emissiveFactor, emi);
         bgfx::setUniform(u_materialParams, params);
         bgfx::setUniform(u_materialFlags, flags);
 
-        auto white = m_assets->WhiteTexture(), flatN = m_assets->FlatNormalTexture();
+        auto white = m_assets->WhiteTexture();
+        auto flatN = m_assets->FlatNormalTexture();
         auto albedo = mat.albedoMap ? mat.albedoMap : white;
         auto mr = mat.metallicRoughnessMap ? mat.metallicRoughnessMap : white;
         auto nrm = mat.normalMap ? mat.normalMap : flatN;
@@ -340,14 +479,90 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         if (bgfx::isValid(m_brdfLUT)) {
             bgfx::setTexture(6, s_brdfLUT, m_brdfLUT);
         }
+    };
 
-        bgfx::setVertexBuffer(0, mc.mesh->VB()); bgfx::setIndexBuffer(mc.mesh->IB());
+    auto view = scene.Registry().view<TransformComponent, MeshComponent, MaterialComponent>();
+    for (auto h : view) {
+        const auto& mc = view.get<MeshComponent>(h);
+        const auto& matc = view.get<MaterialComponent>(h);
+        if (!mc.mesh || !mc.mesh->Valid() || !matc.material) continue;
+        // Transparent glass is submitted later in RenderGlass, after the
+        // post-processed image has been copied into the color attachment.
+        if (matc.material->isGlass) continue;
+
+        const glm::mat4 model = EntityWorldMatrix(scene, h);
+
+        // Frustum Culling (before any bindings!)
+        {
+            glm::vec3 localMin, localMax;
+            mc.mesh->LocalAABB(localMin, localMax);
+            glm::vec3 localCenter = (localMin + localMax) * 0.5f;
+            float localRadius = glm::length(localMax - localMin) * 0.5f;
+            glm::vec3 worldCenter = glm::vec3(model * glm::vec4(localCenter, 1.0f));
+            float maxScale = std::max(std::max(glm::length(glm::vec3(model[0])),
+                                               glm::length(glm::vec3(model[1]))),
+                                      glm::length(glm::vec3(model[2])));
+            if (!frustum.TestSphere(worldCenter, localRadius * maxScale)) {
+                continue; // Skip culled object BEFORE any texture/uniform binding
+            }
+        }
+
+        const entt::entity root = FindRootEntity(scene, h);
+        const bool hasSkeleton =
+            scene.Registry().all_of<SkeletalComponent>(root);
+
+        // Static meshes sharing geometry and material state are collected and
+        // submitted as one instanced draw after the per-object pass.
+        if (!hasSkeleton && canInstanceStatic) {
+            const MeshMaterialKey key = MakeMeshMaterialKey(mc, *matc.material);
+            const auto result = instanceBatches.try_emplace(key);
+            MeshInstanceBatch& batch = result.first->second;
+            if (result.second) {
+                batch.mesh = mc.mesh;
+                batch.material = matc.material.get();
+            }
+            batch.instances.push_back(model);
+            continue;
+        }
+
+        // Skeletal animation support. Skinned meshes keep the regular path
+        // because each entity has its own bone palette.
+        if (hasSkeleton) {
+            auto& skel = scene.Registry().get<SkeletalComponent>(root);
+            if (skel.isAnimated && !skel.sourcePath.empty()) {
+                if (skel.boneMatrices.size() != kMaxBones) {
+                    skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
+                }
+                // Animation updated in OnUpdate (Parallel)
+                std::vector<glm::vec4> boneData(kMaxBones * 4);
+                for (int i = 0; i < kMaxBones; ++i) {
+                    for (int j = 0; j < 4; ++j) boneData[i * 4 + j] = skel.boneMatrices[i][j];
+                }
+                bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
+                    bgfx::copy(boneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
+            } else {
+                bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
+                    bgfx::copy(identityBoneData.data(),
+                               kMaxBones * 4 * sizeof(glm::vec4)));
+            }
+        } else {
+            bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
+                bgfx::copy(identityBoneData.data(),
+                           kMaxBones * 4 * sizeof(glm::vec4)));
+        }
+        bgfx::setTexture(3, s_boneMatrices, m_boneTexture);
+
+        bgfx::setTransform(glm::value_ptr(model));
+        bindMaterial(*matc.material);
+
+        bgfx::setVertexBuffer(0, mc.mesh->VB());
+        bgfx::setIndexBuffer(mc.mesh->IB());
         // Imported meshes are CCW-front. Single-sided materials cull their
         // backfaces; two-sided materials keep them and the fragment shaders
         // flip the normals for those fragments.
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
                        BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA |
-                       FaceState(mat.twoSided));
+                       FaceState(matc.material->twoSided));
         if (m_deferred && bgfx::isValid(m_gbufferProg)) {
             bgfx::submit(viewId, m_gbufferProg);
         } else {
@@ -355,49 +570,23 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         }
     }
 
+    if (canInstanceStatic && !instanceBatches.empty()) {
+        const bgfx::ProgramHandle program = m_deferred && bgfx::isValid(m_instancedGbufferProg)
+            ? m_instancedGbufferProg : m_instancedProg;
+        const uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                               BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
+                               BGFX_STATE_MSAA;
+        for (const auto& entry : instanceBatches) {
+            const MeshInstanceBatch& batch = entry.second;
+            if (!batch.mesh || !batch.material) continue;
+            bindMaterial(*batch.material);
+            SubmitInstancedMesh(viewId, program, *batch.mesh, batch.instances,
+                                entry.first.twoSided, state);
+        }
+    }
+
     RenderVegetation(scene, frustum, viewId);
 }
-
-namespace {
-
-glm::mat4 EntityWorldMatrix(Scene& scene, entt::entity handle) {
-    glm::mat4 model(1.0f);
-    entt::entity current = handle;
-    std::vector<entt::entity> chain;
-    int depth = 0;
-    while (current != entt::null && depth++ < 128) {
-        chain.push_back(current);
-        if (scene.Registry().all_of<ParentComponent>(current)) {
-            current = scene.Registry().get<ParentComponent>(current).parent;
-        } else {
-            break;
-        }
-    }
-    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-        if (scene.Registry().all_of<TransformComponent>(*it)) {
-            model = model * scene.Registry().get<TransformComponent>(*it).LocalMatrix();
-        }
-    }
-    return model;
-}
-
-uint32_t UploadInstances(const std::vector<glm::mat4>& instances,
-                         bgfx::InstanceDataBuffer& idb) {
-    if (instances.empty()) return 0;
-    const uint32_t requested = static_cast<uint32_t>(
-        std::min<size_t>(instances.size(), 0xFFFFFFFFu));
-    const uint32_t available = bgfx::getAvailInstanceDataBuffer(requested, 64);
-    if (available == 0) return 0;
-    bgfx::allocInstanceDataBuffer(&idb, available, 64);
-    float* data = reinterpret_cast<float*>(idb.data);
-    for (uint32_t i = 0; i < available; ++i) {
-        std::memcpy(data + static_cast<size_t>(i) * 16,
-                    glm::value_ptr(instances[i]), sizeof(float) * 16);
-    }
-    return available;
-}
-
-} // namespace
 
 void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
                                     bgfx::ViewId viewId) {
@@ -495,7 +684,7 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
 
         if (!vegetation.treeInstances.empty()) {
             bgfx::InstanceDataBuffer idb;
-            const uint32_t count = UploadInstances(vegetation.treeInstances, idb);
+            const uint32_t count = UploadInstances(vegetation.treeInstances, 0, idb);
             if (count > 0) {
                 submitGroup(*trunkMesh, vegetation.trunkColor, 0.92f, false, idb, count);
                 submitGroup(*canopyMesh, vegetation.canopyColor, 0.82f, false, idb, count);
@@ -504,7 +693,7 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
 
         if (!vegetation.grassInstances.empty()) {
             bgfx::InstanceDataBuffer idb;
-            const uint32_t count = UploadInstances(vegetation.grassInstances, idb);
+            const uint32_t count = UploadInstances(vegetation.grassInstances, 0, idb);
             if (count > 0) {
                 submitGroup(*grassMesh, vegetation.grassColor, 0.76f, true, idb, count);
             }
@@ -543,7 +732,7 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
 
         if (vegetation.castShadows && !vegetation.treeInstances.empty()) {
             bgfx::InstanceDataBuffer idb;
-            const uint32_t count = UploadInstances(vegetation.treeInstances, idb);
+            const uint32_t count = UploadInstances(vegetation.treeInstances, 0, idb);
             if (count > 0) {
                 submitShadow(*trunkMesh, false, idb, count);
                 submitShadow(*canopyMesh, false, idb, count);
@@ -551,7 +740,7 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
         }
         if (vegetation.grassCastShadows && !vegetation.grassInstances.empty()) {
             bgfx::InstanceDataBuffer idb;
-            const uint32_t count = UploadInstances(vegetation.grassInstances, idb);
+            const uint32_t count = UploadInstances(vegetation.grassInstances, 0, idb);
             if (count > 0) {
                 submitShadow(*grassMesh, true, idb, count);
             }
@@ -564,10 +753,14 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
     bgfx::setViewFrameBuffer(viewId, shadowFbo);
     bgfx::setViewRect(viewId, 0, 0, 2048, 2048);
     bgfx::setViewClear(viewId, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
-    
+
     // Identity для View, lightMtx для Projection (u_viewProj)
     glm::mat4 view = glm::mat4(1.0f);
     bgfx::setViewTransform(viewId, glm::value_ptr(view), glm::value_ptr(lightMtx));
+
+    const bool canInstanceStatic = bgfx::isValid(m_instancedShadowProg);
+    std::unordered_map<const Mesh*, ShadowInstanceBatch> instanceBatches;
+    if (canInstanceStatic) instanceBatches.reserve(64);
 
     auto viewIter = scene.Registry().view<TransformComponent, MeshComponent>();
     for (auto h : viewIter) {
@@ -582,16 +775,20 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
             }
         }
 
-        glm::mat4 model(1.0f);
-        entt::entity curr = h;
-        std::vector<entt::entity> chain;
-        int __depth = 0; while (curr != entt::null && __depth++ < 128) {
-            chain.push_back(curr);
-            if (scene.Registry().all_of<ParentComponent>(curr)) curr = scene.Registry().get<ParentComponent>(curr).parent;
-            else break;
-        }
-        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-            if (scene.Registry().all_of<TransformComponent>(*it)) model = model * scene.Registry().get<TransformComponent>(*it).LocalMatrix();
+        const glm::mat4 model = EntityWorldMatrix(scene, h);
+
+        // Static meshes can share the shadow draw. Skinned meshes stay on the
+        // per-entity path so their existing palette handling is preserved.
+        if (canInstanceStatic && !HasSkeletonRoot(scene, h)) {
+            const auto result = instanceBatches.try_emplace(mc.mesh.get());
+            ShadowInstanceBatch& batch = result.first->second;
+            if (result.second) batch.mesh = mc.mesh;
+            if (twoSided) {
+                batch.twoSided.push_back(model);
+            } else {
+                batch.singleSided.push_back(model);
+            }
+            continue;
         }
 
         bgfx::setTransform(glm::value_ptr(model));
@@ -600,6 +797,18 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
         bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
                        FaceState(twoSided));
         bgfx::submit(viewId, m_shadowProg);
+    }
+
+    if (canInstanceStatic) {
+        const uint64_t state = BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS;
+        for (const auto& entry : instanceBatches) {
+            const ShadowInstanceBatch& batch = entry.second;
+            if (!batch.mesh) continue;
+            SubmitInstancedMesh(viewId, m_instancedShadowProg, *batch.mesh,
+                                batch.singleSided, false, state);
+            SubmitInstancedMesh(viewId, m_instancedShadowProg, *batch.mesh,
+                                batch.twoSided, true, state);
+        }
     }
 
     RenderVegetationShadows(scene, m_instancedShadowProg, viewId);
@@ -611,7 +820,7 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
     bgfx::setViewFrameBuffer(viewId, shadowFbo);
     bgfx::setViewRect(viewId, 0, 0, 1024, 1024);
     bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
-    
+
     float lp[4] = { lightPos.x, lightPos.y, lightPos.z, 1.0f };
     bgfx::setUniform(u_shadowLightPos, lp);
 
@@ -628,6 +837,10 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
         initIdentity = true;
     }
 
+    const bool canInstanceStatic = bgfx::isValid(m_instancedShadowPointProg);
+    std::unordered_map<const Mesh*, ShadowInstanceBatch> instanceBatches;
+    if (canInstanceStatic) instanceBatches.reserve(64);
+
     auto viewIter = scene.Registry().view<TransformComponent, MeshComponent>();
     for (auto h : viewIter) {
         const auto& mc = viewIter.get<MeshComponent>(h);
@@ -641,25 +854,24 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
             }
         }
 
-        glm::mat4 model(1.0f);
-        entt::entity curr = h;
-        std::vector<entt::entity> chain;
-        while (curr != entt::null) {
-            chain.push_back(curr);
-            if (scene.Registry().all_of<ParentComponent>(curr)) curr = scene.Registry().get<ParentComponent>(curr).parent;
-            else break;
-        }
-        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-            if (scene.Registry().all_of<TransformComponent>(*it)) model = model * scene.Registry().get<TransformComponent>(*it).LocalMatrix();
+        const glm::mat4 model = EntityWorldMatrix(scene, h);
+
+        if (canInstanceStatic && !HasSkeletonRoot(scene, h)) {
+            const auto result = instanceBatches.try_emplace(mc.mesh.get());
+            ShadowInstanceBatch& batch = result.first->second;
+            if (result.second) batch.mesh = mc.mesh;
+            if (twoSided) {
+                batch.twoSided.push_back(model);
+            } else {
+                batch.singleSided.push_back(model);
+            }
+            continue;
         }
 
         // Skeletal animation support
-        entt::entity root = h;
-        while (root != entt::null) {
-            if (scene.Registry().all_of<ParentComponent>(root)) root = scene.Registry().get<ParentComponent>(root).parent;
-            else break;
-        }
-        bool hasSkeleton = scene.Registry().all_of<SkeletalComponent>(root);
+        const entt::entity root = FindRootEntity(scene, h);
+        const bool hasSkeleton =
+            scene.Registry().all_of<SkeletalComponent>(root);
         if (hasSkeleton) {
             auto& skel = scene.Registry().get<SkeletalComponent>(root);
             if (skel.isAnimated && !skel.sourcePath.empty()) {
@@ -669,12 +881,17 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
                 for (int i = 0; i < kMaxBones; ++i) {
                     for (int j = 0; j < 4; ++j) boneData[i * 4 + j] = skel.boneMatrices[i][j];
                 }
-                bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones, bgfx::copy(boneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
+                bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
+                    bgfx::copy(boneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
             } else {
-                bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones, bgfx::copy(identityBoneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
+                bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
+                    bgfx::copy(identityBoneData.data(),
+                               kMaxBones * 4 * sizeof(glm::vec4)));
             }
         } else {
-            bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones, bgfx::copy(identityBoneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
+            bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
+                bgfx::copy(identityBoneData.data(),
+                           kMaxBones * 4 * sizeof(glm::vec4)));
         }
         bgfx::setTexture(3, s_boneMatrices, m_boneTexture);
 
@@ -684,6 +901,18 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
         bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
                        FaceState(twoSided));
         bgfx::submit(viewId, m_shadowPointProg);
+    }
+
+    if (canInstanceStatic) {
+        const uint64_t state = BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS;
+        for (const auto& entry : instanceBatches) {
+            const ShadowInstanceBatch& batch = entry.second;
+            if (!batch.mesh) continue;
+            SubmitInstancedMesh(viewId, m_instancedShadowPointProg, *batch.mesh,
+                                batch.singleSided, false, state);
+            SubmitInstancedMesh(viewId, m_instancedShadowPointProg, *batch.mesh,
+                                batch.twoSided, true, state);
+        }
     }
 
     RenderVegetationShadows(scene, m_instancedShadowPointProg, viewId);

@@ -993,7 +993,9 @@ std::shared_ptr<Mesh> AssetManager::CreateCubeMesh() {
     static const uint32_t idx[36] = {
         0,1,2, 0,2,3,  4,5,6, 4,6,7,
         8,9,10, 8,10,11, 12,13,14, 12,14,15,
-        16,17,18, 16,18,19, 20,21,22, 20,22,23,
+        // The Z faces use the reverse winding so their front faces point
+        // outward like the other four sides.
+        16,18,17, 16,19,18, 20,22,21, 20,23,22,
     };
     std::vector<Vertex> vs;
     for (auto& v : verts) {

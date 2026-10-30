@@ -3,6 +3,10 @@ $output v_worldPos, v_normal, v_tangent, v_uv
 
 #include <bgfx_shader.sh>
 
+// Generic instanced static-mesh vertex shader. The per-instance matrix is
+// concatenated with u_model[0], which lets vegetation use a landscape-space
+// transform while repeated scene meshes pass world-space matrices with an
+// identity u_model[0].
 void main()
 {
     mat4 instanceModel = mtxFromCols(i_data0, i_data1, i_data2, i_data3);
