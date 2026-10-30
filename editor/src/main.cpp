@@ -1150,6 +1150,8 @@ private:
         m_history.clear();
         m_historyIndex = -1;
         m_currentScenePath.clear();
+        m_uiCanvasEntity = entt::null;
+        m_uiWidgetIndex = -1;
         if (m_serializer) PushHistory(); // empty-scene snapshot for Undo/Redo
     }
 
@@ -1720,26 +1722,37 @@ if (ImGui::BeginMenu("File")) {
             }
             
             if (ImGui::MenuItem("Landscape")) {
-                auto e = m_scene.CreateEntity("Landscape");
-                auto& lc = e.AddComponent<Galeshi::LandscapeComponent>();
-                lc.sizeX = 100; lc.sizeZ = 100; lc.scale = 1.0f;
-                lc.heights.resize(lc.sizeX * lc.sizeZ, 0.0f);
-                
-                auto mesh = std::make_shared<Galeshi::Mesh>();
-                Galeshi::LandscapeMesh::Rebuild(lc, *mesh);
-                
-                e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ mesh, "", "landscape" });
-                auto mat = std::make_shared<Galeshi::Material>();
-                mat->albedoFactor = {0.4f, 0.6f, 0.3f, 1.0f};
-                mat->roughnessFactor = 0.9f;
-                e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+                // Only one landscape is allowed per scene. If one already
+                // exists, select it instead of creating a duplicate.
+                auto landscapeView =
+                    m_scene.Registry().view<Galeshi::LandscapeComponent>();
+                if (!landscapeView.empty()) {
+                    const entt::entity existing = *landscapeView.begin();
+                    m_editor.Select(Galeshi::Entity(existing, &m_scene));
+                    spdlog::warn("[Editor] Landscape already exists; duplicate discarded");
+                } else {
+                    auto e = m_scene.CreateEntity("Landscape");
+                    auto& lc = e.AddComponent<Galeshi::LandscapeComponent>();
+                    lc.sizeX = 100; lc.sizeZ = 100; lc.scale = 1.0f;
+                    lc.heights.resize(lc.sizeX * lc.sizeZ, 0.0f);
 
-                auto& veg = e.AddComponent<Galeshi::VegetationComponent>();
-                Galeshi::VegetationGenerator::Generate(lc, veg);
-                spdlog::info("[Editor] Landscape vegetation: {} trees, {} grass instances",
-                             veg.treeInstances.size(), veg.grassInstances.size());
-                
-                m_editor.Select(e);
+                    auto mesh = std::make_shared<Galeshi::Mesh>();
+                    Galeshi::LandscapeMesh::Rebuild(lc, *mesh);
+
+                    e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ mesh, "", "landscape" });
+
+                    auto mat = std::make_shared<Galeshi::Material>();
+                    mat->albedoFactor = {0.4f, 0.6f, 0.3f, 1.0f};
+                    mat->roughnessFactor = 0.9f;
+                    e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+
+                    auto& veg = e.AddComponent<Galeshi::VegetationComponent>();
+                    Galeshi::VegetationGenerator::Generate(lc, veg);
+                    spdlog::info("[Editor] Landscape vegetation: {} trees, {} grass instances",
+                                 veg.treeInstances.size(), veg.grassInstances.size());
+
+                    m_editor.Select(e);
+                }
             }
             if (ImGui::MenuItem("Cube")) {
                 auto e = MakeCube("Cube", {0, 0, 0});
@@ -1931,12 +1944,18 @@ if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Reset Layout")) m_resetLayout = true;
             ImGui::Separator();
             if (ImGui::MenuItem("Build Scene")) {
-                m_editor.ClearSelection();
-                m_editor.isPlaying = false;
-                m_physics->Reset();
-                m_scene.Registry().clear();
-                if (m_particles) m_particles->Reset();
-                m_assets->Clear();
+                // Build Scene replaces the current document, not append to it.
+                // Unload scene-owned runtime state and GPU assets first, then
+                // drop the previous snapshot history so Undo cannot restore
+                // the scene that was just replaced.
+                UnloadSceneContent();
+                m_history.clear();
+                m_historyIndex = -1;
+                m_uiCanvasEntity = entt::null;
+                m_uiWidgetIndex = -1;
+                m_scene.AudioBuses().fill(Galeshi::AudioBusSettings{});
+                m_postProcess.ResetTaaHistory();
+                spdlog::info("[Editor] Build Scene: previous scene cleared");
                 StartAsyncLoad("Built Scene", [this]() {
                     BuildTestScene();
                     PushHistory();
