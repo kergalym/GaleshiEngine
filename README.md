@@ -53,6 +53,7 @@ The primary rendering path is deferred:
 - Tiled light culling through a compute shader.
 - Frustum culling for scene meshes.
 - Animated procedural water with Fresnel environment reflections, screen-space refraction, depth absorption, shoreline/crest foam, and sun sparkle.
+- Procedural groom hair with guide curves, dense skin-aware strands, spring/wind simulation, and anisotropic ribbon shading.
 - Skybox and debug line rendering.
 
 There is also a forward PBR fallback in `RenderSystem`, but the deferred path is the primary one and is enabled by default.

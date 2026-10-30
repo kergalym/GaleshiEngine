@@ -37,6 +37,7 @@ public:
 
     void LocalAABB(glm::vec3& outMin, glm::vec3& outMax) const;
     void UpdateVertices(const std::vector<glm::vec3>& newPositions);
+    void UpdateVertexData(const std::vector<Vertex>& vertices);
 
 private:
     bgfx::DynamicVertexBufferHandle m_vb = BGFX_INVALID_HANDLE;

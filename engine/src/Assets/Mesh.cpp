@@ -50,6 +50,16 @@ void Mesh::LocalAABB(glm::vec3& outMin, glm::vec3& outMax) const {
     }
 }
 
+void Mesh::UpdateVertexData(const std::vector<Vertex>& vertices) {
+    if (vertices.size() != m_vertices.size()) return;
+    m_vertices = vertices;
+    if (bgfx::isValid(m_vb)) {
+        bgfx::update(m_vb, 0,
+                     bgfx::copy(m_vertices.data(),
+                                static_cast<uint32_t>(m_vertices.size() * sizeof(Vertex))));
+    }
+}
+
 void Mesh::UpdateVertices(const std::vector<glm::vec3>& newPositions) {
     if (newPositions.size() != m_vertices.size()) return;
     for (size_t i = 0; i < m_vertices.size(); ++i) {

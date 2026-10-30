@@ -21,6 +21,11 @@ public:
                      const float lightDir[4], const float lightColorIntensity[4],
                      bgfx::ViewId viewId, uint16_t width, uint16_t height,
                      float time, float nearZ, float farZ);
+    void RenderHair(Scene& scene, const Camera& camera,
+                    bgfx::TextureHandle sceneDepth, bgfx::TextureHandle envCube,
+                    const float sunDir[4], const float lightColorIntensity[4],
+                    bgfx::ViewId viewId, uint16_t width, uint16_t height,
+                    float nearZ, float farZ);
     
     void SetSkipGlass(bool skip) { m_skipGlass = skip; }
     bool DeferredEnabled() const { return m_deferred; }
@@ -47,6 +52,7 @@ private:
     bgfx::UniformHandle u_shadowLightPos = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_glassProg    = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_waterProg    = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_hairProg     = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_instancedProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_instancedGbufferProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_instancedShadowProg = BGFX_INVALID_HANDLE;
@@ -73,6 +79,13 @@ private:
     bgfx::UniformHandle s_waterSceneColor = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_waterDepth = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_waterEnvCube = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_hairParams0 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_hairParams1 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_hairInvNearFar = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_hairRootColor = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_hairTipColor = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_hairDepth = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_hairEnvCube = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_pointLightPosRadius = BGFX_INVALID_HANDLE, u_pointLightColorInt = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_pointLightCount = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_boneMatrices = BGFX_INVALID_HANDLE;

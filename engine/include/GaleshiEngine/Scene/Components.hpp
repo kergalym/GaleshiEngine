@@ -18,6 +18,7 @@ namespace Galeshi {
 class Mesh;
 class Material;
 class Texture;
+class GroomData;
 
 struct NameComponent {
     std::string name = "Entity";
@@ -453,6 +454,63 @@ struct WaterComponent {
     glm::vec3 shallowColor{0.08f, 0.42f, 0.46f};
     glm::vec3 deepColor{0.008f, 0.045f, 0.12f};
     glm::vec3 foamColor{0.92f, 0.96f, 1.0f};
+};
+
+// Procedural groom hair. The runtime generates guide curves from the scalp
+// region of a mesh, derives dense strands from those guides, simulates them in
+// world space, and renders camera-facing ribbons.
+struct GroomComponent {
+    bool enabled = true;
+    bool simulate = true;
+    bool visibleInEditor = true;
+
+    // Optional target mesh name. Empty means "use this entity's mesh, or the
+    // highest descendant mesh" (the head cap of a character).
+    std::string targetMeshName;
+
+    // Groom topology.
+    int guideCount = 96;
+    int strandsPerGuide = 12;
+    int segments = 8;
+
+    // Shape.
+    float length = 0.22f;
+    float width = 0.006f;
+    float rootWidth = 1.0f;
+    float tipWidth = 0.08f;
+    float clumpRadius = 0.012f;
+    float clumping = 0.65f;
+    float frizz = 0.05f;
+    float curl = 0.04f;
+    float volume = 0.35f;
+
+    // Scalp selection in normalized mesh-Y space and root direction.
+    float scalpStart = 0.62f;
+    float scalpEnd = 1.0f;
+    float normalThreshold = -0.15f;
+    glm::vec3 groomDirection{0.0f, -1.0f, -0.4f};
+
+    // Dynamics.
+    float gravity = 0.35f;
+    float stiffness = 0.7f;
+    float damping = 0.25f;
+    float windStrength = 0.15f;
+    glm::vec3 windDirection{1.0f, 0.0f, 0.2f};
+    float windFrequency = 0.8f;
+
+    // Shading.
+    float specular = 0.35f;
+    float shininess = 36.0f;
+    float ambient = 0.28f;
+    float opacity = 0.9f;
+    float randomTint = 0.12f;
+    glm::vec3 rootColor{0.10f, 0.055f, 0.035f};
+    glm::vec3 tipColor{0.34f, 0.19f, 0.10f};
+
+    uint32_t seed = 1337;
+
+    // Runtime-only generated data. Never serialized.
+    std::shared_ptr<GroomData> runtime;
 };
 
 // Screen-space UI canvas.  Rendered by UIRuntime through ImGui; the widget

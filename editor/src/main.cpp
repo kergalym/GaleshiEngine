@@ -18,6 +18,7 @@
 #include "GaleshiEngine/Assets/LandscapeMesh.hpp"
 #include "GaleshiEngine/Assets/VegetationGenerator.hpp"
 #include "GaleshiEngine/Animation/AnimationSystem.hpp"
+#include "GaleshiEngine/Renderer/GroomSystem.hpp"
 #include "GaleshiEngine/AI/BehaviorTree.hpp"
 #include "GaleshiEngine/Editor/EditorState.hpp"
 #include "GaleshiEngine/Editor/ContentBrowser.hpp"
@@ -769,6 +770,9 @@ protected:
         // Skeletal playback and animation state machines. This samples the
         // active clip and blends the previous state when a transition fires.
         Galeshi::AnimationSystem::Update(m_scene, *m_assets, dt);
+        // Hair follows the freshly sampled skeleton, then simulates its own
+        // spring chains before the render pass builds camera-facing ribbons.
+        Galeshi::GroomSystem::Update(m_scene, *m_assets, dt);
 
         // Particle simulation (world-space billboards).
         if (m_particles) m_particles->Update(m_scene, dt);
@@ -1753,6 +1757,22 @@ if (ImGui::BeginMenu("File")) {
                 auto& tc = e.GetComponent<Galeshi::TransformComponent>();
                 tc.position = {m_editor.camTarget.x, 0.0f, m_editor.camTarget.z};
                 m_editor.Select(e);
+            }
+            if (ImGui::MenuItem("Groom Hair")) {
+                Galeshi::Entity selected = m_editor.Selected(&m_scene);
+                if (selected &&
+                    (selected.HasComponent<Galeshi::MeshComponent>() ||
+                     selected.HasComponent<Galeshi::SkeletalComponent>())) {
+                    PushHistory();
+                    selected.AddComponent<Galeshi::GroomComponent>();
+                    m_editor.Select(selected);
+                } else {
+                    auto e = m_scene.CreateEntity("GroomHair");
+                    e.AddComponent<Galeshi::GroomComponent>();
+                    e.GetComponent<Galeshi::TransformComponent>().position =
+                        m_editor.camTarget;
+                    m_editor.Select(e);
+                }
             }
             if (ImGui::MenuItem("Audio Source")) {
                 auto e = m_scene.CreateEntity("AudioSource");
@@ -3835,6 +3855,185 @@ if (ImGui::BeginMenu("File")) {
         }
     }
 
+    void DrawGroomSettings(Galeshi::GroomComponent& groom) {
+        ImGui::Checkbox("Enabled##groom", &groom.enabled);
+        ImGui::SameLine();
+        ImGui::Checkbox("Simulate", &groom.simulate);
+        if (groom.runtime) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("%zu guides / %zu strands",
+                                groom.runtime->guides.size(),
+                                groom.runtime->strands.size());
+        }
+
+        char targetBuffer[128];
+        std::snprintf(targetBuffer, sizeof(targetBuffer), "%s",
+                      groom.targetMeshName.c_str());
+        if (ImGui::InputText("Target Mesh", targetBuffer, sizeof(targetBuffer))) {
+            groom.targetMeshName = targetBuffer;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Leave empty to use this entity's mesh, or the "
+                              "highest descendant mesh of a character.");
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Presets");
+        if (ImGui::Button("Short Fur")) {
+            PushHistory();
+            groom.guideCount = 160;
+            groom.strandsPerGuide = 10;
+            groom.segments = 6;
+            groom.length = 0.075f;
+            groom.width = 0.0035f;
+            groom.clumpRadius = 0.008f;
+            groom.clumping = 0.78f;
+            groom.frizz = 0.025f;
+            groom.curl = 0.018f;
+            groom.volume = 0.18f;
+            groom.scalpStart = 0.56f;
+            groom.gravity = 0.18f;
+            groom.stiffness = 0.85f;
+            groom.damping = 0.32f;
+            groom.windStrength = 0.08f;
+            groom.rootColor = {0.09f, 0.05f, 0.03f};
+            groom.tipColor = {0.25f, 0.14f, 0.075f};
+            groom.opacity = 0.95f;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Bob")) {
+            PushHistory();
+            groom.guideCount = 120;
+            groom.strandsPerGuide = 14;
+            groom.segments = 8;
+            groom.length = 0.24f;
+            groom.width = 0.0075f;
+            groom.clumpRadius = 0.014f;
+            groom.clumping = 0.68f;
+            groom.frizz = 0.045f;
+            groom.curl = 0.035f;
+            groom.volume = 0.30f;
+            groom.scalpStart = 0.60f;
+            groom.gravity = 0.30f;
+            groom.stiffness = 0.72f;
+            groom.damping = 0.26f;
+            groom.windStrength = 0.14f;
+            groom.rootColor = {0.095f, 0.052f, 0.032f};
+            groom.tipColor = {0.31f, 0.17f, 0.09f};
+            groom.opacity = 0.90f;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Long")) {
+            PushHistory();
+            groom.guideCount = 96;
+            groom.strandsPerGuide = 12;
+            groom.segments = 10;
+            groom.length = 0.48f;
+            groom.width = 0.008f;
+            groom.clumpRadius = 0.018f;
+            groom.clumping = 0.52f;
+            groom.frizz = 0.065f;
+            groom.curl = 0.055f;
+            groom.volume = 0.34f;
+            groom.scalpStart = 0.58f;
+            groom.gravity = 0.42f;
+            groom.stiffness = 0.58f;
+            groom.damping = 0.22f;
+            groom.windStrength = 0.22f;
+            groom.rootColor = {0.08f, 0.045f, 0.03f};
+            groom.tipColor = {0.36f, 0.20f, 0.11f};
+            groom.opacity = 0.88f;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Wet Look")) {
+            PushHistory();
+            groom.guideCount = 110;
+            groom.strandsPerGuide = 14;
+            groom.segments = 8;
+            groom.length = 0.28f;
+            groom.width = 0.0045f;
+            groom.clumpRadius = 0.010f;
+            groom.clumping = 0.90f;
+            groom.frizz = 0.012f;
+            groom.curl = 0.020f;
+            groom.volume = 0.20f;
+            groom.scalpStart = 0.58f;
+            groom.gravity = 0.50f;
+            groom.stiffness = 0.80f;
+            groom.damping = 0.36f;
+            groom.windStrength = 0.08f;
+            groom.specular = 0.95f;
+            groom.shininess = 80.0f;
+            groom.ambient = 0.24f;
+            groom.opacity = 0.82f;
+            groom.rootColor = {0.055f, 0.03f, 0.022f};
+            groom.tipColor = {0.19f, 0.10f, 0.06f};
+        }
+
+        if (ImGui::TreeNode("Groom")) {
+            ImGui::DragInt("Guides", &groom.guideCount, 1.0f, 1, 4096);
+            ImGui::DragInt("Strands / Guide", &groom.strandsPerGuide,
+                           1.0f, 1, 64);
+            ImGui::DragInt("Segments", &groom.segments, 0.2f, 2, 32);
+            ImGui::DragFloat("Length", &groom.length, 0.002f, 0.001f, 5.0f);
+            ImGui::DragFloat("Width", &groom.width, 0.0001f, 0.0001f, 0.1f);
+            ImGui::DragFloat("Root Width", &groom.rootWidth, 0.01f, 0.0f, 2.0f);
+            ImGui::DragFloat("Tip Width", &groom.tipWidth, 0.005f, 0.0f, 2.0f);
+            ImGui::DragFloat("Clump Radius", &groom.clumpRadius,
+                             0.0005f, 0.0f, 0.2f);
+            ImGui::DragFloat("Clumping", &groom.clumping, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Frizz", &groom.frizz, 0.002f, 0.0f, 0.5f);
+            ImGui::DragFloat("Curl", &groom.curl, 0.002f, 0.0f, 0.5f);
+            ImGui::DragFloat("Volume", &groom.volume, 0.01f, 0.0f, 2.0f);
+            ImGui::DragFloatRange2("Scalp Band", &groom.scalpStart,
+                                   &groom.scalpEnd, 0.005f, 0.0f, 1.0f);
+            ImGui::DragFloat("Normal Threshold", &groom.normalThreshold,
+                             0.01f, -1.0f, 1.0f);
+            ImGui::DragFloat3("Groom Direction",
+                              glm::value_ptr(groom.groomDirection), 0.01f);
+            ImGui::InputScalar("Seed", ImGuiDataType_U32, &groom.seed);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Dynamics")) {
+            ImGui::DragFloat("Gravity", &groom.gravity, 0.01f, 0.0f, 5.0f);
+            ImGui::DragFloat("Stiffness", &groom.stiffness,
+                             0.01f, 0.0f, 5.0f);
+            ImGui::DragFloat("Damping", &groom.damping, 0.01f, 0.0f, 5.0f);
+            ImGui::DragFloat("Wind Strength", &groom.windStrength,
+                             0.005f, 0.0f, 2.0f);
+            ImGui::DragFloat3("Wind Direction",
+                              glm::value_ptr(groom.windDirection), 0.01f);
+            ImGui::DragFloat("Wind Frequency", &groom.windFrequency,
+                             0.01f, 0.0f, 10.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Shading")) {
+            ImGui::ColorEdit3("Root Color", glm::value_ptr(groom.rootColor));
+            ImGui::ColorEdit3("Tip Color", glm::value_ptr(groom.tipColor));
+            ImGui::DragFloat("Specular", &groom.specular, 0.01f, 0.0f, 2.0f);
+            ImGui::DragFloat("Shininess", &groom.shininess,
+                             0.5f, 1.0f, 256.0f);
+            ImGui::DragFloat("Ambient", &groom.ambient, 0.01f, 0.0f, 2.0f);
+            ImGui::DragFloat("Opacity", &groom.opacity, 0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Random Tint", &groom.randomTint,
+                             0.01f, 0.0f, 1.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::Button("Rebuild Groom")) {
+            groom.runtime.reset();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset Groom Settings")) {
+            PushHistory();
+            auto target = groom.targetMeshName;
+            groom = Galeshi::GroomComponent{};
+            groom.targetMeshName = target;
+        }
+    }
+
     // -------------------------------------------------------------------
     // Audio
     // -------------------------------------------------------------------
@@ -4372,6 +4571,22 @@ if (ImGui::BeginMenu("File")) {
                         m_postProcess.BlitDepth(), env,
                         waterSunDir, waterSunColor, 39, w, h,
                         static_cast<float>(m_time), 0.1f, 1000.0f);
+                }
+
+                // 8b. Groom hair: an independent forward transparent pass.
+                // It reuses the HDR target and the copied opaque depth, and
+                // is submitted before tonemapping/AA like other transparent
+                // surfaces.
+                {
+                    const bgfx::TextureHandle env =
+                        bgfx::isValid(m_postProcess.EnvCubeMap())
+                            ? m_postProcess.EnvCubeMap()
+                            : m_postProcess.BlackCube();
+                    bgfx::setViewFrameBuffer(39, m_postProcess.OutputFbo());
+                    bgfx::setViewRect(39, 0, 0, w, h);
+                    m_render->RenderHair(
+                        m_scene, m_camera, m_postProcess.BlitDepth(), env,
+                        waterSunDir, waterSunColor, 39, w, h, 0.1f, 1000.0f);
                 }
 
                 // 9. Tonemap (View 40)
@@ -5611,6 +5826,23 @@ void DrawDetails() {
             auto& water = sel.GetComponent<Galeshi::WaterComponent>();
             if (ImGui::CollapsingHeader("Water", ImGuiTreeNodeFlags_DefaultOpen)) {
                 DrawWaterSettings(water);
+            }
+        }
+
+        // --- Groom hair inspector ----------------------------------------
+        if (auto sel = m_editor.Selected(&m_scene); sel &&
+            sel.HasComponent<Galeshi::GroomComponent>()) {
+            auto& groom = sel.GetComponent<Galeshi::GroomComponent>();
+            if (ImGui::CollapsingHeader("Groom Hair",
+                                        ImGuiTreeNodeFlags_DefaultOpen)) {
+                DrawGroomSettings(groom);
+            }
+        } else if (auto sel = m_editor.Selected(&m_scene); sel &&
+                   (sel.HasComponent<Galeshi::MeshComponent>() ||
+                    sel.HasComponent<Galeshi::SkeletalComponent>())) {
+            if (ImGui::Button("+ Add Groom Hair")) {
+                PushHistory();
+                sel.AddComponent<Galeshi::GroomComponent>();
             }
         }
 

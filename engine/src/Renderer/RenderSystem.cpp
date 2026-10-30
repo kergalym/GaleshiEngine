@@ -8,6 +8,7 @@
 #include "GaleshiEngine/Assets/Mesh.hpp"
 #include "GaleshiEngine/Assets/Texture.hpp"
 #include "GaleshiEngine/Assets/VegetationGenerator.hpp"
+#include "GaleshiEngine/Renderer/GroomSystem.hpp"
 #include <glm/gtc/type_ptr.hpp>
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -46,6 +47,7 @@ void RenderSystem::Init(AssetManager* assets) {
     m_shadowPointProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_shadow_point.bin");
     m_glassProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_glass.bin");
     m_waterProg = ShaderManager::LoadProgram("shaders/vs_water.bin", "shaders/fs_water.bin");
+    m_hairProg = ShaderManager::LoadProgram("shaders/vs_hair.bin", "shaders/fs_hair.bin");
     m_instancedProg = ShaderManager::LoadProgram(
         "shaders/vs_vegetation_instanced.bin", "shaders/fs_pbr.bin");
     m_instancedGbufferProg = ShaderManager::LoadProgram(
@@ -54,11 +56,11 @@ void RenderSystem::Init(AssetManager* assets) {
         "shaders/vs_vegetation_shadow_instanced.bin", "shaders/fs_shadow.bin");
     m_instancedShadowPointProg = ShaderManager::LoadProgram(
         "shaders/vs_vegetation_instanced.bin", "shaders/fs_shadow_point.bin");
-    spdlog::info("[RenderSystem] programs: pbr={} gbuffer={} shadow={} shadowPoint={} glass={} water={} vegetation={}",
+    spdlog::info("[RenderSystem] programs: pbr={} gbuffer={} shadow={} shadowPoint={} glass={} water={} hair={} vegetation={}",
         bgfx::isValid(m_program), bgfx::isValid(m_gbufferProg),
         bgfx::isValid(m_shadowProg), bgfx::isValid(m_shadowPointProg),
         bgfx::isValid(m_glassProg), bgfx::isValid(m_waterProg),
-        bgfx::isValid(m_instancedProg));
+        bgfx::isValid(m_hairProg), bgfx::isValid(m_instancedProg));
     u_shadowLightPos = bgfx::createUniform("u_shadowLightPos", bgfx::UniformType::Vec4);
     if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
 
@@ -88,6 +90,13 @@ void RenderSystem::Init(AssetManager* assets) {
     s_waterSceneColor = bgfx::createUniform("s_waterSceneColor", bgfx::UniformType::Sampler);
     s_waterDepth = bgfx::createUniform("s_waterDepth", bgfx::UniformType::Sampler);
     s_waterEnvCube = bgfx::createUniform("s_envCube", bgfx::UniformType::Sampler);
+    u_hairParams0 = bgfx::createUniform("u_hairParams0", bgfx::UniformType::Vec4);
+    u_hairParams1 = bgfx::createUniform("u_hairParams1", bgfx::UniformType::Vec4);
+    u_hairInvNearFar = bgfx::createUniform("u_hairInvNearFar", bgfx::UniformType::Vec4);
+    u_hairRootColor = bgfx::createUniform("u_hairRootColor", bgfx::UniformType::Vec4);
+    u_hairTipColor = bgfx::createUniform("u_hairTipColor", bgfx::UniformType::Vec4);
+    s_hairDepth = bgfx::createUniform("s_hairDepth", bgfx::UniformType::Sampler);
+    s_hairEnvCube = bgfx::createUniform("s_hairEnvCube", bgfx::UniformType::Sampler);
     
     s_boneMatrices = bgfx::createUniform("s_boneMatrices", bgfx::UniformType::Sampler);
     m_boneTexture = bgfx::createTexture2D(4, kMaxBones, false, 1, bgfx::TextureFormat::RGBA32F);
@@ -113,6 +122,7 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(m_shadowPointProg)) bgfx::destroy(m_shadowPointProg);
     if (bgfx::isValid(m_glassProg)) bgfx::destroy(m_glassProg);
     if (bgfx::isValid(m_waterProg)) bgfx::destroy(m_waterProg);
+    if (bgfx::isValid(m_hairProg)) bgfx::destroy(m_hairProg);
     if (bgfx::isValid(m_instancedProg)) bgfx::destroy(m_instancedProg);
     if (bgfx::isValid(m_instancedGbufferProg)) bgfx::destroy(m_instancedGbufferProg);
     if (bgfx::isValid(m_instancedShadowProg)) bgfx::destroy(m_instancedShadowProg);
@@ -144,6 +154,13 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(s_waterSceneColor)) bgfx::destroy(s_waterSceneColor);
     if (bgfx::isValid(s_waterDepth)) bgfx::destroy(s_waterDepth);
     if (bgfx::isValid(s_waterEnvCube)) bgfx::destroy(s_waterEnvCube);
+    if (bgfx::isValid(u_hairParams0)) bgfx::destroy(u_hairParams0);
+    if (bgfx::isValid(u_hairParams1)) bgfx::destroy(u_hairParams1);
+    if (bgfx::isValid(u_hairInvNearFar)) bgfx::destroy(u_hairInvNearFar);
+    if (bgfx::isValid(u_hairRootColor)) bgfx::destroy(u_hairRootColor);
+    if (bgfx::isValid(u_hairTipColor)) bgfx::destroy(u_hairTipColor);
+    if (bgfx::isValid(s_hairDepth)) bgfx::destroy(s_hairDepth);
+    if (bgfx::isValid(s_hairEnvCube)) bgfx::destroy(s_hairEnvCube);
     if (bgfx::isValid(s_boneMatrices)) bgfx::destroy(s_boneMatrices);
     if (bgfx::isValid(m_boneTexture)) bgfx::destroy(m_boneTexture);
     if (bgfx::isValid(s_albedoMap)) bgfx::destroy(s_albedoMap);
@@ -691,24 +708,6 @@ void RenderSystem::RenderWater(Scene& scene, const Camera& camera,
     bgfx::setViewMode(viewId, bgfx::ViewMode::Sequential);
 
     const glm::vec3 camPos = camera.Position();
-    glm::vec3 forward = -glm::vec3(camera.View()[0][2],
-                                    camera.View()[1][2],
-                                    camera.View()[2][2]);
-    if (glm::length(forward) > 1e-5f) forward = glm::normalize(forward);
-
-    float cam[4] = {camPos.x, camPos.y, camPos.z, 1.0f};
-    float fwd[4] = {forward.x, forward.y, forward.z, 0.0f};
-    float nearFar[4] = {1.0f / std::max(nearZ, 0.0001f),
-                        1.0f / std::max(farZ, 0.0001f), 0.0f, 0.0f};
-    bgfx::setUniform(u_cameraPosition, cam);
-    bgfx::setUniform(u_cameraForward, fwd);
-    bgfx::setUniform(u_waterInvNearFar, nearFar);
-    bgfx::setUniform(u_lightDirection, lightDir);
-    bgfx::setUniform(u_lightColorIntensity, lightColorIntensity);
-    bgfx::setTexture(0, s_waterSceneColor, sceneColor);
-    bgfx::setTexture(1, s_waterDepth, sceneDepth);
-    bgfx::setTexture(2, s_waterEnvCube, envCube);
-
     struct WaterItem {
         const WaterComponent* water = nullptr;
         glm::mat4 model{1.0f};
@@ -765,6 +764,24 @@ void RenderSystem::RenderWater(Scene& scene, const Camera& camera,
               [](const WaterItem& a, const WaterItem& b) {
                   return a.distanceSq > b.distanceSq;
               });
+    if (items.empty()) return;
+
+    glm::vec3 forward = -glm::vec3(camera.View()[0][2],
+                                    camera.View()[1][2],
+                                    camera.View()[2][2]);
+    if (glm::length(forward) > 1e-5f) forward = glm::normalize(forward);
+    const float cam[4] = {camPos.x, camPos.y, camPos.z, 1.0f};
+    const float fwd[4] = {forward.x, forward.y, forward.z, 0.0f};
+    const float nearFar[4] = {1.0f / std::max(nearZ, 0.0001f),
+                              1.0f / std::max(farZ, 0.0001f), 0.0f, 0.0f};
+    bgfx::setUniform(u_cameraPosition, cam);
+    bgfx::setUniform(u_cameraForward, fwd);
+    bgfx::setUniform(u_waterInvNearFar, nearFar);
+    bgfx::setUniform(u_lightDirection, lightDir);
+    bgfx::setUniform(u_lightColorIntensity, lightColorIntensity);
+    bgfx::setTexture(0, s_waterSceneColor, sceneColor);
+    bgfx::setTexture(1, s_waterDepth, sceneDepth);
+    bgfx::setTexture(2, s_waterEnvCube, envCube);
 
     for (const WaterItem& item : items) {
         const WaterComponent& water = *item.water;
@@ -803,6 +820,104 @@ void RenderSystem::RenderWater(Scene& scene, const Camera& camera,
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
                        BGFX_STATE_BLEND_ALPHA | BGFX_STATE_MSAA);
         bgfx::submit(viewId, m_waterProg);
+    }
+}
+
+void RenderSystem::RenderHair(Scene& scene, const Camera& camera,
+                              bgfx::TextureHandle sceneDepth,
+                              bgfx::TextureHandle envCube,
+                              const float sunDir[4],
+                              const float lightColorIntensity[4],
+                              bgfx::ViewId viewId, uint16_t width, uint16_t height,
+                              float nearZ, float farZ) {
+    if (!bgfx::isValid(m_hairProg) || !bgfx::isValid(sceneDepth)) return;
+
+    bgfx::setViewTransform(viewId, glm::value_ptr(camera.View()),
+                           glm::value_ptr(camera.Projection()));
+    bgfx::setViewRect(viewId, 0, 0, width, height);
+    bgfx::setViewClear(viewId, BGFX_CLEAR_NONE);
+    bgfx::setViewMode(viewId, bgfx::ViewMode::Sequential);
+
+    const glm::vec3 camPos = camera.Position();
+    glm::vec3 forward = -glm::vec3(camera.View()[0][2],
+                                    camera.View()[1][2],
+                                    camera.View()[2][2]);
+    if (glm::length(forward) > 1e-5f) forward = glm::normalize(forward);
+    const float cam[4] = {camPos.x, camPos.y, camPos.z, 1.0f};
+    const float fwd[4] = {forward.x, forward.y, forward.z, 0.0f};
+    const float nearFar[4] = {1.0f / std::max(nearZ, 0.0001f),
+                              1.0f / std::max(farZ, 0.0001f), 0.0f, 0.0f};
+    bgfx::setUniform(u_cameraPosition, cam);
+    bgfx::setUniform(u_cameraForward, fwd);
+    bgfx::setUniform(u_hairInvNearFar, nearFar);
+    bgfx::setUniform(u_lightDirection, sunDir);
+    bgfx::setUniform(u_lightColorIntensity, lightColorIntensity);
+    bgfx::setTexture(1, s_hairDepth, sceneDepth);
+    bgfx::setTexture(2, s_hairEnvCube, envCube);
+
+    struct HairItem {
+        GroomComponent* groom = nullptr;
+        GroomData* data = nullptr;
+        float distanceSq = 0.0f;
+    };
+    std::vector<HairItem> items;
+    items.reserve(16);
+
+    const glm::mat4 viewProj = camera.Projection() * camera.View();
+    const Frustum frustum(viewProj);
+    auto view = scene.Registry().view<GroomComponent>();
+    for (auto h : view) {
+        GroomComponent& groom = view.get<GroomComponent>(h);
+        if (!groom.enabled || !groom.runtime || groom.runtime->strands.empty()) {
+            continue;
+        }
+        GroomData& data = *groom.runtime;
+        if (data.boundsRadius > 0.0f &&
+            !frustum.TestSphere(data.boundsCenter, data.boundsRadius)) {
+            continue;
+        }
+        HairItem item;
+        item.groom = &groom;
+        item.data = &data;
+        item.distanceSq = glm::dot(data.boundsCenter - camPos,
+                                   data.boundsCenter - camPos);
+        items.push_back(item);
+    }
+
+    std::sort(items.begin(), items.end(), [](const HairItem& a, const HairItem& b) {
+        return a.distanceSq > b.distanceSq;
+    });
+    const glm::mat4 identity(1.0f);
+    for (const HairItem& item : items) {
+        GroomComponent& groom = *item.groom;
+        GroomData& data = *item.data;
+
+        data.width = std::max(groom.width, 0.0001f);
+        data.rootWidth = std::max(groom.rootWidth, 0.0f);
+        data.tipWidth = std::max(groom.tipWidth, 0.0f);
+        GroomSystem::BuildRenderMesh(data, camPos);
+        if (!data.renderMesh || !data.renderMesh->Valid()) continue;
+
+        const float params0[4] = {groom.specular, std::max(groom.shininess, 1.0f),
+                                  groom.ambient, groom.opacity};
+        const float params1[4] = {groom.randomTint, 0.35f, 0.75f, 0.0f};
+        const float root[4] = {groom.rootColor.r, groom.rootColor.g,
+                               groom.rootColor.b, 1.0f};
+        const float tip[4] = {groom.tipColor.r, groom.tipColor.g,
+                              groom.tipColor.b, 1.0f};
+        bgfx::setUniform(u_hairParams0, params0);
+        bgfx::setUniform(u_hairParams1, params1);
+        bgfx::setUniform(u_hairRootColor, root);
+        bgfx::setUniform(u_hairTipColor, tip);
+
+        bgfx::setTransform(glm::value_ptr(identity));
+        bgfx::setVertexBuffer(0, data.renderMesh->VB());
+        bgfx::setIndexBuffer(data.renderMesh->IB());
+        // The shader performs the depth test against the copied opaque depth;
+        // this color-only pass never writes depth.
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                       BGFX_STATE_BLEND_ALPHA | BGFX_STATE_MSAA);
+        bgfx::submit(viewId, m_hairProg);
     }
 }
 

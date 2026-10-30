@@ -564,6 +564,45 @@ std::string SceneSerializer::SaveToString() const {
                 {"foamColor", Vec3ToJson(w.foamColor)}
             };
         }
+        if (reg.all_of<GroomComponent>(handle)) {
+            const auto& g = reg.get<GroomComponent>(handle);
+            je["groomHair"] = {
+                {"enabled", g.enabled},
+                {"simulate", g.simulate},
+                {"visibleInEditor", g.visibleInEditor},
+                {"targetMeshName", g.targetMeshName},
+                {"guideCount", g.guideCount},
+                {"strandsPerGuide", g.strandsPerGuide},
+                {"segments", g.segments},
+                {"length", g.length},
+                {"width", g.width},
+                {"rootWidth", g.rootWidth},
+                {"tipWidth", g.tipWidth},
+                {"clumpRadius", g.clumpRadius},
+                {"clumping", g.clumping},
+                {"frizz", g.frizz},
+                {"curl", g.curl},
+                {"volume", g.volume},
+                {"scalpStart", g.scalpStart},
+                {"scalpEnd", g.scalpEnd},
+                {"normalThreshold", g.normalThreshold},
+                {"groomDirection", Vec3ToJson(g.groomDirection)},
+                {"gravity", g.gravity},
+                {"stiffness", g.stiffness},
+                {"damping", g.damping},
+                {"windStrength", g.windStrength},
+                {"windDirection", Vec3ToJson(g.windDirection)},
+                {"windFrequency", g.windFrequency},
+                {"specular", g.specular},
+                {"shininess", g.shininess},
+                {"ambient", g.ambient},
+                {"opacity", g.opacity},
+                {"randomTint", g.randomTint},
+                {"rootColor", Vec3ToJson(g.rootColor)},
+                {"tipColor", Vec3ToJson(g.tipColor)},
+                {"seed", g.seed}
+            };
+        }
         if (reg.all_of<UICanvasComponent>(handle)) {
             const auto& uiCanvas = reg.get<UICanvasComponent>(handle).canvas;
             json widgets = json::array();
@@ -1295,6 +1334,48 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             if (jw.contains("shallowColor")) water.shallowColor = Vec3FromJson(jw.at("shallowColor"));
             if (jw.contains("deepColor")) water.deepColor = Vec3FromJson(jw.at("deepColor"));
             if (jw.contains("foamColor")) water.foamColor = Vec3FromJson(jw.at("foamColor"));
+        }
+        if (je.contains("groomHair") && je["groomHair"].is_object()) {
+            const auto& jg = je["groomHair"];
+            auto& groom = e.AddComponent<GroomComponent>();
+            groom.enabled = jg.value("enabled", true);
+            groom.simulate = jg.value("simulate", true);
+            groom.visibleInEditor = jg.value("visibleInEditor", true);
+            groom.targetMeshName = jg.value("targetMeshName", std::string{});
+            groom.guideCount = jg.value("guideCount", groom.guideCount);
+            groom.strandsPerGuide = jg.value("strandsPerGuide", groom.strandsPerGuide);
+            groom.segments = jg.value("segments", groom.segments);
+            groom.length = jg.value("length", groom.length);
+            groom.width = jg.value("width", groom.width);
+            groom.rootWidth = jg.value("rootWidth", groom.rootWidth);
+            groom.tipWidth = jg.value("tipWidth", groom.tipWidth);
+            groom.clumpRadius = jg.value("clumpRadius", groom.clumpRadius);
+            groom.clumping = jg.value("clumping", groom.clumping);
+            groom.frizz = jg.value("frizz", groom.frizz);
+            groom.curl = jg.value("curl", groom.curl);
+            groom.volume = jg.value("volume", groom.volume);
+            groom.scalpStart = jg.value("scalpStart", groom.scalpStart);
+            groom.scalpEnd = jg.value("scalpEnd", groom.scalpEnd);
+            groom.normalThreshold = jg.value("normalThreshold", groom.normalThreshold);
+            if (jg.contains("groomDirection")) {
+                groom.groomDirection = Vec3FromJson(jg.at("groomDirection"));
+            }
+            groom.gravity = jg.value("gravity", groom.gravity);
+            groom.stiffness = jg.value("stiffness", groom.stiffness);
+            groom.damping = jg.value("damping", groom.damping);
+            groom.windStrength = jg.value("windStrength", groom.windStrength);
+            if (jg.contains("windDirection")) {
+                groom.windDirection = Vec3FromJson(jg.at("windDirection"));
+            }
+            groom.windFrequency = jg.value("windFrequency", groom.windFrequency);
+            groom.specular = jg.value("specular", groom.specular);
+            groom.shininess = jg.value("shininess", groom.shininess);
+            groom.ambient = jg.value("ambient", groom.ambient);
+            groom.opacity = jg.value("opacity", groom.opacity);
+            groom.randomTint = jg.value("randomTint", groom.randomTint);
+            if (jg.contains("rootColor")) groom.rootColor = Vec3FromJson(jg.at("rootColor"));
+            if (jg.contains("tipColor")) groom.tipColor = Vec3FromJson(jg.at("tipColor"));
+            groom.seed = jg.value("seed", groom.seed);
         }
         if (je.contains("uiCanvas") && je["uiCanvas"].is_object()) {
             const auto& jc = je["uiCanvas"];
