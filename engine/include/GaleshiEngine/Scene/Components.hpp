@@ -438,6 +438,9 @@ struct WaterComponent {
     // Optical properties.
     float refractionStrength = 0.35f;
     float reflectionStrength = 0.82f;
+    // High-quality mirror pass for the nearest water plane. Disable it to
+    // use only the environment cubemap reflection.
+    bool  planarReflections  = true;
     float fresnelPower       = 5.0f;
     float depthFade          = 4.0f;
     float absorption         = 0.55f;

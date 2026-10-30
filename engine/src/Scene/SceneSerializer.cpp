@@ -562,6 +562,7 @@ std::string SceneSerializer::SaveToString() const {
                 {"flowDirection", {w.flowDirection.x, w.flowDirection.y}},
                 {"refractionStrength", w.refractionStrength},
                 {"reflectionStrength", w.reflectionStrength},
+                {"planarReflections", w.planarReflections},
                 {"fresnelPower", w.fresnelPower},
                 {"depthFade", w.depthFade},
                 {"absorption", w.absorption},
@@ -1350,6 +1351,7 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             }
             water.refractionStrength = jw.value("refractionStrength", water.refractionStrength);
             water.reflectionStrength = jw.value("reflectionStrength", water.reflectionStrength);
+            water.planarReflections = jw.value("planarReflections", water.planarReflections);
             water.fresnelPower = jw.value("fresnelPower", water.fresnelPower);
             water.depthFade = jw.value("depthFade", water.depthFade);
             water.absorption = jw.value("absorption", water.absorption);

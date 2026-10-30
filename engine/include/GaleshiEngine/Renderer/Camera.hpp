@@ -17,11 +17,15 @@ public:
     const glm::mat4& Projection() const { return m_proj; }
     const glm::mat4  ViewProj()   const { return m_proj * m_view; }
     const glm::vec3& Position()   const { return m_eye; }
+    float NearPlane() const { return m_nearZ; }
+    float FarPlane()  const { return m_farZ; }
 
 private:
     glm::mat4 m_view{1.0f};
     glm::mat4 m_proj{1.0f};
     glm::vec3 m_eye{0.0f};
+    float m_nearZ = 0.1f;
+    float m_farZ = 1000.0f;
 };
 
 } // namespace Galeshi

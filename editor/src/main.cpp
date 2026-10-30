@@ -875,7 +875,15 @@ protected:
         }
 
         const float aspect = m_viewportH ? static_cast<float>(m_viewportW) / m_viewportH : 16.0f / 9.0f;
-        m_camera.SetPerspective(glm::radians(m_preferences.cameraFovDegrees), aspect, 0.1f, 1000.0f);
+        // Keep depth precision usable when the orbit camera moves far away
+        // from its target. A fixed 0.1/1000 range causes z-fighting and
+        // flickering on distant, nearly coplanar geometry.
+        const float orbitDistance = std::max(m_editor.camRadius, 0.5f);
+        const float nearZ = glm::clamp(orbitDistance * 0.0025f,
+                                       0.1f, 0.75f);
+        const float farZ = std::max(1000.0f, orbitDistance * 4.0f + 500.0f);
+        m_camera.SetPerspective(glm::radians(m_preferences.cameraFovDegrees),
+                                aspect, nearZ, farZ);
         m_camera.Orbit(m_editor.camTarget, m_editor.camYaw, m_editor.camPitch, m_editor.camRadius);
     }
 
@@ -4116,6 +4124,11 @@ if (ImGui::BeginMenu("File")) {
         }
 
         if (ImGui::TreeNode("Optics")) {
+            ImGui::Checkbox("Planar Reflections", &water.planarReflections);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Render a mirrored opaque scene for the nearest\n"
+                                  "water plane. Other planes use the environment map.");
+            }
             ImGui::DragFloat("Refraction", &water.refractionStrength,
                              0.005f, 0.0f, 2.0f);
             ImGui::DragFloat("Reflection", &water.reflectionStrength,
@@ -4462,9 +4475,11 @@ if (ImGui::BeginMenu("File")) {
                 auto& dl = lview.get<Galeshi::DirectionalLightComponent>(lh);
                 glm::vec3 lightDir = glm::normalize(dl.direction);
 
-                // 1. Calculate Cascade Splits (Practical Split Scheme)
-                float nearPlane = 0.1f;
-                float farPlane = 1000.0f;
+                // 1. Calculate Cascade Splits (Practical Split Scheme).
+                // Follow the adaptive camera clip range so shadows do not
+                // disappear or become unstable at large orbit distances.
+                float nearPlane = std::max(m_camera.NearPlane(), 0.05f);
+                float farPlane = std::max(m_camera.FarPlane(), 1000.0f);
                 float lambda = 0.5f;
                 float splits[3];
                 for (int i = 0; i < 3; ++i) {
@@ -4522,8 +4537,22 @@ if (ImGui::BeginMenu("File")) {
                         minZ = std::min(minZ, trf.z); maxZ = std::max(maxZ, trf.z);
                     }
 
-                    const float texelWorld =
-                        std::max(maxX - minX, maxY - minY) / 2048.0f;
+                    // Snap the light-space bounds to the shadow-map texel
+                    // grid. Without this, small camera movements shift every
+                    // cascade by a sub-texel amount and distant shadows appear
+                    // to flicker/shimmer.
+                    const float extentX = std::max(maxX - minX, 1e-3f);
+                    const float extentY = std::max(maxY - minY, 1e-3f);
+                    const float extent = std::max(extentX, extentY);
+                    const float texelWorld = extent / 2048.0f;
+                    const float centerX = std::floor(
+                        ((minX + maxX) * 0.5f) / texelWorld) * texelWorld;
+                    const float centerY = std::floor(
+                        ((minY + maxY) * 0.5f) / texelWorld) * texelWorld;
+                    minX = centerX - extent * 0.5f;
+                    maxX = centerX + extent * 0.5f;
+                    minY = centerY - extent * 0.5f;
+                    maxY = centerY + extent * 0.5f;
                     const float depthRange =
                         std::max((-minZ + 10.0f) - (-maxZ - 10.0f), 1e-3f);
                     const float ndcDepthScale = bgfx::getCaps()->homogeneousDepth
@@ -4668,6 +4697,19 @@ if (ImGui::BeginMenu("File")) {
 
             bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             m_render->Render(m_scene, renderCamera, 1, renderW, renderH);
+
+            // Mirrored opaque scene for the nearest water plane. The water
+            // pass samples this HDR target at the same screen UV as the
+            // visible surface. Half resolution is sufficient for a rippled
+            // reflection and keeps the extra scene pass affordable.
+            {
+                const uint16_t reflectionW = static_cast<uint16_t>(
+                    std::max(2, static_cast<int>(renderW / 2)));
+                const uint16_t reflectionH = static_cast<uint16_t>(
+                    std::max(2, static_cast<int>(renderH / 2)));
+                m_render->RenderPlanarReflection(m_scene, m_camera, 16,
+                                                 reflectionW, reflectionH);
+            }
 
             // Water lighting uses the same directional light as the deferred
             // pass. Keep a copy outside the deferred block for the water pass
@@ -4940,8 +4982,11 @@ if (ImGui::BeginMenu("File")) {
                     m_render->RenderWater(
                         m_scene, m_camera, m_postProcess.BlitTextureA(),
                         m_postProcess.BlitDepth(), env,
+                        m_render->PlanarReflectionTexture(),
+                        m_render->PlanarReflectionPlaneY(),
                         waterSunDir, waterSunColor, 39, renderW, renderH,
-                        static_cast<float>(m_time), 0.1f, 1000.0f);
+                        static_cast<float>(m_time), m_camera.NearPlane(),
+                        m_camera.FarPlane());
                 }
 
                 // 8b. Groom hair: an independent forward transparent pass.
@@ -4957,7 +5002,8 @@ if (ImGui::BeginMenu("File")) {
                     bgfx::setViewRect(39, 0, 0, renderW, renderH);
                     m_render->RenderHair(
                         m_scene, m_camera, m_postProcess.BlitDepth(), env,
-                        waterSunDir, waterSunColor, 39, renderW, renderH, 0.1f, 1000.0f);
+                        waterSunDir, waterSunColor, 39, renderW, renderH,
+                        m_camera.NearPlane(), m_camera.FarPlane());
                 }
 
                 // 9. Tonemap (View 40)
@@ -5434,7 +5480,7 @@ if (ImGui::BeginMenu("File")) {
                 const float ndcX = ((sculptMouse.x - imgMin.x) / w) * 2.0f - 1.0f;
                 const float ndcY = 1.0f - ((sculptMouse.y - imgMin.y) / h) * 2.0f;
                 const glm::mat4 invVP = glm::inverse(m_camera.Projection() * m_camera.View());
-                glm::vec4 rayStart4 = invVP * glm::vec4(ndcX, ndcY, -1.0f, 1.0f);
+                glm::vec4 rayStart4 = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
                 glm::vec4 rayEnd4   = invVP * glm::vec4(ndcX, ndcY,  1.0f, 1.0f);
                 rayStart4 /= rayStart4.w;
                 rayEnd4 /= rayEnd4.w;
@@ -5717,7 +5763,7 @@ if (ImGui::BeginMenu("File")) {
                 float ndcY = 1.0f - (my / h) * 2.0f;
 
                 glm::mat4 invVP = glm::inverse(m_camera.Projection() * m_camera.View());
-                glm::vec4 rayStart = invVP * glm::vec4(ndcX, ndcY, -1.0f, 1.0f);
+                glm::vec4 rayStart = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
                 glm::vec4 rayEnd   = invVP * glm::vec4(ndcX, ndcY,  1.0f, 1.0f);
                 rayStart /= rayStart.w; rayEnd /= rayEnd.w;
                 
@@ -7322,7 +7368,7 @@ void DrawDetails() {
 
         const glm::mat4 invVP =
             glm::inverse(m_camera.Projection() * m_camera.View());
-        glm::vec4 nearPoint = invVP * glm::vec4(ndcX, ndcY, -1.0f, 1.0f);
+        glm::vec4 nearPoint = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
         glm::vec4 farPoint  = invVP * glm::vec4(ndcX, ndcY,  1.0f, 1.0f);
         if (std::abs(nearPoint.w) < 1e-6f || std::abs(farPoint.w) < 1e-6f)
             return m_editor.camTarget;
@@ -7337,7 +7383,7 @@ void DrawDetails() {
         // camera is looking up or parallel to that plane.
         if (std::abs(rayDir.y) > 1e-4f) {
             const float t = -rayOrigin.y / rayDir.y;
-            if (t > 0.0f && t < 1000.0f) return rayOrigin + rayDir * t;
+            if (t > 0.0f && t < m_camera.FarPlane()) return rayOrigin + rayDir * t;
         }
         return m_editor.camTarget;
     }

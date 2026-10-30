@@ -4,6 +4,7 @@ $input v_worldPos, v_normal, v_uv, v_clip, v_viewZ, v_wave
 SAMPLER2D(s_waterSceneColor, 0);
 SAMPLER2D(s_waterDepth, 1);
 SAMPLERCUBE(s_envCube, 2);
+SAMPLER2D(s_waterPlanar, 3);
 
 uniform vec4 u_waterParams0; // x=time, y=wave height, z=wave scale, w=wave speed
 uniform vec4 u_waterParams1; // x=choppiness, y=detail strength,
@@ -14,6 +15,7 @@ uniform vec4 u_waterParams3; // x=clarity, y=transparency,
                              // z=fresnel power, w=sparkle
 uniform vec4 u_waterFlow;    // xy=flow direction
 uniform vec4 u_waterInvNearFar; // x=1/near, y=1/far
+uniform vec4 u_waterPlanar;    // x=enabled, y=plane height, z=strength
 uniform vec4 u_waterShallow;
 uniform vec4 u_waterDeep;
 uniform vec4 u_waterFoam;
@@ -115,6 +117,19 @@ void main()
     reflectionDir.y = max(reflectionDir.y, 0.03);
     reflectionDir = normalize(reflectionDir);
     vec3 reflection = textureCube(s_envCube, reflectionDir).rgb;
+
+    // Planar reflection replaces the environment where the mirrored scene
+    // actually drew geometry. Pixels with zero alpha contain no reflected
+    // object and keep the cubemap fallback (sky/ground).
+    if (u_waterPlanar.x > 0.5) {
+        vec2 planarUV = clamp(screenUV + distortion * 1.25,
+                              vec2(0.002), vec2(0.998));
+        vec4 planarSample = texture2D(s_waterPlanar, planarUV);
+        float planarMask = smoothstep(0.0, 0.55, planarSample.a);
+        reflection = mix(reflection, planarSample.rgb,
+                         planarMask * clamp(u_waterPlanar.z, 0.0, 1.0));
+    }
+
     float fresnel = 0.02 + 0.98 *
                     pow(1.0 - max(dot(N, V), 0.0),
                         max(u_waterParams3.z, 1.0));

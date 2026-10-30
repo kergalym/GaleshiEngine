@@ -336,6 +336,9 @@ void RenderSystem::Init(AssetManager* assets) {
     s_waterSceneColor = bgfx::createUniform("s_waterSceneColor", bgfx::UniformType::Sampler);
     s_waterDepth = bgfx::createUniform("s_waterDepth", bgfx::UniformType::Sampler);
     s_waterEnvCube = bgfx::createUniform("s_envCube", bgfx::UniformType::Sampler);
+    s_waterPlanar = bgfx::createUniform("s_waterPlanar", bgfx::UniformType::Sampler);
+    u_waterPlanar = bgfx::createUniform("u_waterPlanar", bgfx::UniformType::Vec4);
+    u_reflectionClip = bgfx::createUniform("u_reflectionClip", bgfx::UniformType::Vec4);
     u_hairParams0 = bgfx::createUniform("u_hairParams0", bgfx::UniformType::Vec4);
     u_hairParams1 = bgfx::createUniform("u_hairParams1", bgfx::UniformType::Vec4);
     u_hairInvNearFar = bgfx::createUniform("u_hairInvNearFar", bgfx::UniformType::Vec4);
@@ -412,6 +415,10 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(s_waterSceneColor)) bgfx::destroy(s_waterSceneColor);
     if (bgfx::isValid(s_waterDepth)) bgfx::destroy(s_waterDepth);
     if (bgfx::isValid(s_waterEnvCube)) bgfx::destroy(s_waterEnvCube);
+    if (bgfx::isValid(s_waterPlanar)) bgfx::destroy(s_waterPlanar);
+    if (bgfx::isValid(u_waterPlanar)) bgfx::destroy(u_waterPlanar);
+    if (bgfx::isValid(u_reflectionClip)) bgfx::destroy(u_reflectionClip);
+    DestroyReflectionTarget();
     if (bgfx::isValid(u_hairParams0)) bgfx::destroy(u_hairParams0);
     if (bgfx::isValid(u_hairParams1)) bgfx::destroy(u_hairParams1);
     if (bgfx::isValid(u_hairInvNearFar)) bgfx::destroy(u_hairInvNearFar);
@@ -700,6 +707,12 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
     if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
     if (!m_assets) return;
 
+    // Forward PBR is also used by the planar-reflection pass. The default
+    // plane constant keeps all fragments during the normal scene pass; only
+    // the reflection pass enables the mirrored half-space clip.
+    const float noClip[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    bgfx::setUniform(u_reflectionClip, noClip);
+
     Galeshi::Frustum frustum(camera.Projection() * camera.View());
 
     const glm::mat4 currentViewProj = camera.Projection() * camera.View();
@@ -760,55 +773,6 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
     std::unordered_map<MeshMaterialKey, MeshInstanceBatch, MeshMaterialKeyHash>
         instanceBatches;
     if (canInstanceStatic) instanceBatches.reserve(64);
-
-    auto bindMaterial = [&](const Material& mat) {
-        const float alb[4] = {mat.albedoFactor.r, mat.albedoFactor.g,
-                              mat.albedoFactor.b, mat.albedoFactor.a};
-        const float met[4] = {mat.metallicFactor, 0, 0, 0};
-        const float rgh[4] = {mat.roughnessFactor, 0, 0, 0};
-        const float emi[4] = {mat.emissiveFactor.r, mat.emissiveFactor.g,
-                              mat.emissiveFactor.b, 0};
-        const float params[4] = {mat.normalStrength, mat.occlusionStrength,
-                                 mat.alphaCutoff, mat.twoSided ? 1.0f : 0.0f};
-        const float flags[4] = {
-            mat.metallicMap ? 1.0f : 0.0f,
-            mat.roughnessMap ? 1.0f : 0.0f,
-            mat.specularMap ? 1.0f : 0.0f,
-            mat.opacityMap ? 1.0f : 0.0f
-        };
-        bgfx::setUniform(u_albedoFactor, alb);
-        bgfx::setUniform(u_metallicFactor, met);
-        bgfx::setUniform(u_roughnessFactor, rgh);
-        bgfx::setUniform(u_emissiveFactor, emi);
-        bgfx::setUniform(u_materialParams, params);
-        bgfx::setUniform(u_materialFlags, flags);
-
-        auto white = m_assets->WhiteTexture();
-        auto flatN = m_assets->FlatNormalTexture();
-        auto albedo = mat.albedoMap ? mat.albedoMap : white;
-        auto mr = mat.metallicRoughnessMap ? mat.metallicRoughnessMap : white;
-        auto nrm = mat.normalMap ? mat.normalMap : flatN;
-        // White fallback keeps a non-zero emissive factor usable even when the
-        // material has no emissive texture.
-        auto emissive = mat.emissiveMap ? mat.emissiveMap : white;
-        auto occlusion = mat.occlusionMap ? mat.occlusionMap : white;
-        auto opacity = mat.opacityMap ? mat.opacityMap : white;
-        auto metallic = mat.metallicMap ? mat.metallicMap : white;
-        auto roughness = mat.roughnessMap ? mat.roughnessMap : white;
-        auto specular = mat.specularMap ? mat.specularMap : white;
-        bgfx::setTexture(0, s_albedoMap, albedo->Handle());
-        bgfx::setTexture(1, s_metallicRoughnessMap, mr->Handle());
-        bgfx::setTexture(2, s_normalMap, nrm->Handle());
-        bgfx::setTexture(7, s_emissiveMap, emissive->Handle());
-        bgfx::setTexture(8, s_occlusionMap, occlusion->Handle());
-        bgfx::setTexture(9, s_opacityMap, opacity->Handle());
-        bgfx::setTexture(10, s_metallicMap, metallic->Handle());
-        bgfx::setTexture(11, s_roughnessMap, roughness->Handle());
-        bgfx::setTexture(12, s_specularMap, specular->Handle());
-        if (bgfx::isValid(m_brdfLUT)) {
-            bgfx::setTexture(6, s_brdfLUT, m_brdfLUT);
-        }
-    };
 
     auto view = scene.Registry().view<TransformComponent, MeshComponent, MaterialComponent>();
     for (auto h : view) {
@@ -905,7 +869,7 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
 
         bgfx::setUniform(u_prevModel, glm::value_ptr(previousModel));
         bgfx::setTransform(glm::value_ptr(model));
-        bindMaterial(*matc.material);
+        BindMaterial(*matc.material);
 
         bgfx::setVertexBuffer(0, mc.mesh->VB());
         bgfx::setIndexBuffer(mc.mesh->IB());
@@ -931,7 +895,7 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         for (const auto& entry : instanceBatches) {
             const MeshInstanceBatch& batch = entry.second;
             if (!batch.mesh || !batch.material) continue;
-            bindMaterial(*batch.material);
+            BindMaterial(*batch.material);
             SubmitInstancedMesh(viewId, program, *batch.mesh, entry.first.lod,
                                 batch.instances, entry.first.twoSided, state);
         }
@@ -949,9 +913,11 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
 }
 
 void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
-                                    bgfx::ViewId viewId) {
+                                    bgfx::ViewId viewId, bool useDeferred,
+                                    bool reflectionView) {
     if (!m_assets) return;
-    const bool useGbuffer = m_deferred && bgfx::isValid(m_instancedGbufferProg);
+    const bool useGbuffer = useDeferred && m_deferred &&
+                            bgfx::isValid(m_instancedGbufferProg);
     const bgfx::ProgramHandle program = useGbuffer
         ? m_instancedGbufferProg : m_instancedProg;
     if (!bgfx::isValid(program)) return;
@@ -965,23 +931,6 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
     auto flatNormal = m_assets->FlatNormalTexture();
     if (!white || !flatNormal) return;
 
-    bgfx::setTexture(0, s_albedoMap, white->Handle());
-    bgfx::setTexture(1, s_metallicRoughnessMap, white->Handle());
-    bgfx::setTexture(2, s_normalMap, flatNormal->Handle());
-    bgfx::setTexture(4, s_irradianceMap, white->Handle());
-    bgfx::setTexture(5, s_envMap, white->Handle());
-    if (bgfx::isValid(m_brdfLUT)) {
-        bgfx::setTexture(6, s_brdfLUT, m_brdfLUT);
-    } else {
-        bgfx::setTexture(6, s_brdfLUT, white->Handle());
-    }
-    bgfx::setTexture(7, s_emissiveMap, white->Handle());
-    bgfx::setTexture(8, s_occlusionMap, white->Handle());
-    bgfx::setTexture(9, s_opacityMap, white->Handle());
-    bgfx::setTexture(10, s_metallicMap, white->Handle());
-    bgfx::setTexture(11, s_roughnessMap, white->Handle());
-    bgfx::setTexture(12, s_specularMap, white->Handle());
-
     const float metallic[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     const float emissive[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     const float flags[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -989,6 +938,26 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
     auto submitGroup = [&](Mesh& mesh, const glm::vec4& color, float roughness,
                            bool twoSided, bgfx::InstanceDataBuffer& idb,
                            uint32_t count) {
+        // Bind textures inside the submitted draw. Binding them before the
+        // vegetation traversal left an unsubmitted uniform set behind when a
+        // scene had no vegetation, which breaks the next PBR/reflection draw.
+        bgfx::setTexture(0, s_albedoMap, white->Handle());
+        bgfx::setTexture(1, s_metallicRoughnessMap, white->Handle());
+        bgfx::setTexture(2, s_normalMap, flatNormal->Handle());
+        bgfx::setTexture(4, s_irradianceMap, white->Handle());
+        bgfx::setTexture(5, s_envMap, white->Handle());
+        if (bgfx::isValid(m_brdfLUT)) {
+            bgfx::setTexture(6, s_brdfLUT, m_brdfLUT);
+        } else {
+            bgfx::setTexture(6, s_brdfLUT, white->Handle());
+        }
+        bgfx::setTexture(7, s_emissiveMap, white->Handle());
+        bgfx::setTexture(8, s_occlusionMap, white->Handle());
+        bgfx::setTexture(9, s_opacityMap, white->Handle());
+        bgfx::setTexture(10, s_metallicMap, white->Handle());
+        bgfx::setTexture(11, s_roughnessMap, white->Handle());
+        bgfx::setTexture(12, s_specularMap, white->Handle());
+
         const float albedo[4] = {color.r, color.g, color.b, color.a};
         const float rough[4] = {roughness, 0.0f, 0.0f, 0.0f};
         const float params[4] = {1.0f, 1.0f, 0.0f, twoSided ? 1.0f : 0.0f};
@@ -1001,9 +970,12 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
         bgfx::setInstanceDataBuffer(&idb, 0, count);
         bgfx::setVertexBuffer(0, mesh.VB());
         bgfx::setIndexBuffer(mesh.IB());
-        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
-                       BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA |
-                       FaceState(twoSided));
+        const uint64_t face = reflectionView
+            ? (twoSided ? 0 : BGFX_STATE_CULL_CCW)
+            : FaceState(twoSided);
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                       BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
+                       BGFX_STATE_MSAA | face);
         bgfx::submit(viewId, program);
     };
 
@@ -1278,10 +1250,283 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
     RenderVegetationShadows(scene, m_instancedShadowPointProg, viewId);
 }
 
+void RenderSystem::BindMaterial(const Material& mat) {
+    const float alb[4] = {mat.albedoFactor.r, mat.albedoFactor.g,
+                          mat.albedoFactor.b, mat.albedoFactor.a};
+    const float met[4] = {mat.metallicFactor, 0, 0, 0};
+    const float rgh[4] = {mat.roughnessFactor, 0, 0, 0};
+    const float emi[4] = {mat.emissiveFactor.r, mat.emissiveFactor.g,
+                          mat.emissiveFactor.b, 0};
+    const float params[4] = {mat.normalStrength, mat.occlusionStrength,
+                             mat.alphaCutoff, mat.twoSided ? 1.0f : 0.0f};
+    const float flags[4] = {
+        mat.metallicMap ? 1.0f : 0.0f,
+        mat.roughnessMap ? 1.0f : 0.0f,
+        mat.specularMap ? 1.0f : 0.0f,
+        mat.opacityMap ? 1.0f : 0.0f
+    };
+    bgfx::setUniform(u_albedoFactor, alb);
+    bgfx::setUniform(u_metallicFactor, met);
+    bgfx::setUniform(u_roughnessFactor, rgh);
+    bgfx::setUniform(u_emissiveFactor, emi);
+    bgfx::setUniform(u_materialParams, params);
+    bgfx::setUniform(u_materialFlags, flags);
+
+    auto white = m_assets->WhiteTexture();
+    auto flatN = m_assets->FlatNormalTexture();
+    auto albedo = mat.albedoMap ? mat.albedoMap : white;
+    auto mr = mat.metallicRoughnessMap ? mat.metallicRoughnessMap : white;
+    auto nrm = mat.normalMap ? mat.normalMap : flatN;
+    auto emissive = mat.emissiveMap ? mat.emissiveMap : white;
+    auto occlusion = mat.occlusionMap ? mat.occlusionMap : white;
+    auto opacity = mat.opacityMap ? mat.opacityMap : white;
+    auto metallic = mat.metallicMap ? mat.metallicMap : white;
+    auto roughness = mat.roughnessMap ? mat.roughnessMap : white;
+    auto specular = mat.specularMap ? mat.specularMap : white;
+    bgfx::setTexture(0, s_albedoMap, albedo->Handle());
+    bgfx::setTexture(1, s_metallicRoughnessMap, mr->Handle());
+    bgfx::setTexture(2, s_normalMap, nrm->Handle());
+    // Forward PBR needs valid samplers even when the reflection pass has no
+    // scene IBL binding available. White fallbacks are neutral and avoid
+    // sampling stale/unbound texture slots.
+    bgfx::setTexture(4, s_irradianceMap, white->Handle());
+    bgfx::setTexture(5, s_envMap, white->Handle());
+    bgfx::setTexture(7, s_emissiveMap, emissive->Handle());
+    bgfx::setTexture(8, s_occlusionMap, occlusion->Handle());
+    bgfx::setTexture(9, s_opacityMap, opacity->Handle());
+    bgfx::setTexture(10, s_metallicMap, metallic->Handle());
+    bgfx::setTexture(11, s_roughnessMap, roughness->Handle());
+    bgfx::setTexture(12, s_specularMap, specular->Handle());
+    bgfx::setTexture(6, s_brdfLUT,
+                     bgfx::isValid(m_brdfLUT) ? m_brdfLUT : white->Handle());
+}
+
+bool RenderSystem::EnsureReflectionTarget(uint16_t width, uint16_t height) {
+    if (width == 0 || height == 0) return false;
+    if (bgfx::isValid(m_reflectionFbo) &&
+        m_reflectionWidth == width && m_reflectionHeight == height) {
+        return true;
+    }
+
+    DestroyReflectionTarget();
+
+    const uint64_t flags = BGFX_TEXTURE_RT |
+                           BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
+    m_reflectionColor = bgfx::createTexture2D(
+        width, height, false, 1, bgfx::TextureFormat::RGBA16F, flags);
+    m_reflectionDepth = bgfx::createTexture2D(
+        width, height, false, 1, bgfx::TextureFormat::D32F, flags);
+    if (!bgfx::isValid(m_reflectionColor) || !bgfx::isValid(m_reflectionDepth)) {
+        DestroyReflectionTarget();
+        return false;
+    }
+
+    const bgfx::TextureHandle attachments[] = {
+        m_reflectionColor, m_reflectionDepth
+    };
+    m_reflectionFbo = bgfx::createFrameBuffer(2, attachments, false);
+    if (!bgfx::isValid(m_reflectionFbo)) {
+        DestroyReflectionTarget();
+        return false;
+    }
+
+    m_reflectionWidth = width;
+    m_reflectionHeight = height;
+    return true;
+}
+
+void RenderSystem::DestroyReflectionTarget() {
+    if (bgfx::isValid(m_reflectionFbo)) bgfx::destroy(m_reflectionFbo);
+    if (bgfx::isValid(m_reflectionColor)) bgfx::destroy(m_reflectionColor);
+    if (bgfx::isValid(m_reflectionDepth)) bgfx::destroy(m_reflectionDepth);
+    m_reflectionFbo = BGFX_INVALID_HANDLE;
+    m_reflectionColor = BGFX_INVALID_HANDLE;
+    m_reflectionDepth = BGFX_INVALID_HANDLE;
+    m_reflectionWidth = 0;
+    m_reflectionHeight = 0;
+    m_planarActive = false;
+}
+
+bool RenderSystem::RenderPlanarReflection(Scene& scene, const Camera& camera,
+                                           bgfx::ViewId viewId,
+                                           uint16_t width, uint16_t height) {
+    m_planarActive = false;
+    if (!m_assets || !bgfx::isValid(m_program) || width == 0 || height == 0) {
+        return false;
+    }
+
+    const glm::vec3 cameraPos = camera.Position();
+    const Frustum mainFrustum(camera.Projection() * camera.View());
+    struct Candidate {
+        uint32_t entity = 0xFFFFFFFFu;
+        float planeY = 0.0f;
+        float distanceSq = std::numeric_limits<float>::max();
+    };
+    Candidate best;
+
+    auto waterView = scene.Registry().view<TransformComponent, WaterComponent>();
+    for (auto handle : waterView) {
+        const auto& water = waterView.get<WaterComponent>(handle);
+        if (!water.enabled || !water.planarReflections ||
+            water.width <= 0.0f || water.depth <= 0.0f) {
+            continue;
+        }
+        const glm::mat4 world = EntityWorldMatrix(scene, handle);
+        const float planeY = world[3].y;
+
+        // A reflection below the waterline is not meaningful for the normal
+        // walk-on-water view and makes the mirrored camera cross the surface.
+        if (cameraPos.y <= planeY + 0.01f) continue;
+
+        const glm::vec3 center(world[3]);
+        const float surfaceRadius = 0.5f * std::sqrt(
+            water.width * water.width + water.depth * water.depth) +
+            std::max(water.waveHeight, 0.1f);
+        if (!mainFrustum.TestSphere(center, surfaceRadius)) continue;
+        const float distanceSq = glm::dot(center - cameraPos, center - cameraPos);
+        if (distanceSq < best.distanceSq) {
+            best.entity = static_cast<uint32_t>(entt::to_integral(handle));
+            best.planeY = planeY;
+            best.distanceSq = distanceSq;
+        }
+    }
+
+    if (best.entity == 0xFFFFFFFFu || !EnsureReflectionTarget(width, height)) {
+        return false;
+    }
+
+    m_planarPlaneY = best.planeY;
+    m_planarActive = true;
+
+    // Reflect the scene across the horizontal water plane by mirroring the
+    // main view. Keeping the main projection makes the reflected image line
+    // up with the water pixel's screen UV, so the water shader can sample it
+    // directly.
+    glm::mat4 mirror(1.0f);
+    mirror[1][1] = -1.0f;
+    mirror[3][1] = 2.0f * m_planarPlaneY;
+    const glm::mat4 reflectionView = camera.View() * mirror;
+    const glm::mat4 reflectionVP = camera.Projection() * reflectionView;
+    const glm::vec3 reflectionEye = glm::vec3(
+        mirror * glm::vec4(cameraPos, 1.0f));
+
+    bgfx::setViewFrameBuffer(viewId, m_reflectionFbo);
+    bgfx::setViewRect(viewId, 0, 0, width, height);
+    bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH,
+                       0x00000000u, 1.0f, 0);
+    bgfx::setViewTransform(viewId, glm::value_ptr(reflectionView),
+                           glm::value_ptr(camera.Projection()));
+    bgfx::setViewMode(viewId, bgfx::ViewMode::Sequential);
+
+    const Frustum frustum(reflectionVP);
+    const float cam[4] = {reflectionEye.x, reflectionEye.y,
+                          reflectionEye.z, 1.0f};
+    glm::vec3 lightDir{-0.4f, -0.8f, -0.5f};
+    glm::vec3 lightCol{1.0f};
+    float lightInt = 1.2f;
+    auto lightView = scene.Registry().view<DirectionalLightComponent>();
+    if (!lightView.empty()) {
+        auto h = *lightView.begin();
+        lightDir = lightView.get<DirectionalLightComponent>(h).direction;
+        lightCol = lightView.get<DirectionalLightComponent>(h).color;
+        lightInt = lightView.get<DirectionalLightComponent>(h).intensity;
+    }
+    const float lDir[4] = {lightDir.x, lightDir.y, lightDir.z, 0.0f};
+    const float lCol[4] = {lightCol.r, lightCol.g, lightCol.b, lightInt};
+    const float clipPlane[4] = {0.0f, 1.0f, 0.0f, -m_planarPlaneY};
+    bgfx::setUniform(u_cameraPosition, cam);
+    bgfx::setUniform(u_lightDirection, lDir);
+    bgfx::setUniform(u_lightColorIntensity, lCol);
+    bgfx::setUniform(u_reflectionClip, clipPlane);
+    bgfx::setUniform(u_prevViewProj, glm::value_ptr(reflectionVP));
+
+    static std::vector<glm::vec4> identityBoneData(kMaxBones * 4,
+                                                    glm::vec4(0.0f));
+    static bool initIdentity = false;
+    if (!initIdentity) {
+        const glm::mat4 identity(1.0f);
+        for (int i = 0; i < kMaxBones; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                identityBoneData[i * 4 + j] = identity[j];
+            }
+        }
+        initIdentity = true;
+    }
+    std::vector<glm::vec4> boneData(kMaxBones * 4);
+
+    auto view = scene.Registry().view<TransformComponent, MeshComponent,
+                                      MaterialComponent>();
+    for (auto handle : view) {
+        const auto& meshComponent = view.get<MeshComponent>(handle);
+        const auto& materialComponent = view.get<MaterialComponent>(handle);
+        if (!meshComponent.mesh || !meshComponent.mesh->Valid() ||
+            !materialComponent.material ||
+            materialComponent.material->isGlass) {
+            continue;
+        }
+
+        const glm::mat4 model = EntityWorldMatrix(scene, handle);
+        glm::vec3 localMin, localMax;
+        meshComponent.mesh->LocalAABB(localMin, localMax);
+        const glm::vec3 localCenter = (localMin + localMax) * 0.5f;
+        const float localRadius = glm::length(localMax - localMin) * 0.5f;
+        const glm::vec3 worldCenter = glm::vec3(
+            model * glm::vec4(localCenter, 1.0f));
+        const float maxScale = std::max(
+            std::max(glm::length(glm::vec3(model[0])),
+                     glm::length(glm::vec3(model[1]))),
+            glm::length(glm::vec3(model[2])));
+        if (!frustum.TestSphere(worldCenter, localRadius * maxScale)) continue;
+
+        const entt::entity root = FindRootEntity(scene, handle);
+        if (scene.Registry().all_of<SkeletalComponent>(root)) {
+            auto& skeleton = scene.Registry().get<SkeletalComponent>(root);
+            if (skeleton.isAnimated && !skeleton.sourcePath.empty()) {
+                if (skeleton.boneMatrices.size() != kMaxBones) {
+                    skeleton.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
+                }
+                for (int i = 0; i < kMaxBones; ++i) {
+                    for (int j = 0; j < 4; ++j) {
+                        boneData[i * 4 + j] = skeleton.boneMatrices[i][j];
+                    }
+                }
+            } else {
+                boneData = identityBoneData;
+            }
+        } else {
+            boneData = identityBoneData;
+        }
+        bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
+            bgfx::copy(boneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
+        bgfx::setTexture(3, s_boneMatrices, m_boneTexture);
+        bgfx::setUniform(u_prevModel, glm::value_ptr(model));
+        bgfx::setTransform(glm::value_ptr(model));
+        BindMaterial(*materialComponent.material);
+        bgfx::setVertexBuffer(0, meshComponent.mesh->VB());
+        bgfx::setIndexBuffer(meshComponent.mesh->IB());
+
+        // The mirrored view reverses triangle winding, so front faces are
+        // clockwise in the reflection target. Two-sided materials still skip
+        // culling entirely.
+        const uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                               BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
+                               BGFX_STATE_MSAA |
+                               (materialComponent.material->twoSided
+                                    ? 0 : BGFX_STATE_CULL_CCW);
+        bgfx::setState(state);
+        bgfx::submit(viewId, m_program);
+    }
+
+    RenderVegetation(scene, frustum, viewId, false, true);
+    return true;
+}
+
 void RenderSystem::RenderWater(Scene& scene, const Camera& camera,
                                bgfx::TextureHandle sceneColor,
                                bgfx::TextureHandle sceneDepth,
                                bgfx::TextureHandle envCube,
+                               bgfx::TextureHandle planarReflection,
+                               float planarPlaneY,
                                const float lightDir[4],
                                const float lightColorIntensity[4],
                                bgfx::ViewId viewId, uint16_t width, uint16_t height,
@@ -1371,6 +1616,10 @@ void RenderSystem::RenderWater(Scene& scene, const Camera& camera,
     bgfx::setTexture(0, s_waterSceneColor, sceneColor);
     bgfx::setTexture(1, s_waterDepth, sceneDepth);
     bgfx::setTexture(2, s_waterEnvCube, envCube);
+    const bgfx::TextureHandle planarTexture =
+        bgfx::isValid(planarReflection)
+            ? planarReflection : m_assets->WhiteTexture()->Handle();
+    bgfx::setTexture(3, s_waterPlanar, planarTexture);
 
     for (const WaterItem& item : items) {
         const WaterComponent& water = *item.water;
@@ -1391,6 +1640,14 @@ void RenderSystem::RenderWater(Scene& scene, const Camera& camera,
                                water.deepColor.b, 1.0f};
         const float foam[4] = {water.foamColor.r, water.foamColor.g,
                                water.foamColor.b, 1.0f};
+        // The reflection target is valid for one horizontal plane. Surfaces
+        // at other heights keep the cubemap reflection instead of sampling
+        // an image mirrored across the wrong plane.
+        const float itemPlaneY = item.model[3].y;
+        const bool usePlanar = bgfx::isValid(planarReflection) &&
+            std::abs(itemPlaneY - planarPlaneY) < 0.05f;
+        const float planar[4] = {usePlanar ? 1.0f : 0.0f,
+                                 planarPlaneY, 1.0f, 0.0f};
 
         bgfx::setUniform(u_waterParams0, p0);
         bgfx::setUniform(u_waterParams1, p1);
@@ -1400,6 +1657,7 @@ void RenderSystem::RenderWater(Scene& scene, const Camera& camera,
         bgfx::setUniform(u_waterShallow, shallow);
         bgfx::setUniform(u_waterDeep, deep);
         bgfx::setUniform(u_waterFoam, foam);
+        bgfx::setUniform(u_waterPlanar, planar);
 
         bgfx::setTransform(glm::value_ptr(item.model));
         bgfx::setVertexBuffer(0, waterMesh->VB());

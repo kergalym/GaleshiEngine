@@ -18,7 +18,7 @@ Ray ScreenPointToRay(const Camera& camera,
 
     const glm::mat4 invVP = glm::inverse(camera.ViewProj());
 
-    glm::vec4 nearP = invVP * glm::vec4(ndcX, ndcY, -1.0f, 1.0f);
+    glm::vec4 nearP = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
     glm::vec4 farP  = invVP * glm::vec4(ndcX, ndcY,  1.0f, 1.0f);
 
     nearP /= nearP.w;

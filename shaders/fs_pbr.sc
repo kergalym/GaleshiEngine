@@ -1,4 +1,4 @@
-$input v_worldPos, v_normal, v_tangent, v_uv
+$input v_worldPos, v_normal, v_tangent, v_uv, v_motion
 
 #include <bgfx_shader.sh>
 
@@ -15,6 +15,9 @@ uniform vec4 u_materialParams;
 // x = separate metallic map, y = separate roughness map,
 // z = specular map, w = opacity map
 uniform vec4 u_materialFlags;
+// xyz = plane normal, w = plane constant. The regular forward pass uses
+// (0,0,0,1); the planar-reflection pass clips geometry below the waterline.
+uniform vec4 u_reflectionClip;
 
 SAMPLER2D(s_albedoMap,            0);
 SAMPLER2D(s_metallicRoughnessMap, 1);
@@ -66,6 +69,10 @@ vec3 aces_tonemap(vec3 color) {
 
 void main()
 {
+    if (dot(v_worldPos, u_reflectionClip.xyz) + u_reflectionClip.w < 0.0) {
+        discard;
+    }
+
     vec4 albedoTex = texture2D(s_albedoMap, v_uv);
     float opacity = texture2D(s_opacityMap, v_uv).r;
     // Texture alpha only: legacy material factors must not turn a fully

@@ -6,7 +6,7 @@
 #include <unordered_map>
 
 namespace Galeshi {
-class Scene; class Camera; class AssetManager; class Frustum;
+class Scene; class Camera; class AssetManager; class Frustum; class Material;
 class RenderSystem {
 public:
     RenderSystem(); ~RenderSystem();
@@ -23,9 +23,22 @@ public:
     void RenderWater(Scene& scene, const Camera& camera,
                      bgfx::TextureHandle sceneColor, bgfx::TextureHandle sceneDepth,
                      bgfx::TextureHandle envCube,
+                     bgfx::TextureHandle planarReflection, float planarPlaneY,
                      const float lightDir[4], const float lightColorIntensity[4],
                      bgfx::ViewId viewId, uint16_t width, uint16_t height,
                      float time, float nearZ, float farZ);
+
+    // Renders the opaque scene mirrored across the nearest visible water
+    // plane. The resulting HDR texture is sampled by RenderWater and falls
+    // back to the environment cubemap where no reflected geometry exists.
+    bool RenderPlanarReflection(Scene& scene, const Camera& camera,
+                                bgfx::ViewId viewId, uint16_t width, uint16_t height);
+    bgfx::TextureHandle PlanarReflectionTexture() const {
+        if (!m_planarActive) return bgfx::TextureHandle(BGFX_INVALID_HANDLE);
+        return m_reflectionColor;
+    }
+    float PlanarReflectionPlaneY() const { return m_planarPlaneY; }
+    bool HasPlanarReflection() const { return m_planarActive; }
     void RenderHair(Scene& scene, const Camera& camera,
                     bgfx::TextureHandle sceneDepth, bgfx::TextureHandle envCube,
                     const float sunDir[4], const float lightColorIntensity[4],
@@ -64,9 +77,13 @@ private:
         uint64_t lastSeenFrame = 0;
     };
 
-    void RenderVegetation(Scene& scene, const Frustum& frustum, bgfx::ViewId viewId);
+    void RenderVegetation(Scene& scene, const Frustum& frustum, bgfx::ViewId viewId,
+                          bool useDeferred = true, bool reflectionView = false);
     void RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle program,
                                  bgfx::ViewId viewId);
+    void BindMaterial(const Material& mat);
+    bool EnsureReflectionTarget(uint16_t width, uint16_t height);
+    void DestroyReflectionTarget();
     bool EnsureOcclusionTarget(uint16_t width, uint16_t height);
     bool IsOccluded(uint32_t entityId) const;
     void ResetOcclusionState();
@@ -90,6 +107,14 @@ private:
     std::unordered_map<uint32_t, OcclusionState> m_occlusionStates;
     bgfx::TextureHandle m_brdfLUT = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_brdfLUT = BGFX_INVALID_HANDLE;
+
+    bgfx::TextureHandle m_reflectionColor = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_reflectionDepth = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_reflectionFbo = BGFX_INVALID_HANDLE;
+    uint16_t m_reflectionWidth = 0;
+    uint16_t m_reflectionHeight = 0;
+    float m_planarPlaneY = 0.0f;
+    bool m_planarActive = false;
 
     bgfx::ProgramHandle m_program      = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_gbufferProg  = BGFX_INVALID_HANDLE;
@@ -130,6 +155,9 @@ private:
     bgfx::UniformHandle s_waterSceneColor = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_waterDepth = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_waterEnvCube = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_waterPlanar = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_waterPlanar = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_reflectionClip = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_hairParams0 = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_hairParams1 = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_hairInvNearFar = BGFX_INVALID_HANDLE;

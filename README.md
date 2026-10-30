@@ -52,11 +52,11 @@ The primary rendering path is deferred:
 - Spot shadows: up to four spot lights.
 - Tiled light culling through a compute shader.
 - Frustum culling for scene meshes.
-- Animated procedural water with Fresnel environment reflections, screen-space refraction, depth absorption, shoreline/crest foam, and sun sparkle.
+- Animated procedural water with planar scene reflections, Fresnel environment fallback, screen-space refraction, depth absorption, shoreline/crest foam, and sun sparkle. Planar reflections use a clipped mirrored opaque pass for the nearest water plane and can be disabled per water entity.
 - Automatic instancing for repeated static meshes in the main, G-buffer, and shadow passes.
 - Automatic mesh LOD generation and distance-based LOD selection.
 - Conservative occlusion culling with GPU occlusion queries and a low-resolution occluder depth map.
-- Cascade-aware PSSM depth bias and normal-offset tuning.
+- Cascade-aware PSSM depth bias, normal-offset tuning, and texel-snapped cascades for stable distant shadows.
 - Per-object motion vectors for Motion Blur and TAA, with camera fallback for sky.
 - Scalable render resolution with optional dynamic-resolution scaling.
 - Analytical height fog plus an optional volumetric ray-marched mode with PSSM shadow shafts.

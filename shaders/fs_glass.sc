@@ -1,4 +1,4 @@
-$input v_worldPos, v_normal, v_tangent, v_uv
+$input v_worldPos, v_normal, v_tangent, v_uv, v_motion
 #include <bgfx_shader.sh>
 
 SAMPLER2D(s_albedoMap,  0);
