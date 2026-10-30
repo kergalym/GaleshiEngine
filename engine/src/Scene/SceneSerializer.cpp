@@ -787,7 +787,10 @@ bool SceneSerializer::Save(const std::string& path) const {
 bool SceneSerializer::Load(const std::string& path,
                            const std::atomic<bool>* cancel) {
     std::ifstream in(path);
-    if (!in.is_open()) return false;
+    if (!in.is_open()) {
+        spdlog::error("[Scene] Could not open scene file: {}", path);
+        return false;
+    }
     std::stringstream ss;
     ss << in.rdbuf();
     return LoadFromString(ss.str(), cancel);

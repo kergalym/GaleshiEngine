@@ -365,7 +365,21 @@ protected:
         if (f.is_open()) {
             try {
                 nlohmann::json j; f >> j;
-                if (j.is_array()) m_recentProjects = j.get<std::vector<std::string>>();
+                if (j.is_array()) {
+                    const auto raw = j.get<std::vector<std::string>>();
+                    m_recentProjects.clear();
+                    for (const auto& entry : raw) {
+                        if (entry.empty()) continue;
+                        std::error_code ec;
+                        const auto absolute = std::filesystem::absolute(entry, ec);
+                        const std::string normalized = ec
+                            ? entry : absolute.lexically_normal().string();
+                        if (std::find(m_recentProjects.begin(), m_recentProjects.end(),
+                                      normalized) == m_recentProjects.end()) {
+                            m_recentProjects.push_back(normalized);
+                        }
+                    }
+                }
             } catch (...) {}
         }
     }
@@ -381,10 +395,16 @@ protected:
         }
     }
 
-    void AddRecentProject(const std::string& path) {
+    // Take the path by value: callers used to pass a reference to an element
+    // of m_recentProjects, and erasing that element below invalidated the
+    // reference before the path could be captured by the load lambda.
+    void AddRecentProject(std::string path) {
+        std::error_code ec;
+        const auto absolute = std::filesystem::absolute(path, ec);
+        if (!ec) path = absolute.lexically_normal().string();
         auto it = std::find(m_recentProjects.begin(), m_recentProjects.end(), path);
         if (it != m_recentProjects.end()) m_recentProjects.erase(it);
-        m_recentProjects.insert(m_recentProjects.begin(), path);
+        m_recentProjects.insert(m_recentProjects.begin(), std::move(path));
         if (m_recentProjects.size() > 10) m_recentProjects.resize(10);
         SaveRecentProjects();
     }
@@ -523,27 +543,31 @@ protected:
                 } else {
                     for (size_t i = 0; i < m_recentProjects.size(); ++i) {
                         ImGui::PushID(static_cast<int>(i));
-                        const auto& proj = m_recentProjects[i];
-                        std::string filename = std::filesystem::path(proj).filename().string();
+                        // Copy before AddRecentProject reorders the vector.
+                        const std::string projectPath = m_recentProjects[i];
+                        std::string filename = std::filesystem::path(projectPath).filename().string();
                         
                         if (ImGui::Selectable(filename.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
                             if (ImGui::IsMouseDoubleClicked(0)) {
-                                if (Galeshi::ProjectManager::OpenProject(proj)) {
+                                if (Galeshi::ProjectManager::OpenProject(projectPath)) {
                                     m_projectLoaded = true;
-                                    AddRecentProject(proj);
-                                    StartAsyncLoad(filename, [this, proj]() {
+                                    AddRecentProject(projectPath);
+                                    StartAsyncLoad(filename, [this, projectPath]() {
                                         InitializeEditor();
                                         if (m_loadingState.cancelRequested) return;
                                         if (m_serializer &&
-                                            m_serializer->Load(proj, &m_loadingState.cancelRequested)) {
-                                            m_currentScenePath = proj;
+                                            m_serializer->Load(projectPath, &m_loadingState.cancelRequested)) {
+                                            m_currentScenePath = std::filesystem::absolute(projectPath)
+                                                .lexically_normal().string();
+                                        } else {
+                                            spdlog::error("[ProjectManager] Failed to load scene: {}", projectPath);
                                         }
                                     }, true);
                                 }
                             }
                         }
                         if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("%s\nDouble-click to open.", proj.c_str());
+                            ImGui::SetTooltip("%s\nDouble-click to open.", projectPath.c_str());
                         }
                         ImGui::PopID();
                     }
@@ -566,7 +590,10 @@ protected:
                         if (m_loadingState.cancelRequested) return;
                         if (m_serializer &&
                             m_serializer->Load(chosenPath, &m_loadingState.cancelRequested)) {
-                            m_currentScenePath = chosenPath;
+                            m_currentScenePath = std::filesystem::absolute(chosenPath)
+                                .lexically_normal().string();
+                        } else {
+                            spdlog::error("[ProjectManager] Failed to load scene: {}", chosenPath);
                         }
                     }, true);
                 }
