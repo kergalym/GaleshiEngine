@@ -415,6 +415,46 @@ struct ParticleEmitterComponent {
     std::shared_ptr<Texture> texture;
 };
 
+// Procedural water surface. The renderer builds a subdivided plane from this
+// component, displaces it with animated waves, and shades reflections,
+// screen-space refraction, depth absorption, foam, and sun glints.
+struct WaterComponent {
+    bool enabled = true;
+    bool visibleInEditor = true;
+
+    // World-space extent of the surface.
+    float width = 20.0f;
+    float depth = 20.0f;
+
+    // Wave field.
+    float waveHeight   = 0.32f;
+    float waveScale    = 1.0f;
+    float waveSpeed    = 1.0f;
+    float choppiness   = 0.35f;
+    float detailStrength = 0.45f;
+    glm::vec2 flowDirection{1.0f, 0.0f};
+
+    // Optical properties.
+    float refractionStrength = 0.35f;
+    float reflectionStrength = 0.82f;
+    float fresnelPower       = 5.0f;
+    float depthFade          = 4.0f;
+    float absorption         = 0.55f;
+    float clarity            = 0.65f;
+    float transparency       = 0.82f;
+
+    // Shore and crest foam.
+    float foamDistance  = 0.35f;
+    float foamIntensity = 0.25f;
+
+    // Specular sparkle strength.
+    float sparkle = 0.35f;
+
+    glm::vec3 shallowColor{0.08f, 0.42f, 0.46f};
+    glm::vec3 deepColor{0.008f, 0.045f, 0.12f};
+    glm::vec3 foamColor{0.92f, 0.96f, 1.0f};
+};
+
 // Screen-space UI canvas.  Rendered by UIRuntime through ImGui; the widget
 // list is authored in the editor or loaded from the scene file.
 struct UICanvasComponent {

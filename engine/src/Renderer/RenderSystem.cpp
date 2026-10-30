@@ -11,6 +11,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -44,6 +45,7 @@ void RenderSystem::Init(AssetManager* assets) {
     m_shadowProg = ShaderManager::LoadProgram("shaders/vs_shadow.bin", "shaders/fs_shadow.bin");
     m_shadowPointProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_shadow_point.bin");
     m_glassProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_glass.bin");
+    m_waterProg = ShaderManager::LoadProgram("shaders/vs_water.bin", "shaders/fs_water.bin");
     m_instancedProg = ShaderManager::LoadProgram(
         "shaders/vs_vegetation_instanced.bin", "shaders/fs_pbr.bin");
     m_instancedGbufferProg = ShaderManager::LoadProgram(
@@ -52,10 +54,11 @@ void RenderSystem::Init(AssetManager* assets) {
         "shaders/vs_vegetation_shadow_instanced.bin", "shaders/fs_shadow.bin");
     m_instancedShadowPointProg = ShaderManager::LoadProgram(
         "shaders/vs_vegetation_instanced.bin", "shaders/fs_shadow_point.bin");
-    spdlog::info("[RenderSystem] programs: pbr={} gbuffer={} shadow={} shadowPoint={} glass={} vegetation={}",
+    spdlog::info("[RenderSystem] programs: pbr={} gbuffer={} shadow={} shadowPoint={} glass={} water={} vegetation={}",
         bgfx::isValid(m_program), bgfx::isValid(m_gbufferProg),
         bgfx::isValid(m_shadowProg), bgfx::isValid(m_shadowPointProg),
-        bgfx::isValid(m_glassProg), bgfx::isValid(m_instancedProg));
+        bgfx::isValid(m_glassProg), bgfx::isValid(m_waterProg),
+        bgfx::isValid(m_instancedProg));
     u_shadowLightPos = bgfx::createUniform("u_shadowLightPos", bgfx::UniformType::Vec4);
     if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
 
@@ -72,6 +75,19 @@ void RenderSystem::Init(AssetManager* assets) {
     u_materialParams = bgfx::createUniform("u_materialParams", bgfx::UniformType::Vec4);
     u_materialFlags = bgfx::createUniform("u_materialFlags", bgfx::UniformType::Vec4);
     u_glassParams = bgfx::createUniform("u_glassParams", bgfx::UniformType::Vec4);
+    u_cameraForward = bgfx::createUniform("u_cameraForward", bgfx::UniformType::Vec4);
+    u_waterParams0 = bgfx::createUniform("u_waterParams0", bgfx::UniformType::Vec4);
+    u_waterParams1 = bgfx::createUniform("u_waterParams1", bgfx::UniformType::Vec4);
+    u_waterParams2 = bgfx::createUniform("u_waterParams2", bgfx::UniformType::Vec4);
+    u_waterParams3 = bgfx::createUniform("u_waterParams3", bgfx::UniformType::Vec4);
+    u_waterFlow = bgfx::createUniform("u_waterFlow", bgfx::UniformType::Vec4);
+    u_waterInvNearFar = bgfx::createUniform("u_waterInvNearFar", bgfx::UniformType::Vec4);
+    u_waterShallow = bgfx::createUniform("u_waterShallow", bgfx::UniformType::Vec4);
+    u_waterDeep = bgfx::createUniform("u_waterDeep", bgfx::UniformType::Vec4);
+    u_waterFoam = bgfx::createUniform("u_waterFoam", bgfx::UniformType::Vec4);
+    s_waterSceneColor = bgfx::createUniform("s_waterSceneColor", bgfx::UniformType::Sampler);
+    s_waterDepth = bgfx::createUniform("s_waterDepth", bgfx::UniformType::Sampler);
+    s_waterEnvCube = bgfx::createUniform("s_envCube", bgfx::UniformType::Sampler);
     
     s_boneMatrices = bgfx::createUniform("s_boneMatrices", bgfx::UniformType::Sampler);
     m_boneTexture = bgfx::createTexture2D(4, kMaxBones, false, 1, bgfx::TextureFormat::RGBA32F);
@@ -96,6 +112,7 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(m_shadowProg)) bgfx::destroy(m_shadowProg);
     if (bgfx::isValid(m_shadowPointProg)) bgfx::destroy(m_shadowPointProg);
     if (bgfx::isValid(m_glassProg)) bgfx::destroy(m_glassProg);
+    if (bgfx::isValid(m_waterProg)) bgfx::destroy(m_waterProg);
     if (bgfx::isValid(m_instancedProg)) bgfx::destroy(m_instancedProg);
     if (bgfx::isValid(m_instancedGbufferProg)) bgfx::destroy(m_instancedGbufferProg);
     if (bgfx::isValid(m_instancedShadowProg)) bgfx::destroy(m_instancedShadowProg);
@@ -114,6 +131,19 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(u_materialParams)) bgfx::destroy(u_materialParams);
     if (bgfx::isValid(u_materialFlags)) bgfx::destroy(u_materialFlags);
     if (bgfx::isValid(u_glassParams)) bgfx::destroy(u_glassParams);
+    if (bgfx::isValid(u_cameraForward)) bgfx::destroy(u_cameraForward);
+    if (bgfx::isValid(u_waterParams0)) bgfx::destroy(u_waterParams0);
+    if (bgfx::isValid(u_waterParams1)) bgfx::destroy(u_waterParams1);
+    if (bgfx::isValid(u_waterParams2)) bgfx::destroy(u_waterParams2);
+    if (bgfx::isValid(u_waterParams3)) bgfx::destroy(u_waterParams3);
+    if (bgfx::isValid(u_waterFlow)) bgfx::destroy(u_waterFlow);
+    if (bgfx::isValid(u_waterInvNearFar)) bgfx::destroy(u_waterInvNearFar);
+    if (bgfx::isValid(u_waterShallow)) bgfx::destroy(u_waterShallow);
+    if (bgfx::isValid(u_waterDeep)) bgfx::destroy(u_waterDeep);
+    if (bgfx::isValid(u_waterFoam)) bgfx::destroy(u_waterFoam);
+    if (bgfx::isValid(s_waterSceneColor)) bgfx::destroy(s_waterSceneColor);
+    if (bgfx::isValid(s_waterDepth)) bgfx::destroy(s_waterDepth);
+    if (bgfx::isValid(s_waterEnvCube)) bgfx::destroy(s_waterEnvCube);
     if (bgfx::isValid(s_boneMatrices)) bgfx::destroy(s_boneMatrices);
     if (bgfx::isValid(m_boneTexture)) bgfx::destroy(m_boneTexture);
     if (bgfx::isValid(s_albedoMap)) bgfx::destroy(s_albedoMap);
@@ -640,6 +670,140 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
     }
 
     RenderVegetationShadows(scene, m_instancedShadowPointProg, viewId);
+}
+
+void RenderSystem::RenderWater(Scene& scene, const Camera& camera,
+                               bgfx::TextureHandle sceneColor,
+                               bgfx::TextureHandle sceneDepth,
+                               bgfx::TextureHandle envCube,
+                               const float lightDir[4],
+                               const float lightColorIntensity[4],
+                               bgfx::ViewId viewId, uint16_t width, uint16_t height,
+                               float time, float nearZ, float farZ) {
+    if (!bgfx::isValid(m_waterProg) || !m_assets) return;
+    const std::shared_ptr<Mesh> waterMesh = m_assets->CreateWaterMesh();
+    if (!waterMesh || !waterMesh->Valid()) return;
+
+    bgfx::setViewTransform(viewId, glm::value_ptr(camera.View()),
+                           glm::value_ptr(camera.Projection()));
+    bgfx::setViewRect(viewId, 0, 0, width, height);
+    bgfx::setViewClear(viewId, BGFX_CLEAR_NONE);
+    bgfx::setViewMode(viewId, bgfx::ViewMode::Sequential);
+
+    const glm::vec3 camPos = camera.Position();
+    glm::vec3 forward = -glm::vec3(camera.View()[0][2],
+                                    camera.View()[1][2],
+                                    camera.View()[2][2]);
+    if (glm::length(forward) > 1e-5f) forward = glm::normalize(forward);
+
+    float cam[4] = {camPos.x, camPos.y, camPos.z, 1.0f};
+    float fwd[4] = {forward.x, forward.y, forward.z, 0.0f};
+    float nearFar[4] = {1.0f / std::max(nearZ, 0.0001f),
+                        1.0f / std::max(farZ, 0.0001f), 0.0f, 0.0f};
+    bgfx::setUniform(u_cameraPosition, cam);
+    bgfx::setUniform(u_cameraForward, fwd);
+    bgfx::setUniform(u_waterInvNearFar, nearFar);
+    bgfx::setUniform(u_lightDirection, lightDir);
+    bgfx::setUniform(u_lightColorIntensity, lightColorIntensity);
+    bgfx::setTexture(0, s_waterSceneColor, sceneColor);
+    bgfx::setTexture(1, s_waterDepth, sceneDepth);
+    bgfx::setTexture(2, s_waterEnvCube, envCube);
+
+    struct WaterItem {
+        const WaterComponent* water = nullptr;
+        glm::mat4 model{1.0f};
+        float distanceSq = 0.0f;
+    };
+    std::vector<WaterItem> items;
+    items.reserve(8);
+
+    const glm::mat4 viewProj = camera.Projection() * camera.View();
+    const Frustum frustum(viewProj);
+
+    auto view = scene.Registry().view<TransformComponent, WaterComponent>();
+    for (auto h : view) {
+        const WaterComponent& water = view.get<WaterComponent>(h);
+        if (!water.enabled || water.width <= 0.0f || water.depth <= 0.0f) {
+            continue;
+        }
+
+        WaterItem item;
+        item.water = &water;
+
+        entt::entity curr = h;
+        std::vector<entt::entity> chain;
+        int depth = 0;
+        while (curr != entt::null && depth++ < 128) {
+            chain.push_back(curr);
+            if (scene.Registry().all_of<ParentComponent>(curr))
+                curr = scene.Registry().get<ParentComponent>(curr).parent;
+            else
+                break;
+        }
+        glm::mat4 world(1.0f);
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            if (scene.Registry().all_of<TransformComponent>(*it)) {
+                world = world * scene.Registry().get<TransformComponent>(*it).LocalMatrix();
+            }
+        }
+
+        const glm::vec3 center = glm::vec3(world[3]);
+        const float radius = 0.5f * std::sqrt(water.width * water.width +
+                                              water.depth * water.depth);
+        if (!frustum.TestSphere(center, radius + std::max(water.waveHeight, 0.1f))) {
+            continue;
+        }
+
+        item.model = world * glm::scale(glm::mat4(1.0f),
+                                        glm::vec3(water.width, 1.0f, water.depth));
+        item.distanceSq = glm::dot(center - camPos, center - camPos);
+        items.push_back(item);
+    }
+
+    // Alpha blending is order-dependent; draw distant water first.
+    std::sort(items.begin(), items.end(),
+              [](const WaterItem& a, const WaterItem& b) {
+                  return a.distanceSq > b.distanceSq;
+              });
+
+    for (const WaterItem& item : items) {
+        const WaterComponent& water = *item.water;
+        const float p0[4] = {time, water.waveHeight,
+                             std::max(water.waveScale, 0.01f), water.waveSpeed};
+        const float p1[4] = {water.choppiness, water.detailStrength,
+                             water.refractionStrength, water.reflectionStrength};
+        const float p2[4] = {std::max(water.depthFade, 0.05f),
+                             std::max(water.absorption, 0.0f),
+                             std::max(water.foamDistance, 0.01f),
+                             std::max(water.foamIntensity, 0.0f)};
+        const float p3[4] = {water.clarity, water.transparency,
+                             std::max(water.fresnelPower, 1.0f), water.sparkle};
+        const float flow[4] = {water.flowDirection.x, water.flowDirection.y, 0.0f, 1.0f};
+        const float shallow[4] = {water.shallowColor.r, water.shallowColor.g,
+                                  water.shallowColor.b, 1.0f};
+        const float deep[4] = {water.deepColor.r, water.deepColor.g,
+                               water.deepColor.b, 1.0f};
+        const float foam[4] = {water.foamColor.r, water.foamColor.g,
+                               water.foamColor.b, 1.0f};
+
+        bgfx::setUniform(u_waterParams0, p0);
+        bgfx::setUniform(u_waterParams1, p1);
+        bgfx::setUniform(u_waterParams2, p2);
+        bgfx::setUniform(u_waterParams3, p3);
+        bgfx::setUniform(u_waterFlow, flow);
+        bgfx::setUniform(u_waterShallow, shallow);
+        bgfx::setUniform(u_waterDeep, deep);
+        bgfx::setUniform(u_waterFoam, foam);
+
+        bgfx::setTransform(glm::value_ptr(item.model));
+        bgfx::setVertexBuffer(0, waterMesh->VB());
+        bgfx::setIndexBuffer(waterMesh->IB());
+        // Depth is checked manually in the shader against the copied opaque
+        // depth; this target is color-only and has no usable hardware depth.
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                       BGFX_STATE_BLEND_ALPHA | BGFX_STATE_MSAA);
+        bgfx::submit(viewId, m_waterProg);
+    }
 }
 
 void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height) {

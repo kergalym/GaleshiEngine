@@ -1747,6 +1747,13 @@ if (ImGui::BeginMenu("File")) {
                 tc.position = {0, 2, 0};
                 m_editor.Select(e);
             }
+            if (ImGui::MenuItem("Water Surface")) {
+                auto e = m_scene.CreateEntity("Water");
+                e.AddComponent<Galeshi::WaterComponent>();
+                auto& tc = e.GetComponent<Galeshi::TransformComponent>();
+                tc.position = {m_editor.camTarget.x, 0.0f, m_editor.camTarget.z};
+                m_editor.Select(e);
+            }
             if (ImGui::MenuItem("Audio Source")) {
                 auto e = m_scene.CreateEntity("AudioSource");
                 e.AddComponent<Galeshi::AudioSourceComponent>();
@@ -3706,6 +3713,128 @@ if (ImGui::BeginMenu("File")) {
         }
     }
 
+    void DrawWaterSettings(Galeshi::WaterComponent& water) {
+        ImGui::Checkbox("Enabled##water", &water.enabled);
+        ImGui::SameLine();
+        ImGui::Checkbox("Visible in Editor", &water.visibleInEditor);
+        ImGui::DragFloat("Width", &water.width, 0.1f, 0.1f, 10000.0f);
+        ImGui::DragFloat("Depth", &water.depth, 0.1f, 0.1f, 10000.0f);
+        ImGui::TextDisabled("The water surface is centered on the entity and "
+                            "uses its Y position.");
+
+        ImGui::Separator();
+        ImGui::Text("Presets");
+        if (ImGui::Button("Calm Lake")) {
+            PushHistory();
+            water.waveHeight = 0.12f;
+            water.waveScale = 1.4f;
+            water.waveSpeed = 0.55f;
+            water.choppiness = 0.15f;
+            water.detailStrength = 0.20f;
+            water.refractionStrength = 0.28f;
+            water.reflectionStrength = 0.82f;
+            water.clarity = 0.72f;
+            water.absorption = 0.32f;
+            water.foamDistance = 0.45f;
+            water.foamIntensity = 0.35f;
+            water.shallowColor = {0.10f, 0.46f, 0.48f};
+            water.deepColor = {0.015f, 0.10f, 0.16f};
+            water.transparency = 0.88f;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Ocean")) {
+            PushHistory();
+            water.waveHeight = 0.48f;
+            water.waveScale = 0.75f;
+            water.waveSpeed = 1.25f;
+            water.choppiness = 0.55f;
+            water.detailStrength = 0.55f;
+            water.refractionStrength = 0.34f;
+            water.reflectionStrength = 0.92f;
+            water.clarity = 0.60f;
+            water.absorption = 0.70f;
+            water.foamDistance = 0.85f;
+            water.foamIntensity = 0.78f;
+            water.shallowColor = {0.04f, 0.24f, 0.34f};
+            water.deepColor = {0.004f, 0.025f, 0.085f};
+            water.transparency = 0.76f;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Tropical")) {
+            PushHistory();
+            water.waveHeight = 0.22f;
+            water.waveScale = 1.15f;
+            water.waveSpeed = 0.85f;
+            water.choppiness = 0.28f;
+            water.detailStrength = 0.38f;
+            water.refractionStrength = 0.42f;
+            water.reflectionStrength = 0.86f;
+            water.clarity = 0.76f;
+            water.absorption = 0.36f;
+            water.foamDistance = 0.65f;
+            water.foamIntensity = 0.62f;
+            water.shallowColor = {0.03f, 0.62f, 0.58f};
+            water.deepColor = {0.005f, 0.10f, 0.22f};
+            water.transparency = 0.84f;
+        }
+
+        if (ImGui::TreeNode("Waves")) {
+            ImGui::DragFloat("Height", &water.waveHeight,
+                             0.005f, 0.0f, 5.0f);
+            ImGui::DragFloat("Scale", &water.waveScale,
+                             0.01f, 0.05f, 20.0f);
+            ImGui::DragFloat("Speed", &water.waveSpeed,
+                             0.01f, 0.0f, 10.0f);
+            ImGui::DragFloat("Choppiness", &water.choppiness,
+                             0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Detail Strength", &water.detailStrength,
+                             0.01f, 0.0f, 2.0f);
+            ImGui::DragFloat2("Flow Direction", glm::value_ptr(water.flowDirection),
+                              0.01f, -10.0f, 10.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Optics")) {
+            ImGui::DragFloat("Refraction", &water.refractionStrength,
+                             0.005f, 0.0f, 2.0f);
+            ImGui::DragFloat("Reflection", &water.reflectionStrength,
+                             0.005f, 0.0f, 2.0f);
+            ImGui::DragFloat("Fresnel Power", &water.fresnelPower,
+                             0.05f, 1.0f, 20.0f);
+            ImGui::DragFloat("Depth Fade", &water.depthFade,
+                             0.05f, 0.05f, 100.0f);
+            ImGui::DragFloat("Absorption", &water.absorption,
+                             0.01f, 0.0f, 10.0f);
+            ImGui::DragFloat("Clarity", &water.clarity,
+                             0.01f, 0.0f, 1.0f);
+            ImGui::DragFloat("Transparency", &water.transparency,
+                             0.01f, 0.0f, 1.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Foam & Sparkle")) {
+            ImGui::DragFloat("Shore Distance", &water.foamDistance,
+                             0.01f, 0.01f, 20.0f);
+            ImGui::DragFloat("Foam Intensity", &water.foamIntensity,
+                             0.01f, 0.0f, 2.0f);
+            ImGui::DragFloat("Sparkle", &water.sparkle,
+                             0.01f, 0.0f, 2.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Colors")) {
+            ImGui::ColorEdit3("Shallow", glm::value_ptr(water.shallowColor));
+            ImGui::ColorEdit3("Deep", glm::value_ptr(water.deepColor));
+            ImGui::ColorEdit3("Foam", glm::value_ptr(water.foamColor));
+            ImGui::TreePop();
+        }
+
+        if (ImGui::Button("Reset Water Settings")) {
+            PushHistory();
+            water = Galeshi::WaterComponent{};
+        }
+    }
+
     // -------------------------------------------------------------------
     // Audio
     // -------------------------------------------------------------------
@@ -3992,6 +4121,12 @@ if (ImGui::BeginMenu("File")) {
             bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
             m_render->Render(m_scene, renderCamera, 1, w, h);
 
+            // Water lighting uses the same directional light as the deferred
+            // pass. Keep a copy outside the deferred block for the water pass
+            // that runs after TAA.
+            float waterSunDir[4] = {-0.4f, -0.8f, -0.5f, 0.0f};
+            float waterSunColor[4] = {1.0f, 1.0f, 1.0f, 1.2f};
+
             if (m_render->DeferredEnabled()) {
                 glm::vec3 ldir{-0.4f,-0.8f,-0.5f}, lcol{1.0f};
                 float lint = 1.2f;
@@ -4002,6 +4137,14 @@ if (ImGui::BeginMenu("File")) {
                     lcol = lview.get<Galeshi::DirectionalLightComponent>(h).color;
                     lint = lview.get<Galeshi::DirectionalLightComponent>(h).intensity;
                 }
+                waterSunDir[0] = -ldir.x;
+                waterSunDir[1] = -ldir.y;
+                waterSunDir[2] = -ldir.z;
+                waterSunDir[3] = 0.0f;
+                waterSunColor[0] = lcol.r;
+                waterSunColor[1] = lcol.g;
+                waterSunColor[2] = lcol.b;
+                waterSunColor[3] = lint;
                 glm::vec3 cp = m_camera.Position();
                 float camPos[4] = {cp.x, cp.y, cp.z, 1.0f};
                 float lDirA[4]  = {ldir.x, ldir.y, ldir.z, 0.0f};
@@ -4211,44 +4354,64 @@ if (ImGui::BeginMenu("File")) {
                     }
                 }
 
-                // 8. Tonemap (View 38)
-                m_postProcess.RenderTonemap(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 38, w, h, pp.exposure, pp.contrast, pp.saturation);
+                // 8. Water (copy scene color/depth at View 38, water at
+                // View 39). Rendering after TAA avoids smearing the animated
+                // normals while keeping the water in the HDR tonemap chain.
+                {
+                    m_postProcess.BlitTexture(m_postProcess.OutputTexture(),
+                                              m_postProcess.BlitTextureA(), 38);
+                    m_postProcess.BlitDepth(m_framebuffer->Depth(), 38);
+                    bgfx::setViewFrameBuffer(39, m_postProcess.OutputFbo());
+                    bgfx::setViewRect(39, 0, 0, w, h);
+                    const bgfx::TextureHandle env =
+                        bgfx::isValid(m_postProcess.EnvCubeMap())
+                            ? m_postProcess.EnvCubeMap()
+                            : m_postProcess.BlackCube();
+                    m_render->RenderWater(
+                        m_scene, m_camera, m_postProcess.BlitTextureA(),
+                        m_postProcess.BlitDepth(), env,
+                        waterSunDir, waterSunColor, 39, w, h,
+                        static_cast<float>(m_time), 0.1f, 1000.0f);
+                }
+
+                // 9. Tonemap (View 40)
+                m_postProcess.RenderTonemap(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 40, w, h, pp.exposure, pp.contrast, pp.saturation);
                 m_postProcess.SwapFbos();
 
-                // 9. Color Correction (View 39)
-                m_postProcess.RenderColorCorrection(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 39, w, h, pp.colorExposure, pp.colorContrast, pp.colorSaturation);
+                // 10. Color Correction (View 41)
+                m_postProcess.RenderColorCorrection(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 41, w, h, pp.colorExposure, pp.colorContrast, pp.colorSaturation);
                 m_postProcess.SwapFbos();
 
-                // 10. Vignette (View 40)
-                m_postProcess.RenderVignette(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 40, w, h, pp.vignetteIntensity, pp.vignetteSmoothness);
+                // 11. Vignette (View 42)
+                m_postProcess.RenderVignette(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 42, w, h, pp.vignetteIntensity, pp.vignetteSmoothness);
                 m_postProcess.SwapFbos();
 
-                // 11. Chromatic Aberration (View 41)
-                m_postProcess.RenderChromatic(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 41, w, h, pp.chromaticAberration);
+                // 12. Chromatic Aberration (View 43)
+                m_postProcess.RenderChromatic(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 43, w, h, pp.chromaticAberration);
                 m_postProcess.SwapFbos();
 
-                // 12. SMAA (Views 42..43)
+                // 13. SMAA (Views 44..45)
                 if (pp.smaaEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderSmaa(
-                            m_postProcess.OutputTexture(), 42, w, h))) {
+                            m_postProcess.OutputTexture(), 44, w, h))) {
                         m_postProcess.SwapFbos();
                     }
                 }
 
-                // 13. FXAA (View 44)
+                // 14. FXAA (View 46)
                 if (pp.fxaaEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderFxaa(
                             m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
-                            44, w, h))) {
+                            46, w, h))) {
                         m_postProcess.SwapFbos();
                     }
                 }
 
-                // 14. Invert (View 45)
+                // 15. Invert (View 47)
                 if (pp.invertEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderInvert(
                             m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
-                            45, w, h))) {
+                            47, w, h))) {
                         m_postProcess.SwapFbos();
                     }
                 }
@@ -4262,8 +4425,10 @@ if (ImGui::BeginMenu("File")) {
             }
         }
 
-        // Debug rendering (View 49)
-        if (m_debug && !m_isGameMode && m_framebuffer) {
+        // Debug rendering (View 50). All editor-only overlays (grid, axes,
+        // nav/AI debug, collider and post-process-volume bounds) are hidden
+        // while Play is active so they never leak into the running scene.
+        if (m_debug && !m_isGameMode && !m_editor.isPlaying && m_framebuffer) {
             m_debug->Begin();
             m_debug->AddGrid(50.0f, 2.0f, {0.3f, 0.3f, 0.3f, 0.4f});
             m_debug->AddAxes({0, 0.05f, 0}, 2.0f);
@@ -4589,34 +4754,34 @@ if (ImGui::BeginMenu("File")) {
             if (m_framebuffer && bgfx::isValid(m_framebuffer->Handle())) {
                 // Draw directly into the G-buffer FBO: it already owns the
                 // scene depth, and its color attachment has been filled with
-                // the post-processed image at view 47. The G-buffer color is
+                // the post-processed image at view 48. The G-buffer color is
                 // no longer sampled after the lighting pass.
-                bgfx::setViewFrameBuffer(49, m_framebuffer->Handle());
-                m_debug->Render(m_camera, 49, w, h);
+                bgfx::setViewFrameBuffer(50, m_framebuffer->Handle());
+                m_debug->Render(m_camera, 50, w, h);
             }
         }
 
         // Copy the final HDR color into the G-buffer color attachment, then
-        // blend the transparent layer over it (view 48, before debug at 49 and
-        // the ImGui blit at 50). Reusing the persistent G-buffer FBO avoids
-        // temporary FBOs whose attachment layout can get out of sync.
+        // blend the transparent layer over it (view 48, before glass at 49,
+        // debug at 50 and the ImGui blit at 51). Reusing the persistent
+        // G-buffer FBO avoids temporary FBOs whose layout can get out of sync.
         if (m_framebuffer && bgfx::isValid(m_framebuffer->Color()) &&
             m_postProcess.OutputFbo().idx != bgfx::kInvalidHandle) {
-            m_postProcess.BlitTexture(m_postProcess.OutputTexture(), m_framebuffer->Color(), 47);
-            bgfx::setViewFrameBuffer(48, m_framebuffer->Handle());
-            bgfx::setViewRect(48, 0, 0, w, h);
-            m_render->RenderGlass(m_scene, m_camera, 48, w, h);
+            m_postProcess.BlitTexture(m_postProcess.OutputTexture(), m_framebuffer->Color(), 48);
+            bgfx::setViewFrameBuffer(49, m_framebuffer->Handle());
+            bgfx::setViewRect(49, 0, 0, w, h);
+            m_render->RenderGlass(m_scene, m_camera, 49, w, h);
         }
 
         // Set when the 2D UI canvas overlay handles the click this frame.
         bool uiOverlayConsumed = false;
 
-        // Blit для ImGui (View 50)
+        // Blit для ImGui (View 51)
         if (m_framebuffer && bgfx::isValid(m_framebuffer->Color())) {
             bgfx::TextureHandle __ppTex = m_framebuffer->Color();
             bgfx::TextureHandle __disp = bgfx::isValid(__ppTex) ? __ppTex : m_framebuffer->Color();
             if (bgfx::isValid(__ppTex)) {
-                m_postProcess.BlitTexture(__ppTex, m_postProcess.BlitTextureA(), 50);
+                m_postProcess.BlitTexture(__ppTex, m_postProcess.BlitTextureA(), 51);
                 __disp = m_postProcess.BlitTextureA();
             }
             ImTextureID texId = static_cast<ImTextureID>(__disp.idx);
@@ -5437,6 +5602,15 @@ void DrawDetails() {
             if (ImGui::CollapsingHeader("Post-Process Volume",
                                         ImGuiTreeNodeFlags_DefaultOpen)) {
                 DrawPostProcessVolumeSettings(volume);
+            }
+        }
+
+        // --- Water inspector ---------------------------------------------
+        if (auto sel = m_editor.Selected(&m_scene); sel &&
+            sel.HasComponent<Galeshi::WaterComponent>()) {
+            auto& water = sel.GetComponent<Galeshi::WaterComponent>();
+            if (ImGui::CollapsingHeader("Water", ImGuiTreeNodeFlags_DefaultOpen)) {
+                DrawWaterSettings(water);
             }
         }
 

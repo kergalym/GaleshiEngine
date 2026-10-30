@@ -1458,4 +1458,10 @@ void PostProcessManager::BlitTexture(bgfx::TextureHandle src, bgfx::TextureHandl
     }
     bgfx::blit(viewId, dst, 0, 0, src);
 }
+
+void PostProcessManager::BlitDepth(bgfx::TextureHandle src, bgfx::ViewId viewId) {
+    if (!bgfx::isValid(src) || !bgfx::isValid(m_blitDepth)) return;
+    if ((bgfx::getCaps()->supported & BGFX_CAPS_TEXTURE_BLIT) == 0) return;
+    bgfx::blit(viewId, m_blitDepth, 0, 0, src);
+}
 } // namespace Galeshi

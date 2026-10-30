@@ -82,6 +82,7 @@ void AssetManager::Clear() {
     m_embeddedTextures.clear();
     m_cubeMesh.reset();
     m_sphereMesh.reset();
+    m_waterMesh.reset();
     m_treeTrunkMesh.reset();
     m_treeCanopyMesh.reset();
     m_grassMesh.reset();
@@ -1007,6 +1008,48 @@ std::shared_ptr<Mesh> AssetManager::CreateCubeMesh() {
     m_cubeMesh = std::make_shared<Mesh>();
     m_cubeMesh->Upload(vs, is);
     return m_cubeMesh;
+}
+
+std::shared_ptr<Mesh> AssetManager::CreateWaterMesh() {
+    if (m_waterMesh) return m_waterMesh;
+
+    // A dense unit plane in XZ. The water shader displaces it in world space;
+    // the component's width/depth are applied through the model matrix.
+    constexpr int kSegments = 64;
+    std::vector<Vertex> verts;
+    std::vector<uint32_t> indices;
+    verts.reserve((kSegments + 1) * (kSegments + 1));
+    indices.reserve(kSegments * kSegments * 6);
+
+    for (int z = 0; z <= kSegments; ++z) {
+        const float v = static_cast<float>(z) / kSegments;
+        for (int x = 0; x <= kSegments; ++x) {
+            const float u = static_cast<float>(x) / kSegments;
+            Vertex vert{};
+            vert.position = {u - 0.5f, 0.0f, v - 0.5f};
+            vert.normal = {0.0f, 1.0f, 0.0f};
+            vert.tangent = {1.0f, 0.0f, 0.0f};
+            vert.uv = {u, v};
+            vert.boneIDs = glm::vec4(255.0f, 0.0f, 0.0f, 0.0f);
+            vert.boneWeights = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
+            verts.push_back(vert);
+        }
+    }
+
+    for (int z = 0; z < kSegments; ++z) {
+        for (int x = 0; x < kSegments; ++x) {
+            const uint32_t i0 = static_cast<uint32_t>(z * (kSegments + 1) + x);
+            const uint32_t i1 = i0 + 1;
+            const uint32_t i2 = i0 + kSegments + 1;
+            const uint32_t i3 = i2 + 1;
+            indices.push_back(i0); indices.push_back(i2); indices.push_back(i1);
+            indices.push_back(i1); indices.push_back(i2); indices.push_back(i3);
+        }
+    }
+
+    m_waterMesh = std::make_shared<Mesh>();
+    m_waterMesh->Upload(verts, indices);
+    return m_waterMesh;
 }
 
 std::shared_ptr<Mesh> AssetManager::CreateSphereMesh() {

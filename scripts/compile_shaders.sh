@@ -40,6 +40,7 @@ esac
 varying_for() {
     case "$1" in
         vs_fullscreen|fs_passthrough|fs_invert|fs_fxaa|fs_lighting|fs_sky|fs_shadow|fs_ibl_gen|fs_irradiance_conv|fs_prefilter|fs_brdf|fs_tonemap|fs_bloom_extract|fs_bloom_blur|fs_bloom_combine|fs_ssr|fs_ssao|fs_ssao_blur|fs_ao_sample|fs_ao_upsample|fs_ao_detail|fs_ao_blur|fs_hbao|fs_gtao|fs_taa|fs_smaa_edge|fs_godrays|fs_atmosphere|fs_smaa_weight|fs_smaa_blend|fs_hbao_blur|fs_vignette|fs_color_correction|fs_chromatic|fs_dof_coc|fs_dof_blur|fs_dof_composite|fs_motion_blur|fs_motion_blur_velocity) echo "$SRC_DIR/varying_fullscreen.def.sc" ;;
+        vs_water|fs_water)                                   echo "$SRC_DIR/varying_water.def.sc" ;;
         vs_pbr|fs_pbr|fs_gbuffer|fs_glass|fs_shadow_point)     echo "$SRC_DIR/varying_pbr.def.sc"   ;;
         vs_particles|fs_particles)             echo "$SRC_DIR/varying_particles.def.sc" ;;
         vs_vegetation_instanced)               echo "$SRC_DIR/varying_vegetation.def.sc" ;;

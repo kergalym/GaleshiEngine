@@ -15,6 +15,12 @@ public:
     void RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx, const glm::vec3& lightPos, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo);
     void RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo);
     void RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height);
+    void RenderWater(Scene& scene, const Camera& camera,
+                     bgfx::TextureHandle sceneColor, bgfx::TextureHandle sceneDepth,
+                     bgfx::TextureHandle envCube,
+                     const float lightDir[4], const float lightColorIntensity[4],
+                     bgfx::ViewId viewId, uint16_t width, uint16_t height,
+                     float time, float nearZ, float farZ);
     
     void SetSkipGlass(bool skip) { m_skipGlass = skip; }
     bool DeferredEnabled() const { return m_deferred; }
@@ -40,6 +46,7 @@ private:
     bgfx::ProgramHandle m_shadowPointProg = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_shadowLightPos = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_glassProg    = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_waterProg    = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_instancedProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_instancedGbufferProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_instancedShadowProg = BGFX_INVALID_HANDLE;
@@ -53,6 +60,19 @@ private:
     bgfx::UniformHandle u_materialParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_materialFlags = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_glassParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_cameraForward = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_waterParams0 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_waterParams1 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_waterParams2 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_waterParams3 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_waterFlow = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_waterInvNearFar = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_waterShallow = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_waterDeep = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_waterFoam = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_waterSceneColor = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_waterDepth = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_waterEnvCube = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_pointLightPosRadius = BGFX_INVALID_HANDLE, u_pointLightColorInt = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_pointLightCount = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_boneMatrices = BGFX_INVALID_HANDLE;

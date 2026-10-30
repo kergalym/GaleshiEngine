@@ -536,6 +536,34 @@ std::string SceneSerializer::SaveToString() const {
                 }}
             };
         }
+        if (reg.all_of<WaterComponent>(handle)) {
+            const auto& w = reg.get<WaterComponent>(handle);
+            je["water"] = {
+                {"enabled", w.enabled},
+                {"visibleInEditor", w.visibleInEditor},
+                {"width", w.width},
+                {"depth", w.depth},
+                {"waveHeight", w.waveHeight},
+                {"waveScale", w.waveScale},
+                {"waveSpeed", w.waveSpeed},
+                {"choppiness", w.choppiness},
+                {"detailStrength", w.detailStrength},
+                {"flowDirection", {w.flowDirection.x, w.flowDirection.y}},
+                {"refractionStrength", w.refractionStrength},
+                {"reflectionStrength", w.reflectionStrength},
+                {"fresnelPower", w.fresnelPower},
+                {"depthFade", w.depthFade},
+                {"absorption", w.absorption},
+                {"clarity", w.clarity},
+                {"transparency", w.transparency},
+                {"foamDistance", w.foamDistance},
+                {"foamIntensity", w.foamIntensity},
+                {"sparkle", w.sparkle},
+                {"shallowColor", Vec3ToJson(w.shallowColor)},
+                {"deepColor", Vec3ToJson(w.deepColor)},
+                {"foamColor", Vec3ToJson(w.foamColor)}
+            };
+        }
         if (reg.all_of<UICanvasComponent>(handle)) {
             const auto& uiCanvas = reg.get<UICanvasComponent>(handle).canvas;
             json widgets = json::array();
@@ -1236,6 +1264,37 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                 s.atmosphereIntensity = js.value("atmosphereIntensity", s.atmosphereIntensity);
                 s.invertEnabled = js.value("invertEnabled", s.invertEnabled);
             }
+        }
+        if (je.contains("water") && je["water"].is_object()) {
+            const auto& jw = je["water"];
+            auto& water = e.AddComponent<WaterComponent>();
+            water.enabled = jw.value("enabled", true);
+            water.visibleInEditor = jw.value("visibleInEditor", true);
+            water.width = jw.value("width", water.width);
+            water.depth = jw.value("depth", water.depth);
+            water.waveHeight = jw.value("waveHeight", water.waveHeight);
+            water.waveScale = jw.value("waveScale", water.waveScale);
+            water.waveSpeed = jw.value("waveSpeed", water.waveSpeed);
+            water.choppiness = jw.value("choppiness", water.choppiness);
+            water.detailStrength = jw.value("detailStrength", water.detailStrength);
+            if (jw.contains("flowDirection") && jw["flowDirection"].is_array() &&
+                jw["flowDirection"].size() >= 2) {
+                water.flowDirection = {jw["flowDirection"][0].get<float>(),
+                                       jw["flowDirection"][1].get<float>()};
+            }
+            water.refractionStrength = jw.value("refractionStrength", water.refractionStrength);
+            water.reflectionStrength = jw.value("reflectionStrength", water.reflectionStrength);
+            water.fresnelPower = jw.value("fresnelPower", water.fresnelPower);
+            water.depthFade = jw.value("depthFade", water.depthFade);
+            water.absorption = jw.value("absorption", water.absorption);
+            water.clarity = jw.value("clarity", water.clarity);
+            water.transparency = jw.value("transparency", water.transparency);
+            water.foamDistance = jw.value("foamDistance", water.foamDistance);
+            water.foamIntensity = jw.value("foamIntensity", water.foamIntensity);
+            water.sparkle = jw.value("sparkle", water.sparkle);
+            if (jw.contains("shallowColor")) water.shallowColor = Vec3FromJson(jw.at("shallowColor"));
+            if (jw.contains("deepColor")) water.deepColor = Vec3FromJson(jw.at("deepColor"));
+            if (jw.contains("foamColor")) water.foamColor = Vec3FromJson(jw.at("foamColor"));
         }
         if (je.contains("uiCanvas") && je["uiCanvas"].is_object()) {
             const auto& jc = je["uiCanvas"];

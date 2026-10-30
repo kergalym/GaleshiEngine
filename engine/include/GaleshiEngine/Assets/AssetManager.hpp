@@ -64,6 +64,7 @@ public:
     std::shared_ptr<Mesh> CreateCubeMesh();
     std::shared_ptr<Mesh> CreateSphereMesh();  // unit sphere, radius 0.5
     std::shared_ptr<Mesh> CreateCapsuleMesh(float halfHeight, float radius);
+    std::shared_ptr<Mesh> CreateWaterMesh();   // unit XZ plane, 64x64 grid
 
     // Procedural low-poly vegetation primitives used by the instanced
     // renderer.  Trunks and canopies are drawn with separate materials so the
@@ -87,6 +88,7 @@ private:
 
     std::shared_ptr<Mesh>    m_cubeMesh;
     std::shared_ptr<Mesh>    m_sphereMesh;
+    std::shared_ptr<Mesh>    m_waterMesh;
     std::shared_ptr<Mesh>    m_treeTrunkMesh;
     std::shared_ptr<Mesh>    m_treeCanopyMesh;
     std::shared_ptr<Mesh>    m_grassMesh;

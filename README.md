@@ -52,6 +52,7 @@ The primary rendering path is deferred:
 - Spot shadows: up to four spot lights.
 - Tiled light culling through a compute shader.
 - Frustum culling for scene meshes.
+- Animated procedural water with Fresnel environment reflections, screen-space refraction, depth absorption, shoreline/crest foam, and sun sparkle.
 - Skybox and debug line rendering.
 
 There is also a forward PBR fallback in `RenderSystem`, but the deferred path is the primary one and is enabled by default.

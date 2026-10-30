@@ -43,6 +43,7 @@ public:
     bgfx::TextureHandle BlitTextureB() const { return m_blitTexB; }
     bgfx::TextureHandle BlitDepth() const { return m_blitDepth; }
     void BlitTexture(bgfx::TextureHandle src, bgfx::TextureHandle dst, bgfx::ViewId viewId);
+    void BlitDepth(bgfx::TextureHandle src, bgfx::ViewId viewId);
     bgfx::FrameBufferHandle PingFbo() const { return m_pingFbo; }
     void SwapFbos();
 
@@ -136,6 +137,7 @@ bgfx::TextureHandle EnvScratch() const { return m_envScratch; }
     bgfx::FrameBufferHandle EnvScratchFbo() const { return m_envScratchFbo; }
 
     bgfx::TextureHandle EnvCubeMap() const { return m_envCubeMap; }
+    bgfx::TextureHandle BlackCube() const { return m_blackCube; }
     bgfx::FrameBufferHandle DofCocFbo() const { return m_dofCocFbo; }
     bgfx::FrameBufferHandle DofBlurFboA() const { return m_dofBlurFboA; }
     bgfx::FrameBufferHandle DofBlurFboB() const { return m_dofBlurFboB; }
