@@ -19,6 +19,7 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <unordered_set>
 #include <vector>
 
 namespace Galeshi {
@@ -69,6 +70,94 @@ std::string AssetManager::ResolvePath(const std::string& path) const {
         return (std::filesystem::path(projPath) / path).string();
     }
     return path;
+}
+
+void AssetManager::ReleaseUnusedAssets(const std::vector<std::string>& retainedModels) {
+    std::unordered_set<std::string> retained;
+    retained.reserve(retainedModels.size());
+    for (const auto& path : retainedModels) {
+        if (!path.empty()) retained.insert(MakeRelativePath(path));
+    }
+
+    // First release model-cache entries whose meshes and materials are only
+    // owned by the cache itself. Scene components keep shared_ptrs, so their
+    // use_count is greater than one while the asset is still visible.
+    int releasedModels = 0;
+    for (auto it = m_models.begin(); it != m_models.end();) {
+        const LoadedModel& model = it->second;
+        bool externalReference = retained.count(it->first) != 0;
+        if (!externalReference) {
+            for (const auto& mesh : model.meshes) {
+                if (mesh && mesh.use_count() > 1) { externalReference = true; break; }
+            }
+        }
+        if (!externalReference) {
+            for (const auto& material : model.materials) {
+                if (material && material.use_count() > 1) { externalReference = true; break; }
+            }
+        }
+        if (!externalReference) {
+            it = m_models.erase(it);
+            ++releasedModels;
+        } else {
+            ++it;
+        }
+    }
+
+    // Texture caches intentionally contain multiple keys for one texture
+    // (path/normalized/embedded aliases). Count those keys before deciding
+    // whether any non-cache owner remains.
+    std::unordered_map<const Texture*, int> cacheKeyCount;
+    for (const auto& entry : m_textures) {
+        if (entry.second) ++cacheKeyCount[entry.second.get()];
+    }
+    for (const auto& entry : m_embeddedTextures) {
+        if (entry.second) ++cacheKeyCount[entry.second.get()];
+    }
+
+    std::unordered_set<const Texture*> releasedTextures;
+    for (const auto& entry : m_textures) {
+        const auto& tex = entry.second;
+        if (!tex) continue;
+        const auto countIt = cacheKeyCount.find(tex.get());
+        const int keys = countIt == cacheKeyCount.end() ? 1 : countIt->second;
+        if (tex.use_count() <= keys) releasedTextures.insert(tex.get());
+    }
+    for (const auto& entry : m_embeddedTextures) {
+        const auto& tex = entry.second;
+        if (!tex) continue;
+        const auto countIt = cacheKeyCount.find(tex.get());
+        const int keys = countIt == cacheKeyCount.end() ? 1 : countIt->second;
+        if (tex.use_count() <= keys) releasedTextures.insert(tex.get());
+    }
+
+    for (auto it = m_textures.begin(); it != m_textures.end();) {
+        if (it->second && releasedTextures.count(it->second.get())) {
+            it = m_textures.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = m_embeddedTextures.begin(); it != m_embeddedTextures.end();) {
+        if (it->second && releasedTextures.count(it->second.get())) {
+            it = m_embeddedTextures.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // Primitive meshes are recreated on demand. Imported models are the
+    // large allocations; the small cached primitives are intentionally kept
+    // because the renderer uses some of them without a scene-side owner.
+    // The small cube/sphere primitives are cached by default, but if the last
+    // entity using one was removed its GPU buffers can be released too.
+    if (m_cubeMesh && m_cubeMesh.use_count() == 1) m_cubeMesh.reset();
+    if (m_sphereMesh && m_sphereMesh.use_count() == 1) m_sphereMesh.reset();
+
+    if (releasedModels > 0 || !releasedTextures.empty()) {
+        spdlog::info("[AssetManager] Released {} unused models and {} textures",
+                     releasedModels, releasedTextures.size());
+    }
 }
 
 void AssetManager::Clear() {

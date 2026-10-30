@@ -43,6 +43,9 @@ public:
     size_t ParticleCount() const { return m_totalParticles; }
     size_t ParticleCount(entt::entity emitter) const;
 
+    // Drops live particles and runtime state for one deleted emitter.
+    void RemoveEmitter(entt::entity emitter);
+
 private:
     struct Particle {
         glm::vec3 position{0.0f};

@@ -126,6 +126,15 @@ size_t ParticleSystem::ParticleCount(entt::entity emitter) const {
     return it != m_emitters.end() ? it->second.particles.size() : 0;
 }
 
+void ParticleSystem::RemoveEmitter(entt::entity emitter) {
+    auto it = m_emitters.find(emitter);
+    if (it == m_emitters.end()) return;
+    m_totalParticles = m_totalParticles > it->second.particles.size()
+        ? m_totalParticles - it->second.particles.size()
+        : 0;
+    m_emitters.erase(it);
+}
+
 void ParticleSystem::PruneRuntimes(Scene& scene) {
     auto& reg = scene.Registry();
     for (auto it = m_emitters.begin(); it != m_emitters.end();) {

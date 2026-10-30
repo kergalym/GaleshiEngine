@@ -64,6 +64,7 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <unordered_set>
 
 struct LoadingState {
     enum class Stage : int {
@@ -1126,9 +1127,11 @@ private:
         }
 
         // Successful load: reap the finished thread so the next load starts
-        // from a clean state.
+        // from a clean state, then release assets left behind by the scene
+        // that was replaced.
         if (s.loaderThread.joinable() && !s.workerRunning) {
             s.loaderThread.join();
+            ReleaseUnusedSceneAssets();
         }
     }
 
@@ -2049,6 +2052,7 @@ if (ImGui::BeginMenu("File")) {
         m_editor.ClearSelection();
         m_serializer->LoadFromString(m_history[m_historyIndex]);
         if (m_particles) m_particles->Reset();
+        ReleaseUnusedSceneAssets();
         m_isRestoringHistory = false;
     }
 
@@ -2059,6 +2063,7 @@ if (ImGui::BeginMenu("File")) {
         m_editor.ClearSelection();
         m_serializer->LoadFromString(m_history[m_historyIndex]);
         if (m_particles) m_particles->Reset();
+        ReleaseUnusedSceneAssets();
         m_isRestoringHistory = false;
     }
 
@@ -2078,12 +2083,79 @@ if (ImGui::BeginMenu("File")) {
         m_scenePicker.Open(SceneStartDirectory(), "Load Scene", { ".json" });
     }
 
+    void CollectEntityHierarchy(entt::entity root,
+                                std::unordered_set<entt::entity>& out) {
+        auto& reg = m_scene.Registry();
+        if (!reg.valid(root) || !out.insert(root).second) return;
+        auto childView = reg.view<Galeshi::ParentComponent>();
+        for (auto child : childView) {
+            if (childView.get<Galeshi::ParentComponent>(child).parent == root) {
+                CollectEntityHierarchy(child, out);
+            }
+        }
+    }
+
+    void ReleaseUnusedSceneAssets() {
+        if (!m_assets) return;
+        std::vector<std::string> retainedModels;
+        auto skeletonView = m_scene.Registry().view<Galeshi::SkeletalComponent>();
+        for (auto e : skeletonView) {
+            const auto& skeleton = skeletonView.get<Galeshi::SkeletalComponent>(e);
+            if (!skeleton.sourcePath.empty()) {
+                retainedModels.push_back(skeleton.sourcePath);
+            }
+        }
+        m_assets->ReleaseUnusedAssets(retainedModels);
+    }
+
     void DeleteSelected() {
         if (!m_editor.HasSelection()) return;
+
+        std::unordered_set<entt::entity> toDestroy;
+        for (auto entity : m_editor.SelectedAll(&m_scene)) {
+            CollectEntityHierarchy(entity.Handle(), toDestroy);
+        }
+        if (toDestroy.empty()) {
+            m_editor.ClearSelection();
+            return;
+        }
+
         PushHistory();
-        auto entities = m_editor.SelectedAll(&m_scene);
-        for (auto e : entities) m_scene.DestroyEntity(e);
+
+        // Remove non-ECS runtime owners before the components disappear.
+        for (entt::entity e : toDestroy) {
+            if (!m_scene.Registry().valid(e)) continue;
+            m_audio.StopSource(e);
+
+            if (m_physics) {
+                if (auto* rb = m_scene.Registry().try_get<Galeshi::RigidBodyComponent>(e)) {
+                    m_physics->DestroyBody(rb->bodyId);
+                    rb->bodyId = 0xFFFFFFFFu;
+                }
+                if (auto* soft = m_scene.Registry().try_get<Galeshi::SoftBodyComponent>(e)) {
+                    m_physics->DestroyBody(soft->softBodyId);
+                    soft->softBodyId = 0xFFFFFFFFu;
+                }
+            }
+            if (m_particles) m_particles->RemoveEmitter(e);
+        }
+
+        for (entt::entity e : toDestroy) {
+            if (m_scene.Registry().valid(e)) {
+                m_scene.DestroyEntity(Galeshi::Entity(e, &m_scene));
+            }
+        }
+
+        if (m_uiCanvasEntity != entt::null && toDestroy.count(m_uiCanvasEntity)) {
+            m_uiCanvasEntity = entt::null;
+            m_uiWidgetIndex = -1;
+        }
+
+        spdlog::info("[Editor] Deleted {} entities", toDestroy.size());
         m_editor.ClearSelection();
+        if (m_debug) m_debug->Begin();
+        m_postProcess.ResetTaaHistory();
+        ReleaseUnusedSceneAssets();
     }
 
     // -------------------------------------------------------------------

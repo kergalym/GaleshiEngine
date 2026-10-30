@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <glm/glm.hpp>
 
@@ -76,6 +77,11 @@ public:
     // Release cached meshes and textures. Clear the scene first so its
     // components no longer hold shared references to these resources.
     void Clear();
+
+    // Drop cached models and textures that are no longer referenced by the
+    // scene. retainedModels lists model paths that are still needed by
+    // non-owning systems such as SkeletalComponent animation playback.
+    void ReleaseUnusedAssets(const std::vector<std::string>& retainedModels = {});
 
     std::string ResolvePath(const std::string& path) const;
     std::string MakeRelativePath(const std::string& path) const;
