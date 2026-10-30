@@ -512,6 +512,7 @@ std::string SceneSerializer::SaveToString() const {
                     {"ssaoBias", s.ssaoBias},
                     {"ssaoMaxDistance", s.ssaoMaxDistance},
                     {"ssaoStrength", s.ssaoStrength},
+                    {"aoResolutionScale", s.aoResolutionScale},
                     {"aoRadius", s.aoRadius},
                     {"aoBias", s.aoBias},
                     {"aoThickness", s.aoThickness},
@@ -1292,6 +1293,9 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                 s.ssaoBias = js.value("ssaoBias", s.ssaoBias);
                 s.ssaoMaxDistance = js.value("ssaoMaxDistance", s.ssaoMaxDistance);
                 s.ssaoStrength = js.value("ssaoStrength", s.ssaoStrength);
+                s.aoResolutionScale = js.value("aoResolutionScale", s.aoResolutionScale);
+                if (s.aoResolutionScale < 0.25f) s.aoResolutionScale = 0.25f;
+                if (s.aoResolutionScale > 1.0f) s.aoResolutionScale = 1.0f;
                 s.aoRadius = js.value("aoRadius", s.aoRadius);
                 s.aoBias = js.value("aoBias", s.aoBias);
                 s.aoThickness = js.value("aoThickness", s.aoThickness);

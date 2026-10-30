@@ -61,6 +61,10 @@ struct PostProcessSettings {
     float ssaoMaxDistance = 6.9f;
     float ssaoStrength    = 1.1f;
 
+    // AO evaluation resolution relative to the viewport. Quarter resolution
+    // is the fast default for GTAO; switch to half for maximum contact detail.
+    float aoResolutionScale = 0.25f;
+
     // HBAO/GTAO parameters (radius and distances are in world units).
     float aoRadius       = 1.5f;
     float aoBias         = 0.05f;

@@ -18,6 +18,7 @@ struct AmbientOcclusionParams {
     float strength    = 1.1f;
     int   directions  = 8;
     int   steps       = 4;
+    float resolutionScale = 0.25f; // AO source resolution relative to viewport
 };
 
 class PostProcessManager {
@@ -169,7 +170,7 @@ private:
     bgfx::UniformHandle u_tileParams = BGFX_INVALID_HANDLE;
 
     void EnsureOutputFbo(uint16_t w, uint16_t h);
-    void EnsureAOFbo(uint16_t w, uint16_t h);
+    void EnsureAOFbo(uint16_t w, uint16_t h, float resolutionScale);
 
     bgfx::ProgramHandle m_program     = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_invertProg  = BGFX_INVALID_HANDLE;
@@ -231,6 +232,7 @@ private:
     bgfx::UniformHandle u_aoParams     = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_aoParams2    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_aoViewport   = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_aoSource     = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_aoBlurParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_aoBlurDir    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_aoSource     = BGFX_INVALID_HANDLE;
@@ -256,7 +258,7 @@ private:
     bgfx::FrameBufferHandle m_pingFbo     = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_blitFboA    = BGFX_INVALID_HANDLE;
 
-    // --- Ambient occlusion chain (half res -> full res) ---
+    // --- Ambient occlusion chain (reduced res -> full res) ---
     bgfx::TextureHandle     m_aoHalfTex   = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle     m_aoFullTexA  = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle     m_aoFullTexB  = BGFX_INVALID_HANDLE;
@@ -264,6 +266,7 @@ private:
     bgfx::FrameBufferHandle m_aoFullFboA  = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_aoFullFboB  = BGFX_INVALID_HANDLE;
     uint16_t m_aoWidth = 0, m_aoHeight = 0;
+    float    m_aoResolutionScale = 0.0f;
     bool     m_aoValid = false;
     bool m_historyValid = false;
 

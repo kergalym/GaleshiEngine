@@ -187,6 +187,7 @@ void PostProcessManager::Init() {
         u_aoParams     = bgfx::createUniform("u_aoParams",     bgfx::UniformType::Vec4);
         u_aoParams2    = bgfx::createUniform("u_aoParams2",    bgfx::UniformType::Vec4);
         u_aoViewport   = bgfx::createUniform("u_aoViewport",   bgfx::UniformType::Vec4);
+        u_aoSource     = bgfx::createUniform("u_aoSource",     bgfx::UniformType::Vec4);
         u_aoBlurParams = bgfx::createUniform("u_aoBlurParams", bgfx::UniformType::Vec4);
         u_aoBlurDir    = bgfx::createUniform("u_aoBlurDir",    bgfx::UniformType::Vec4);
         s_aoSource     = bgfx::createUniform("s_aoSource",     bgfx::UniformType::Sampler);
@@ -586,7 +587,7 @@ void PostProcessManager::Shutdown() {
     destroyUni(s_pointShadowMap); destroyUni(u_pointLightFarPlane);
     destroyUni(u_aoView); destroyUni(u_aoProj); destroyUni(u_aoParams);
     destroyUni(u_aoParams2);
-    destroyUni(u_aoViewport); destroyUni(u_aoBlurParams); destroyUni(u_aoBlurDir);
+    destroyUni(u_aoViewport); destroyUni(u_aoSource); destroyUni(u_aoBlurParams); destroyUni(u_aoBlurDir);
     destroyUni(s_aoSource); destroyUni(s_aoTex);
     destroyTex(m_aoHalfTex); destroyTex(m_aoFullTexA); destroyTex(m_aoFullTexB);
     destroyFbo(m_aoHalfFbo); destroyFbo(m_aoFullFboA); destroyFbo(m_aoFullFboB);
@@ -606,8 +607,10 @@ void PostProcessManager::Shutdown() {
     m_width = m_height = 0;
 }
 
-void PostProcessManager::EnsureAOFbo(uint16_t w, uint16_t h) {
-    if (bgfx::isValid(m_aoHalfFbo) && m_aoWidth == w && m_aoHeight == h) return;
+void PostProcessManager::EnsureAOFbo(uint16_t w, uint16_t h, float resolutionScale) {
+    resolutionScale = std::clamp(resolutionScale, 0.25f, 1.0f);
+    if (bgfx::isValid(m_aoHalfFbo) && m_aoWidth == w && m_aoHeight == h &&
+        std::abs(m_aoResolutionScale - resolutionScale) < 0.001f) return;
 
     // The AO FBO that was bound in the previous frame is about to be
     // destroyed. Reset bgfx's current framebuffer to the backbuffer first so
@@ -628,11 +631,11 @@ void PostProcessManager::EnsureAOFbo(uint16_t w, uint16_t h) {
     m_aoHalfTex = m_aoFullTexA = m_aoFullTexB = BGFX_INVALID_HANDLE;
     m_aoValid = false;
 
-    const uint16_t halfW = w > 2 ? (uint16_t)(w / 2) : 1;
-    const uint16_t halfH = h > 2 ? (uint16_t)(h / 2) : 1;
+    const uint16_t aoW = std::max<uint16_t>(1, static_cast<uint16_t>(w * resolutionScale));
+    const uint16_t aoH = std::max<uint16_t>(1, static_cast<uint16_t>(h * resolutionScale));
     const uint64_t flags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
 
-    m_aoHalfTex  = bgfx::createTexture2D(halfW, halfH, false, 1, bgfx::TextureFormat::RGBA8, flags);
+    m_aoHalfTex  = bgfx::createTexture2D(aoW, aoH, false, 1, bgfx::TextureFormat::RGBA8, flags);
     m_aoFullTexA = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
     m_aoFullTexB = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
 
@@ -642,9 +645,10 @@ void PostProcessManager::EnsureAOFbo(uint16_t w, uint16_t h) {
 
     m_aoWidth = w;
     m_aoHeight = h;
+    m_aoResolutionScale = resolutionScale;
 
-    spdlog::info("[AO] buffers {}x{} (half {}x{}), fbos half={} fullA={} fullB={}",
-        w, h, halfW, halfH,
+    spdlog::info("[AO] buffers {}x{} (source {}x{}, scale {:.2f}), fbos half={} fullA={} fullB={}",
+        w, h, aoW, aoH, resolutionScale,
         bgfx::isValid(m_aoHalfFbo), bgfx::isValid(m_aoFullFboA), bgfx::isValid(m_aoFullFboB));
 }
 
@@ -919,14 +923,15 @@ void PostProcessManager::RenderAmbientOcclusion(bgfx::TextureHandle worldPos,
         return;
     }
 
-    EnsureAOFbo(width, height);
+    const float resolutionScale = std::clamp(params.resolutionScale, 0.25f, 1.0f);
+    EnsureAOFbo(width, height, resolutionScale);
     if (!bgfx::isValid(m_aoHalfFbo) || !bgfx::isValid(m_aoFullFboA) || !bgfx::isValid(m_aoFullFboB)) {
         m_aoValid = false;
         return;
     }
 
-    const uint16_t halfW = width > 2 ? (uint16_t)(width / 2) : 1;
-    const uint16_t halfH = height > 2 ? (uint16_t)(height / 2) : 1;
+    const uint16_t aoW = std::max<uint16_t>(1, static_cast<uint16_t>(width * resolutionScale));
+    const uint16_t aoH = std::max<uint16_t>(1, static_cast<uint16_t>(height * resolutionScale));
 
     int directions = params.directions < 1 ? 1 : params.directions;
     if (directions > 16) directions = 16;
@@ -934,6 +939,7 @@ void PostProcessManager::RenderAmbientOcclusion(bgfx::TextureHandle worldPos,
     if (steps > 16) steps = 16;
 
     float viewport[4] = { (float)width, (float)height, 1.0f / width, 1.0f / height };
+    float aoSource[4] = { (float)aoW, (float)aoH, 1.0f / aoW, 1.0f / aoH };
     float aoParams[4] = { std::max(params.radius, 0.0f), std::max(params.bias, 0.0f),
                           std::max(params.maxDistance, 0.0f), std::max(params.strength, 0.0f) };
     // x = directions/slices, y = steps, z = GTAO falloff start,
@@ -945,15 +951,16 @@ void PostProcessManager::RenderAmbientOcclusion(bgfx::TextureHandle worldPos,
     float blurDirH[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
     float blurDirV[4] = { 0.0f, 1.0f, 0.0f, 0.0f };
 
-    // View viewId + 0: half-resolution ambient occlusion (SSAO/HBAO/GTAO).
+    // View viewId + 0: reduced-resolution ambient occlusion (SSAO/HBAO/GTAO).
     bgfx::setViewFrameBuffer(viewId, m_aoHalfFbo);
-    bgfx::setViewRect(viewId, 0, 0, halfW, halfH);
+    bgfx::setViewRect(viewId, 0, 0, aoW, aoH);
     bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR, 0xffffffff);
     bgfx::setTexture(0, s_worldPos, worldPos);
     bgfx::setTexture(1, s_normalRough, normal);
     bgfx::setUniform(u_aoView, glm::value_ptr(view));
     bgfx::setUniform(u_aoProj, glm::value_ptr(proj));
     bgfx::setUniform(u_aoViewport, viewport);
+    bgfx::setUniform(u_aoSource, aoSource);
     bgfx::setUniform(u_aoParams, aoParams);
     if (bgfx::isValid(u_aoParams2)) bgfx::setUniform(u_aoParams2, aoParams2);
     bgfx::setVertexBuffer(0, m_vbh);
@@ -970,6 +977,7 @@ void PostProcessManager::RenderAmbientOcclusion(bgfx::TextureHandle worldPos,
     bgfx::setTexture(2, s_normalRough, normal);
     bgfx::setUniform(u_aoView, glm::value_ptr(view));
     bgfx::setUniform(u_aoViewport, viewport);
+    bgfx::setUniform(u_aoSource, aoSource);
     bgfx::setUniform(u_aoBlurParams, upsampleParams);
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);

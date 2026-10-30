@@ -1,7 +1,7 @@
 $input v_texcoord0
 #include <bgfx_shader.sh>
 
-// Half-resolution SSAO pass.
+// Reduced-resolution SSAO pass.
 // Ported from tobspr/RenderPipeline: rpplugins/ao/shader/ao_sample.frag.glsl
 // and rpplugins/ao/shader/ssao.kernel.glsl.
 //
@@ -16,6 +16,7 @@ uniform mat4 u_aoView;
 uniform mat4 u_aoProj;
 uniform vec4 u_aoParams;   // x=sample radius in pixels, y=bias, z=max distance, w=strength
 uniform vec4 u_aoViewport; // xy=full resolution, zw=1/full resolution
+uniform vec4 u_aoSource;   // xy=AO source size, zw=1/AO source size
 
 vec3 halton3D(int i)
 {
@@ -48,8 +49,8 @@ void main()
 {
     ivec2 coord = ivec2(gl_FragCoord.xy);
 
-    // Each half-resolution pixel maps to the centre of a 2x2 full-res block.
-    vec2 uv = (vec2(coord) * 2.0 + 1.0) * u_aoViewport.zw;
+    // Map the reduced-resolution AO pixel to its centre in full-screen UV.
+    vec2 uv = (vec2(coord) + 0.5) * u_aoSource.zw;
 
     vec4 wp = texture2D(s_worldPos, uv);
     if (wp.w < 0.5) {

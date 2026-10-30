@@ -67,7 +67,7 @@ There is also a forward PBR fallback in `RenderSystem`, but the deferred path is
 
 Implemented post-processing passes:
 
-- SSAO, HBAO, and GTAO ambient occlusion
+- SSAO, HBAO, and GTAO ambient occlusion with quarter/half-resolution AO evaluation and a bilateral upsample
 - SSR, using an approximate screen-space raymarch
 - Bloom
 - TAA

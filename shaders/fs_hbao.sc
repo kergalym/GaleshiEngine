@@ -1,7 +1,7 @@
 $input v_texcoord0
 #include <bgfx_shader.sh>
 
-// Half-resolution horizon-based ambient occlusion.
+// Reduced-resolution horizon-based ambient occlusion.
 //
 // The G-buffer provides world position and world normal. View-space positions
 // are reconstructed with the camera view matrix, so this works independently
@@ -17,6 +17,7 @@ uniform mat4 u_aoProj;
 uniform vec4 u_aoParams;   // x=radius (world), y=bias, z=max distance, w=strength
 uniform vec4 u_aoParams2;  // x=directions, y=steps
 uniform vec4 u_aoViewport; // xy=full resolution, zw=1/full resolution
+uniform vec4 u_aoSource;   // xy=AO source size, zw=1/AO source size
 
 #define HBAO_PI 3.14159265359
 #define HBAO_MAX_DIRECTIONS 16
@@ -104,8 +105,8 @@ void main()
 {
     ivec2 coord = ivec2(gl_FragCoord.xy);
 
-    // Each half-resolution pixel maps to the centre of a 2x2 full-res block.
-    vec2 uv = (vec2(coord) * 2.0 + 1.0) * u_aoViewport.zw;
+    // Map the reduced-resolution AO pixel to its centre in full-screen UV.
+    vec2 uv = (vec2(coord) + 0.5) * u_aoSource.zw;
 
     vec4 centerWp = texture2D(s_worldPos, uv);
     if (centerWp.w < 0.5) {

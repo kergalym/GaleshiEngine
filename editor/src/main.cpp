@@ -128,6 +128,15 @@ struct CpuProfileSample {
     float cameraMs = 0.0f;
     float gameLogicMs = 0.0f;
     float renderCpuMs = 0.0f;
+    float pssmMs = 0.0f;
+    float pointShadowsMs = 0.0f;
+    float spotShadowsMs = 0.0f;
+    float occlusionMs = 0.0f;
+    float gbufferMs = 0.0f;
+    float planarReflectionMs = 0.0f;
+    float postFxMs = 0.0f;
+    float waterMs = 0.0f;
+    float hairMs = 0.0f;
     float imguiMs = 0.0f;
 };
 
@@ -1826,7 +1835,7 @@ private:
 
         ImGui::Text("FPS: %.1f   Frame: %.2f ms", ImGui::GetIO().Framerate,
                     profile.frameMs);
-        ImGui::TextDisabled("CPU update %.2f ms | ImGui %.2f ms | "
+        ImGui::TextDisabled("CPU update %.2f ms | OnImGui %.2f ms | "
                             "Render submit %.2f ms | GPU %.2f ms",
                             profile.updateMs, profile.imguiMs,
                             profile.renderCpuMs, m_gpuFrameMs);
@@ -1894,13 +1903,31 @@ private:
                     row("  Particles", profile.particlesMs);
                     row("  Camera / Input", profile.cameraMs);
                     row("Update total", profile.updateMs);
-                    row("ImGui / Editor", profile.imguiMs);
-                    row("  Render submit", profile.renderCpuMs);
+                    row("OnImGui / Editor total", profile.imguiMs);
+                    row("  Render submit (total)", profile.renderCpuMs);
+                    row("    PSSM shadows", profile.pssmMs);
+                    row("    Point shadows", profile.pointShadowsMs);
+                    row("    Spot shadows", profile.spotShadowsMs);
+                    row("    Occlusion", profile.occlusionMs);
+                    row("    G-Buffer", profile.gbufferMs);
+                    row("    Planar reflection", profile.planarReflectionMs);
+                    row("    PostFX", profile.postFxMs);
+                    row("    Water", profile.waterMs);
+                    row("    Hair", profile.hairMs);
+                    const float profiledRender = profile.pssmMs +
+                        profile.pointShadowsMs + profile.spotShadowsMs +
+                        profile.occlusionMs + profile.gbufferMs +
+                        profile.planarReflectionMs + profile.postFxMs +
+                        profile.waterMs + profile.hairMs;
+                    row("    Other / editor",
+                        std::max(0.0f, profile.renderCpuMs - profiledRender));
                     ImGui::EndTable();
                 }
                 ImGui::Spacing();
                 ImGui::TextDisabled("Game logic is the sum of the update subsystems; "
                                     "update total also includes editor overhead.");
+                ImGui::TextDisabled("PostFX excludes Water, Hair and debug gizmos; "
+                                    "all render sub-timings are CPU command submission.");
                 ImGui::EndTabItem();
             }
 
@@ -4333,6 +4360,12 @@ if (ImGui::BeginMenu("File")) {
                 s.aoMode = static_cast<Galeshi::AmbientOcclusionMode>(aoMode);
             }
 
+            int aoResolution = s.aoResolutionScale <= 0.375f ? 0 : 1;
+            const char* aoResolutions[] = { "Quarter (fast)", "Half (quality)" };
+            if (ImGui::Combo("Resolution", &aoResolution, aoResolutions, 2)) {
+                s.aoResolutionScale = aoResolution == 0 ? 0.25f : 0.5f;
+            }
+
             if (s.aoMode == Galeshi::AmbientOcclusionMode::SSAO) {
                 ImGui::DragFloat("Radius", &s.ssaoRadius,
                                  0.5f, 0.0f, 1000.0f);
@@ -4860,8 +4893,13 @@ if (ImGui::BeginMenu("File")) {
         m_viewportW = w;
         m_viewportH = h;
 
+        float postFxAccumMs = 0.0f;
+        ProfileClock::time_point postFxSegmentStart{};
+        bool postFxProfiling = false;
+
         if (m_framebuffer && m_framebuffer->Valid()) {
             
+            const auto pssmStart = ProfileClock::now();
             // --- PSSM SHADOW PASS ---
             auto lview = m_scene.Registry().view<Galeshi::DirectionalLightComponent>();
             glm::mat4 lightMtx0, lightMtx1, lightMtx2;
@@ -4999,8 +5037,10 @@ if (ImGui::BeginMenu("File")) {
                     m_render->RenderShadowMap(m_scene, lightMtx, 2 + i, m_shadowFbos[i]);
                 }
             }
+            m_cpuProfile.pssmMs = ProfileElapsedMs(pssmStart, ProfileClock::now());
 
             // --- POINT LIGHT SHADOW PASS ---
+            const auto pointShadowStart = ProfileClock::now();
             auto plview = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::PointLightComponent>();
             if (plview.begin() != plview.end()) {
                 auto firstLight = *plview.begin();
@@ -5023,8 +5063,10 @@ if (ImGui::BeginMenu("File")) {
                     m_render->RenderPointShadowMap(m_scene, proj * views[i], lightPos, 5 + i, m_postProcess.PointShadowFbo(i));
                 }
             }
+            m_cpuProfile.pointShadowsMs = ProfileElapsedMs(pointShadowStart, ProfileClock::now());
 
             // --- SPOT LIGHT SHADOW PASS ---
+            const auto spotShadowStart = ProfileClock::now();
             auto slview = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::SpotLightComponent>();
             int slIdx = 0;
             glm::mat4 spotLightVPs[4];
@@ -5044,6 +5086,7 @@ if (ImGui::BeginMenu("File")) {
                 m_render->RenderShadowMap(m_scene, spotLightVPs[slIdx], 11 + slIdx, m_postProcess.SpotShadowFbo(slIdx));
                 slIdx++;
             }
+            m_cpuProfile.spotShadowsMs = ProfileElapsedMs(spotShadowStart, ProfileClock::now());
 
             const Galeshi::PostProcessSettings pp =
                 ResolvePostProcessSettings();
@@ -5086,7 +5129,9 @@ if (ImGui::BeginMenu("File")) {
             // View 0 is a small depth-only occluder pass. Hardware queries
             // are read on the next frame, so this must run before the scene
             // view without stalling the GPU.
+            const auto occlusionStart = ProfileClock::now();
             m_render->RenderOcclusion(m_scene, renderCamera, 0, renderW, renderH);
+            m_cpuProfile.occlusionMs = ProfileElapsedMs(occlusionStart, ProfileClock::now());
 
             // Object motion vectors must use the same unjittered history
             // matrix that TAA uses, otherwise jitter is baked into velocity.
@@ -5095,12 +5140,15 @@ if (ImGui::BeginMenu("File")) {
             m_render->SetPreviousViewProj(motionPrevVP);
 
             bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
+            const auto gbufferStart = ProfileClock::now();
             m_render->Render(m_scene, renderCamera, 1, renderW, renderH);
+            m_cpuProfile.gbufferMs = ProfileElapsedMs(gbufferStart, ProfileClock::now());
 
             // Mirrored opaque scene for the nearest water plane. The water
             // pass samples this HDR target at the same screen UV as the
             // visible surface. Half resolution is sufficient for a rippled
             // reflection and keeps the extra scene pass affordable.
+            const auto planarStart = ProfileClock::now();
             {
                 const uint16_t reflectionW = static_cast<uint16_t>(
                     std::max(2, static_cast<int>(renderW / 2)));
@@ -5109,6 +5157,11 @@ if (ImGui::BeginMenu("File")) {
                 m_render->RenderPlanarReflection(m_scene, m_camera, 19,
                                                  reflectionW, reflectionH);
             }
+            m_cpuProfile.planarReflectionMs = ProfileElapsedMs(planarStart,
+                                                               ProfileClock::now());
+
+            postFxSegmentStart = ProfileClock::now();
+            postFxProfiling = true;
 
             // Water lighting uses the same directional light as the deferred
             // pass. Keep a copy outside the deferred block for the water pass
@@ -5237,6 +5290,7 @@ if (ImGui::BeginMenu("File")) {
                     ao.directions  = pp.aoDirections;
                     ao.steps       = pp.aoSteps;
                 }
+                ao.resolutionScale = pp.aoResolutionScale;
                 m_postProcess.RenderAmbientOcclusion(
                     m_framebuffer->WorldPos(), m_framebuffer->Normal(),
                     m_camera.View(), proj, 15, renderW, renderH, ao);
@@ -5368,6 +5422,9 @@ if (ImGui::BeginMenu("File")) {
                 // 8. Water (copy scene color/depth at View 38, water at
                 // View 39). Rendering after TAA avoids smearing the animated
                 // normals while keeping the water in the HDR tonemap chain.
+                postFxAccumMs += ProfileElapsedMs(postFxSegmentStart,
+                                                   ProfileClock::now());
+                const auto waterStart = ProfileClock::now();
                 {
                     m_postProcess.BlitTexture(m_postProcess.OutputTexture(),
                                               m_postProcess.BlitTextureA(), 38);
@@ -5387,11 +5444,13 @@ if (ImGui::BeginMenu("File")) {
                         static_cast<float>(m_time), m_camera.NearPlane(),
                         m_camera.FarPlane());
                 }
+                m_cpuProfile.waterMs = ProfileElapsedMs(waterStart, ProfileClock::now());
 
                 // 8b. Groom hair: an independent forward transparent pass.
                 // It reuses the HDR target and the copied opaque depth, and
                 // is submitted before tonemapping/AA like other transparent
                 // surfaces.
+                const auto hairStart = ProfileClock::now();
                 {
                     const bgfx::TextureHandle env =
                         bgfx::isValid(m_postProcess.EnvCubeMap())
@@ -5404,6 +5463,8 @@ if (ImGui::BeginMenu("File")) {
                         waterSunDir, waterSunColor, 39, renderW, renderH,
                         m_camera.NearPlane(), m_camera.FarPlane());
                 }
+                m_cpuProfile.hairMs = ProfileElapsedMs(hairStart, ProfileClock::now());
+                postFxSegmentStart = ProfileClock::now();
 
                 // 9. Tonemap (View 40)
                 m_postProcess.RenderTonemap(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 40, renderW, renderH, pp.exposure, pp.contrast, pp.saturation);
@@ -5454,6 +5515,14 @@ if (ImGui::BeginMenu("File")) {
                 // View 2 is reserved for the first directional shadow cascade.
                 m_postProcess.Render(46, m_framebuffer->Color(), renderW, renderH);
             }
+        }
+
+        // Stop PostFX before editor debug gizmos; the final scene copy and
+        // debug overlay are presentation/editor work and land in Other.
+        if (postFxProfiling) {
+            postFxAccumMs += ProfileElapsedMs(postFxSegmentStart,
+                                               ProfileClock::now());
+            m_cpuProfile.postFxMs = postFxAccumMs;
         }
 
         // Debug rendering (View 50). All editor-only overlays (grid, axes,
