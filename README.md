@@ -44,7 +44,7 @@ GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20
 
 The primary rendering path is deferred:
 
-- G-Buffer: albedo/metallic, normal/roughness, world position, and depth.
+- G-Buffer: albedo/metallic, normal/roughness, world position, per-object motion vectors, and depth.
 - Metallic-roughness PBR: GGX distribution, Smith geometry, Schlick Fresnel.
 - IBL: generated irradiance and prefiltered environment cubemaps. The deferred lighting shader evaluates the split-sum BRDF analytically to stay within the Vulkan descriptor budget.
 - Directional shadows: three-cascade PSSM with log-linear split selection and tight orthographic projections.
@@ -57,6 +57,8 @@ The primary rendering path is deferred:
 - Automatic mesh LOD generation and distance-based LOD selection.
 - Conservative occlusion culling with GPU occlusion queries and a low-resolution occluder depth map.
 - Cascade-aware PSSM depth bias and normal-offset tuning.
+- Per-object motion vectors for Motion Blur and TAA, with camera fallback for sky.
+- Scalable render resolution with optional dynamic-resolution scaling.
 - Procedural groom hair with guide curves, dense skin-aware strands, spring/wind simulation, and anisotropic ribbon shading.
 - Skybox and debug line rendering.
 
@@ -348,9 +350,9 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 - [x] Add instancing for repeated meshes.
 - [x] Add occlusion culling and LOD.
 - [x] Tune PSSM bias and normal offsets.
-- [ ] Add per-object motion vectors for Motion Blur.
-- [ ] Add TAA motion vectors.
-- [ ] Add quality scaling and dynamic resolution.
+- [x] Add per-object motion vectors for Motion Blur.
+- [x] Add TAA motion vectors.
+- [x] Add quality scaling and dynamic resolution.
 - [x] Add texture compression and compressed texture loading/reading
 - [x] Add two sided mode for normals option as checkbox to Material properties
 - [x] Rename material slots to their names in FBX file format

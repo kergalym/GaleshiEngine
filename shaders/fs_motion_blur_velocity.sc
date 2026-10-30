@@ -7,6 +7,7 @@ $input v_texcoord0
 // space. The result is consumed by fs_motion_blur.sc.
 
 SAMPLER2D(s_worldPos, 0);
+SAMPLER2D(s_mbObjectMotion, 1);
 uniform mat4 u_mbPrevVP;
 uniform mat4 u_mbInvVP;
 uniform vec4 u_mbVelocityParams; // x = velocity scale (blur factor * 60/fps)
@@ -14,6 +15,15 @@ uniform vec4 u_mbVelocityParams; // x = velocity scale (blur factor * 60/fps)
 void main() {
     vec2 uv = v_texcoord0;
     vec4 wpos = texture2D(s_worldPos, uv);
+
+    // Opaque geometry writes per-object previous-to-current UV motion in
+    // RT4. Sky has no object motion, so keep the camera-only reconstruction
+    // below for background parallax.
+    if (wpos.w >= 0.5) {
+        vec2 motion = texture2D(s_mbObjectMotion, uv).xy;
+        gl_FragColor = vec4(motion * u_mbVelocityParams.x, 0.0, 1.0);
+        return;
+    }
 
     vec3 world;
     if (wpos.w < 0.5) {

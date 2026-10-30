@@ -123,6 +123,15 @@ class GaleshiEditorApp final : public Galeshi::Application {
     float m_pssmNormalOffsetTexels = 1.75f;
     float m_pssmNormalOffsetSlope = 0.5f;
     float m_pssmPcfRadius = 1.5f;
+    // Viewport render scaling. Dynamic resolution adjusts m_dynamicScale in
+    // 5% steps while the manual scale is used when dynamic mode is disabled.
+    float m_renderScale = 1.0f;
+    bool m_dynamicResolution = false;
+    float m_dynamicScale = 1.0f;
+    float m_dynamicMinScale = 0.5f;
+    float m_dynamicTargetFps = 60.0f;
+    float m_smoothedFrameTime = 1.0f / 60.0f;
+    int m_dynamicFrameCounter = 0;
     LoadingState m_loadingState;
     float m_displayProgress = 0.0f; // UI thread only, smoothed copy of progress
     std::unique_ptr<Galeshi::Texture> m_logoTexture;
@@ -770,6 +779,23 @@ protected:
 
         m_time += dt;
         m_frameDelta = dt;
+
+        if (m_dynamicResolution) {
+            const float clampedDelta = std::clamp(dt, 1.0f / 240.0f, 1.0f / 15.0f);
+            m_smoothedFrameTime = m_smoothedFrameTime * 0.9f + clampedDelta * 0.1f;
+            ++m_dynamicFrameCounter;
+            if (m_dynamicFrameCounter >= 20) {
+                const float target = 1.0f / std::max(m_dynamicTargetFps, 1.0f);
+                if (m_smoothedFrameTime > target * 1.10f) {
+                    m_dynamicScale -= 0.05f;
+                } else if (m_smoothedFrameTime < target * 0.92f) {
+                    m_dynamicScale += 0.05f;
+                }
+                m_dynamicScale = std::clamp(m_dynamicScale,
+                                             m_dynamicMinScale, 1.0f);
+                m_dynamicFrameCounter = 0;
+            }
+        }
         m_scripts.RunAIScripts(m_scene, dt);
         Galeshi::AISystem::Update(m_scene, dt, m_navSystem.get());
         m_scripts.Update(dt);
@@ -1567,6 +1593,26 @@ private:
             float lodBias = m_render->LodBias();
             if (ImGui::SliderFloat("LOD Bias", &lodBias, 0.25f, 4.0f, "%.2f"))
                 m_render->SetLodBias(lodBias);
+
+            if (ImGui::BeginMenu("Resolution")) {
+                if (m_dynamicResolution) ImGui::BeginDisabled();
+                ImGui::SliderFloat("Render Scale", &m_renderScale,
+                                   0.5f, 1.0f, "%.2f");
+                if (m_dynamicResolution) ImGui::EndDisabled();
+                if (ImGui::Checkbox("Dynamic Resolution", &m_dynamicResolution) &&
+                    m_dynamicResolution) {
+                    m_dynamicScale = m_renderScale;
+                    m_dynamicFrameCounter = 0;
+                }
+                if (m_dynamicResolution) {
+                    ImGui::Text("Dynamic scale: %.2f", m_dynamicScale);
+                    ImGui::SliderFloat("Minimum Scale", &m_dynamicMinScale,
+                                       0.5f, 1.0f, "%.2f");
+                    ImGui::DragFloat("Target FPS", &m_dynamicTargetFps,
+                                     0.5f, 30.0f, 144.0f, "%.0f");
+                }
+                ImGui::EndMenu();
+            }
 
             if (ImGui::BeginMenu("PSSM Shadows")) {
                 ImGui::DragFloat("Depth Bias (texels)", &m_pssmDepthBiasTexels,
@@ -4164,8 +4210,18 @@ if (ImGui::BeginMenu("File")) {
         const uint16_t w = static_cast<uint16_t>(avail.x);
         const uint16_t h = static_cast<uint16_t>(avail.y);
 
+        // The UI/viewport stays at native size; the complete scene and
+        // post-process chain render at this scaled internal resolution.
+        const float activeRenderScale = std::clamp(
+            m_dynamicResolution ? m_dynamicScale : m_renderScale, 0.5f, 1.0f);
+        const uint16_t renderW = static_cast<uint16_t>(std::max(
+            2, static_cast<int>(std::lround(static_cast<float>(w) * activeRenderScale))));
+        const uint16_t renderH = static_cast<uint16_t>(std::max(
+            2, static_cast<int>(std::lround(static_cast<float>(h) * activeRenderScale))));
+
         if (w > 0 && h > 0) {
-            if (!m_framebuffer || m_framebuffer->Width() != w || m_framebuffer->Height() != h) {
+            if (!m_framebuffer || m_framebuffer->Width() != renderW ||
+                m_framebuffer->Height() != renderH) {
                 // Recreating an FBO that bgfx still considers bound can make it
                 // skip the image-layout transition on the next bind (the new
                 // handle may reuse the old index). Touch the backbuffer first
@@ -4176,7 +4232,7 @@ if (ImGui::BeginMenu("File")) {
                 bgfx::touch(0);
 
                 if (!m_framebuffer) m_framebuffer = std::make_unique<Galeshi::Framebuffer>();
-                m_framebuffer->Resize(w, h);
+                m_framebuffer->Resize(renderW, renderH);
             }
         }
 
@@ -4393,10 +4449,16 @@ if (ImGui::BeginMenu("File")) {
             // View 0 is a small depth-only occluder pass. Hardware queries
             // are read on the next frame, so this must run before the scene
             // view without stalling the GPU.
-            m_render->RenderOcclusion(m_scene, renderCamera, 0, w, h);
+            m_render->RenderOcclusion(m_scene, renderCamera, 0, renderW, renderH);
+
+            // Object motion vectors must use the same unjittered history
+            // matrix that TAA uses, otherwise jitter is baked into velocity.
+            const glm::mat4 motionPrevVP = m_postProcess.HasPrevViewProj()
+                ? m_postProcess.GetPrevViewProj() : taaVP;
+            m_render->SetPreviousViewProj(motionPrevVP);
 
             bgfx::setViewFrameBuffer(1, m_framebuffer->Handle());
-            m_render->Render(m_scene, renderCamera, 1, w, h);
+            m_render->Render(m_scene, renderCamera, 1, renderW, renderH);
 
             // Water lighting uses the same directional light as the deferred
             // pass. Keep a copy outside the deferred block for the water pass
@@ -4527,9 +4589,9 @@ if (ImGui::BeginMenu("File")) {
                 }
                 m_postProcess.RenderAmbientOcclusion(
                     m_framebuffer->WorldPos(), m_framebuffer->Normal(),
-                    m_camera.View(), proj, 15, w, h, ao);
+                    m_camera.View(), proj, 15, renderW, renderH, ao);
 
-                m_postProcess.RenderLightCulling(plCount, plPosA, currVP, w, h);
+                m_postProcess.RenderLightCulling(plCount, plPosA, currVP, renderW, renderH);
                 const float pssmParams[4] = {
                     m_pssmSlopeBias, m_pssmPcfRadius,
                     m_pssmNormalOffsetSlope,
@@ -4548,13 +4610,13 @@ if (ImGui::BeginMenu("File")) {
                     camPos, lDirA, lColA,
                     plPosA, plColA, plCount,
                     slPos, slDir, slCol, slCount,
-                    20, w, h);
+                    20, renderW, renderH);
 
                 // Particles are drawn after lighting into the HDR output
                 // target (view 21), so bloom/tonemapping pick them up.
                 if (m_particles) {
                     m_particles->Render(m_scene, m_camera, 21,
-                                        m_postProcess.OutputFbo(), w, h);
+                                        m_postProcess.OutputFbo(), renderW, renderH);
                 }
 
                 // The post-processing passes are submitted in increasing view
@@ -4566,7 +4628,7 @@ if (ImGui::BeginMenu("File")) {
                     if (bgfx::isValid(m_postProcess.RenderSSR(
                             m_postProcess.OutputTexture(), m_framebuffer->Normal(),
                             m_framebuffer->Depth(), m_postProcess.PingFbo(),
-                            proj, invProj, camPos, 24, w, h,
+                            proj, invProj, camPos, 24, renderW, renderH,
                             pp.ssrIntensity))) {
                         m_postProcess.SwapFbos();
                     }
@@ -4576,8 +4638,9 @@ if (ImGui::BeginMenu("File")) {
                 if (pp.motionBlurEnabled && m_postProcess.HasPrevViewProj()) {
                     if (bgfx::isValid(m_postProcess.RenderMotionBlur(
                             m_postProcess.OutputTexture(), m_framebuffer->WorldPos(),
+                            m_framebuffer->Velocity(),
                             m_postProcess.GetPrevViewProj(), taaInvVP,
-                            m_postProcess.PingFbo(), 23, 25, w, h, m_frameDelta,
+                            m_postProcess.PingFbo(), 23, 25, renderW, renderH, m_frameDelta,
                             pp.motionBlurAmount, pp.motionBlurMaxVelocity))) {
                         m_postProcess.SwapFbos();
                     }
@@ -4589,7 +4652,7 @@ if (ImGui::BeginMenu("File")) {
                     if (bgfx::isValid(m_postProcess.RenderAtmosphere(
                             m_postProcess.OutputTexture(), m_framebuffer->Depth(),
                             glm::inverse(currVP), camPos, sunDir, m_postProcess.PingFbo(),
-                            26, w, h, pp.atmosphereIntensity))) {
+                            26, renderW, renderH, pp.atmosphereIntensity))) {
                         m_postProcess.SwapFbos();
                     }
                 }
@@ -4600,7 +4663,7 @@ if (ImGui::BeginMenu("File")) {
                     if (bgfx::isValid(m_postProcess.RenderGodRays(
                             m_postProcess.OutputTexture(), m_framebuffer->Depth(),
                             currVP, camPos, sunDir, m_postProcess.PingFbo(),
-                            27, w, h, pp.godRaysIntensity, pp.godRaysDecay,
+                            27, renderW, renderH, pp.godRaysIntensity, pp.godRaysDecay,
                             pp.godRaysDensity, pp.godRaysWeight))) {
                         m_postProcess.SwapFbos();
                     }
@@ -4611,7 +4674,7 @@ if (ImGui::BeginMenu("File")) {
                     const float dofFocusDistance = ResolveDofFocusDistance(pp);
                     if (bgfx::isValid(m_postProcess.RenderDof(
                             m_postProcess.OutputTexture(), m_framebuffer->Depth(),
-                            proj, invProj, m_postProcess.PingFbo(), 28, w, h,
+                            proj, invProj, m_postProcess.PingFbo(), 28, renderW, renderH,
                             dofFocusDistance, pp.dofBlur))) {
                         m_postProcess.SwapFbos();
                     }
@@ -4621,7 +4684,7 @@ if (ImGui::BeginMenu("File")) {
                 if (pp.bloomEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderBloom(
                             m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
-                            32, w, h, pp.bloomThreshold, pp.bloomIntensity,
+                            32, renderW, renderH, pp.bloomThreshold, pp.bloomIntensity,
                             pp.bloomRadius))) {
                         m_postProcess.SwapFbos();
                     }
@@ -4631,8 +4694,9 @@ if (ImGui::BeginMenu("File")) {
                 if (pp.taaEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderTaa(
                             m_postProcess.OutputTexture(), m_framebuffer->Depth(),
+                            m_framebuffer->Velocity(),
                             m_postProcess.GetPrevViewProj(), taaInvVP,
-                            m_postProcess.PingFbo(), 36, w, h, pp.taaBlend))) {
+                            m_postProcess.PingFbo(), 36, renderW, renderH, pp.taaBlend))) {
                         m_postProcess.SwapFbos();
                     }
                 }
@@ -4645,7 +4709,7 @@ if (ImGui::BeginMenu("File")) {
                                               m_postProcess.BlitTextureA(), 38);
                     m_postProcess.BlitDepth(m_framebuffer->Depth(), 38);
                     bgfx::setViewFrameBuffer(39, m_postProcess.OutputFbo());
-                    bgfx::setViewRect(39, 0, 0, w, h);
+                    bgfx::setViewRect(39, 0, 0, renderW, renderH);
                     const bgfx::TextureHandle env =
                         bgfx::isValid(m_postProcess.EnvCubeMap())
                             ? m_postProcess.EnvCubeMap()
@@ -4653,7 +4717,7 @@ if (ImGui::BeginMenu("File")) {
                     m_render->RenderWater(
                         m_scene, m_camera, m_postProcess.BlitTextureA(),
                         m_postProcess.BlitDepth(), env,
-                        waterSunDir, waterSunColor, 39, w, h,
+                        waterSunDir, waterSunColor, 39, renderW, renderH,
                         static_cast<float>(m_time), 0.1f, 1000.0f);
                 }
 
@@ -4667,32 +4731,32 @@ if (ImGui::BeginMenu("File")) {
                             ? m_postProcess.EnvCubeMap()
                             : m_postProcess.BlackCube();
                     bgfx::setViewFrameBuffer(39, m_postProcess.OutputFbo());
-                    bgfx::setViewRect(39, 0, 0, w, h);
+                    bgfx::setViewRect(39, 0, 0, renderW, renderH);
                     m_render->RenderHair(
                         m_scene, m_camera, m_postProcess.BlitDepth(), env,
-                        waterSunDir, waterSunColor, 39, w, h, 0.1f, 1000.0f);
+                        waterSunDir, waterSunColor, 39, renderW, renderH, 0.1f, 1000.0f);
                 }
 
                 // 9. Tonemap (View 40)
-                m_postProcess.RenderTonemap(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 40, w, h, pp.exposure, pp.contrast, pp.saturation);
+                m_postProcess.RenderTonemap(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 40, renderW, renderH, pp.exposure, pp.contrast, pp.saturation);
                 m_postProcess.SwapFbos();
 
                 // 10. Color Correction (View 41)
-                m_postProcess.RenderColorCorrection(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 41, w, h, pp.colorExposure, pp.colorContrast, pp.colorSaturation);
+                m_postProcess.RenderColorCorrection(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 41, renderW, renderH, pp.colorExposure, pp.colorContrast, pp.colorSaturation);
                 m_postProcess.SwapFbos();
 
                 // 11. Vignette (View 42)
-                m_postProcess.RenderVignette(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 42, w, h, pp.vignetteIntensity, pp.vignetteSmoothness);
+                m_postProcess.RenderVignette(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 42, renderW, renderH, pp.vignetteIntensity, pp.vignetteSmoothness);
                 m_postProcess.SwapFbos();
 
                 // 12. Chromatic Aberration (View 43)
-                m_postProcess.RenderChromatic(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 43, w, h, pp.chromaticAberration);
+                m_postProcess.RenderChromatic(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 43, renderW, renderH, pp.chromaticAberration);
                 m_postProcess.SwapFbos();
 
                 // 13. SMAA (Views 44..45)
                 if (pp.smaaEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderSmaa(
-                            m_postProcess.OutputTexture(), 44, w, h))) {
+                            m_postProcess.OutputTexture(), 44, renderW, renderH))) {
                         m_postProcess.SwapFbos();
                     }
                 }
@@ -4701,7 +4765,7 @@ if (ImGui::BeginMenu("File")) {
                 if (pp.fxaaEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderFxaa(
                             m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
-                            46, w, h))) {
+                            46, renderW, renderH))) {
                         m_postProcess.SwapFbos();
                     }
                 }
@@ -4710,7 +4774,7 @@ if (ImGui::BeginMenu("File")) {
                 if (pp.invertEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderInvert(
                             m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
-                            47, w, h))) {
+                            47, renderW, renderH))) {
                         m_postProcess.SwapFbos();
                     }
                 }
@@ -4720,7 +4784,7 @@ if (ImGui::BeginMenu("File")) {
                 m_postProcess.SetPrevViewProj(taaVP);
             } else {
                 // View 2 is reserved for the first directional shadow cascade.
-                m_postProcess.Render(46, m_framebuffer->Color(), w, h);
+                m_postProcess.Render(46, m_framebuffer->Color(), renderW, renderH);
             }
         }
 
@@ -5056,7 +5120,7 @@ if (ImGui::BeginMenu("File")) {
                 // the post-processed image at view 48. The G-buffer color is
                 // no longer sampled after the lighting pass.
                 bgfx::setViewFrameBuffer(50, m_framebuffer->Handle());
-                m_debug->Render(m_camera, 50, w, h);
+                m_debug->Render(m_camera, 50, renderW, renderH);
             }
         }
 
@@ -5068,8 +5132,8 @@ if (ImGui::BeginMenu("File")) {
             m_postProcess.OutputFbo().idx != bgfx::kInvalidHandle) {
             m_postProcess.BlitTexture(m_postProcess.OutputTexture(), m_framebuffer->Color(), 48);
             bgfx::setViewFrameBuffer(49, m_framebuffer->Handle());
-            bgfx::setViewRect(49, 0, 0, w, h);
-            m_render->RenderGlass(m_scene, m_camera, 49, w, h);
+            bgfx::setViewRect(49, 0, 0, renderW, renderH);
+            m_render->RenderGlass(m_scene, m_camera, 49, renderW, renderH);
         }
 
         // Set when the 2D UI canvas overlay handles the click this frame.

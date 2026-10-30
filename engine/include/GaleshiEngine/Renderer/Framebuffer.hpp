@@ -21,6 +21,7 @@ public:
     bgfx::TextureHandle     Normal()     const { return m_normal; }     // normal.xyz*0.5+0.5 + rough.a
     bgfx::TextureHandle     WorldPos()   const { return m_worldPos; }   // worldPos.xyz
     bgfx::TextureHandle     Material()   const { return m_material; }   // emissive.rgb + material AO
+    bgfx::TextureHandle     Velocity()   const { return m_velocity; }  // RG = previous - current screen UV
     bgfx::TextureHandle     Depth()      const { return m_depth; }
 
     uint16_t Width()  const { return m_width; }
@@ -33,6 +34,7 @@ private:
     bgfx::TextureHandle     m_normal   = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle     m_worldPos = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle     m_material = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle     m_velocity = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle     m_depth    = BGFX_INVALID_HANDLE;
     uint16_t m_width  = 0;
     uint16_t m_height = 0;

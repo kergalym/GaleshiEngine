@@ -1,4 +1,4 @@
-$input v_worldPos, v_normal, v_tangent, v_uv
+$input v_worldPos, v_normal, v_tangent, v_uv, v_motion
 #include <bgfx_shader.sh>
 
 SAMPLER2D(s_albedoMap,            0);
@@ -85,4 +85,5 @@ void main()
     // the material specular mask to the deferred lighting pass.
     gl_FragData[2] = vec4(v_worldPos, 1.0 + specular); // RT2
     gl_FragData[3] = vec4(emissive, occlusion);        // RT3
+    gl_FragData[4] = vec4(v_motion, 0.0, 1.0);         // RT4: screen-space motion
 }

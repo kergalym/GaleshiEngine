@@ -218,6 +218,7 @@ void PostProcessManager::Init() {
           u_taaParams = bgfx::createUniform("u_taaParams", bgfx::UniformType::Vec4);
           u_taaTexelSize = bgfx::createUniform("u_taaTexelSize", bgfx::UniformType::Vec4);
           s_taaHistory = bgfx::createUniform("s_history", bgfx::UniformType::Sampler);
+          s_taaMotion = bgfx::createUniform("s_taaMotion", bgfx::UniformType::Sampler);
       } }
     { auto vs = LoadBinShader("shaders/vs_fullscreen.bin");
       auto fs = LoadBinShader("shaders/fs_sky.bin");
@@ -340,6 +341,7 @@ void PostProcessManager::Init() {
         u_mbPrevVP = bgfx::createUniform("u_mbPrevVP", bgfx::UniformType::Mat4);
         u_mbInvVP  = bgfx::createUniform("u_mbInvVP",  bgfx::UniformType::Mat4);
         s_mbVelocity = bgfx::createUniform("s_mbVelocity", bgfx::UniformType::Sampler);
+        s_mbObjectMotion = bgfx::createUniform("s_mbObjectMotion", bgfx::UniformType::Sampler);
         u_atmoInvVP = bgfx::createUniform("u_atmoInvVP", bgfx::UniformType::Mat4);
         u_atmoSunDir = bgfx::createUniform("u_atmoSunDir", bgfx::UniformType::Vec4);
         u_atmoParams = bgfx::createUniform("u_atmoParams", bgfx::UniformType::Vec4);
@@ -510,7 +512,8 @@ void PostProcessManager::Shutdown() {
     destroyUni(u_sunScreenPos); destroyUni(u_godraysParams);
     destroyUni(u_atmoInvVP); destroyUni(u_atmoSunDir); destroyUni(u_atmoParams);
     destroyUni(u_mbPrevVP); destroyUni(u_mbInvVP);
-    destroyUni(u_motionBlurParams); destroyUni(u_mbVelocityParams); destroyUni(s_mbVelocity);
+    destroyUni(u_motionBlurParams); destroyUni(u_mbVelocityParams);
+    destroyUni(s_mbVelocity); destroyUni(s_mbObjectMotion);
     if (bgfx::isValid(m_mbVelocityFbo)) bgfx::destroy(m_mbVelocityFbo);
     if (bgfx::isValid(m_mbVelocityTex)) bgfx::destroy(m_mbVelocityTex);
     destroyUni(u_dofParams); destroyUni(u_dofTexelSize); destroyUni(u_dofDir);
@@ -521,7 +524,8 @@ void PostProcessManager::Shutdown() {
     if (bgfx::isValid(m_dofCocTex))   bgfx::destroy(m_dofCocTex);
     if (bgfx::isValid(m_dofBlurTexA)) bgfx::destroy(m_dofBlurTexA);
     if (bgfx::isValid(m_dofBlurTexB)) bgfx::destroy(m_dofBlurTexB);
-    destroyUni(u_taaPrevVP); destroyUni(u_taaInvVP); destroyUni(u_taaParams); destroyUni(u_taaTexelSize); destroyUni(s_taaHistory);
+    destroyUni(u_taaPrevVP); destroyUni(u_taaInvVP); destroyUni(u_taaParams); destroyUni(u_taaTexelSize);
+    destroyUni(s_taaHistory); destroyUni(s_taaMotion);
     if (bgfx::isValid(m_historyFbo)) bgfx::destroy(m_historyFbo);
     if(bgfx::isValid(m_historyColor)) bgfx::destroy(m_historyColor);
     destroyProg(m_skyProg); destroyProg(m_iblGenProg); destroyProg(m_brdfProg);
@@ -1203,7 +1207,11 @@ bgfx::TextureHandle PostProcessManager::RenderSky(const glm::mat4& invProj, cons
 }
 
 
-bgfx::TextureHandle PostProcessManager::RenderTaa(bgfx::TextureHandle color, bgfx::TextureHandle depth, const glm::mat4& prevVP, const glm::mat4& invVP, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float blend) {
+bgfx::TextureHandle PostProcessManager::RenderTaa(bgfx::TextureHandle color, bgfx::TextureHandle depth,
+                                                  bgfx::TextureHandle motionVector,
+                                                  const glm::mat4& prevVP, const glm::mat4& invVP,
+                                                  bgfx::FrameBufferHandle target, bgfx::ViewId viewId,
+                                                  uint16_t w, uint16_t h, float blend) {
     if (!bgfx::isValid(m_taaProg) || !bgfx::isValid(u_taaParams)) return BGFX_INVALID_HANDLE;
     if (m_width != w || m_height != h) return BGFX_INVALID_HANDLE;
 
@@ -1236,6 +1244,7 @@ bgfx::TextureHandle PostProcessManager::RenderTaa(bgfx::TextureHandle color, bgf
     bgfx::setTexture(0, s_texColor, color); // Сэмплируем напрямую
     bgfx::setTexture(1, s_taaHistory, m_historyColor);
     bgfx::setTexture(2, s_texDepth, depth); // Сэмплируем глубину напрямую
+    bgfx::setTexture(3, s_taaMotion, motionVector);
     bgfx::setUniform(u_taaPrevVP, glm::value_ptr(prevVP));
     bgfx::setUniform(u_taaInvVP, glm::value_ptr(invVP));
     float params[4] = { std::clamp(blend, 0.0f, 1.0f), 0, 0, 0 };
@@ -1330,7 +1339,9 @@ bgfx::TextureHandle PostProcessManager::RenderAtmosphere(bgfx::TextureHandle col
     return m_pingColor;
 }
 
-bgfx::TextureHandle PostProcessManager::RenderMotionBlur(bgfx::TextureHandle color, bgfx::TextureHandle worldPos,
+bgfx::TextureHandle PostProcessManager::RenderMotionBlur(bgfx::TextureHandle color,
+                                                         bgfx::TextureHandle worldPos,
+                                                         bgfx::TextureHandle motionVector,
                                                          const glm::mat4& prevVP, const glm::mat4& invVP,
                                                          bgfx::FrameBufferHandle target,
                                                          bgfx::ViewId velocityViewId, bgfx::ViewId blurViewId,
@@ -1357,6 +1368,7 @@ bgfx::TextureHandle PostProcessManager::RenderMotionBlur(bgfx::TextureHandle col
     bgfx::setViewRect(velocityViewId, 0, 0, w, h);
     bgfx::setViewClear(velocityViewId, BGFX_CLEAR_COLOR, 0x00000000);
     bgfx::setTexture(0, s_worldPos, worldPos);
+    bgfx::setTexture(1, s_mbObjectMotion, motionVector);
     bgfx::setUniform(u_mbPrevVP, glm::value_ptr(prevVP));
     bgfx::setUniform(u_mbInvVP, glm::value_ptr(invVP));
     float velParams[4] = { velocityScale, 0.0f, 0.0f, 0.0f };

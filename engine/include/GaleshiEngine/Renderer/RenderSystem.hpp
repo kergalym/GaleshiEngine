@@ -32,6 +32,14 @@ public:
                     bgfx::ViewId viewId, uint16_t width, uint16_t height,
                     float nearZ, float farZ);
 
+    // Previous unjittered camera view-projection. Feed this from the same
+    // history matrix used by TAA so the G-buffer velocity and reprojection
+    // agree.
+    void SetPreviousViewProj(const glm::mat4& prev) {
+        m_prevViewProj = prev;
+        m_hasPrevViewProj = true;
+    }
+
     void SetOcclusionCullingEnabled(bool enabled);
     bool OcclusionCullingEnabled() const { return m_occlusionEnabled; }
     uint32_t OccludedObjectCount() const { return m_occludedObjectCount; }
@@ -88,6 +96,11 @@ private:
     bgfx::ProgramHandle m_shadowProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_shadowPointProg = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_shadowLightPos = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_prevViewProj = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_prevModel = BGFX_INVALID_HANDLE;
+    glm::mat4 m_prevViewProj{1.0f};
+    bool m_hasPrevViewProj = false;
+    std::unordered_map<uint32_t, glm::mat4> m_prevModels;
     bgfx::ProgramHandle m_glassProg    = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_waterProg    = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_hairProg     = BGFX_INVALID_HANDLE;

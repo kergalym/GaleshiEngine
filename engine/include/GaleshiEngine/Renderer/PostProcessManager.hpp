@@ -91,7 +91,11 @@ public:
     void SetTaaEnabled(bool v) { m_taaEnabled = v; }
     bool TaaEnabled() const { return m_taaEnabled; }
     void ResetTaaHistory() { m_historyValid = false; }
-    bgfx::TextureHandle RenderTaa(bgfx::TextureHandle color, bgfx::TextureHandle depth, const glm::mat4& prevVP, const glm::mat4& invVP, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float blend);
+    bgfx::TextureHandle RenderTaa(bgfx::TextureHandle color, bgfx::TextureHandle depth,
+                                  bgfx::TextureHandle motionVector,
+                                  const glm::mat4& prevVP, const glm::mat4& invVP,
+                                  bgfx::FrameBufferHandle target, bgfx::ViewId viewId,
+                                  uint16_t w, uint16_t h, float blend);
     bgfx::TextureHandle RenderGodRays(bgfx::TextureHandle color, bgfx::TextureHandle depth,
                                       const glm::mat4& viewProj, const float camPos[4], const float sunDir[4],
                                       bgfx::FrameBufferHandle target,
@@ -105,7 +109,9 @@ public:
                                            bgfx::ViewId viewId, uint16_t w, uint16_t h, float intensity);
     void SetAtmosphereEnabled(bool v) { m_atmosphereEnabled = v; }
     bool AtmosphereEnabled() const { return m_atmosphereEnabled; }
-    bgfx::TextureHandle RenderMotionBlur(bgfx::TextureHandle color, bgfx::TextureHandle worldPos,
+    bgfx::TextureHandle RenderMotionBlur(bgfx::TextureHandle color,
+                                              bgfx::TextureHandle worldPos,
+                                              bgfx::TextureHandle motionVector,
                                               const glm::mat4& prevVP, const glm::mat4& invVP,
                                               bgfx::FrameBufferHandle target,
                                               bgfx::ViewId velocityViewId, bgfx::ViewId blurViewId,
@@ -285,6 +291,7 @@ private:
     bgfx::UniformHandle u_taaParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_taaTexelSize = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_taaHistory = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_taaMotion = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_historyColor = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_historyFbo = BGFX_INVALID_HANDLE;
     glm::mat4 m_prevViewProj{1.0f};
@@ -334,6 +341,7 @@ private:
     bgfx::UniformHandle u_mbPrevVP = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_mbInvVP  = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_mbVelocity = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_mbObjectMotion = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_mbVelocityTex = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_mbVelocityFbo = BGFX_INVALID_HANDLE;
     bool m_motionBlurEnabled = true;

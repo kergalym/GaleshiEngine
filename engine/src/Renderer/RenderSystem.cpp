@@ -76,6 +76,17 @@ namespace {
         return model;
     }
 
+    bool MatricesNearlyEqual(const glm::mat4& a, const glm::mat4& b) {
+        for (int column = 0; column < 4; ++column) {
+            for (int row = 0; row < 4; ++row) {
+                if (std::abs(a[column][row] - b[column][row]) > 1e-6f) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     float ProjectedSphereRadius(const glm::vec3& center, float radius,
                                 const glm::vec3& cameraPosition,
                                 const glm::mat4& projection) {
@@ -295,6 +306,8 @@ void RenderSystem::Init(AssetManager* assets) {
         bgfx::isValid(m_hairProg), bgfx::isValid(m_instancedProg),
         m_occlusionSupported);
     u_shadowLightPos = bgfx::createUniform("u_shadowLightPos", bgfx::UniformType::Vec4);
+    u_prevViewProj = bgfx::createUniform("u_prevViewProj", bgfx::UniformType::Mat4);
+    u_prevModel = bgfx::createUniform("u_prevModel", bgfx::UniformType::Mat4);
     if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
 
     u_albedoFactor = bgfx::createUniform("u_albedoFactor", bgfx::UniformType::Vec4);
@@ -371,6 +384,8 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(m_instancedShadowProg)) bgfx::destroy(m_instancedShadowProg);
     if (bgfx::isValid(m_instancedShadowPointProg)) bgfx::destroy(m_instancedShadowPointProg);
     if (bgfx::isValid(u_shadowLightPos)) bgfx::destroy(u_shadowLightPos);
+    if (bgfx::isValid(u_prevViewProj)) bgfx::destroy(u_prevViewProj);
+    if (bgfx::isValid(u_prevModel)) bgfx::destroy(u_prevModel);
     if (bgfx::isValid(u_albedoFactor)) bgfx::destroy(u_albedoFactor);
     if (bgfx::isValid(u_metallicFactor)) bgfx::destroy(u_metallicFactor);
     if (bgfx::isValid(u_roughnessFactor)) bgfx::destroy(u_roughnessFactor);
@@ -687,6 +702,11 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
 
     Galeshi::Frustum frustum(camera.Projection() * camera.View());
 
+    const glm::mat4 currentViewProj = camera.Projection() * camera.View();
+    const glm::mat4 previousViewProj = m_hasPrevViewProj
+        ? m_prevViewProj : currentViewProj;
+    bgfx::setUniform(u_prevViewProj, glm::value_ptr(previousViewProj));
+
     bgfx::setViewTransform(viewId, glm::value_ptr(camera.View()), glm::value_ptr(camera.Projection()));
     bgfx::setViewRect(viewId, 0, 0, width, height);
     // In deferred mode the G-buffer world position must be exactly zero for
@@ -800,6 +820,11 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         if (matc.material->isGlass) continue;
 
         const glm::mat4 model = EntityWorldMatrix(scene, h);
+        const uint32_t entityId = static_cast<uint32_t>(entt::to_integral(h));
+        const auto previousIt = m_prevModels.find(entityId);
+        const glm::mat4 previousModel = previousIt != m_prevModels.end()
+            ? previousIt->second : model;
+        const bool modelMoved = !MatricesNearlyEqual(previousModel, model);
 
         // Frustum culling (before any bindings).
         glm::vec3 localMin, localMax;
@@ -819,7 +844,6 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         const entt::entity root = FindRootEntity(scene, h);
         const bool hasSkeleton =
             scene.Registry().all_of<SkeletalComponent>(root);
-        const uint32_t entityId = static_cast<uint32_t>(entt::to_integral(h));
 
         // The occlusion pass tests static entities before this pass. Results
         // are one frame old, which keeps the query readback off the GPU
@@ -829,7 +853,7 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         }
 
         uint32_t lod = 0;
-        if (m_lodEnabled && !hasSkeleton &&
+        if (m_lodEnabled && !hasSkeleton && !modelMoved &&
             !scene.Registry().all_of<SoftBodyComponent>(h)) {
             mc.mesh->EnsureLods();
             const float projectedRadius = ProjectedSphereRadius(
@@ -840,7 +864,7 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         // Static meshes sharing geometry, LOD and material state are
         // collected and submitted as one instanced draw after the per-object
         // pass.
-        if (!hasSkeleton && canInstanceStatic) {
+        if (!hasSkeleton && canInstanceStatic && !modelMoved) {
             const MeshMaterialKey key = MakeMeshMaterialKey(mc, *matc.material, lod);
             const auto result = instanceBatches.try_emplace(key);
             MeshInstanceBatch& batch = result.first->second;
@@ -879,6 +903,7 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         }
         bgfx::setTexture(3, s_boneMatrices, m_boneTexture);
 
+        bgfx::setUniform(u_prevModel, glm::value_ptr(previousModel));
         bgfx::setTransform(glm::value_ptr(model));
         bindMaterial(*matc.material);
 
@@ -913,6 +938,14 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
     }
 
     RenderVegetation(scene, frustum, viewId);
+
+    // Store the current transforms for the next frame's object motion vectors.
+    for (auto handle : scene.Registry().view<TransformComponent, MeshComponent>()) {
+        const uint32_t id = static_cast<uint32_t>(entt::to_integral(handle));
+        m_prevModels[id] = EntityWorldMatrix(scene, handle);
+    }
+    m_prevViewProj = currentViewProj;
+    m_hasPrevViewProj = true;
 }
 
 void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,

@@ -11,12 +11,14 @@ void Framebuffer::Destroy() {
     if (bgfx::isValid(m_normal))   bgfx::destroy(m_normal);
     if (bgfx::isValid(m_worldPos)) bgfx::destroy(m_worldPos);
     if (bgfx::isValid(m_material)) bgfx::destroy(m_material);
+    if (bgfx::isValid(m_velocity)) bgfx::destroy(m_velocity);
     if (bgfx::isValid(m_depth))    bgfx::destroy(m_depth);
     m_fbh      = BGFX_INVALID_HANDLE;
     m_color    = BGFX_INVALID_HANDLE;
     m_normal   = BGFX_INVALID_HANDLE;
     m_worldPos = BGFX_INVALID_HANDLE;
     m_material = BGFX_INVALID_HANDLE;
+    m_velocity = BGFX_INVALID_HANDLE;
     m_depth    = BGFX_INVALID_HANDLE;
     m_width = m_height = 0;
 }
@@ -36,28 +38,32 @@ bool Framebuffer::Create(uint16_t w, uint16_t h) {
     m_worldPos = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags);
     // RT3: emissive.rgb + material ambient occlusion
     m_material = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags);
+    // RT4: per-object screen-space motion vector (previous UV - current UV).
+    m_velocity = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags);
     // Depth
     m_depth = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::D32F, flags);
 
     if (!bgfx::isValid(m_color) || !bgfx::isValid(m_normal) ||
         !bgfx::isValid(m_worldPos) || !bgfx::isValid(m_material) ||
-        !bgfx::isValid(m_depth)) {
-        spdlog::error("[FBO] texture creation failed (color={} normal={} worldPos={} material={} depth={})",
+        !bgfx::isValid(m_velocity) || !bgfx::isValid(m_depth)) {
+        spdlog::error("[FBO] texture creation failed (color={} normal={} worldPos={} material={} velocity={} depth={})",
             bgfx::isValid(m_color), bgfx::isValid(m_normal),
             bgfx::isValid(m_worldPos), bgfx::isValid(m_material),
-            bgfx::isValid(m_depth));
+            bgfx::isValid(m_velocity), bgfx::isValid(m_depth));
         Destroy();
         return false;
     }
 
-    bgfx::TextureHandle att[] = { m_color, m_normal, m_worldPos, m_material, m_depth };
-    m_fbh = bgfx::createFrameBuffer(5, att, false);
+    bgfx::TextureHandle att[] = {
+        m_color, m_normal, m_worldPos, m_material, m_velocity, m_depth
+    };
+    m_fbh = bgfx::createFrameBuffer(6, att, false);
     if (!bgfx::isValid(m_fbh)) {
         spdlog::error("[FBO] createFrameBuffer failed");
         Destroy();
         return false;
     }
-    spdlog::info("[FBO] Created {}x{} (color + normal + worldPos + material + depth)", w, h);
+    spdlog::info("[FBO] Created {}x{} (color + normal + worldPos + material + velocity + depth)", w, h);
     return true;
 }
 
