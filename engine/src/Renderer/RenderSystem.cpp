@@ -1158,14 +1158,16 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
             vegetation.treeTypes.empty() ? loadTreeDraws(vegetation.treeMeshPath)
                                          : std::vector<CustomTreeDraw>{};
 
-        if (!vegetation.hideDefaultInstances) {
-            if (vegetation.treeTypes.empty()) {
+        if (vegetation.treeTypes.empty()) {
+            if (!vegetation.hideDefaultInstances) {
                 drawTreeBatch(vegetation.treeInstances, legacyTreeDraws);
-            } else {
-                for (const auto& type : vegetation.treeTypes) {
-                    drawTreeBatch(type.generatedInstances,
-                                  loadTreeDraws(type.meshPath));
-                }
+            }
+        } else {
+            // Authored tree species are real vegetation assets, not the
+            // legacy procedural defaults that Hide Default Instances targets.
+            for (const auto& type : vegetation.treeTypes) {
+                drawTreeBatch(type.generatedInstances,
+                              loadTreeDraws(type.meshPath));
             }
         }
         if (!vegetation.treeTypes.empty()) {
@@ -1275,14 +1277,14 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
                 : std::vector<CustomTreeShadowDraw>{};
 
         if (vegetation.castShadows) {
-            if (!vegetation.hideDefaultInstances) {
-                if (vegetation.treeTypes.empty()) {
+            if (vegetation.treeTypes.empty()) {
+                if (!vegetation.hideDefaultInstances) {
                     drawShadowBatch(vegetation.treeInstances, legacyTreeDraws);
-                } else {
-                    for (const auto& type : vegetation.treeTypes) {
-                        drawShadowBatch(type.generatedInstances,
-                                        loadShadowDraws(type.meshPath));
-                    }
+                }
+            } else {
+                for (const auto& type : vegetation.treeTypes) {
+                    drawShadowBatch(type.generatedInstances,
+                                    loadShadowDraws(type.meshPath));
                 }
             }
             if (!vegetation.treeTypes.empty()) {

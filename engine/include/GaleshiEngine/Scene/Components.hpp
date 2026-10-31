@@ -201,8 +201,9 @@ struct LandscapeComponent {
 };
 
 // One independently configured tree species used by landscape vegetation.
-// Density controls the share of automatically generated trees; Size is a
-// model-space multiplier applied to generated and painted instances.
+// Density scales the number of automatically generated instances of this
+// species relative to the base Trees count; Size is a model-space multiplier
+// applied to generated and painted instances.
 struct VegetationTreeType {
     std::string meshPath;
     float density = 1.0f;
@@ -236,11 +237,12 @@ struct VegetationComponent {
     glm::vec4 grassColor{0.22f, 0.52f, 0.14f, 1.0f};
 
     // Multiple draggable/static tree species. When this list is non-empty,
-    // generated trees are distributed between the species by Density.
+    // generated tree counts are driven by each species' Density.
     std::vector<VegetationTreeType> treeTypes;
 
-    // Hides all automatically generated trees/grass (including generated
-    // instances of tree types). Painted instances remain visible.
+    // Hides generated procedural grass and legacy default trees. Generated
+    // instances of explicitly authored tree species and painted instances
+    // remain visible.
     bool hideDefaultInstances = false;
 
     // Brush painting controls. Size is multiplied by a tree type's Size when

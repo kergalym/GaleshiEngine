@@ -7165,61 +7165,64 @@ if (ImGui::BeginMenu("File")) {
                         m_editor.toolMode ==
                         Galeshi::EditorState::ToolMode::PaintGrass;
                     const bool paintMode = paintTrees || paintGrass;
+                    const bool leftClicked =
+                        ImGui::IsMouseClicked(ImGuiMouseButton_Left);
 
-                    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                    if (leftClicked) {
                         PushHistory();
                         m_wasSculpting = true;
                         m_paintStampValid = false;
                     }
-                    if (m_wasSculpting &&
-                        ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                        if (paintMode) {
-                            const float minStep =
-                                std::max(0.05f, m_editor.brushRadius * 0.2f);
-                            const float dx =
-                                hit.localPosition.x - m_lastPaintLocal.x;
-                            const float dz =
-                                hit.localPosition.z - m_lastPaintLocal.z;
-                            if (!m_paintStampValid ||
-                                dx * dx + dz * dz >= minStep * minStep) {
-                                PaintVegetationAt(sel, landscape,
-                                                  hit.localPosition,
-                                                  paintGrass);
-                                m_lastPaintLocal = hit.localPosition;
-                                m_paintStampValid = true;
-                            }
-                        } else {
-                            Galeshi::LandscapeBrushSettings settings;
-                            switch (m_editor.toolMode) {
-                                case Galeshi::EditorState::ToolMode::Raise:
-                                    settings.tool = Galeshi::LandscapeBrush::Raise; break;
-                                case Galeshi::EditorState::ToolMode::Lower:
-                                    settings.tool = Galeshi::LandscapeBrush::Lower; break;
-                                case Galeshi::EditorState::ToolMode::Smooth:
-                                    settings.tool = Galeshi::LandscapeBrush::Smooth; break;
-                                case Galeshi::EditorState::ToolMode::Flatten:
-                                    settings.tool = Galeshi::LandscapeBrush::Flatten; break;
-                                case Galeshi::EditorState::ToolMode::Noise:
-                                    settings.tool = Galeshi::LandscapeBrush::Noise; break;
-                                default: break;
-                            }
-                            settings.radius = m_editor.brushRadius;
-                            settings.strength = m_editor.brushStrength;
-                            settings.falloff = m_editor.brushFalloff;
-                            settings.flattenHeight = m_editor.flattenHeight;
-                            settings.noiseFrequency = m_editor.noiseFrequency;
-                            if (Galeshi::LandscapeMesh::ApplyBrush(
-                                    landscape, settings,
-                                    hit.localPosition.x,
-                                    hit.localPosition.z,
-                                    ImGui::GetIO().DeltaTime) > 0) {
-                                if (sel.HasComponent<Galeshi::MeshComponent>()) {
-                                    auto& meshComponent =
-                                        sel.GetComponent<Galeshi::MeshComponent>();
-                                    if (meshComponent.mesh) {
-                                        Galeshi::LandscapeMesh::UpdateMesh(
-                                            landscape, *meshComponent.mesh);
-                                    }
+                    if (paintMode &&
+                        (leftClicked ||
+                         (m_wasSculpting &&
+                          ImGui::IsMouseDown(ImGuiMouseButton_Left)))) {
+                        const float minStep =
+                            std::max(0.05f, m_editor.brushRadius * 0.2f);
+                        const float dx =
+                            hit.localPosition.x - m_lastPaintLocal.x;
+                        const float dz =
+                            hit.localPosition.z - m_lastPaintLocal.z;
+                        if (!m_paintStampValid ||
+                            dx * dx + dz * dz >= minStep * minStep) {
+                            PaintVegetationAt(sel, landscape,
+                                              hit.localPosition,
+                                              paintGrass);
+                            m_lastPaintLocal = hit.localPosition;
+                            m_paintStampValid = true;
+                        }
+                    } else if (m_wasSculpting &&
+                               ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                        Galeshi::LandscapeBrushSettings settings;
+                        switch (m_editor.toolMode) {
+                            case Galeshi::EditorState::ToolMode::Raise:
+                                settings.tool = Galeshi::LandscapeBrush::Raise; break;
+                            case Galeshi::EditorState::ToolMode::Lower:
+                                settings.tool = Galeshi::LandscapeBrush::Lower; break;
+                            case Galeshi::EditorState::ToolMode::Smooth:
+                                settings.tool = Galeshi::LandscapeBrush::Smooth; break;
+                            case Galeshi::EditorState::ToolMode::Flatten:
+                                settings.tool = Galeshi::LandscapeBrush::Flatten; break;
+                            case Galeshi::EditorState::ToolMode::Noise:
+                                settings.tool = Galeshi::LandscapeBrush::Noise; break;
+                            default: break;
+                        }
+                        settings.radius = m_editor.brushRadius;
+                        settings.strength = m_editor.brushStrength;
+                        settings.falloff = m_editor.brushFalloff;
+                        settings.flattenHeight = m_editor.flattenHeight;
+                        settings.noiseFrequency = m_editor.noiseFrequency;
+                        if (Galeshi::LandscapeMesh::ApplyBrush(
+                                landscape, settings,
+                                hit.localPosition.x,
+                                hit.localPosition.z,
+                                ImGui::GetIO().DeltaTime) > 0) {
+                            if (sel.HasComponent<Galeshi::MeshComponent>()) {
+                                auto& meshComponent =
+                                    sel.GetComponent<Galeshi::MeshComponent>();
+                                if (meshComponent.mesh) {
+                                    Galeshi::LandscapeMesh::UpdateMesh(
+                                        landscape, *meshComponent.mesh);
                                 }
                             }
                         }
@@ -8564,6 +8567,18 @@ void DrawDetails() {
 
         
             if (ImGui::DragFloat3("Scale", glm::value_ptr(scl), 0.05f)) { for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().scale = scl; }
+            float uniformScale = scl.x;
+            if (ImGui::DragFloat("Uniform Scale", &uniformScale, 0.05f)) {
+                scl = glm::vec3(uniformScale);
+                for (auto e : selected) {
+                    if (e.HasComponent<Galeshi::TransformComponent>()) {
+                        e.GetComponent<Galeshi::TransformComponent>().scale = scl;
+                    }
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Sets X, Y and Z scale together.");
+            }
             if (ImGui::DragFloat3("Rotation", glm::value_ptr(rot), 1.0f)) { glm::quat q = glm::quat(glm::radians(rot)); for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().rotation = q; }
 
             if (HasCollisionShapeParent(selectedHandle)) {
@@ -8975,6 +8990,11 @@ void DrawDetails() {
             changed |= ImGui::Checkbox("Grass Shadows", &veg.grassCastShadows);
             ImGui::SetNextItemWidth(170.0f);
             changed |= ImGui::DragInt("Trees", &veg.treeCount, 1.0f, 0, 20000);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Base generated tree count. Each tree species scales its "
+                    "count by its Density.");
+            }
             ImGui::SetNextItemWidth(170.0f);
             changed |= ImGui::DragInt("Grass", &veg.grassCount, 10.0f, 0, 50000);
             changed |= ImGui::DragFloatRange2("Tree Scale", &veg.treeMinScale, &veg.treeMaxScale,
@@ -8998,8 +9018,8 @@ void DrawDetails() {
                                        &veg.hideDefaultInstances);
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip(
-                    "Hide automatically generated trees and grass while "
-                    "keeping painted vegetation visible.");
+                    "Hide generated procedural trees and grass. Authored tree "
+                    "species and painted vegetation stay visible.");
             }
 
             const float dropWidth = ImGui::GetContentRegionAvail().x;
@@ -9093,7 +9113,9 @@ void DrawDetails() {
                 }
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip(
-                        "Relative share of this species among generated trees.");
+                        "Scales this species' generated tree count. With "
+                        "multiple species, 1.0 gives each an equal share of "
+                        "the base Trees count.");
                 }
                 ImGui::SetNextItemWidth(160.0f);
                 if (ImGui::DragFloat("Size", &type.scale, 0.01f,
@@ -9157,11 +9179,22 @@ void DrawDetails() {
             if (ImGui::Button("Paint Trees")) {
                 m_editor.toolMode = Galeshi::EditorState::ToolMode::PaintTrees;
                 m_editor.Select(selected[0]);
+                m_wasSculpting = false;
+                m_paintStampValid = false;
+                // When a landscape already has authored species, start with
+                // the first one instead of silently painting procedural trees.
+                if (!veg.treeTypes.empty() &&
+                    (m_paintTreeType < 0 ||
+                     m_paintTreeType >= static_cast<int>(veg.treeTypes.size()))) {
+                    m_paintTreeType = 0;
+                }
             }
             ImGui::SameLine();
             if (ImGui::Button("Paint Grass")) {
                 m_editor.toolMode = Galeshi::EditorState::ToolMode::PaintGrass;
                 m_editor.Select(selected[0]);
+                m_wasSculpting = false;
+                m_paintStampValid = false;
             }
             ImGui::SameLine();
             ImGui::TextDisabled("Use Brush Radius in Landscape Sculpting");

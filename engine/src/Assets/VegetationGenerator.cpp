@@ -53,7 +53,6 @@ void VegetationGenerator::Generate(const LandscapeComponent& landscape,
     }
     vegetation.dirty = false;
     if (!vegetation.enabled) return;
-    if (vegetation.hideDefaultInstances) return;
     if (landscape.sizeX < 2 || landscape.sizeZ < 2 || landscape.heights.empty()) return;
 
     const int treeCount = std::clamp(vegetation.treeCount, 0, 20000);
@@ -66,34 +65,65 @@ void VegetationGenerator::Generate(const LandscapeComponent& landscape,
     const float maxMargin = std::max(0.0f, std::min(halfX, halfZ) * 0.9f);
     const float margin = std::min(std::max(0.5f, landscape.scale * 1.25f), maxMargin);
 
-    // A single jittered position grid is shared by all species so different
-    // tree models do not stack on top of each other.
-    std::vector<double> speciesWeights;
-    double totalDensity = 0.0;
-    if (!vegetation.treeTypes.empty()) {
-        speciesWeights.reserve(vegetation.treeTypes.size());
+    const bool hasTreeTypes = !vegetation.treeTypes.empty();
+    int generatedTreeCount = 0;
+    std::vector<int> speciesAssignments;
+
+    if (hasTreeTypes) {
+        // Density is a real count multiplier, not just a share of a fixed
+        // total. With one species, Density 2 generates twice the Trees count;
+        // with multiple species, 1.0 gives each an equal share. The final
+        // count is capped so an extreme Density cannot stall the editor.
+        const double speciesCount = static_cast<double>(
+            std::max<size_t>(1, vegetation.treeTypes.size()));
+        std::vector<double> rawTargets;
+        rawTargets.reserve(vegetation.treeTypes.size());
+        double rawTotal = 0.0;
         for (const auto& type : vegetation.treeTypes) {
-            const double weight = std::max(0.0, static_cast<double>(type.density));
-            speciesWeights.push_back(weight);
-            totalDensity += weight;
+            const double density =
+                std::max(0.0, static_cast<double>(type.density));
+            const double raw = static_cast<double>(treeCount) * density /
+                               speciesCount;
+            rawTargets.push_back(raw);
+            rawTotal += raw;
         }
-    }
-    std::discrete_distribution<int> chooseSpecies;
-    if (totalDensity > 0.0) {
-        chooseSpecies = std::discrete_distribution<int>(
-            speciesWeights.begin(), speciesWeights.end());
+
+        const double targetScale =
+            rawTotal > 20000.0 ? 20000.0 / rawTotal : 1.0;
+        std::vector<int> targets;
+        targets.reserve(rawTargets.size());
+        for (double raw : rawTargets) {
+            const int target = std::clamp(
+                static_cast<int>(std::lround(raw * targetScale)), 0, 20000);
+            targets.push_back(target);
+            generatedTreeCount += target;
+        }
+
+        speciesAssignments.reserve(
+            static_cast<size_t>(generatedTreeCount));
+        for (size_t typeIndex = 0; typeIndex < targets.size(); ++typeIndex) {
+            speciesAssignments.insert(speciesAssignments.end(),
+                                      static_cast<size_t>(targets[typeIndex]),
+                                      static_cast<int>(typeIndex));
+        }
+        std::shuffle(speciesAssignments.begin(), speciesAssignments.end(), rng);
+    } else if (!vegetation.hideDefaultInstances) {
+        generatedTreeCount = treeCount;
     }
 
-    if (treeCount > 0) {
+    if (generatedTreeCount > 0) {
+        // A single jittered position grid is shared by all species so
+        // different tree models do not stack on top of each other.
         const int columns = std::max(1, static_cast<int>(
-            std::ceil(std::sqrt(static_cast<float>(treeCount)))));
-        const int rows = std::max(1, (treeCount + columns - 1) / columns);
+            std::ceil(std::sqrt(static_cast<float>(generatedTreeCount)))));
+        const int rows = std::max(
+            1, (generatedTreeCount + columns - 1) / columns);
         const float cellW = (halfX * 2.0f - margin * 2.0f) /
                             static_cast<float>(columns);
         const float cellH = (halfZ * 2.0f - margin * 2.0f) /
                             static_cast<float>(rows);
 
-        for (int i = 0; i < treeCount; ++i) {
+        for (int i = 0; i < generatedTreeCount; ++i) {
             const int row = i / columns;
             const int col = i % columns;
             const float x = -halfX + margin +
@@ -103,11 +133,11 @@ void VegetationGenerator::Generate(const LandscapeComponent& landscape,
             if (!ValidPlacement(landscape, vegetation, x, z)) continue;
 
             const float y = LandscapeMesh::SampleHeight(landscape, x, z);
-            const float baseScale = RandomRange(
-                rng, vegetation.treeMinScale, vegetation.treeMaxScale);
             const float yaw = RandomRange(rng, 0.0f, 6.2831853f);
 
-            if (vegetation.treeTypes.empty()) {
+            if (!hasTreeTypes) {
+                const float baseScale = RandomRange(
+                    rng, vegetation.treeMinScale, vegetation.treeMaxScale);
                 const float widthScale = baseScale *
                     RandomRange(rng, 0.85f, 1.18f);
                 glm::mat4 transform = glm::translate(
@@ -120,14 +150,13 @@ void VegetationGenerator::Generate(const LandscapeComponent& landscape,
                 continue;
             }
 
-            if (totalDensity <= 0.0) continue;
-            const int typeIndex = chooseSpecies(rng);
+            if (i >= static_cast<int>(speciesAssignments.size())) continue;
+            const int typeIndex = speciesAssignments[static_cast<size_t>(i)];
             if (typeIndex < 0 ||
                 typeIndex >= static_cast<int>(vegetation.treeTypes.size())) {
                 continue;
             }
             auto& type = vegetation.treeTypes[static_cast<size_t>(typeIndex)];
-            if (type.density <= 0.0f) continue;
             // Custom species use their own Size (native model scale) rather
             // than the procedural tree scale range.
             const float scale = std::max(type.scale, 0.01f) *
@@ -143,7 +172,7 @@ void VegetationGenerator::Generate(const LandscapeComponent& landscape,
         }
     }
 
-    if (grassCount > 0) {
+    if (!vegetation.hideDefaultInstances && grassCount > 0) {
         vegetation.grassInstances.reserve(grassCount);
         const int maxAttempts = grassCount * 10;
         int attempts = 0;

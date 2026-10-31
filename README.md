@@ -167,8 +167,8 @@ end
 - Primitive cube, sphere, and capsule meshes.
 - Landscape heightfield generation with Raise, Lower, Smooth, Flatten, and Noise brushes, with a terrain-following brush outline.
 - Deterministic procedural tree and grass generation, rendered with per-instance matrices and instanced shadow passes.
-- Multiple draggable tree species for landscape vegetation; each has its own model, density and size, and can be painted or generated together. Models can be dropped from the Content Browser or viewport.
-- Tree and grass painting brushes with adjustable density and instance size. Painted instances are serialized with the scene, and `Hide Default Instances` hides generated vegetation while keeping painted vegetation visible.
+- Multiple draggable tree species for landscape vegetation; each has its own model, density and size, and can be painted or generated together. Density scales the species' generated instance count, while Size scales the model itself. Models can be dropped from the Content Browser or viewport.
+- Tree and grass painting brushes with adjustable density and instance size. A single click stamps foliage and dragging continues the stroke. Painted instances are serialized with the scene, and `Hide Default Instances` hides generated procedural trees/grass while keeping authored tree species and painted vegetation visible.
 - Skeletal animation clip sampling with weighted pose blending.
 - Serializable animation state machines with parameters, triggers, transitions, and blend durations.
 - PBR material parameters and texture slots.
@@ -181,6 +181,7 @@ end
 - Collision-shape wireframes keep the same visibility across Play/Stop and are controlled only by their per-collider Visible in Editor flag; attached meshes are never hidden by Play mode.
 - Content Browser with model import and a right-click script-template menu that creates Lua files in `assets/scripts`. Models, textures and audio can also be dragged in from any file manager; drops on the browser import into the current folder, other drops go to `assets/`.
 - `File -> New Scene` replaces the current document with an empty scene and releases the previous scene's mesh, material and texture GPU resources before continuing. `File -> Recent Scenes` keeps up to ten recently loaded/saved scenes per project for quick loading.
+- The Details Transform section includes a Uniform Scale control that updates X, Y and Z together for the selection.
 - Create entities, lights, physics primitives, cloth, landscape, AI agents, and gameplay cameras.
 - Camera entities expose FOV, clip planes, primary/priority selection and local Transform offset. A camera parented to a character follows it; during Play the selected primary camera overrides the editor viewport, and Stop restores the orbit camera and its previous view.
 - `Testing -> Build Scene` rebuilds the PBR test scene: 12 colored spheres (3 albedo samples and a 3x3 metallic/roughness grid) plus the physics demo objects and ground.
