@@ -10,7 +10,16 @@ namespace Galeshi {
 enum class GizmoMode { Translate, Rotate, Scale };
 class EditorState {
 public:
-    enum class ToolMode { Select, Raise, Lower, Smooth, Flatten, Noise };
+    enum class ToolMode {
+        Select,
+        Raise,
+        Lower,
+        Smooth,
+        Flatten,
+        Noise,
+        PaintTrees,
+        PaintGrass
+    };
     
 
     // --- Selection ---

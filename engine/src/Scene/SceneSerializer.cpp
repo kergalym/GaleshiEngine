@@ -34,6 +34,37 @@ glm::vec4 Vec4FromJson(const json& j) { return { j.at(0).get<float>(), j.at(1).g
 json QuatToJson(const glm::quat& q) { return json::array({q.w, q.x, q.y, q.z}); }
 glm::quat QuatFromJson(const json& j) { return glm::quat(j.at(0).get<float>(), j.at(1).get<float>(), j.at(2).get<float>(), j.at(3).get<float>()); }
 
+json Mat4ToJson(const glm::mat4& m) {
+    json out = json::array();
+    for (int column = 0; column < 4; ++column)
+        for (int row = 0; row < 4; ++row)
+            out.push_back(m[column][row]);
+    return out;
+}
+
+glm::mat4 Mat4FromJson(const json& j) {
+    glm::mat4 m(1.0f);
+    if (!j.is_array() || j.size() < 16) return m;
+    size_t i = 0;
+    for (int column = 0; column < 4; ++column)
+        for (int row = 0; row < 4; ++row)
+            m[column][row] = j.at(i++).get<float>();
+    return m;
+}
+
+json Mat4ArrayToJson(const std::vector<glm::mat4>& matrices) {
+    json out = json::array();
+    for (const auto& matrix : matrices) out.push_back(Mat4ToJson(matrix));
+    return out;
+}
+
+void Mat4ArrayFromJson(const json& j, std::vector<glm::mat4>& out) {
+    out.clear();
+    if (!j.is_array()) return;
+    out.reserve(j.size());
+    for (const auto& entry : j) out.push_back(Mat4FromJson(entry));
+}
+
 json CameraStateToJson(const SceneCameraState& camera) {
     return {
         {"position", Vec3ToJson(camera.position)},
@@ -566,6 +597,15 @@ std::string SceneSerializer::SaveToString() const {
         }
         if (reg.all_of<VegetationComponent>(handle)) {
             const auto& veg = reg.get<VegetationComponent>(handle);
+            json treeTypes = json::array();
+            for (const auto& type : veg.treeTypes) {
+                treeTypes.push_back({
+                    {"meshPath", m_assets.MakeRelativePath(type.meshPath)},
+                    {"density", type.density},
+                    {"scale", type.scale},
+                    {"paintedInstances", Mat4ArrayToJson(type.paintedInstances)}
+                });
+            }
             je["vegetation"] = {
                 {"enabled", veg.enabled},
                 {"castShadows", veg.castShadows},
@@ -581,7 +621,15 @@ std::string SceneSerializer::SaveToString() const {
                 {"trunkColor", Vec4ToJson(veg.trunkColor)},
                 {"canopyColor", Vec4ToJson(veg.canopyColor)},
                 {"grassColor", Vec4ToJson(veg.grassColor)},
-                {"treeMeshPath", m_assets.MakeRelativePath(veg.treeMeshPath)}
+                {"treeMeshPath", m_assets.MakeRelativePath(veg.treeMeshPath)},
+                {"treeTypes", std::move(treeTypes)},
+                {"hideDefaultInstances", veg.hideDefaultInstances},
+                {"paintDensity", veg.paintDensity},
+                {"paintSize", veg.paintSize},
+                {"paintedTreeInstances",
+                 Mat4ArrayToJson(veg.paintedTreeInstances)},
+                {"paintedGrassInstances",
+                 Mat4ArrayToJson(veg.paintedGrassInstances)}
             };
         }
 
@@ -1224,7 +1272,43 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             if (jv.contains("trunkColor")) vegetation.trunkColor = Vec4FromJson(jv.at("trunkColor"));
             if (jv.contains("canopyColor")) vegetation.canopyColor = Vec4FromJson(jv.at("canopyColor"));
             if (jv.contains("grassColor")) vegetation.grassColor = Vec4FromJson(jv.at("grassColor"));
+            vegetation.hideDefaultInstances =
+                jv.value("hideDefaultInstances", false);
+            vegetation.paintDensity = jv.value("paintDensity", 1.0f);
+            vegetation.paintSize = jv.value("paintSize", 1.0f);
             vegetation.treeMeshPath = jv.value("treeMeshPath", std::string{});
+
+            vegetation.treeTypes.clear();
+            if (jv.contains("treeTypes") && jv["treeTypes"].is_array()) {
+                for (const auto& jt : jv["treeTypes"]) {
+                    VegetationTreeType type;
+                    type.meshPath = jt.value("meshPath", std::string{});
+                    type.density = std::clamp(
+                        jt.value("density", 1.0f), 0.0f, 100.0f);
+                    type.scale = std::clamp(
+                        jt.value("scale", 1.0f), 0.01f, 100.0f);
+                    if (jt.contains("paintedInstances"))
+                        Mat4ArrayFromJson(jt["paintedInstances"],
+                                          type.paintedInstances);
+                    vegetation.treeTypes.push_back(std::move(type));
+                }
+            }
+            // Migrate scenes saved with the old single tree model field.
+            if (vegetation.treeTypes.empty() &&
+                !vegetation.treeMeshPath.empty()) {
+                VegetationTreeType type;
+                type.meshPath = vegetation.treeMeshPath;
+                vegetation.treeTypes.push_back(std::move(type));
+                vegetation.treeMeshPath.clear();
+            }
+            if (jv.contains("paintedTreeInstances"))
+                Mat4ArrayFromJson(jv["paintedTreeInstances"],
+                                  vegetation.paintedTreeInstances);
+            if (jv.contains("paintedGrassInstances"))
+                Mat4ArrayFromJson(jv["paintedGrassInstances"],
+                                  vegetation.paintedGrassInstances);
+
+            vegetation.dirty = true;
             if (const auto* landscape = reg.try_get<LandscapeComponent>(e.Handle())) {
                 VegetationGenerator::Generate(*landscape, vegetation);
             }

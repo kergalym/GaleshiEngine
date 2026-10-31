@@ -1065,18 +1065,15 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
         if (vegetation.dirty) {
             VegetationGenerator::Generate(landscape, vegetation);
         }
-        if (vegetation.treeInstances.empty() && vegetation.grassInstances.empty()) {
-            continue;
-        }
-
         struct CustomTreeDraw {
             std::shared_ptr<Mesh> mesh;
             std::shared_ptr<Material> material;
         };
-        std::vector<CustomTreeDraw> customTreeMeshes;
-        if (!vegetation.treeMeshPath.empty()) {
-            auto treeModel = m_assets->LoadModel(vegetation.treeMeshPath);
-            customTreeMeshes.reserve(treeModel.meshes.size());
+        auto loadTreeDraws = [&](const std::string& path) {
+            std::vector<CustomTreeDraw> draws;
+            if (path.empty()) return draws;
+            auto treeModel = m_assets->LoadModel(path);
+            draws.reserve(treeModel.meshes.size());
             for (size_t i = 0; i < treeModel.meshes.size(); ++i) {
                 if (!treeModel.meshes[i] || !treeModel.meshes[i]->Valid()) continue;
                 std::shared_ptr<Material> material;
@@ -1090,8 +1087,44 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
                 if (!material && !treeModel.materials.empty()) {
                     material = treeModel.materials.front();
                 }
-                customTreeMeshes.push_back({treeModel.meshes[i], material});
+                draws.push_back({treeModel.meshes[i], material});
             }
+            return draws;
+        };
+        auto drawTreeBatch = [&](const std::vector<glm::mat4>& instances,
+                                 const std::vector<CustomTreeDraw>& draws) {
+            if (instances.empty()) return;
+            bgfx::InstanceDataBuffer idb;
+            const uint32_t count = UploadInstances(instances, 0, idb);
+            if (count == 0) return;
+            if (!draws.empty()) {
+                for (const CustomTreeDraw& draw : draws) {
+                    if (draw.material) {
+                        submitMaterialGroup(*draw.mesh, *draw.material,
+                                            idb, count);
+                    } else {
+                        submitGroup(*draw.mesh, vegetation.trunkColor, 0.9f,
+                                    false, idb, count);
+                    }
+                }
+            } else {
+                submitGroup(*trunkMesh, vegetation.trunkColor, 0.92f, false,
+                            idb, count);
+                submitGroup(*canopyMesh, vegetation.canopyColor, 0.82f, false,
+                            idb, count);
+            }
+        };
+        const bool hasTreeInstances =
+            !vegetation.treeInstances.empty() ||
+            !vegetation.paintedTreeInstances.empty() ||
+            std::any_of(vegetation.treeTypes.begin(), vegetation.treeTypes.end(),
+                        [](const VegetationTreeType& type) {
+                            return !type.generatedInstances.empty() ||
+                                   !type.paintedInstances.empty();
+                        });
+        if (!hasTreeInstances && vegetation.grassInstances.empty() &&
+            vegetation.paintedGrassInstances.empty()) {
+            continue;
         }
 
         const glm::mat4 world = EntityWorldMatrix(scene, handle);
@@ -1103,16 +1136,12 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
         }
         const float halfX = landscape.sizeX * 0.5f * landscape.scale;
         const float halfZ = landscape.sizeZ * 0.5f * landscape.scale;
-        float maxTreeHeight = 5.0f * std::max(1.0f, vegetation.treeMaxScale);
-        for (const CustomTreeDraw& draw : customTreeMeshes) {
-            if (!draw.mesh) continue;
-            glm::vec3 localMin, localMax;
-            draw.mesh->LocalAABB(localMin, localMax);
-            maxTreeHeight = std::max(
-                maxTreeHeight,
-                std::max(0.0f, localMax.y) *
-                    std::max(vegetation.treeMaxScale, 0.05f));
+        float maxTypeScale = 1.0f;
+        for (const auto& type : vegetation.treeTypes) {
+            maxTypeScale = std::max(maxTypeScale, type.scale);
         }
+        float maxTreeHeight = 20.0f *
+            std::max(1.0f, vegetation.treeMaxScale * maxTypeScale);
         const glm::vec3 localCenter(0.0f, (minHeight + maxHeight) * 0.5f + maxTreeHeight * 0.5f, 0.0f);
         const glm::vec3 localExtents(halfX, (maxHeight - minHeight) * 0.5f + maxTreeHeight, halfZ);
         const glm::vec3 worldCenter = glm::vec3(world * glm::vec4(localCenter, 1.0f));
@@ -1125,34 +1154,46 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
 
         bgfx::setTransform(glm::value_ptr(world));
 
-        if (!vegetation.treeInstances.empty()) {
-            bgfx::InstanceDataBuffer idb;
-            const uint32_t count = UploadInstances(vegetation.treeInstances, 0, idb);
-            if (count > 0) {
-                if (!customTreeMeshes.empty()) {
-                    for (const CustomTreeDraw& draw : customTreeMeshes) {
-                        if (draw.material) {
-                            submitMaterialGroup(*draw.mesh, *draw.material,
-                                                idb, count);
-                        } else {
-                            submitGroup(*draw.mesh, vegetation.trunkColor, 0.9f,
-                                        false, idb, count);
-                        }
-                    }
-                } else {
-                    submitGroup(*trunkMesh, vegetation.trunkColor, 0.92f, false,
-                                idb, count);
-                    submitGroup(*canopyMesh, vegetation.canopyColor, 0.82f, false,
-                                idb, count);
+        const std::vector<CustomTreeDraw> legacyTreeDraws =
+            vegetation.treeTypes.empty() ? loadTreeDraws(vegetation.treeMeshPath)
+                                         : std::vector<CustomTreeDraw>{};
+
+        if (!vegetation.hideDefaultInstances) {
+            if (vegetation.treeTypes.empty()) {
+                drawTreeBatch(vegetation.treeInstances, legacyTreeDraws);
+            } else {
+                for (const auto& type : vegetation.treeTypes) {
+                    drawTreeBatch(type.generatedInstances,
+                                  loadTreeDraws(type.meshPath));
                 }
             }
         }
+        if (!vegetation.treeTypes.empty()) {
+            for (const auto& type : vegetation.treeTypes) {
+                drawTreeBatch(type.paintedInstances,
+                              loadTreeDraws(type.meshPath));
+            }
+        }
+        drawTreeBatch(vegetation.paintedTreeInstances, legacyTreeDraws);
 
-        if (!vegetation.grassInstances.empty()) {
+        if (!vegetation.hideDefaultInstances) {
+            if (!vegetation.grassInstances.empty()) {
+                bgfx::InstanceDataBuffer idb;
+                const uint32_t count = UploadInstances(
+                    vegetation.grassInstances, 0, idb);
+                if (count > 0) {
+                    submitGroup(*grassMesh, vegetation.grassColor, 0.76f,
+                                true, idb, count);
+                }
+            }
+        }
+        if (!vegetation.paintedGrassInstances.empty()) {
             bgfx::InstanceDataBuffer idb;
-            const uint32_t count = UploadInstances(vegetation.grassInstances, 0, idb);
+            const uint32_t count = UploadInstances(
+                vegetation.paintedGrassInstances, 0, idb);
             if (count > 0) {
-                submitGroup(*grassMesh, vegetation.grassColor, 0.76f, true, idb, count);
+                submitGroup(*grassMesh, vegetation.grassColor, 0.76f,
+                            true, idb, count);
             }
         }
     }
@@ -1188,10 +1229,11 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
             std::shared_ptr<Mesh> mesh;
             bool twoSided = false;
         };
-        std::vector<CustomTreeShadowDraw> customTreeMeshes;
-        if (!vegetation.treeMeshPath.empty()) {
-            auto treeModel = m_assets->LoadModel(vegetation.treeMeshPath);
-            customTreeMeshes.reserve(treeModel.meshes.size());
+        auto loadShadowDraws = [&](const std::string& path) {
+            std::vector<CustomTreeShadowDraw> draws;
+            if (path.empty()) return draws;
+            auto treeModel = m_assets->LoadModel(path);
+            draws.reserve(treeModel.meshes.size());
             for (size_t i = 0; i < treeModel.meshes.size(); ++i) {
                 if (!treeModel.meshes[i] || !treeModel.meshes[i]->Valid()) continue;
                 bool twoSided = false;
@@ -1204,32 +1246,66 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
                             static_cast<size_t>(materialIndex)]->twoSided;
                     }
                 }
-                customTreeMeshes.push_back({treeModel.meshes[i], twoSided});
+                draws.push_back({treeModel.meshes[i], twoSided});
             }
-        }
+            return draws;
+        };
+        auto drawShadowBatch = [&](const std::vector<glm::mat4>& instances,
+                                   const std::vector<CustomTreeShadowDraw>& draws) {
+            if (instances.empty()) return;
+            bgfx::InstanceDataBuffer idb;
+            const uint32_t count = UploadInstances(instances, 0, idb);
+            if (count == 0) return;
+            if (!draws.empty()) {
+                for (const CustomTreeShadowDraw& draw : draws) {
+                    submitShadow(*draw.mesh, draw.twoSided, idb, count);
+                }
+            } else {
+                submitShadow(*trunkMesh, false, idb, count);
+                submitShadow(*canopyMesh, false, idb, count);
+            }
+        };
 
         const glm::mat4 world = EntityWorldMatrix(scene, handle);
         bgfx::setTransform(glm::value_ptr(world));
 
-        if (vegetation.castShadows && !vegetation.treeInstances.empty()) {
-            bgfx::InstanceDataBuffer idb;
-            const uint32_t count = UploadInstances(vegetation.treeInstances, 0, idb);
-            if (count > 0) {
-                if (!customTreeMeshes.empty()) {
-                    for (const CustomTreeShadowDraw& draw : customTreeMeshes) {
-                        submitShadow(*draw.mesh, draw.twoSided, idb, count);
-                    }
+        const std::vector<CustomTreeShadowDraw> legacyTreeDraws =
+            vegetation.treeTypes.empty()
+                ? loadShadowDraws(vegetation.treeMeshPath)
+                : std::vector<CustomTreeShadowDraw>{};
+
+        if (vegetation.castShadows) {
+            if (!vegetation.hideDefaultInstances) {
+                if (vegetation.treeTypes.empty()) {
+                    drawShadowBatch(vegetation.treeInstances, legacyTreeDraws);
                 } else {
-                    submitShadow(*trunkMesh, false, idb, count);
-                    submitShadow(*canopyMesh, false, idb, count);
+                    for (const auto& type : vegetation.treeTypes) {
+                        drawShadowBatch(type.generatedInstances,
+                                        loadShadowDraws(type.meshPath));
+                    }
                 }
             }
+            if (!vegetation.treeTypes.empty()) {
+                for (const auto& type : vegetation.treeTypes) {
+                    drawShadowBatch(type.paintedInstances,
+                                    loadShadowDraws(type.meshPath));
+                }
+            }
+            drawShadowBatch(vegetation.paintedTreeInstances, legacyTreeDraws);
         }
-        if (vegetation.grassCastShadows && !vegetation.grassInstances.empty()) {
-            bgfx::InstanceDataBuffer idb;
-            const uint32_t count = UploadInstances(vegetation.grassInstances, 0, idb);
-            if (count > 0) {
-                submitShadow(*grassMesh, true, idb, count);
+        if (vegetation.grassCastShadows) {
+            if (!vegetation.hideDefaultInstances &&
+                !vegetation.grassInstances.empty()) {
+                bgfx::InstanceDataBuffer idb;
+                const uint32_t count = UploadInstances(
+                    vegetation.grassInstances, 0, idb);
+                if (count > 0) submitShadow(*grassMesh, true, idb, count);
+            }
+            if (!vegetation.paintedGrassInstances.empty()) {
+                bgfx::InstanceDataBuffer idb;
+                const uint32_t count = UploadInstances(
+                    vegetation.paintedGrassInstances, 0, idb);
+                if (count > 0) submitShadow(*grassMesh, true, idb, count);
             }
         }
     }

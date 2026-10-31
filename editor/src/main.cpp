@@ -65,6 +65,7 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <random>
 #include <unordered_set>
 
 struct LoadingState {
@@ -1222,11 +1223,13 @@ protected:
                 registry.valid(m_vegetationMeshTarget)) {
                 AssignLandscapeTreeModel(
                     Galeshi::Entity(m_vegetationMeshTarget, &m_scene),
-                    chosenTreeMesh);
+                    chosenTreeMesh, m_vegetationMeshTypeIndex);
             }
             m_vegetationMeshTarget = entt::null;
+            m_vegetationMeshTypeIndex = -1;
         } else if (!m_vegetationMeshPicker.IsOpen()) {
             m_vegetationMeshTarget = entt::null;
+            m_vegetationMeshTypeIndex = -1;
         }
 
         m_cpuProfile.imguiMs = ProfileElapsedMs(imguiStart, ProfileClock::now());
@@ -2779,6 +2782,11 @@ if (ImGui::BeginMenu("File")) {
                 vegetationView.get<Galeshi::VegetationComponent>(e);
             if (!vegetation.treeMeshPath.empty()) {
                 retainedModels.push_back(vegetation.treeMeshPath);
+            }
+            for (const auto& type : vegetation.treeTypes) {
+                if (!type.meshPath.empty()) {
+                    retainedModels.push_back(type.meshPath);
+                }
             }
         }
         m_assets->ReleaseUnusedAssets(retainedModels);
@@ -5327,6 +5335,67 @@ if (ImGui::BeginMenu("File")) {
         }
     }
 
+    void PaintVegetationAt(Galeshi::Entity landscapeEntity,
+                           const Galeshi::LandscapeComponent& landscape,
+                           const glm::vec3& localPosition,
+                           bool paintGrass) {
+        if (!m_assets || !landscapeEntity ||
+            !landscapeEntity.HasComponent<Galeshi::VegetationComponent>()) {
+            return;
+        }
+        auto& vegetation =
+            landscapeEntity.GetComponent<Galeshi::VegetationComponent>();
+        if (!vegetation.enabled || vegetation.paintDensity <= 0.0f) return;
+
+        const float radius = std::max(0.05f, m_editor.brushRadius);
+        const float halfX = landscape.sizeX * 0.5f * landscape.scale;
+        const float halfZ = landscape.sizeZ * 0.5f * landscape.scale;
+        std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+        std::uniform_real_distribution<float> angle(0.0f, 6.2831853f);
+
+        Galeshi::VegetationTreeType* treeType = nullptr;
+        if (!paintGrass && m_paintTreeType >= 0 &&
+            m_paintTreeType < static_cast<int>(vegetation.treeTypes.size())) {
+            treeType = &vegetation.treeTypes[
+                static_cast<size_t>(m_paintTreeType)];
+        }
+
+        const int stamps = std::clamp(
+            static_cast<int>(std::round(vegetation.paintDensity * 6.0f)),
+            0, 96);
+        if (stamps == 0) return;
+
+        auto& painted = paintGrass
+            ? vegetation.paintedGrassInstances
+            : (treeType ? treeType->paintedInstances
+                        : vegetation.paintedTreeInstances);
+        painted.reserve(painted.size() + static_cast<size_t>(stamps));
+
+        for (int i = 0; i < stamps; ++i) {
+            const float a = angle(m_paintRng);
+            const float r = std::sqrt(unit(m_paintRng)) * radius;
+            const float x = localPosition.x + std::cos(a) * r;
+            const float z = localPosition.z + std::sin(a) * r;
+            if (std::abs(x) > halfX || std::abs(z) > halfZ) continue;
+
+            const float y = Galeshi::LandscapeMesh::SampleHeight(
+                landscape, x, z);
+            const float baseSize = paintGrass
+                ? vegetation.paintSize
+                : vegetation.paintSize * (treeType ? treeType->scale : 1.0f);
+            const float scale = baseSize * (0.82f + unit(m_paintRng) * 0.36f);
+            if (scale <= 0.0f) continue;
+            const float yaw = angle(m_paintRng);
+
+            glm::mat4 transform = glm::translate(
+                glm::mat4(1.0f), glm::vec3(x, y, z));
+            transform = glm::rotate(transform, yaw,
+                                    glm::vec3(0.0f, 1.0f, 0.0f));
+            transform = glm::scale(transform, glm::vec3(scale));
+            painted.push_back(transform);
+        }
+    }
+
     void DrawCollisionShapeGizmos() {
         if (!m_debug) return;
         Galeshi::Entity selected = m_editor.Selected(&m_scene);
@@ -6364,6 +6433,37 @@ if (ImGui::BeginMenu("File")) {
 
             } // !isPlaying: editor-only overlays
 
+            // Brush outline: draw the actual brush footprint on the height
+            // field so radius is visible before painting/sculpting.
+            if (!m_editor.isPlaying && m_lastBrushHitValid && sel &&
+                sel.HasComponent<Galeshi::LandscapeComponent>() &&
+                m_editor.toolMode != Galeshi::EditorState::ToolMode::Select) {
+                const auto& landscape =
+                    sel.GetComponent<Galeshi::LandscapeComponent>();
+                const glm::mat4 world = EntityWorldMatrix(sel.Handle());
+                const float radius = std::max(0.05f, m_lastBrushRadius);
+                const glm::vec4 color =
+                    m_editor.toolMode == Galeshi::EditorState::ToolMode::PaintTrees
+                        ? glm::vec4(0.30f, 1.00f, 0.30f, 1.0f)
+                        : m_editor.toolMode == Galeshi::EditorState::ToolMode::PaintGrass
+                            ? glm::vec4(0.35f, 0.85f, 0.25f, 1.0f)
+                            : glm::vec4(1.00f, 0.80f, 0.20f, 1.0f);
+                constexpr int segments = 64;
+                glm::vec3 previous(0.0f);
+                for (int i = 0; i <= segments; ++i) {
+                    const float a = static_cast<float>(i) / segments *
+                                    6.2831853f;
+                    const float x = m_lastBrushLocal.x + std::cos(a) * radius;
+                    const float z = m_lastBrushLocal.z + std::sin(a) * radius;
+                    const float y = Galeshi::LandscapeMesh::SampleHeight(
+                        landscape, x, z) + 0.035f;
+                    const glm::vec3 point = glm::vec3(
+                        world * glm::vec4(x, y, z, 1.0f));
+                    if (i > 0) m_debug->AddLine(previous, point, color);
+                    previous = point;
+                }
+            }
+
             // Collision shape gizmos stay visible across Play/Stop. Only the
             // per-collider Visible in Editor flag controls the wireframe.
             DrawCollisionShapeGizmos();
@@ -6618,54 +6718,97 @@ if (ImGui::BeginMenu("File")) {
 
                 auto& landscape = sel.GetComponent<Galeshi::LandscapeComponent>();
                 Galeshi::LandscapeRaycastHit hit;
+                m_lastBrushHitValid = false;
                 if (overImage &&
                     Galeshi::LandscapeMesh::Raycast(landscape, landscapeWorld,
                                                     rayOrigin, rayDir, hit)) {
                     m_lastSculptHeight = hit.height;
+                    m_lastBrushLocal = hit.localPosition;
+                    m_lastBrushRadius = m_editor.brushRadius;
+                    m_lastBrushHitValid = true;
+
+                    const bool paintTrees =
+                        m_editor.toolMode ==
+                        Galeshi::EditorState::ToolMode::PaintTrees;
+                    const bool paintGrass =
+                        m_editor.toolMode ==
+                        Galeshi::EditorState::ToolMode::PaintGrass;
+                    const bool paintMode = paintTrees || paintGrass;
+
                     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                         PushHistory();
                         m_wasSculpting = true;
+                        m_paintStampValid = false;
                     }
-                    if (m_wasSculpting && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                        Galeshi::LandscapeBrushSettings settings;
-                        switch (m_editor.toolMode) {
-                            case Galeshi::EditorState::ToolMode::Raise:
-                                settings.tool = Galeshi::LandscapeBrush::Raise; break;
-                            case Galeshi::EditorState::ToolMode::Lower:
-                                settings.tool = Galeshi::LandscapeBrush::Lower; break;
-                            case Galeshi::EditorState::ToolMode::Smooth:
-                                settings.tool = Galeshi::LandscapeBrush::Smooth; break;
-                            case Galeshi::EditorState::ToolMode::Flatten:
-                                settings.tool = Galeshi::LandscapeBrush::Flatten; break;
-                            case Galeshi::EditorState::ToolMode::Noise:
-                                settings.tool = Galeshi::LandscapeBrush::Noise; break;
-                            default: break;
-                        }
-                        settings.radius = m_editor.brushRadius;
-                        settings.strength = m_editor.brushStrength;
-                        settings.falloff = m_editor.brushFalloff;
-                        settings.flattenHeight = m_editor.flattenHeight;
-                        settings.noiseFrequency = m_editor.noiseFrequency;
-                        if (Galeshi::LandscapeMesh::ApplyBrush(landscape, settings,
-                                                               hit.localPosition.x,
-                                                               hit.localPosition.z,
-                                                               ImGui::GetIO().DeltaTime) > 0) {
-                            if (sel.HasComponent<Galeshi::MeshComponent>()) {
-                                auto& meshComponent = sel.GetComponent<Galeshi::MeshComponent>();
-                                if (meshComponent.mesh) {
-                                    Galeshi::LandscapeMesh::UpdateMesh(
-                                        landscape, *meshComponent.mesh);
+                    if (m_wasSculpting &&
+                        ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                        if (paintMode) {
+                            const float minStep =
+                                std::max(0.05f, m_editor.brushRadius * 0.2f);
+                            const float dx =
+                                hit.localPosition.x - m_lastPaintLocal.x;
+                            const float dz =
+                                hit.localPosition.z - m_lastPaintLocal.z;
+                            if (!m_paintStampValid ||
+                                dx * dx + dz * dz >= minStep * minStep) {
+                                PaintVegetationAt(sel, landscape,
+                                                  hit.localPosition,
+                                                  paintGrass);
+                                m_lastPaintLocal = hit.localPosition;
+                                m_paintStampValid = true;
+                            }
+                        } else {
+                            Galeshi::LandscapeBrushSettings settings;
+                            switch (m_editor.toolMode) {
+                                case Galeshi::EditorState::ToolMode::Raise:
+                                    settings.tool = Galeshi::LandscapeBrush::Raise; break;
+                                case Galeshi::EditorState::ToolMode::Lower:
+                                    settings.tool = Galeshi::LandscapeBrush::Lower; break;
+                                case Galeshi::EditorState::ToolMode::Smooth:
+                                    settings.tool = Galeshi::LandscapeBrush::Smooth; break;
+                                case Galeshi::EditorState::ToolMode::Flatten:
+                                    settings.tool = Galeshi::LandscapeBrush::Flatten; break;
+                                case Galeshi::EditorState::ToolMode::Noise:
+                                    settings.tool = Galeshi::LandscapeBrush::Noise; break;
+                                default: break;
+                            }
+                            settings.radius = m_editor.brushRadius;
+                            settings.strength = m_editor.brushStrength;
+                            settings.falloff = m_editor.brushFalloff;
+                            settings.flattenHeight = m_editor.flattenHeight;
+                            settings.noiseFrequency = m_editor.noiseFrequency;
+                            if (Galeshi::LandscapeMesh::ApplyBrush(
+                                    landscape, settings,
+                                    hit.localPosition.x,
+                                    hit.localPosition.z,
+                                    ImGui::GetIO().DeltaTime) > 0) {
+                                if (sel.HasComponent<Galeshi::MeshComponent>()) {
+                                    auto& meshComponent =
+                                        sel.GetComponent<Galeshi::MeshComponent>();
+                                    if (meshComponent.mesh) {
+                                        Galeshi::LandscapeMesh::UpdateMesh(
+                                            landscape, *meshComponent.mesh);
+                                    }
                                 }
                             }
                         }
                     }
+
+                    if (m_wasSculpting &&
+                        !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                        m_wasSculpting = false;
+                        m_paintStampValid = false;
+                        if (!paintMode &&
+                            sel.HasComponent<Galeshi::VegetationComponent>()) {
+                            sel.GetComponent<Galeshi::VegetationComponent>().dirty = true;
+                        }
+                    }
                 }
 
-                if (m_wasSculpting && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                if (m_wasSculpting &&
+                    !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                     m_wasSculpting = false;
-                    if (sel.HasComponent<Galeshi::VegetationComponent>()) {
-                        sel.GetComponent<Galeshi::VegetationComponent>().dirty = true;
-                    }
+                    m_paintStampValid = false;
                 }
             } else {
                 m_wasSculpting = false;
@@ -8279,7 +8422,10 @@ void DrawDetails() {
         if (selected[0].HasComponent<Galeshi::LandscapeComponent>() &&
             ImGui::CollapsingHeader("Landscape (Sculpting)", ImGuiTreeNodeFlags_DefaultOpen)) {
             auto& landscape = selected[0].GetComponent<Galeshi::LandscapeComponent>();
-            const char* toolNames[] = {"Select", "Raise", "Lower", "Smooth", "Flatten", "Noise"};
+            const char* toolNames[] = {
+                "Select", "Raise", "Lower", "Smooth", "Flatten", "Noise",
+                "Paint Trees", "Paint Grass"
+            };
             int currentTool = static_cast<int>(m_editor.toolMode);
             if (ImGui::Combo("Brush", &currentTool, toolNames, IM_ARRAYSIZE(toolNames))) {
                 m_editor.toolMode = static_cast<Galeshi::EditorState::ToolMode>(currentTool);
@@ -8300,6 +8446,14 @@ void DrawDetails() {
             ImGui::TextDisabled("%d x %d vertices, scale %.2f", landscape.sizeX, landscape.sizeZ, landscape.scale);
             if (m_editor.toolMode == Galeshi::EditorState::ToolMode::Select) {
                 ImGui::TextDisabled("Select a brush, then left-click and drag in the viewport.");
+            } else if (m_editor.toolMode ==
+                           Galeshi::EditorState::ToolMode::PaintTrees ||
+                       m_editor.toolMode ==
+                           Galeshi::EditorState::ToolMode::PaintGrass) {
+                ImGui::TextColored(
+                    ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
+                    "%s with brush radius %.2f",
+                    toolNames[currentTool], m_editor.brushRadius);
             } else {
                 ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f),
                                    "Sculpting with %s brush", toolNames[currentTool]);
@@ -8344,6 +8498,11 @@ void DrawDetails() {
             changed |= ImGui::DragInt("Grass", &veg.grassCount, 10.0f, 0, 50000);
             changed |= ImGui::DragFloatRange2("Tree Scale", &veg.treeMinScale, &veg.treeMaxScale,
                                               0.01f, 0.05f, 10.0f, "Min %.2f", "Max %.2f");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Scale range for default procedural trees. Custom tree "
+                    "types use their own Size.");
+            }
             changed |= ImGui::DragFloatRange2("Grass Scale", &veg.grassMinScale, &veg.grassMaxScale,
                                               0.01f, 0.05f, 10.0f, "Min %.2f", "Max %.2f");
             changed |= ImGui::DragFloat("Slope Limit", &veg.slopeLimit, 0.01f, 0.0f, 5.0f);
@@ -8353,79 +8512,178 @@ void DrawDetails() {
             changed |= ImGui::ColorEdit4("Grass Color", glm::value_ptr(veg.grassColor));
 
             ImGui::Separator();
-            ImGui::Text("Static Tree Mesh");
-
-            // A large dedicated drop target makes the whole field accept
-            // Content Browser drops instead of relying on the narrow text
-            // input. Clicking it opens the model picker.
-            const float dropWidth = ImGui::GetContentRegionAvail().x;
-            ImGui::InvisibleButton("##tree_mesh_drop",
-                                   ImVec2(dropWidth, 52.0f));
-            const ImVec2 dropMin = ImGui::GetItemRectMin();
-            const ImVec2 dropMax = ImGui::GetItemRectMax();
-            const bool dropHovered = ImGui::IsItemHovered();
-            ImDrawList* drawList = ImGui::GetWindowDrawList();
-            drawList->AddRectFilled(
-                dropMin, dropMax,
-                dropHovered ? IM_COL32(44, 48, 56, 255)
-                            : IM_COL32(28, 30, 34, 255), 4.0f);
-            drawList->AddRect(dropMin, dropMax,
-                              dropHovered ? IM_COL32(120, 160, 220, 255)
-                                          : IM_COL32(80, 84, 92, 255),
-                              4.0f);
-            if (veg.treeMeshPath.empty()) {
-                drawList->AddText(ImVec2(dropMin.x + 10.0f, dropMin.y + 10.0f),
-                                  IM_COL32(200, 205, 215, 255),
-                                  "Drop a static tree model here");
-                drawList->AddText(ImVec2(dropMin.x + 10.0f, dropMin.y + 30.0f),
-                                  IM_COL32(130, 135, 145, 255),
-                                  "FBX / glTF / GLB / OBJ / DAE");
-            } else {
-                const ImVec4 clipRect(dropMin.x, dropMin.y, dropMax.x,
-                                      dropMax.y);
-                drawList->AddText(
-                    ImGui::GetFont(), ImGui::GetFontSize(),
-                    ImVec2(dropMin.x + 10.0f, dropMin.y + 10.0f),
-                    IM_COL32(220, 225, 235, 255), veg.treeMeshPath.c_str(),
-                    nullptr, dropWidth - 20.0f, &clipRect);
-            }
+            ImGui::Text("Tree Models");
+            changed |= ImGui::Checkbox("Hide Default Instances",
+                                       &veg.hideDefaultInstances);
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip(
-                    "Drag a model from the Content Browser or click to choose.\n"
-                    "All meshes/materials in the model are used as the tree.");
-            }
-            if (ImGui::IsItemClicked()) {
-                m_vegetationMeshTarget = selected[0].Handle();
-                std::string start = "assets";
-                const std::string projectPath =
-                    Galeshi::ProjectManager::GetProjectPath();
-                if (!projectPath.empty()) {
-                    start = (std::filesystem::path(projectPath) / "assets")
-                                .string();
-                }
-                m_vegetationMeshPicker.Open(
-                    start, "Select Static Tree Model",
-                    {".fbx", ".gltf", ".glb", ".obj", ".dae"});
-            }
-            if (ImGui::BeginDragDropTarget()) {
-                if (const ImGuiPayload* payload =
-                        ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
-                    const char* path = static_cast<const char*>(payload->Data);
-                    const std::string candidate = path ? path : "";
-                    if (IsModelAssetPath(candidate)) {
-                        AssignLandscapeTreeModel(selected[0], candidate);
-                    }
-                }
-                ImGui::EndDragDropTarget();
+                    "Hide automatically generated trees and grass while "
+                    "keeping painted vegetation visible.");
             }
 
-            if (ImGui::Button("Clear##tree_mesh")) veg.treeMeshPath.clear();
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Return to the procedural trunk + canopy trees.");
+            const float dropWidth = ImGui::GetContentRegionAvail().x;
+            for (int typeIndex = 0;
+                 typeIndex < static_cast<int>(veg.treeTypes.size());
+                 ++typeIndex) {
+                auto& type = veg.treeTypes[static_cast<size_t>(typeIndex)];
+                ImGui::PushID(typeIndex);
+                ImGui::Separator();
+                ImGui::Text("Tree Type %d", typeIndex + 1);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove")) {
+                    PushHistory();
+                    veg.treeTypes.erase(veg.treeTypes.begin() + typeIndex);
+                    if (m_paintTreeType >= typeIndex) --m_paintTreeType;
+                    changed = true;
+                    ImGui::PopID();
+                    break;
+                }
+
+                ImGui::InvisibleButton("##tree_type_drop",
+                                       ImVec2(dropWidth, 44.0f));
+                const ImVec2 dropMin = ImGui::GetItemRectMin();
+                const ImVec2 dropMax = ImGui::GetItemRectMax();
+                const bool dropHovered = ImGui::IsItemHovered();
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                drawList->AddRectFilled(
+                    dropMin, dropMax,
+                    dropHovered ? IM_COL32(44, 48, 56, 255)
+                                : IM_COL32(28, 30, 34, 255), 4.0f);
+                drawList->AddRect(
+                    dropMin, dropMax,
+                    dropHovered ? IM_COL32(120, 160, 220, 255)
+                                : IM_COL32(80, 84, 92, 255), 4.0f);
+                if (type.meshPath.empty()) {
+                    drawList->AddText(
+                        ImVec2(dropMin.x + 10.0f, dropMin.y + 7.0f),
+                        IM_COL32(200, 205, 215, 255),
+                        "Drop a tree model here");
+                    drawList->AddText(
+                        ImVec2(dropMin.x + 10.0f, dropMin.y + 25.0f),
+                        IM_COL32(130, 135, 145, 255),
+                        "FBX / glTF / GLB / OBJ / DAE");
+                } else {
+                    const ImVec4 clipRect(dropMin.x, dropMin.y, dropMax.x,
+                                          dropMax.y);
+                    drawList->AddText(
+                        ImGui::GetFont(), ImGui::GetFontSize(),
+                        ImVec2(dropMin.x + 10.0f, dropMin.y + 7.0f),
+                        IM_COL32(220, 225, 235, 255), type.meshPath.c_str(),
+                        nullptr, dropWidth - 20.0f, &clipRect);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Drag a model from the Content Browser or click to choose.\n"
+                        "The model keeps its native size; use Size for scaling.");
+                }
+                if (ImGui::IsItemClicked()) {
+                    m_vegetationMeshTarget = selected[0].Handle();
+                    m_vegetationMeshTypeIndex = typeIndex;
+                    std::string start = "assets";
+                    const std::string projectPath =
+                        Galeshi::ProjectManager::GetProjectPath();
+                    if (!projectPath.empty()) {
+                        start = (std::filesystem::path(projectPath) /
+                                 "assets").string();
+                    }
+                    m_vegetationMeshPicker.Open(
+                        start, "Select Tree Model",
+                        {".fbx", ".gltf", ".glb", ".obj", ".dae"});
+                }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload =
+                            ImGui::AcceptDragDropPayload(
+                                "GALESHI_ASSET_PATH")) {
+                        const char* path =
+                            static_cast<const char*>(payload->Data);
+                        const std::string candidate = path ? path : "";
+                        if (IsModelAssetPath(candidate)) {
+                            AssignLandscapeTreeModel(
+                                selected[0], candidate, typeIndex);
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+
+                ImGui::SetNextItemWidth(160.0f);
+                if (ImGui::DragFloat("Density", &type.density,
+                                     0.01f, 0.0f, 100.0f, "%.2f")) {
+                    changed = true;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Relative share of this species among generated trees.");
+                }
+                ImGui::SetNextItemWidth(160.0f);
+                if (ImGui::DragFloat("Size", &type.scale, 0.01f,
+                                     0.01f, 100.0f, "%.2f")) {
+                    changed = true;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Multiplier of the model's native size. Dropped models "
+                        "start at 1.0.");
+                }
+                ImGui::TextDisabled("Painted: %zu",
+                                    type.paintedInstances.size());
+                ImGui::PopID();
+            }
+
+            if (ImGui::Button("+ Add Tree Type")) {
+                PushHistory();
+                veg.treeTypes.push_back(Galeshi::VegetationTreeType{});
+                m_paintTreeType =
+                    static_cast<int>(veg.treeTypes.size()) - 1;
+                changed = true;
+            }
+            if (veg.treeTypes.empty()) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("Empty = procedural trees");
+            }
+
+            ImGui::Separator();
+            ImGui::Text("Painting");
+            {
+                std::vector<std::string> paintLabelStorage;
+                paintLabelStorage.push_back("Default Procedural");
+                for (const auto& type : veg.treeTypes) {
+                    paintLabelStorage.push_back(
+                        type.meshPath.empty()
+                            ? "Tree Type"
+                            : std::filesystem::path(type.meshPath)
+                                  .stem().string());
+                }
+                std::vector<const char*> paintLabels;
+                paintLabels.reserve(paintLabelStorage.size());
+                for (const auto& label : paintLabelStorage)
+                    paintLabels.push_back(label.c_str());
+
+                int paintSelection = m_paintTreeType + 1;
+                if (paintSelection < 0) paintSelection = 0;
+                if (paintSelection >= static_cast<int>(paintLabels.size()))
+                    paintSelection = 0;
+                ImGui::SetNextItemWidth(220.0f);
+                if (ImGui::Combo("Paint Tree Type", &paintSelection,
+                                 paintLabels.data(),
+                                 static_cast<int>(paintLabels.size()))) {
+                    m_paintTreeType = paintSelection - 1;
+                }
+            }
+            ImGui::DragFloat("Paint Density", &veg.paintDensity,
+                             0.05f, 0.0f, 10.0f);
+            ImGui::DragFloat("Paint Size", &veg.paintSize,
+                             0.05f, 0.05f, 20.0f);
+            if (ImGui::Button("Paint Trees")) {
+                m_editor.toolMode = Galeshi::EditorState::ToolMode::PaintTrees;
+                m_editor.Select(selected[0]);
             }
             ImGui::SameLine();
-            ImGui::TextDisabled(
-                "Empty = procedural trees. All model meshes are instanced.");
+            if (ImGui::Button("Paint Grass")) {
+                m_editor.toolMode = Galeshi::EditorState::ToolMode::PaintGrass;
+                m_editor.Select(selected[0]);
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("Use Brush Radius in Landscape Sculpting");
 
             if (changed) veg.dirty = true;
             const bool hasLandscape = selected[0].HasComponent<Galeshi::LandscapeComponent>();
@@ -8442,8 +8700,15 @@ void DrawDetails() {
                 Galeshi::VegetationGenerator::Clear(veg);
             }
             ImGui::SameLine();
-            ImGui::TextDisabled("%zu trees / %zu grass", veg.treeInstances.size(),
-                                veg.grassInstances.size());
+            size_t treeTotal = veg.treeInstances.size() +
+                veg.paintedTreeInstances.size();
+            size_t grassTotal = veg.grassInstances.size() +
+                veg.paintedGrassInstances.size();
+            for (const auto& type : veg.treeTypes) {
+                treeTotal += type.generatedInstances.size() +
+                             type.paintedInstances.size();
+            }
+            ImGui::TextDisabled("%zu trees / %zu grass", treeTotal, grassTotal);
         }
 
         auto materialUserCount = [&](const Galeshi::Material* material) {
@@ -9125,7 +9390,8 @@ void DrawDetails() {
     // The model is validated before the component/path is changed so a
     // broken FBX cannot silently replace a working tree mesh.
     void AssignLandscapeTreeModel(Galeshi::Entity landscapeEntity,
-                                  const std::string& originalPath) {
+                                  const std::string& originalPath,
+                                  int typeIndex = -1) {
         if (!m_assets || !landscapeEntity) return;
         if (!landscapeEntity.HasComponent<Galeshi::LandscapeComponent>()) {
             spdlog::warn("[Editor] Tree model '{}' was dropped on a non-landscape entity",
@@ -9153,7 +9419,26 @@ void DrawDetails() {
             landscapeEntity.HasComponent<Galeshi::VegetationComponent>()
                 ? landscapeEntity.GetComponent<Galeshi::VegetationComponent>()
                 : landscapeEntity.AddComponent<Galeshi::VegetationComponent>();
-        vegetation.treeMeshPath = path;
+
+        // A dropped model keeps its native size. The per-field Size control
+        // remains available for tuning afterwards.
+        if (typeIndex >= 0 &&
+            typeIndex < static_cast<int>(vegetation.treeTypes.size())) {
+            auto& type = vegetation.treeTypes[static_cast<size_t>(typeIndex)];
+            type.meshPath = path;
+            // Use the imported model's native dimensions on drop. The Size
+            // slider can then scale this species from its real-world size.
+            type.scale = 1.0f;
+            if (type.density <= 0.0f) type.density = 1.0f;
+        } else {
+            Galeshi::VegetationTreeType type;
+            type.meshPath = path;
+            type.scale = 1.0f;
+            type.density = 1.0f;
+            vegetation.treeTypes.push_back(std::move(type));
+            m_paintTreeType = static_cast<int>(vegetation.treeTypes.size()) - 1;
+        }
+        vegetation.treeMeshPath.clear();
         vegetation.enabled = true;
         vegetation.dirty = true;
         Galeshi::VegetationGenerator::Generate(landscape, vegetation);
@@ -9663,6 +9948,8 @@ void DrawDetails() {
     Galeshi::FilePickerDialog m_scenePicker;
     Galeshi::FilePickerDialog m_vegetationMeshPicker;
     entt::entity m_vegetationMeshTarget = entt::null;
+    int m_vegetationMeshTypeIndex = -1;
+    int m_paintTreeType = -1;
     TextEditor m_luaEditor;
     std::string m_currentLuaFile;
     bool m_luaEditorInitialized = false;
@@ -9673,6 +9960,12 @@ void DrawDetails() {
     bool m_wasUsingGizmo = false;
     bool m_wasSculpting = false;
     float m_lastSculptHeight = 0.0f;
+    bool m_lastBrushHitValid = false;
+    glm::vec3 m_lastBrushLocal{0.0f};
+    float m_lastBrushRadius = 1.0f;
+    glm::vec3 m_lastPaintLocal{0.0f};
+    bool m_paintStampValid = false;
+    std::mt19937 m_paintRng{0x51ed270bu};
     bool m_showAIDebug = true;
 
     // Profiler state and rolling frame history.

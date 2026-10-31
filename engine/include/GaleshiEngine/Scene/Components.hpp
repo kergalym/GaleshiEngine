@@ -195,6 +195,21 @@ struct LandscapeComponent {
     std::vector<float> heights;
 };
 
+// One independently configured tree species used by landscape vegetation.
+// Density controls the share of automatically generated trees; Size is a
+// model-space multiplier applied to generated and painted instances.
+struct VegetationTreeType {
+    std::string meshPath;
+    float density = 1.0f;
+    float scale = 1.0f;
+
+    // Runtime-generated instances are deterministic from the vegetation seed
+    // and are not serialized. Painted instances are authored by the brush and
+    // are saved with the scene.
+    std::vector<glm::mat4> generatedInstances;
+    std::vector<glm::mat4> paintedInstances;
+};
+
 struct VegetationComponent {
     bool enabled = true;
     bool castShadows = true;
@@ -215,14 +230,30 @@ struct VegetationComponent {
     glm::vec4 canopyColor{0.16f, 0.42f, 0.12f, 1.0f};
     glm::vec4 grassColor{0.22f, 0.52f, 0.14f, 1.0f};
 
-    // Optional static tree model. When set, every mesh/material in the loaded
-    // model is drawn for each tree instance instead of the procedural trunk
-    // and canopy meshes. An empty path keeps the procedural trees.
+    // Multiple draggable/static tree species. When this list is non-empty,
+    // generated trees are distributed between the species by Density.
+    std::vector<VegetationTreeType> treeTypes;
+
+    // Hides all automatically generated trees/grass (including generated
+    // instances of tree types). Painted instances remain visible.
+    bool hideDefaultInstances = false;
+
+    // Brush painting controls. Size is multiplied by a tree type's Size when
+    // painting a custom tree.
+    float paintDensity = 1.0f;
+    float paintSize = 1.0f;
+
+    // Legacy single-model setting. It is migrated into treeTypes when an old
+    // scene is loaded and is no longer edited by the new UI.
     std::string treeMeshPath;
 
     // Local-space instance transforms (landscape entity space).
+    // treeInstances/grassInstances are deterministic generated defaults.
+    // painted* arrays are authored by the vegetation brush.
     std::vector<glm::mat4> treeInstances;
     std::vector<glm::mat4> grassInstances;
+    std::vector<glm::mat4> paintedTreeInstances;
+    std::vector<glm::mat4> paintedGrassInstances;
     bool dirty = true;
 };
 

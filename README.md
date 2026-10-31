@@ -165,9 +165,10 @@ end
 - Assimp import for FBX and glTF.
 - Meshes, PBR materials, and textures with caching.
 - Primitive cube, sphere, and capsule meshes.
-- Landscape heightfield generation with Raise, Lower, Smooth, Flatten, and Noise brushes.
+- Landscape heightfield generation with Raise, Lower, Smooth, Flatten, and Noise brushes, with a terrain-following brush outline.
 - Deterministic procedural tree and grass generation, rendered with per-instance matrices and instanced shadow passes.
-- Optional static tree-model override for landscape tree instances; all meshes and materials from the selected FBX/glTF/OBJ/DAE model are instanced. Tree models can be dropped directly on a Landscape in the World Outliner, on its Vegetation panel, or on the selected Landscape in the viewport.
+- Multiple draggable tree species for landscape vegetation; each has its own model, density and size, and can be painted or generated together. Models can be dropped from the Content Browser or viewport.
+- Tree and grass painting brushes with adjustable density and instance size. Painted instances are serialized with the scene, and `Hide Default Instances` hides generated vegetation while keeping painted vegetation visible.
 - Skeletal animation clip sampling with weighted pose blending.
 - Serializable animation state machines with parameters, triggers, transitions, and blend durations.
 - PBR material parameters and texture slots.
