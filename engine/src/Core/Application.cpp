@@ -354,7 +354,8 @@ int Application::Run() {
             m_impl->input.ProcessEvent(e);
             ImGui_ImplSDL3_ProcessEvent(&e);
             if (e.type == SDL_EVENT_QUIT) m_impl->running = false;
-            if (e.type == SDL_EVENT_DROP_FILE) OnFileDrop(e.drop.data);
+            if (e.type == SDL_EVENT_DROP_FILE)
+                OnFileDrop(e.drop.data, e.drop.x, e.drop.y);
             if (e.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED &&
                 e.window.windowID == SDL_GetWindowID(m_impl->window))
                 m_impl->running = false;

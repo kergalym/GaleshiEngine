@@ -178,7 +178,7 @@ end
 - Viewport with orbit camera, selection, and drag movement.
 - World Outliner and Details panels, with independent collision/physics child nodes. Detaching is available only for children of collision shapes; skeletal-model children stay locked, and detach preserves their world transform.
 - Collision-shape wireframes keep the same visibility across Play/Stop and are controlled only by their per-collider Visible in Editor flag; attached meshes are never hidden by Play mode.
-- Content Browser with model import and a right-click script-template menu that creates Lua files in `assets/scripts`.
+- Content Browser with model import and a right-click script-template menu that creates Lua files in `assets/scripts`. Models, textures and audio can also be dragged in from any file manager; drops on the browser import into the current folder, other drops go to `assets/`.
 - Create entities, lights, physics primitives, cloth, landscape, and AI agents.
 - `Testing -> Build Scene` rebuilds the PBR test scene: 12 colored spheres (3 albedo samples and a 3x3 metallic/roughness grid) plus the physics demo objects and ground.
 - When `scene.json` is missing, the editor starts with an empty scene; the test scene is not built automatically.

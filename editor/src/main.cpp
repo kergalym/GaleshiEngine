@@ -435,36 +435,46 @@ protected:
         spdlog::info("[Game] Loaded start scene {}", m_currentScenePath);
     }
 
-    void OnFileDrop(const std::string& filepath) override {
+    void OnFileDrop(const std::string& filepath, float x, float y) override {
         if (!m_projectLoaded || !m_assets) return;
         namespace fs = std::filesystem;
         const std::string ext = AssetExtensionLower(filepath);
-        if (IsModelAssetPath(filepath) || IsImageAssetPath(filepath) ||
-            ext == ".wav" || ext == ".mp3") {
-            const std::string projectPath = Galeshi::ProjectManager::GetProjectPath();
-            if (projectPath.empty()) {
-                spdlog::error("[Editor] Cannot import '{}': no project is open", filepath);
-                return;
-            }
+        if (!IsModelAssetPath(filepath) && !IsImageAssetPath(filepath) &&
+            ext != ".wav" && ext != ".mp3") {
+            return;
+        }
 
-            const fs::path dest = fs::path(projectPath) / "assets" / fs::path(filepath).filename();
-            std::error_code ec;
-            fs::create_directories(dest.parent_path(), ec);
-            if (ec) {
-                spdlog::error("[Editor] Cannot create asset directory '{}': {}",
-                              dest.parent_path().string(), ec.message());
-                return;
-            }
+        const std::string projectPath = Galeshi::ProjectManager::GetProjectPath();
+        if (projectPath.empty()) {
+            spdlog::error("[Editor] Cannot import '{}': no project is open", filepath);
+            return;
+        }
 
-            fs::copy_file(filepath, dest, fs::copy_options::overwrite_existing, ec);
-            if (ec) {
-                spdlog::error("[Editor] Failed to import '{}' to '{}': {}",
-                              filepath, dest.string(), ec.message());
-                return;
-            }
+        const fs::path assetsRoot = fs::path(projectPath) / "assets";
+        // A file dropped on the Content Browser is imported into the folder
+        // currently open there. Drops elsewhere keep the previous behavior
+        // and go to the project assets root.
+        const bool overContentBrowser =
+            m_browser && m_browser->ContainsPoint(x, y);
+        const fs::path destinationDir =
+            overContentBrowser ? m_browser->CurrentDirectory() : assetsRoot;
 
-            if (m_browser) m_browser->Refresh();
-            spdlog::info("[Editor] Imported asset: {}", dest.string());
+        if (m_browser) {
+            if (m_browser->ImportFiles({filepath}, destinationDir)) {
+                spdlog::info("[Editor] Imported file-manager drop '{}' into '{}'",
+                             filepath, destinationDir.string());
+            }
+            return;
+        }
+
+        std::error_code ec;
+        fs::create_directories(destinationDir, ec);
+        const fs::path destination = destinationDir / fs::path(filepath).filename();
+        fs::copy_file(filepath, destination,
+                      fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            spdlog::error("[Editor] Failed to import '{}' to '{}': {}",
+                          filepath, destination.string(), ec.message());
         }
     }
 

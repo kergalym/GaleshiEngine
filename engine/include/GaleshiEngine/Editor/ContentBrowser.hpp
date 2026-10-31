@@ -26,6 +26,18 @@ public:
 
     void Refresh();
 
+    // Folder currently shown in the browser. File-manager drops that land on
+    // the Content Browser are imported here.
+    const std::filesystem::path& CurrentDirectory() const { return m_current; }
+
+    // Copies external files into destDir and refreshes the browser. Returns
+    // true when at least one file was imported.
+    bool ImportFiles(const std::vector<std::string>& files,
+                     const std::filesystem::path& destDir);
+
+    // Drop coordinates are window-relative (single-viewport ImGui space).
+    bool ContainsPoint(float x, float y) const;
+
 private:
     struct Entry {
         std::filesystem::path path;
@@ -48,6 +60,10 @@ private:
     bool                                  m_autoRefresh = true;
     std::chrono::steady_clock::time_point  m_lastCheck{};
     std::filesystem::file_time_type        m_lastWriteTime{};
+    float                                  m_windowMinX = 0.0f;
+    float                                  m_windowMinY = 0.0f;
+    float                                  m_windowMaxX = 0.0f;
+    float                                  m_windowMaxY = 0.0f;
 };
 
 } // namespace Galeshi

@@ -254,6 +254,51 @@ void ContentBrowser::Refresh() {
     }
 }
 
+bool ContentBrowser::ImportFiles(const std::vector<std::string>& files,
+                                 const std::filesystem::path& destDir) {
+    if (files.empty() || destDir.empty()) return false;
+
+    bool imported = false;
+    for (const std::string& sourcePath : files) {
+        if (sourcePath.empty()) continue;
+        const fs::path source(sourcePath);
+        std::error_code ec;
+        if (!fs::is_regular_file(source, ec)) {
+            spdlog::warn("[ContentBrowser] Skipping non-file drop '{}'",
+                         sourcePath);
+            continue;
+        }
+
+        const fs::path destination = destDir / source.filename();
+        fs::create_directories(destination.parent_path(), ec);
+        if (ec) {
+            spdlog::error("[ContentBrowser] Cannot create directory '{}': {}",
+                          destination.parent_path().string(), ec.message());
+            continue;
+        }
+
+        fs::copy_file(source, destination,
+                      fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            spdlog::error("[ContentBrowser] Failed to import '{}' to '{}': {}",
+                          sourcePath, destination.string(), ec.message());
+            continue;
+        }
+
+        spdlog::info("[ContentBrowser] Imported '{}' -> '{}'",
+                     sourcePath, destination.string());
+        imported = true;
+    }
+
+    if (imported) Refresh();
+    return imported;
+}
+
+bool ContentBrowser::ContainsPoint(float x, float y) const {
+    return x >= m_windowMinX && x <= m_windowMaxX &&
+           y >= m_windowMinY && y <= m_windowMaxY;
+}
+
 std::string ContentBrowser::CreateScript(const std::string& templateId) {
     const ScriptTemplate* scriptTemplate = FindScriptTemplate(templateId);
     if (!scriptTemplate) {
@@ -348,6 +393,15 @@ void ContentBrowser::UpdateAutoRefresh() {
 std::string ContentBrowser::Draw() {
     std::string clicked;
 
+    // Remember the window bounds in single-viewport ImGui coordinates. The
+    // editor uses this to route OS file-manager drops to the visible folder.
+    const ImVec2 windowPos = ImGui::GetWindowPos();
+    const ImVec2 windowSize = ImGui::GetWindowSize();
+    m_windowMinX = windowPos.x;
+    m_windowMinY = windowPos.y;
+    m_windowMaxX = windowPos.x + windowSize.x;
+    m_windowMaxY = windowPos.y + windowSize.y;
+
     // Pick up external changes to the assets folder before drawing.
     UpdateAutoRefresh();
 
@@ -369,6 +423,13 @@ std::string ContentBrowser::Draw() {
                           "removed or renamed in the assets folder.");
     }
     ImGui::SameLine();
+    ImGui::TextDisabled("| Drop files here to import");
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip(
+            "Drag FBX/glTF/GLB/OBJ/DAE models, textures or audio from any\n"
+            "file manager and drop them into this folder.");
+    }
+    ImGui::SameLine();
     if (ImGui::Button("Import Asset")) {
         m_importPicker.Open(m_current.string(), "Import Asset",
                             { ".fbx", ".gltf", ".glb", ".obj", ".dae",
@@ -378,22 +439,7 @@ std::string ContentBrowser::Draw() {
 
     std::string importPath = m_importPicker.Draw();
     if (!importPath.empty()) {
-        std::filesystem::path dest = m_current / std::filesystem::path(importPath).filename();
-        std::error_code ec;
-        std::filesystem::create_directories(dest.parent_path(), ec);
-        if (ec) {
-            spdlog::error("[ContentBrowser] Cannot create directory '{}': {}",
-                          dest.parent_path().string(), ec.message());
-        } else {
-            std::filesystem::copy_file(importPath, dest,
-                std::filesystem::copy_options::overwrite_existing, ec);
-            if (ec) {
-                spdlog::error("[ContentBrowser] Failed to import '{}' to '{}': {}",
-                              importPath, dest.string(), ec.message());
-            } else {
-                Refresh();
-            }
-        }
+        ImportFiles({importPath}, m_current);
     }
 
     ImGui::BeginChild("content_list", ImVec2(0, 0), true);

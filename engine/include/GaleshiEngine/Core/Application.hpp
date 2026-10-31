@@ -38,7 +38,14 @@ protected:
     virtual void OnRender()         {}
     virtual void OnImGui()          {}
     virtual void OnShutdown()       {}
-    virtual void OnFileDrop(const std::string& filepath) {}
+    // x/y are window-relative drop coordinates, matching ImGui's
+    // single-viewport mouse coordinate space.
+    virtual void OnFileDrop(const std::string& filepath, float x = 0.0f,
+                            float y = 0.0f) {
+        (void)filepath;
+        (void)x;
+        (void)y;
+    }
 
 private:
     struct Impl;
