@@ -431,6 +431,7 @@ protected:
         m_editor.isPlaying = true;
         ApplySceneViewState();
         EnsurePhysicsBodies();
+        ActivateGameplayCamera();
         m_uiCanvasEntity = entt::null;
         m_uiWidgetIndex = -1;
         spdlog::info("[Game] Loaded start scene {}", m_currentScenePath);
@@ -1043,51 +1044,59 @@ protected:
         }
 
         const auto cameraStart = ProfileClock::now();
-        // Логика камеры
-        const bool cameraControllable = m_viewportHovered && !m_editor.GizmoLocked() && !ImGuizmo::IsUsing() && !ImGuizmo::IsOver();
-        
-        // Зум
-        if (m_viewportHovered) {
-            float wheel = ImGui::GetIO().MouseWheel;
-            if (wheel != 0.0f) {
-                m_editor.camRadius -= wheel * m_preferences.cameraZoomSpeed;
-                m_editor.camRadius = glm::clamp(m_editor.camRadius, 0.5f, 200.0f);
-            }
-        }
-
-        // Вращение ПКМ
-        if (cameraControllable && ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-            auto d = ImGui::GetIO().MouseDelta;
-            m_editor.camYaw   -= d.x * m_preferences.cameraOrbitSensitivity;
-            m_editor.camPitch -= d.y * m_preferences.cameraOrbitSensitivity;
-            m_editor.camPitch  = glm::clamp(m_editor.camPitch, -1.5f, 1.5f);
-        }
-
-        // Перемещение стрелками
-        if (cameraControllable && !ImGui::GetIO().WantTextInput) {
-            float panSpeed = m_preferences.cameraPanSpeed * dt;
-            float yaw = m_editor.camYaw;
-            glm::vec3 forward(std::sin(yaw), 0.0f, std::cos(yaw));
-            glm::vec3 right(forward.z, 0.0f, -forward.x);
-
-            if (ImGui::IsKeyDown(ImGuiKey_UpArrow))    m_editor.camTarget -= forward * panSpeed;
-            if (ImGui::IsKeyDown(ImGuiKey_DownArrow))  m_editor.camTarget += forward * panSpeed;
-            if (ImGui::IsKeyDown(ImGuiKey_LeftArrow))  m_editor.camTarget -= right * panSpeed;
-            if (ImGui::IsKeyDown(ImGuiKey_RightArrow)) m_editor.camTarget += right * panSpeed;
+        if (m_usingGameCamera) {
+            // Play is driven by the primary gameplay camera. The editor orbit
+            // state remains untouched so Stop can immediately restore it.
+            UpdateGameplayCamera();
+        } else {
+            // Логика камеры
+            const bool cameraControllable = m_viewportHovered && !m_editor.GizmoLocked() && !ImGuizmo::IsUsing() && !ImGuizmo::IsOver();
             
-        }
+            // Зум
+            if (m_viewportHovered) {
+                float wheel = ImGui::GetIO().MouseWheel;
+                if (wheel != 0.0f) {
+                    m_editor.camRadius -= wheel * m_preferences.cameraZoomSpeed;
+                    m_editor.camRadius = glm::clamp(m_editor.camRadius, 0.5f, 200.0f);
+                }
+            }
 
-        const float aspect = m_viewportH ? static_cast<float>(m_viewportW) / m_viewportH : 16.0f / 9.0f;
-        // Keep depth precision usable when the orbit camera moves far away
-        // from its target. A fixed 0.1/1000 range causes z-fighting and
-        // flickering on distant, nearly coplanar geometry.
-        const float orbitDistance = std::max(m_editor.camRadius, 0.5f);
-        const float nearZ = glm::clamp(orbitDistance * 0.0025f,
-                                       0.1f, 0.75f);
-        const float farZ = std::max(1000.0f, orbitDistance * 4.0f + 500.0f);
-        m_camera.SetPerspective(glm::radians(m_preferences.cameraFovDegrees),
-                                aspect, nearZ, farZ);
-        m_camera.Orbit(m_editor.camTarget, m_editor.camYaw, m_editor.camPitch, m_editor.camRadius);
+            // Вращение ПКМ
+            if (cameraControllable && ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+                auto d = ImGui::GetIO().MouseDelta;
+                m_editor.camYaw   -= d.x * m_preferences.cameraOrbitSensitivity;
+                m_editor.camPitch -= d.y * m_preferences.cameraOrbitSensitivity;
+                m_editor.camPitch  = glm::clamp(m_editor.camPitch, -1.5f, 1.5f);
+            }
+
+            // Перемещение стрелками
+            if (cameraControllable && !ImGui::GetIO().WantTextInput) {
+                float panSpeed = m_preferences.cameraPanSpeed * dt;
+                float yaw = m_editor.camYaw;
+                glm::vec3 forward(std::sin(yaw), 0.0f, std::cos(yaw));
+                glm::vec3 right(forward.z, 0.0f, -forward.x);
+
+                if (ImGui::IsKeyDown(ImGuiKey_UpArrow))    m_editor.camTarget -= forward * panSpeed;
+                if (ImGui::IsKeyDown(ImGuiKey_DownArrow))  m_editor.camTarget += forward * panSpeed;
+                if (ImGui::IsKeyDown(ImGuiKey_LeftArrow))  m_editor.camTarget -= right * panSpeed;
+                if (ImGui::IsKeyDown(ImGuiKey_RightArrow)) m_editor.camTarget += right * panSpeed;
+
+            }
+
+            const float aspect = m_viewportH
+                ? static_cast<float>(m_viewportW) / m_viewportH
+                : 16.0f / 9.0f;
+            // Keep depth precision usable when the orbit camera moves far away
+            // from its target. A fixed 0.1/1000 range causes z-fighting and
+            // flickering on distant, nearly coplanar geometry.
+            const float orbitDistance = std::max(m_editor.camRadius, 0.5f);
+            const float nearZ = glm::clamp(orbitDistance * 0.0025f,
+                                           0.1f, 0.75f);
+            const float farZ = std::max(1000.0f, orbitDistance * 4.0f + 500.0f);
+            m_camera.SetPerspective(glm::radians(m_preferences.cameraFovDegrees),
+                                    aspect, nearZ, farZ);
+            m_camera.Orbit(m_editor.camTarget, m_editor.camYaw, m_editor.camPitch, m_editor.camRadius);
+        }
         m_cpuProfile.cameraMs = ProfileElapsedMs(cameraStart, ProfileClock::now());
         m_cpuProfile.updateMs = ProfileElapsedMs(updateStart, ProfileClock::now());
         m_cpuProfile.gameLogicMs = m_cpuProfile.physicsMs + m_cpuProfile.audioMs +
@@ -1424,6 +1433,8 @@ private:
     void ClearSceneForShutdown() {
         m_editor.ClearSelection();
         m_editor.isPlaying = false;
+        m_usingGameCamera = false;
+        m_activeGameCamera = entt::null;
         m_audio.StopAll();
 
         if (m_physics) m_physics->Reset();
@@ -1450,6 +1461,8 @@ private:
 
         m_editor.ClearSelection();
         m_editor.isPlaying = false;
+        m_usingGameCamera = false;
+        m_activeGameCamera = entt::null;
         m_audio.StopAll();
 
         if (m_physics) m_physics->Reset();
@@ -2187,12 +2200,14 @@ private:
                 PushHistory();
                 m_editor.isPlaying = true;
                 EnsurePhysicsBodies();
+                ActivateGameplayCamera();
             } else {
                 m_editor.isPlaying = false;
                 m_audio.StopAll();
                 m_physics->Reset();
                 if (m_particles) m_particles->Reset();
                 if (m_historyIndex >= 0) m_serializer->LoadFromString(m_history[m_historyIndex]);
+                DeactivateGameplayCamera();
             }
         }
         ImGui::SameLine();
@@ -2459,6 +2474,24 @@ if (ImGui::BeginMenu("File")) {
             }
             if (ImGui::MenuItem("Cube")) {
                 auto e = MakeCube("Cube", {0, 0, 0});
+                m_editor.Select(e);
+            }
+            if (ImGui::MenuItem("Camera")) {
+                auto e = m_scene.CreateEntity("Camera");
+                auto& camera = e.AddComponent<Galeshi::CameraComponent>();
+                auto& tf = e.GetComponent<Galeshi::TransformComponent>();
+                auto selected = m_editor.Selected(&m_scene);
+                if (selected && IsSkeletalCharacter(selected)) {
+                    // Convenient default for character cameras: attach at
+                    // eye height. Move local Position in Details/Viewport for
+                    // first- or third-person distance.
+                    e.AddComponent<Galeshi::ParentComponent>(
+                        Galeshi::ParentComponent{ selected.Handle() });
+                    tf.position = {0.0f, 1.6f, 0.0f};
+                    camera.priority = 1;
+                } else {
+                    tf.position = m_editor.camTarget;
+                }
                 m_editor.Select(e);
             }
             if (ImGui::MenuItem("Physics Sphere")) {
@@ -4303,6 +4336,104 @@ if (ImGui::BeginMenu("File")) {
         }
         ImGui::DockSpace(dockspaceId, ImVec2(0, 0), ImGuiDockNodeFlags_None);
         ImGui::End();
+    }
+
+    // -------------------------------------------------------------------
+    // Gameplay camera
+    // -------------------------------------------------------------------
+    Galeshi::Entity FindGameplayCamera() {
+        auto view = m_scene.Registry().view<Galeshi::CameraComponent,
+                                             Galeshi::TransformComponent>();
+        Galeshi::Entity best;
+        int bestPriority = std::numeric_limits<int>::min();
+        bool bestAttached = false;
+        for (auto e : view) {
+            const auto& camera =
+                view.get<Galeshi::CameraComponent>(e);
+            if (!camera.primary) continue;
+            const bool attached =
+                m_scene.Registry().all_of<Galeshi::ParentComponent>(e);
+            if (!best ||
+                camera.priority > bestPriority ||
+                (camera.priority == bestPriority && attached && !bestAttached)) {
+                best = Galeshi::Entity(e, &m_scene);
+                bestPriority = camera.priority;
+                bestAttached = attached;
+            }
+        }
+        return best;
+    }
+
+    void UpdateGameplayCamera() {
+        Galeshi::Entity cameraEntity = FindGameplayCamera();
+        if (!cameraEntity) {
+            if (m_usingGameCamera) {
+                m_usingGameCamera = false;
+                RestoreEditorCamera();
+            }
+            return;
+        }
+
+        const auto& camera =
+            cameraEntity.GetComponent<Galeshi::CameraComponent>();
+        const glm::mat4 world = EntityWorldMatrix(cameraEntity.Handle());
+        glm::vec3 eye = glm::vec3(world[3]);
+        glm::vec3 forward = glm::vec3(world * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f));
+        glm::vec3 up = glm::vec3(world * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f));
+        if (glm::dot(forward, forward) < 1e-6f ||
+            glm::dot(up, up) < 1e-6f) {
+            forward = {0.0f, 0.0f, -1.0f};
+            up = {0.0f, 1.0f, 0.0f};
+        } else {
+            forward = glm::normalize(forward);
+            up = glm::normalize(up);
+        }
+        if (std::abs(glm::dot(forward, up)) > 0.999f) {
+            up = std::abs(forward.y) > 0.9f
+                ? glm::vec3(0.0f, 0.0f, 1.0f)
+                : glm::vec3(0.0f, 1.0f, 0.0f);
+        }
+
+        const float aspect = m_viewportH
+            ? static_cast<float>(m_viewportW) / static_cast<float>(m_viewportH)
+            : 16.0f / 9.0f;
+        m_camera.SetPerspective(
+            glm::radians(glm::clamp(camera.fovY, 1.0f, 179.0f)), aspect,
+            std::max(camera.nearZ, 1e-4f), std::max(camera.farZ, camera.nearZ + 0.001f));
+        m_camera.SetView(eye, eye + forward, up);
+        m_usingGameCamera = true;
+        m_activeGameCamera = cameraEntity.Handle();
+    }
+
+    void RestoreEditorCamera() {
+        const float aspect = m_viewportH
+            ? static_cast<float>(m_viewportW) / static_cast<float>(m_viewportH)
+            : 16.0f / 9.0f;
+        const float orbitDistance = std::max(m_editor.camRadius, 0.5f);
+        const float nearZ = glm::clamp(orbitDistance * 0.0025f, 0.1f, 0.75f);
+        const float farZ = std::max(1000.0f, orbitDistance * 4.0f + 500.0f);
+        m_camera.SetPerspective(glm::radians(m_preferences.cameraFovDegrees),
+                                aspect, nearZ, farZ);
+        m_camera.Orbit(m_editor.camTarget, m_editor.camYaw,
+                       m_editor.camPitch, m_editor.camRadius);
+        m_activeGameCamera = entt::null;
+    }
+
+    bool ActivateGameplayCamera() {
+        m_usingGameCamera = true;
+        UpdateGameplayCamera();
+        if (!m_usingGameCamera) {
+            RestoreEditorCamera();
+            return false;
+        }
+        spdlog::info("[Camera] Gameplay camera active: entity {}",
+                     static_cast<uint32_t>(m_activeGameCamera));
+        return true;
+    }
+
+    void DeactivateGameplayCamera() {
+        m_usingGameCamera = false;
+        RestoreEditorCamera();
     }
 
     // -------------------------------------------------------------------
@@ -6464,6 +6595,54 @@ if (ImGui::BeginMenu("File")) {
                 }
             }
 
+            // Camera gizmos (editor only): a small frustum makes the camera
+            // object visible and clearly shows its viewing direction.
+            if (!m_editor.isPlaying) {
+                auto cameraView = m_scene.Registry()
+                    .view<Galeshi::CameraComponent,
+                          Galeshi::TransformComponent>();
+                const float aspect = m_viewportH
+                    ? static_cast<float>(m_viewportW) / m_viewportH
+                    : 16.0f / 9.0f;
+                for (auto cameraEntity : cameraView) {
+                    const auto& cameraComponent =
+                        cameraView.get<Galeshi::CameraComponent>(cameraEntity);
+                    const glm::mat4 world = EntityWorldMatrix(cameraEntity);
+                    const glm::vec3 eye = glm::vec3(world[3]);
+                    glm::vec3 forward = glm::vec3(
+                        world * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f));
+                    glm::vec3 up = glm::vec3(
+                        world * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f));
+                    forward = glm::dot(forward, forward) < 1e-6f
+                        ? glm::vec3(0,0,-1) : glm::normalize(forward);
+                    up = glm::dot(up, up) < 1e-6f
+                        ? glm::vec3(0,1,0) : glm::normalize(up);
+                    glm::vec3 right = glm::normalize(glm::cross(forward, up));
+                    up = glm::normalize(glm::cross(right, forward));
+                    const bool selectedCamera = sel && sel.Handle() == cameraEntity;
+                    const glm::vec4 color = selectedCamera
+                        ? glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)
+                        : glm::vec4(0.25f, 0.8f, 1.0f, 0.85f);
+                    const float nearPlane = 0.45f;
+                    const float halfH = std::tan(glm::radians(
+                        glm::clamp(cameraComponent.fovY, 1.0f, 179.0f)) * 0.5f) *
+                        nearPlane;
+                    const float halfW = halfH * aspect;
+                    const glm::vec3 center = eye + forward * nearPlane;
+                    const glm::vec3 corners[4] = {
+                        center - right * halfW - up * halfH,
+                        center + right * halfW - up * halfH,
+                        center + right * halfW + up * halfH,
+                        center - right * halfW + up * halfH,
+                    };
+                    for (int i = 0; i < 4; ++i) {
+                        m_debug->AddLine(eye, corners[i], color);
+                        m_debug->AddLine(corners[i], corners[(i + 1) % 4], color);
+                    }
+                    m_debug->AddLine(eye, eye + forward * 0.9f, color);
+                }
+            }
+
             // Collision shape gizmos stay visible across Play/Stop. Only the
             // per-collider Visible in Editor flag controls the wireframe.
             DrawCollisionShapeGizmos();
@@ -8165,6 +8344,56 @@ void DrawDetails() {
                             "shape. Skeletal parents keep their children locked.");
                     }
                 }
+            }
+        }
+
+        // --- Gameplay camera ----------------------------------------------
+        if (selected[0].HasComponent<Galeshi::CameraComponent>()) {
+            auto& camera =
+                selected[0].GetComponent<Galeshi::CameraComponent>();
+            if (ImGui::CollapsingHeader("Camera",
+                                        ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Checkbox("Primary (Game Camera)", &camera.primary);
+                ImGui::DragInt("Priority", &camera.priority, 1.0f, -100, 100);
+                ImGui::DragFloat("FOV (vertical)", &camera.fovY,
+                                 0.1f, 1.0f, 179.0f, "%.1f deg");
+                ImGui::DragFloat("Near Clip", &camera.nearZ,
+                                 0.001f, 0.0001f, 100.0f, "%.4f");
+                ImGui::DragFloat("Far Clip", &camera.farZ,
+                                 1.0f, 0.1f, 100000.0f, "%.1f");
+                if (selected[0].HasComponent<Galeshi::TransformComponent>()) {
+                    auto& cameraTransform =
+                        selected[0].GetComponent<Galeshi::TransformComponent>();
+                    ImGui::DragFloat3("Local Offset",
+                                      glm::value_ptr(cameraTransform.position),
+                                      0.01f);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "Local translation from the parent (character). "
+                            "Use Z for first/third-person distance.");
+                    }
+                }
+                if (selected[0].HasComponent<Galeshi::ParentComponent>()) {
+                    const entt::entity parent =
+                        selected[0].GetComponent<Galeshi::ParentComponent>().parent;
+                    if (m_scene.Registry().valid(parent) &&
+                        m_scene.Registry().all_of<Galeshi::NameComponent>(parent)) {
+                        ImGui::TextDisabled("Attached to: %s",
+                            m_scene.Registry().get<Galeshi::NameComponent>(parent)
+                                .name.c_str());
+                    } else {
+                        ImGui::TextDisabled("Attached to a parent");
+                    }
+                } else {
+                    ImGui::TextDisabled("Not attached (world camera)");
+                }
+                ImGui::TextDisabled(
+                    "Camera pose uses this entity's Transform. When parented, "
+                    "Position/Rotation are local; translate it to set "
+                    "first-person/third-person distance.");
+                ImGui::TextDisabled(
+                    "While Play is active, the highest-priority primary camera "
+                    "overrides the viewport camera.");
             }
         }
 
@@ -9915,6 +10144,8 @@ void DrawDetails() {
     Galeshi::Scene          m_scene;
     Galeshi::Camera         m_camera;
     Galeshi::EditorState    m_editor;
+    bool                    m_usingGameCamera = false;
+    entt::entity            m_activeGameCamera = entt::null;
     float                   m_time = 0.0f;
     float                   m_frameDelta = 1.0f / 60.0f;
     int                     m_renderFrameCounter = 0;

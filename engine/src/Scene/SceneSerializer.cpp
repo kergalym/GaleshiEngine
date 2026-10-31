@@ -705,7 +705,8 @@ std::string SceneSerializer::SaveToString() const {
                 {"fovY", camera.fovY},
                 {"nearZ", camera.nearZ},
                 {"farZ", camera.farZ},
-                {"primary", camera.primary}
+                {"primary", camera.primary},
+                {"priority", camera.priority}
             };
         }
         if (reg.all_of<DirectionalLightComponent>(handle)) {
@@ -1461,6 +1462,7 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             camera.nearZ = jc.value("nearZ", 0.1f);
             camera.farZ = jc.value("farZ", 1000.0f);
             camera.primary = jc.value("primary", true);
+            camera.priority = jc.value("priority", 0);
         }
 
         if (je.contains("directionalLight")) {

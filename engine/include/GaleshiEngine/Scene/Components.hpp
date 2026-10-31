@@ -118,10 +118,15 @@ struct MaterialComponent {
 };
 
 struct CameraComponent {
+    // Vertical field of view in degrees, clip planes and selection priority.
+    // The entity Transform is the camera's pose. When the entity is parented,
+    // Position/Rotation are local to the parent, so moving the camera entity
+    // adjusts first-person/third-person distance without a separate offset.
     float fovY    = 60.0f;
     float nearZ   = 0.1f;
-    float farZ   = 1000.0f;
+    float farZ    = 1000.0f;
     bool  primary = true;
+    int   priority = 0;
 };
 
 struct DirectionalLightComponent {
