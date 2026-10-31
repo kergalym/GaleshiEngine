@@ -349,6 +349,19 @@ void RenderSystem::Init(AssetManager* assets) {
     
     s_boneMatrices = bgfx::createUniform("s_boneMatrices", bgfx::UniformType::Sampler);
     m_boneTexture = bgfx::createTexture2D(4, kMaxBones, false, 1, bgfx::TextureFormat::RGBA32F);
+    m_identityBoneTexture = bgfx::createTexture2D(
+        4, kMaxBones, false, 1, bgfx::TextureFormat::RGBA32F);
+    if (bgfx::isValid(m_identityBoneTexture)) {
+        std::vector<glm::vec4> identity(kMaxBones * 4, glm::vec4(0.0f));
+        const glm::mat4 id(1.0f);
+        for (int i = 0; i < kMaxBones; ++i) {
+            for (int j = 0; j < 4; ++j) identity[i * 4 + j] = id[j];
+        }
+        bgfx::updateTexture2D(m_identityBoneTexture, 0, 0, 0, 0,
+                              4, kMaxBones,
+                              bgfx::copy(identity.data(),
+                                         kMaxBones * 4 * sizeof(glm::vec4)));
+    }
 
     s_albedoMap = bgfx::createUniform("s_albedoMap", bgfx::UniformType::Sampler);
     s_metallicRoughnessMap = bgfx::createUniform("s_metallicRoughnessMap", bgfx::UniformType::Sampler);
@@ -428,6 +441,9 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(s_hairEnvCube)) bgfx::destroy(s_hairEnvCube);
     if (bgfx::isValid(s_boneMatrices)) bgfx::destroy(s_boneMatrices);
     if (bgfx::isValid(m_boneTexture)) bgfx::destroy(m_boneTexture);
+    if (bgfx::isValid(m_identityBoneTexture)) bgfx::destroy(m_identityBoneTexture);
+    m_boneTexture = BGFX_INVALID_HANDLE;
+    m_identityBoneTexture = BGFX_INVALID_HANDLE;
     if (bgfx::isValid(s_albedoMap)) bgfx::destroy(s_albedoMap);
     if (bgfx::isValid(s_metallicRoughnessMap)) bgfx::destroy(s_metallicRoughnessMap);
     if (bgfx::isValid(s_normalMap)) bgfx::destroy(s_normalMap);
@@ -441,6 +457,62 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(s_specularMap)) bgfx::destroy(s_specularMap);
     if (bgfx::isValid(s_brdfLUT)) bgfx::destroy(s_brdfLUT);
     m_program = BGFX_INVALID_HANDLE;
+}
+
+void RenderSystem::BeginBonePaletteCache() {
+    ++m_boneCacheGeneration;
+    m_boneCacheRoot = 0xFFFFFFFFu;
+    m_boneCacheRootGeneration = 0;
+    m_boneCacheUsesTexture = false;
+}
+
+void RenderSystem::BindBonePalette(Scene& scene, uint32_t rootId,
+                                   bool hasSkeleton) {
+    // Non-skinned and non-animated meshes share one immutable identity
+    // texture. Previously every draw uploaded 256 identity matrices, which
+    // dominated CPU submission on scenes made of many character submeshes.
+    if (!hasSkeleton || rootId == 0xFFFFFFFFu) {
+        if (bgfx::isValid(m_identityBoneTexture)) {
+            bgfx::setTexture(3, s_boneMatrices, m_identityBoneTexture);
+        } else {
+            bgfx::setTexture(3, s_boneMatrices, m_boneTexture);
+        }
+        return;
+    }
+
+    if (m_boneCacheRoot == rootId &&
+        m_boneCacheRootGeneration == m_boneCacheGeneration) {
+        bgfx::setTexture(3, s_boneMatrices,
+                         m_boneCacheUsesTexture ? m_boneTexture
+                                                : m_identityBoneTexture);
+        return;
+    }
+
+    auto& registry = scene.Registry();
+    const entt::entity root = static_cast<entt::entity>(rootId);
+    auto& skeleton = registry.get<SkeletalComponent>(root);
+    const bool animated = skeleton.isAnimated && !skeleton.sourcePath.empty();
+    if (animated && bgfx::isValid(m_boneTexture)) {
+        if (skeleton.boneMatrices.size() != kMaxBones) {
+            skeleton.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
+        }
+        m_boneScratch.resize(kMaxBones * 4);
+        for (int i = 0; i < kMaxBones; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                m_boneScratch[i * 4 + j] = skeleton.boneMatrices[i][j];
+            }
+        }
+        bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
+                              bgfx::copy(m_boneScratch.data(),
+                                         kMaxBones * 4 * sizeof(glm::vec4)));
+    }
+
+    m_boneCacheRoot = rootId;
+    m_boneCacheRootGeneration = m_boneCacheGeneration;
+    m_boneCacheUsesTexture = animated && bgfx::isValid(m_boneTexture);
+    bgfx::setTexture(3, s_boneMatrices,
+                     m_boneCacheUsesTexture ? m_boneTexture
+                                            : m_identityBoneTexture);
 }
 
 void RenderSystem::SetOcclusionCullingEnabled(bool enabled) {
@@ -531,6 +603,23 @@ void RenderSystem::RenderOcclusion(Scene& scene, const Camera& camera,
         !bgfx::isValid(m_shadowProg)) {
         return;
     }
+    // Occlusion queries have a fixed CPU cost per candidate and are not a
+    // win for small scenes. Below this threshold, frustum culling already
+    // removes the few objects that can matter and the query pass only adds
+    // submission overhead.
+    static constexpr uint32_t kMinOcclusionMeshes = 64;
+    uint32_t meshCount = 0;
+    auto meshView = scene.Registry().view<TransformComponent, MeshComponent>();
+    for (auto h : meshView) {
+        const auto& mesh = meshView.get<MeshComponent>(h);
+        if (mesh.mesh && mesh.mesh->Valid()) ++meshCount;
+    }
+    if (meshCount < kMinOcclusionMeshes) {
+        if (!m_occlusionStates.empty()) ResetOcclusionState();
+        m_occludedObjectCount = 0;
+        return;
+    }
+
     if (!EnsureOcclusionTarget(width, height)) {
         ResetOcclusionState();
         return;
@@ -757,16 +846,6 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         bgfx::setUniform(u_pointLightColorInt, plCol, plCount);
     }
 
-    static std::vector<glm::vec4> identityBoneData(kMaxBones * 4, glm::vec4(0.0f));
-    static bool initIdentity = false;
-    if (!initIdentity) {
-        glm::mat4 id(1.0f);
-        for (int i = 0; i < kMaxBones; ++i) {
-            for (int j = 0; j < 4; ++j) identityBoneData[i * 4 + j] = id[j];
-        }
-        initIdentity = true;
-    }
-
     const bool canInstanceStatic =
         bgfx::isValid(m_instancedProg) &&
         (!m_deferred || bgfx::isValid(m_instancedGbufferProg));
@@ -774,6 +853,7 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         instanceBatches;
     if (canInstanceStatic) instanceBatches.reserve(64);
 
+    BeginBonePaletteCache();
     auto view = scene.Registry().view<TransformComponent, MeshComponent, MaterialComponent>();
     for (auto h : view) {
         const auto& mc = view.get<MeshComponent>(h);
@@ -840,32 +920,9 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
             continue;
         }
 
-        // Skeletal animation support. Skinned meshes keep the regular path
-        // because each entity has its own bone palette.
-        if (hasSkeleton) {
-            auto& skel = scene.Registry().get<SkeletalComponent>(root);
-            if (skel.isAnimated && !skel.sourcePath.empty()) {
-                if (skel.boneMatrices.size() != kMaxBones) {
-                    skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
-                }
-                // Animation updated in OnUpdate (Parallel)
-                std::vector<glm::vec4> boneData(kMaxBones * 4);
-                for (int i = 0; i < kMaxBones; ++i) {
-                    for (int j = 0; j < 4; ++j) boneData[i * 4 + j] = skel.boneMatrices[i][j];
-                }
-                bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
-                    bgfx::copy(boneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
-            } else {
-                bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
-                    bgfx::copy(identityBoneData.data(),
-                               kMaxBones * 4 * sizeof(glm::vec4)));
-            }
-        } else {
-            bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
-                bgfx::copy(identityBoneData.data(),
-                           kMaxBones * 4 * sizeof(glm::vec4)));
-        }
-        bgfx::setTexture(3, s_boneMatrices, m_boneTexture);
+        BindBonePalette(scene,
+                        static_cast<uint32_t>(entt::to_integral(root)),
+                        hasSkeleton);
 
         bgfx::setUniform(u_prevModel, glm::value_ptr(previousModel));
         bgfx::setTransform(glm::value_ptr(model));
@@ -1159,20 +1216,11 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
     glm::mat4 view = glm::mat4(1.0f);
     bgfx::setViewTransform(viewId, glm::value_ptr(view), glm::value_ptr(lightMtx));
 
-    static std::vector<glm::vec4> identityBoneData(kMaxBones * 4, glm::vec4(0.0f));
-    static bool initIdentity = false;
-    if (!initIdentity) {
-        glm::mat4 id(1.0f);
-        for (int i = 0; i < kMaxBones; ++i) {
-            for (int j = 0; j < 4; ++j) identityBoneData[i * 4 + j] = id[j];
-        }
-        initIdentity = true;
-    }
-
     const bool canInstanceStatic = bgfx::isValid(m_instancedShadowPointProg);
     std::unordered_map<const Mesh*, ShadowInstanceBatch> instanceBatches;
     if (canInstanceStatic) instanceBatches.reserve(64);
 
+    BeginBonePaletteCache();
     auto viewIter = scene.Registry().view<TransformComponent, MeshComponent>();
     for (auto h : viewIter) {
         const auto& mc = viewIter.get<MeshComponent>(h);
@@ -1204,28 +1252,9 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
         const entt::entity root = FindRootEntity(scene, h);
         const bool hasSkeleton =
             scene.Registry().all_of<SkeletalComponent>(root);
-        if (hasSkeleton) {
-            auto& skel = scene.Registry().get<SkeletalComponent>(root);
-            if (skel.isAnimated && !skel.sourcePath.empty()) {
-                if (skel.boneMatrices.size() != kMaxBones) skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f)); // Should be handled in OnUpdate
-                // Animation updated in OnUpdate (Parallel)
-                std::vector<glm::vec4> boneData(kMaxBones * 4);
-                for (int i = 0; i < kMaxBones; ++i) {
-                    for (int j = 0; j < 4; ++j) boneData[i * 4 + j] = skel.boneMatrices[i][j];
-                }
-                bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
-                    bgfx::copy(boneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
-            } else {
-                bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
-                    bgfx::copy(identityBoneData.data(),
-                               kMaxBones * 4 * sizeof(glm::vec4)));
-            }
-        } else {
-            bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
-                bgfx::copy(identityBoneData.data(),
-                           kMaxBones * 4 * sizeof(glm::vec4)));
-        }
-        bgfx::setTexture(3, s_boneMatrices, m_boneTexture);
+        BindBonePalette(scene,
+                        static_cast<uint32_t>(entt::to_integral(root)),
+                        hasSkeleton);
 
         bgfx::setTransform(glm::value_ptr(model));
         bgfx::setVertexBuffer(0, mc.mesh->VB());
@@ -1350,6 +1379,7 @@ void RenderSystem::DestroyReflectionTarget() {
 bool RenderSystem::RenderPlanarReflection(Scene& scene, const Camera& camera,
                                            bgfx::ViewId viewId,
                                            uint16_t width, uint16_t height) {
+    const bool wasActive = m_planarActive;
     m_planarActive = false;
     if (!m_assets || !bgfx::isValid(m_program) || width == 0 || height == 0) {
         return false;
@@ -1391,12 +1421,20 @@ bool RenderSystem::RenderPlanarReflection(Scene& scene, const Camera& camera,
         }
     }
 
-    if (best.entity == 0xFFFFFFFFu || !EnsureReflectionTarget(width, height)) {
+    if (best.entity == 0xFFFFFFFFu) {
+        m_planarHasLastView = false;
+        m_planarCadence = 0;
         return false;
     }
 
-    m_planarPlaneY = best.planeY;
-    m_planarActive = true;
+    const bool targetWasValid =
+        bgfx::isValid(m_reflectionColor) &&
+        m_reflectionWidth == width && m_reflectionHeight == height;
+    if (!EnsureReflectionTarget(width, height)) {
+        m_planarHasLastView = false;
+        m_planarCadence = 0;
+        return false;
+    }
 
     // Reflect the scene across the horizontal water plane by mirroring the
     // main view. Keeping the main projection makes the reflected image line
@@ -1404,11 +1442,29 @@ bool RenderSystem::RenderPlanarReflection(Scene& scene, const Camera& camera,
     // directly.
     glm::mat4 mirror(1.0f);
     mirror[1][1] = -1.0f;
-    mirror[3][1] = 2.0f * m_planarPlaneY;
+    mirror[3][1] = 2.0f * best.planeY;
     const glm::mat4 reflectionView = camera.View() * mirror;
     const glm::mat4 reflectionVP = camera.Projection() * reflectionView;
     const glm::vec3 reflectionEye = glm::vec3(
         mirror * glm::vec4(cameraPos, 1.0f));
+
+    const bool samePlane = wasActive &&
+        std::abs(m_planarPlaneY - best.planeY) < 1e-4f;
+    const bool sameView = m_planarHasLastView &&
+        MatricesNearlyEqual(m_planarLastView, reflectionView) &&
+        MatricesNearlyEqual(m_planarLastProj, camera.Projection());
+    if (targetWasValid && samePlane && sameView) {
+        ++m_planarCadence;
+        if ((m_planarCadence & 1u) != 0u) {
+            m_planarActive = true;
+            return true;
+        }
+    } else {
+        m_planarCadence = 0;
+    }
+
+    m_planarPlaneY = best.planeY;
+    m_planarActive = true;
 
     bgfx::setViewFrameBuffer(viewId, m_reflectionFbo);
     bgfx::setViewRect(viewId, 0, 0, width, height);
@@ -1440,20 +1496,7 @@ bool RenderSystem::RenderPlanarReflection(Scene& scene, const Camera& camera,
     bgfx::setUniform(u_reflectionClip, clipPlane);
     bgfx::setUniform(u_prevViewProj, glm::value_ptr(reflectionVP));
 
-    static std::vector<glm::vec4> identityBoneData(kMaxBones * 4,
-                                                    glm::vec4(0.0f));
-    static bool initIdentity = false;
-    if (!initIdentity) {
-        const glm::mat4 identity(1.0f);
-        for (int i = 0; i < kMaxBones; ++i) {
-            for (int j = 0; j < 4; ++j) {
-                identityBoneData[i * 4 + j] = identity[j];
-            }
-        }
-        initIdentity = true;
-    }
-    std::vector<glm::vec4> boneData(kMaxBones * 4);
-
+    BeginBonePaletteCache();
     auto view = scene.Registry().view<TransformComponent, MeshComponent,
                                       MaterialComponent>();
     for (auto handle : view) {
@@ -1479,26 +1522,11 @@ bool RenderSystem::RenderPlanarReflection(Scene& scene, const Camera& camera,
         if (!frustum.TestSphere(worldCenter, localRadius * maxScale)) continue;
 
         const entt::entity root = FindRootEntity(scene, handle);
-        if (scene.Registry().all_of<SkeletalComponent>(root)) {
-            auto& skeleton = scene.Registry().get<SkeletalComponent>(root);
-            if (skeleton.isAnimated && !skeleton.sourcePath.empty()) {
-                if (skeleton.boneMatrices.size() != kMaxBones) {
-                    skeleton.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
-                }
-                for (int i = 0; i < kMaxBones; ++i) {
-                    for (int j = 0; j < 4; ++j) {
-                        boneData[i * 4 + j] = skeleton.boneMatrices[i][j];
-                    }
-                }
-            } else {
-                boneData = identityBoneData;
-            }
-        } else {
-            boneData = identityBoneData;
-        }
-        bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
-            bgfx::copy(boneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
-        bgfx::setTexture(3, s_boneMatrices, m_boneTexture);
+        const bool hasSkeleton =
+            scene.Registry().all_of<SkeletalComponent>(root);
+        BindBonePalette(scene,
+                        static_cast<uint32_t>(entt::to_integral(root)),
+                        hasSkeleton);
         bgfx::setUniform(u_prevModel, glm::value_ptr(model));
         bgfx::setTransform(glm::value_ptr(model));
         BindMaterial(*materialComponent.material);
@@ -1518,6 +1546,9 @@ bool RenderSystem::RenderPlanarReflection(Scene& scene, const Camera& camera,
     }
 
     RenderVegetation(scene, frustum, viewId, false, true);
+    m_planarLastView = reflectionView;
+    m_planarLastProj = camera.Projection();
+    m_planarHasLastView = true;
     return true;
 }
 
@@ -1829,16 +1860,7 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
     bgfx::setUniform(u_cameraPosition, cam);
 
     auto white = m_assets->WhiteTexture(), flatN = m_assets->FlatNormalTexture();
-    static std::vector<glm::vec4> identityBoneData(kMaxBones * 4, glm::vec4(0.0f));
-    static bool initIdentity = false;
-    if (!initIdentity) {
-        glm::mat4 id(1.0f);
-        for (int i = 0; i < kMaxBones; ++i) {
-            for (int j = 0; j < 4; ++j) identityBoneData[i * 4 + j] = id[j];
-        }
-        initIdentity = true;
-    }
-    std::vector<glm::vec4> boneData(kMaxBones * 4);
+    BeginBonePaletteCache();
     for (const GlassItem& item : items) {
         const Material& mat = *item.material;
         const float alb[4] = {mat.albedoFactor.r, mat.albedoFactor.g, mat.albedoFactor.b, mat.albedoFactor.a};
@@ -1856,28 +1878,12 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
 
         // vs_pbr always samples the bone palette, so bind real skeletal data
         // when available and identity matrices otherwise.
-        const std::vector<glm::vec4>* bones = &identityBoneData;
-        entt::entity root = item.entity;
-        while (root != entt::null) {
-            if (scene.Registry().all_of<ParentComponent>(root))
-                root = scene.Registry().get<ParentComponent>(root).parent;
-            else
-                break;
-        }
-        if (scene.Registry().all_of<SkeletalComponent>(root)) {
-            auto& skel = scene.Registry().get<SkeletalComponent>(root);
-            if (skel.isAnimated && !skel.sourcePath.empty()) {
-                if (skel.boneMatrices.size() != kMaxBones)
-                    skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
-                for (int i = 0; i < kMaxBones; ++i) {
-                    for (int j = 0; j < 4; ++j) boneData[i * 4 + j] = skel.boneMatrices[i][j];
-                }
-                bones = &boneData;
-            }
-        }
-        bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
-            bgfx::copy(bones->data(), kMaxBones * 4 * sizeof(glm::vec4)));
-        bgfx::setTexture(3, s_boneMatrices, m_boneTexture);
+        const entt::entity root = FindRootEntity(scene, item.entity);
+        const bool hasSkeleton =
+            scene.Registry().all_of<SkeletalComponent>(root);
+        BindBonePalette(scene,
+                        static_cast<uint32_t>(entt::to_integral(root)),
+                        hasSkeleton);
 
         bgfx::setTransform(glm::value_ptr(item.model));
         bgfx::setVertexBuffer(0, item.mesh->VB());
