@@ -1417,6 +1417,7 @@ private:
         m_scene.Registry().clear();
         m_scene.AudioBuses().fill(Galeshi::AudioBusSettings{});
         if (m_assets) m_assets->Clear();
+        m_lastViewportTexture = BGFX_INVALID_HANDLE;
 
         m_currentScenePath.clear();
         m_uiCanvasEntity = entt::null;
@@ -1444,6 +1445,7 @@ private:
         m_scene.Registry().clear();
         m_assets->Clear();
         if (m_particles) m_particles->Reset();
+        m_lastViewportTexture = BGFX_INVALID_HANDLE;
 
         m_history.clear();
         m_historyIndex = -1;
@@ -2163,6 +2165,8 @@ private:
 
         // Play/Stop
         if (ImGui::Button(m_editor.isPlaying ? "Stop" : "Play", ImVec2(60, 0))) {
+            // Never show the previous mode's cached viewport after Play/Stop.
+            m_lastViewportTexture = BGFX_INVALID_HANDLE;
             if (!m_editor.isPlaying) {
                 PushHistory();
                 m_editor.isPlaying = true;
@@ -2274,6 +2278,20 @@ private:
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Rendering")) {
+            bool realtime = m_realtimeRendering;
+            if (ImGui::MenuItem("Realtime Rendering", nullptr, &realtime)) {
+                m_realtimeRendering = realtime;
+                // The camera can move while paused; do not reuse stale TAA
+                // history when the viewport starts rendering again.
+                m_postProcess.ResetTaaHistory();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Pause scene and post-process rendering while keeping "
+                    "the editor and its last viewport image responsive.");
+            }
+            ImGui::Separator();
+
             bool lodEnabled = m_render->LodEnabled();
             if (ImGui::MenuItem("LOD", nullptr, &lodEnabled))
                 m_render->SetLodEnabled(lodEnabled);
@@ -5309,7 +5327,15 @@ if (ImGui::BeginMenu("File")) {
         const uint16_t renderH = static_cast<uint16_t>(std::max(
             2, static_cast<int>(std::lround(static_cast<float>(h) * activeRenderScale))));
 
-        if (w > 0 && h > 0) {
+        // Realtime Rendering off keeps the last completed viewport image on
+        // screen and skips all GPU scene/post-process work. The game needs at
+        // least one frame after enabling it, so an invalid cache always
+        // renders once even while the editor is paused.
+        const bool renderThisFrame =
+            m_realtimeRendering || m_isGameMode ||
+            !bgfx::isValid(m_lastViewportTexture);
+
+        if (renderThisFrame && w > 0 && h > 0) {
             if (!m_framebuffer || m_framebuffer->Width() != renderW ||
                 m_framebuffer->Height() != renderH) {
                 // Recreating an FBO that bgfx still considers bound can make it
@@ -5333,7 +5359,7 @@ if (ImGui::BeginMenu("File")) {
         ProfileClock::time_point postFxSegmentStart{};
         bool postFxProfiling = false;
 
-        if (m_framebuffer && m_framebuffer->Valid()) {
+        if (renderThisFrame && m_framebuffer && m_framebuffer->Valid()) {
             
             const auto pssmStart = ProfileClock::now();
             // --- PSSM SHADOW PASS ---
@@ -6362,7 +6388,8 @@ if (ImGui::BeginMenu("File")) {
         // blend the transparent layer over it (view 48, before glass at 49,
         // debug at 50 and the ImGui blit at 51). Reusing the persistent
         // G-buffer FBO avoids temporary FBOs whose layout can get out of sync.
-        if (m_framebuffer && bgfx::isValid(m_framebuffer->Color()) &&
+        if (renderThisFrame && m_framebuffer &&
+            bgfx::isValid(m_framebuffer->Color()) &&
             m_postProcess.OutputFbo().idx != bgfx::kInvalidHandle) {
             m_postProcess.BlitTexture(m_postProcess.OutputTexture(), m_framebuffer->Color(), 48);
             bgfx::setViewFrameBuffer(49, m_framebuffer->Handle());
@@ -6373,14 +6400,22 @@ if (ImGui::BeginMenu("File")) {
         // Set when the 2D UI canvas overlay handles the click this frame.
         bool uiOverlayConsumed = false;
 
-        // Blit для ImGui (View 51)
-        if (m_framebuffer && bgfx::isValid(m_framebuffer->Color())) {
+        // Blit for ImGui (View 51). While Realtime Rendering is paused this
+        // pass is skipped and the last completed viewport image is sampled
+        // directly, so the UI stays responsive without submitting scene work.
+        bgfx::TextureHandle __disp = BGFX_INVALID_HANDLE;
+        if (renderThisFrame && m_framebuffer &&
+            bgfx::isValid(m_framebuffer->Color())) {
             bgfx::TextureHandle __ppTex = m_framebuffer->Color();
-            bgfx::TextureHandle __disp = bgfx::isValid(__ppTex) ? __ppTex : m_framebuffer->Color();
-            if (bgfx::isValid(__ppTex)) {
-                m_postProcess.BlitTexture(__ppTex, m_postProcess.BlitTextureA(), 51);
-                __disp = m_postProcess.BlitTextureA();
-            }
+            __disp = __ppTex;
+            m_postProcess.BlitTexture(__ppTex, m_postProcess.BlitTextureA(), 51);
+            __disp = m_postProcess.BlitTextureA();
+            m_lastViewportTexture = __disp;
+        } else if (bgfx::isValid(m_lastViewportTexture)) {
+            __disp = m_lastViewportTexture;
+        }
+
+        if (bgfx::isValid(__disp)) {
             ImTextureID texId = static_cast<ImTextureID>(__disp.idx);
             ImGui::Image(texId, ImVec2(static_cast<float>(w), static_cast<float>(h)), ImVec2(0, 0), ImVec2(1, 1));
             m_viewportImagePos = ImGui::GetItemRectMin();
@@ -6397,17 +6432,25 @@ if (ImGui::BeginMenu("File")) {
                 std::snprintf(entitiesText, sizeof(entitiesText), "Entities: %d",
                               static_cast<int>(m_scene.AllEntities().size()));
 
+                const bool renderingPaused =
+                    !m_realtimeRendering && !m_isGameMode;
+                const char* realtimeText = renderingPaused
+                    ? "Rendering: PAUSED"
+                    : "Rendering: Realtime";
+
                 const float lineHeight = ImGui::GetTextLineHeight();
                 const ImVec2 padding(8.0f, 5.0f);
                 const ImVec2 textPos(m_viewportImagePos.x + padding.x,
                                      m_viewportImagePos.y + padding.y);
                 const float textWidth = std::max(
-                    ImGui::CalcTextSize(fpsText).x,
-                    ImGui::CalcTextSize(entitiesText).x);
+                    std::max(ImGui::CalcTextSize(fpsText).x,
+                             ImGui::CalcTextSize(entitiesText).x),
+                    ImGui::CalcTextSize(realtimeText).x);
                 const ImVec2 panelMin = m_viewportImagePos;
                 const ImVec2 panelMax(
                     m_viewportImagePos.x + textWidth + padding.x * 2.0f,
-                    m_viewportImagePos.y + lineHeight * 2.0f + padding.y * 2.0f);
+                    m_viewportImagePos.y + lineHeight * 3.0f +
+                        padding.y * 2.0f);
 
                 ImDrawList* drawList = ImGui::GetWindowDrawList();
                 drawList->AddRectFilled(panelMin, panelMax,
@@ -6420,6 +6463,15 @@ if (ImGui::BeginMenu("File")) {
                                   IM_COL32(0, 0, 0, 180), entitiesText);
                 drawList->AddText(ImVec2(textPos.x, textPos.y + lineHeight),
                                   IM_COL32(235, 240, 248, 255), entitiesText);
+                drawList->AddText(
+                    ImVec2(textPos.x + 1.0f, textPos.y + lineHeight * 2.0f + 1.0f),
+                    IM_COL32(0, 0, 0, 180), realtimeText);
+                drawList->AddText(
+                    ImVec2(textPos.x, textPos.y + lineHeight * 2.0f),
+                    renderingPaused
+                        ? IM_COL32(255, 190, 90, 255)
+                        : IM_COL32(140, 220, 150, 255),
+                    realtimeText);
             }
 
             // Accept assets dragged from the Content Browser. Models are
@@ -6462,9 +6514,16 @@ if (ImGui::BeginMenu("File")) {
                         *overlayCanvas, dropImageMin, dropImageMax);
                 }
             }
+        } else {
+            // Keep the viewport item geometry valid for gizmos, picking and
+            // layout while there is no completed frame to display yet.
+            ImGui::Dummy(ImVec2(static_cast<float>(w),
+                                static_cast<float>(h)));
+            m_viewportImagePos = ImGui::GetItemRectMin();
+            m_viewportImageSize = ImGui::GetItemRectSize();
         }
 
-        if (m_framebuffer && bgfx::isValid(m_framebuffer->Color())) {
+        if (bgfx::isValid(__disp)) {
             if (m_isGameMode) {
                 ImGui::End();
                 return; // Пропускаем гизмо и выделение мышью
@@ -9371,6 +9430,10 @@ void DrawDetails() {
     float                   m_frameDelta = 1.0f / 60.0f;
     int                     m_renderFrameCounter = 0;
     bool                    m_pendingEffectsEnable = false;
+    // When false, the viewport skips all scene, shadow, reflection and
+    // post-process GPU work and keeps displaying the last completed image.
+    bool                    m_realtimeRendering = true;
+    bgfx::TextureHandle     m_lastViewportTexture = BGFX_INVALID_HANDLE;
 
     std::unique_ptr<Galeshi::AssetManager>    m_assets;
     std::unique_ptr<Galeshi::RenderSystem>    m_render;

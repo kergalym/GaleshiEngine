@@ -88,6 +88,7 @@ Implemented post-processing passes:
 - Chromatic aberration
 - Invert
 - Scene-wide post-processing volumes with per-effect tuning for bloom, DoF, motion blur, tonemap, color correction, vignette, ambient occlusion (SSAO/HBAO/GTAO), SSR, anti-aliasing, god rays, atmosphere, and fog. The highest-priority enabled volume applies to the entire scene; bounds are editor-only visualization. The Post-Process menu edits the active source (volume or global settings), so menu and volume controls override each other on the last change.
+- Realtime Rendering toggle in the Rendering menu pauses scene, shadow, reflection and post-process GPU work while keeping the editor responsive and displaying the last completed viewport frame.
 
 ---
 
