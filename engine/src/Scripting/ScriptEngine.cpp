@@ -2,11 +2,15 @@
 #include "GaleshiEngine/Scene/Scene.hpp"
 #include "GaleshiEngine/Scene/Components.hpp"
 #include "GaleshiEngine/Animation/AnimationSystem.hpp"
+#include "GaleshiEngine/Assets/AssetManager.hpp"
+#include "GaleshiEngine/Assets/Material.hpp"
+#include "GaleshiEngine/Assets/Mesh.hpp"
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <filesystem>
 #include <limits>
 #include <sstream>
 #include <utility>
@@ -1078,6 +1082,369 @@ void ScriptEngine::BuildApi() {
     m_lua.set_function("trigger_animation", triggerAnimation);
 
     // ------------------------------------------------------------------
+    // Skeletal model assets and playback.
+    //
+    // Galeshi.animation.model(path) returns a lightweight model object that
+    // remembers the source file and clip list.  Spawn/apply attach the full
+    // imported mesh hierarchy and SkeletalComponent to the scene; play passes
+    // the model and a clip directly to the animation system.
+    // ------------------------------------------------------------------
+    auto skeletalPath = [](const sol::object& value) -> std::string {
+        if (value.get_type() == sol::type::string) {
+            return value.as<std::string>();
+        }
+        if (value.get_type() == sol::type::table) {
+            sol::table table = value.as<sol::table>();
+            const sol::object path = table.get<sol::object>("path");
+            if (path.get_type() == sol::type::string) {
+                return path.as<std::string>();
+            }
+        }
+        return {};
+    };
+
+    auto makeSkeletalModel = [this](const std::string& path) -> sol::object {
+        if (!m_assets) {
+            AddLog("[Lua] animation.model: no AssetManager is bound");
+            return sol::make_object(m_lua, sol::nil);
+        }
+        if (path.empty()) return sol::make_object(m_lua, sol::nil);
+
+        auto loaded = m_assets->LoadModel(path);
+        if (loaded.meshes.empty() && !loaded.hasAnimation) {
+            AddLog("[Lua] animation.model: could not load '" + path + "'");
+            return sol::make_object(m_lua, sol::nil);
+        }
+
+        const std::string relativePath = m_assets->MakeRelativePath(path);
+        sol::table model = m_lua.create_table();
+        model["path"] = relativePath;
+        model["name"] = std::filesystem::path(path).stem().string();
+        model["valid"] = true;
+        model["has_animation"] = loaded.hasAnimation;
+        model["mesh_count"] = static_cast<int>(loaded.meshes.size());
+        model["bone_count"] = loaded.totalBones;
+        model["num_clips"] = static_cast<int>(loaded.animationNames.size());
+
+        sol::table clips = m_lua.create_table();
+        sol::table durations = m_lua.create_table();
+        for (size_t i = 0; i < loaded.animationNames.size(); ++i) {
+            clips[i + 1] = loaded.animationNames[i];
+        }
+        for (size_t i = 0; i < loaded.animationDurations.size(); ++i) {
+            durations[i + 1] = loaded.animationDurations[i];
+        }
+        model["clips"] = clips;
+        model["durations"] = durations;
+        model[sol::metatable_key] = m_skeletalMeta;
+        return sol::make_object(m_lua, model);
+    };
+
+    auto spawnSkeletalModel = [this, makeEntity](
+                                  const std::string& path,
+                                  const std::string& requestedName,
+                                  const glm::vec3& position) -> sol::object {
+        if (!m_assets || !m_scene) {
+            AddLog("[Lua] animation.spawn: no AssetManager or Scene is bound");
+            return sol::make_object(m_lua, sol::nil);
+        }
+        auto loaded = m_assets->LoadModel(path);
+        if (loaded.meshes.empty()) {
+            AddLog("[Lua] animation.spawn: model has no meshes: " + path);
+            return sol::make_object(m_lua, sol::nil);
+        }
+
+        const std::string source = m_assets->MakeRelativePath(path);
+        const std::string stem = std::filesystem::path(path).stem().string();
+        const std::string rootName = requestedName.empty()
+            ? (stem.empty() ? std::string("SkeletalModel") : stem)
+            : requestedName;
+
+        Entity root = m_scene->CreateEntity(rootName);
+        root.AddComponent<LuaEntityComponent>();
+        auto& transform = root.GetComponent<TransformComponent>();
+        transform.position = position;
+
+        if (loaded.hasAnimation || loaded.totalBones > 0) {
+            auto& skeleton = root.AddComponent<SkeletalComponent>();
+            skeleton.isAnimated = loaded.hasAnimation;
+            skeleton.sourcePath = source;
+            skeleton.boneMatrices.assign(256, glm::mat4(1.0f));
+            if (loaded.hasAnimation) {
+                auto& machine =
+                    root.AddComponent<AnimationStateMachineComponent>();
+                machine = AnimationSystem::CreateDefaultStateMachine(
+                    loaded.animationNames);
+            }
+        }
+
+        for (size_t i = 0; i < loaded.meshes.size(); ++i) {
+            Entity meshEntity = m_scene->CreateEntity(
+                rootName + "_" + std::to_string(i));
+            meshEntity.AddComponent<LuaEntityComponent>();
+            meshEntity.AddComponent<ParentComponent>(
+                ParentComponent{static_cast<entt::entity>(root)});
+            meshEntity.AddComponent<MeshComponent>(MeshComponent{
+                loaded.meshes[i], source, "", static_cast<int>(i)});
+
+            std::shared_ptr<Material> material;
+            if (i < loaded.meshMaterialIndex.size()) {
+                const int materialIndex = loaded.meshMaterialIndex[i];
+                if (materialIndex >= 0 &&
+                    materialIndex < static_cast<int>(loaded.materials.size())) {
+                    material = loaded.materials[static_cast<size_t>(materialIndex)];
+                }
+            }
+            if (!material && !loaded.materials.empty()) {
+                material = loaded.materials.front();
+            }
+            if (!material) material = std::make_shared<Material>();
+            meshEntity.AddComponent<MaterialComponent>(
+                MaterialComponent{material});
+        }
+
+        spdlog::info("[Lua] Spawned skeletal model '{}' ({} meshes, {} clips)",
+                     source, loaded.meshes.size(), loaded.animationNames.size());
+        return makeEntity(static_cast<uint32_t>(static_cast<entt::entity>(root)));
+    };
+
+    auto applySkeletalModel = [this](entt::entity entity,
+                                     const std::string& path) -> bool {
+        if (!m_assets || !m_scene || entity == entt::null) return false;
+        auto loaded = m_assets->LoadModel(path);
+        if (loaded.meshes.empty() && !loaded.hasAnimation) return false;
+
+        auto& registry = m_scene->Registry();
+        SkeletalComponent* skeleton = nullptr;
+        if (registry.all_of<SkeletalComponent>(entity)) {
+            skeleton = &registry.get<SkeletalComponent>(entity);
+        } else {
+            skeleton = &registry.emplace<SkeletalComponent>(entity);
+        }
+        skeleton->isAnimated = loaded.hasAnimation;
+        skeleton->sourcePath = m_assets->MakeRelativePath(path);
+        skeleton->currentTime = 0.0f;
+        skeleton->activeAnimation = 0;
+        skeleton->boneMatrices.assign(256, glm::mat4(1.0f));
+
+        if (loaded.hasAnimation) {
+            if (!registry.all_of<AnimationStateMachineComponent>(entity)) {
+                auto& machine =
+                    registry.emplace<AnimationStateMachineComponent>(entity);
+                machine = AnimationSystem::CreateDefaultStateMachine(
+                    loaded.animationNames);
+            } else {
+                auto& machine =
+                    registry.get<AnimationStateMachineComponent>(entity);
+                if (machine.states.empty()) {
+                    machine = AnimationSystem::CreateDefaultStateMachine(
+                        loaded.animationNames);
+                }
+            }
+        }
+        return true;
+    };
+
+    auto resolveSkeletalClip = [this](const std::string& path,
+                                      const sol::object& value,
+                                      int& outClip) -> bool {
+        if (!m_assets) return false;
+        auto loaded = m_assets->LoadModel(path);
+        if (!loaded.hasAnimation || loaded.animationNames.empty()) return false;
+
+        int index = 0; // Lua-facing clip indices are 1-based.
+        if (value.get_type() == sol::type::number) {
+            index = static_cast<int>(value.as<double>()) - 1;
+        } else if (value.get_type() == sol::type::string) {
+            const std::string name = value.as<std::string>();
+            bool found = false;
+            for (size_t i = 0; i < loaded.animationNames.size(); ++i) {
+                if (loaded.animationNames[i] == name) {
+                    index = static_cast<int>(i);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return false;
+        }
+        index = std::clamp(index, 0,
+                           static_cast<int>(loaded.animationNames.size()) - 1);
+        outClip = index;
+        return true;
+    };
+
+    auto playSkeletalModel = [this, applySkeletalModel, resolveSkeletalClip](
+                                 entt::entity entity,
+                                 const std::string& path,
+                                 const sol::object& clipValue) -> bool {
+        if (!m_assets || !m_scene || entity == entt::null) return false;
+        if (!applySkeletalModel(entity, path)) return false;
+
+        int clip = 0;
+        if (!resolveSkeletalClip(path, clipValue, clip)) return false;
+
+        auto& registry = m_scene->Registry();
+        auto* skeleton = registry.try_get<SkeletalComponent>(entity);
+        if (!skeleton) return false;
+        skeleton->isAnimated = true;
+        skeleton->activeAnimation = clip;
+        skeleton->currentTime = 0.0f;
+
+        if (auto* machine =
+                registry.try_get<AnimationStateMachineComponent>(entity)) {
+            int stateIndex = -1;
+            for (size_t i = 0; i < machine->states.size(); ++i) {
+                if (machine->states[i].clip == clip) {
+                    stateIndex = static_cast<int>(i);
+                    break;
+                }
+            }
+            if (stateIndex >= 0) {
+                machine->enabled = true;
+                AnimationSystem::SetState(*machine,
+                                          machine->states[stateIndex].name);
+            } else {
+                // Custom state machines may not have a state for this clip.
+                // Fall back to direct clip playback.
+                machine->enabled = false;
+            }
+        }
+        return true;
+    };
+
+    auto playSkeletalClip = [this, playSkeletalModel](entt::entity entity,
+                                                      const sol::object& clipValue) {
+        if (!m_assets || !m_scene || entity == entt::null) return false;
+        auto* skeleton = m_scene->Registry().try_get<SkeletalComponent>(entity);
+        if (!skeleton || skeleton->sourcePath.empty()) return false;
+        return playSkeletalModel(entity, skeleton->sourcePath, clipValue);
+    };
+
+    // Shared metatable for model objects returned by animation.model().
+    m_skeletalMeta = m_lua.create_table();
+    sol::table modelMethods = m_lua.create_table();
+    modelMethods["clip_count"] = [](sol::table self) -> int {
+        const sol::object count = self.get<sol::object>("num_clips");
+        return count.get_type() == sol::type::number
+            ? static_cast<int>(count.as<double>())
+            : 0;
+    };
+    modelMethods["clip_name"] = [](sol::table self, int index) -> std::string {
+        const sol::object clipsValue = self.get<sol::object>("clips");
+        if (clipsValue.get_type() != sol::type::table) return {};
+        sol::table clips = clipsValue.as<sol::table>();
+        const sol::object name = clips.get<sol::object>(index);
+        return name.get_type() == sol::type::string
+            ? name.as<std::string>()
+            : std::string{};
+    };
+    modelMethods["duration"] = [](sol::table self, int index) -> float {
+        const sol::object durationsValue = self.get<sol::object>("durations");
+        if (durationsValue.get_type() != sol::type::table) return 0.0f;
+        sol::table durations = durationsValue.as<sol::table>();
+        const sol::object value = durations.get<sol::object>(index);
+        return value.get_type() == sol::type::number
+            ? static_cast<float>(value.as<double>())
+            : 0.0f;
+    };
+    modelMethods["spawn"] = [this, skeletalPath, spawnSkeletalModel](
+                                sol::table self,
+                                sol::optional<std::string> name,
+                                sol::optional<float> x,
+                                sol::optional<float> y,
+                                sol::optional<float> z) -> sol::object {
+        return spawnSkeletalModel(skeletalPath(sol::object(self)),
+                                  name.value_or(""),
+                                  {x.value_or(0.0f), y.value_or(0.0f),
+                                   z.value_or(0.0f)});
+    };
+    modelMethods["apply"] = [this, resolve, skeletalPath, applySkeletalModel](
+                                sol::table self, sol::object entity) {
+        return applySkeletalModel(resolve(entity),
+                                  skeletalPath(sol::object(self)));
+    };
+    modelMethods["play"] = [this, resolve, skeletalPath, playSkeletalModel](
+                               sol::table self, sol::object entity,
+                               sol::variadic_args args) {
+        sol::object clip;
+        if (args.size() > 0) clip = args[0];
+        return playSkeletalModel(resolve(entity), skeletalPath(sol::object(self)),
+                                 clip);
+    };
+    m_skeletalMeta[sol::meta_function::index] = modelMethods;
+    m_skeletalMeta[sol::meta_function::to_string] =
+        [](sol::table self) -> std::string {
+            const sol::object path = self.get<sol::object>("path");
+            const sol::object count = self.get<sol::object>("num_clips");
+            return std::string("SkeletalModel(") +
+                   (path.get_type() == sol::type::string
+                        ? path.as<std::string>()
+                        : std::string("?")) +
+                   ", clips=" +
+                   std::to_string(count.get_type() == sol::type::number
+                                      ? static_cast<int>(count.as<double>())
+                                      : 0) + ")";
+        };
+
+    animation["model"] = [makeSkeletalModel](const std::string& path) {
+        return makeSkeletalModel(path);
+    };
+    animation["load"] = [makeSkeletalModel](const std::string& path) {
+        return makeSkeletalModel(path);
+    };
+    animation["spawn"] = [this, skeletalPath, spawnSkeletalModel](
+                             sol::object modelValue,
+                             sol::optional<std::string> name,
+                             sol::optional<float> x,
+                             sol::optional<float> y,
+                             sol::optional<float> z) -> sol::object {
+        const std::string path = skeletalPath(modelValue);
+        if (path.empty()) return sol::make_object(m_lua, sol::nil);
+        return spawnSkeletalModel(path, name.value_or(""),
+                                  {x.value_or(0.0f), y.value_or(0.0f),
+                                   z.value_or(0.0f)});
+    };
+    animation["apply"] = [this, resolve, skeletalPath, applySkeletalModel](
+                             sol::object entity, sol::object modelValue) {
+        return applySkeletalModel(resolve(entity), skeletalPath(modelValue));
+    };
+    animation["play"] = [this, resolve, skeletalPath, playSkeletalModel](
+                            sol::object entity, sol::object modelValue,
+                            sol::variadic_args args) {
+        sol::object clip;
+        if (args.size() > 0) clip = args[0];
+        return playSkeletalModel(resolve(entity), skeletalPath(modelValue),
+                                 clip);
+    };
+    animation["play_clip"] = [this, resolve, playSkeletalClip](
+                                 sol::object entity,
+                                 sol::variadic_args args) {
+        sol::object clip;
+        if (args.size() > 0) clip = args[0];
+        return playSkeletalClip(resolve(entity), clip);
+    };
+    animation["stop"] = [this, resolve](sol::object value) {
+        const entt::entity entity = resolve(value);
+        if (entity == entt::null || !m_scene) return false;
+        auto* skeleton = m_scene->Registry().try_get<SkeletalComponent>(entity);
+        if (!skeleton) return false;
+        skeleton->isAnimated = false;
+        return true;
+    };
+    animation["is_playing"] = [this, resolve](sol::object value) {
+        const entt::entity entity = resolve(value);
+        if (entity == entt::null || !m_scene) return false;
+        auto* skeleton = m_scene->Registry().try_get<SkeletalComponent>(entity);
+        return skeleton && skeleton->isAnimated;
+    };
+
+    // Legacy aliases for simple scripts.
+    m_lua.set_function("load_skeletal_model", [makeSkeletalModel](
+                                                   const std::string& path) {
+        return makeSkeletalModel(path);
+    });
+
+    // ------------------------------------------------------------------
     // AI and navigation (Detour/Recast through host callbacks).
     // ------------------------------------------------------------------
     auto navAgent = [this, resolve](sol::object value) -> NavAgentComponent* {
@@ -1481,6 +1848,11 @@ void ScriptEngine::DestroyEntity(entt::entity entity) {
 void ScriptEngine::BindECS(Scene& scene) {
     BuildApi();
     m_scene = &scene;
+}
+
+void ScriptEngine::BindAssets(AssetManager* assets) {
+    BuildApi();
+    m_assets = assets;
 }
 
 void ScriptEngine::BindInput(std::function<bool(const std::string&)> isKeyDown) {

@@ -12,6 +12,7 @@
 namespace Galeshi {
 
 class Scene;
+class AssetManager;
 
 class ScriptEngine {
 public:
@@ -45,6 +46,9 @@ public:
     // The methods below only connect engine callbacks/subsystems to the API;
     // the Lua entry points themselves are created once by BindFunctions().
     void BindECS(Scene& scene);
+    // Enables the Galeshi.animation model/spawn/playback helpers. The host
+    // keeps ownership of the AssetManager.
+    void BindAssets(AssetManager* assets);
     void BindInput(std::function<bool(const std::string&)> isKeyDown);
     void BindInputAxes(
         std::function<float(const std::string&)> getAxis,
@@ -101,8 +105,10 @@ private:
     sol::state m_lua;
     sol::table m_api;
     sol::table m_entityMeta;
+    sol::table m_skeletalMeta;
     bool m_apiBuilt = false;
     Scene* m_scene = nullptr;
+    AssetManager* m_assets = nullptr;
 
     std::function<bool(const std::string&)> m_isKeyDown;
     std::function<float(const std::string&)> m_getAxis;

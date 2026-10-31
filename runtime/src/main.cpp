@@ -1,4 +1,5 @@
 #include "GaleshiEngine/Core/Application.hpp"
+#include "GaleshiEngine/Assets/AssetManager.hpp"
 #include "GaleshiEngine/Scene/Scene.hpp"
 #include "GaleshiEngine/Scene/Components.hpp"
 #include "GaleshiEngine/Scripting/ScriptEngine.hpp"
@@ -6,6 +7,8 @@
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
+
+#include <memory>
 
 // Minimal runtime demo: builds an in-game main menu from UI widgets, renders
 // it every frame through UIRuntime, and forwards widget events to Lua.
@@ -19,6 +22,8 @@ protected:
     void OnStart() override {
         m_scripts.BindFunctions();
         m_scripts.BindECS(m_scene);
+        m_assets = std::make_unique<Galeshi::AssetManager>();
+        m_scripts.BindAssets(m_assets.get());
         m_scripts.BindEngine([this]() { RequestExit(); });
         if (!m_scripts.RunScript("assets/scripts/ui_menu.lua")) {
             spdlog::warn("[UI] ui_menu.lua not found; events will only be logged");
@@ -151,6 +156,7 @@ private:
     }
 
     Galeshi::Scene m_scene;
+    std::unique_ptr<Galeshi::AssetManager> m_assets;
     Galeshi::ScriptEngine m_scripts;
     Galeshi::UIRuntime m_ui;
 };

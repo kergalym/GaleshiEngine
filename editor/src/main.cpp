@@ -703,6 +703,11 @@ protected:
         spdlog::info("[Subsystem] m_audio.Init() begin");
         if (!m_audio.Init()) spdlog::error("[Subsystem] m_audio.Init() failed");
         else spdlog::info("[Subsystem] m_audio.Init() done");
+        // Assets must be available before scripts run so Lua can declare
+        // skeletal animation models. The AssetManager is also used by the
+        // scene serializer and renderer below.
+        m_assets = std::make_unique<Galeshi::AssetManager>();
+        m_scripts.BindAssets(m_assets.get());
         m_physics = std::make_unique<Galeshi::EnginePhysicsSystem>();
         spdlog::info("[Subsystem] m_physics->Init() begin");
         if (!m_physics->Init()) spdlog::error("[Subsystem] m_physics->Init() failed");
@@ -802,7 +807,6 @@ protected:
             DispatchUIEvent(event);
         });
 
-        m_assets  = std::make_unique<Galeshi::AssetManager>();
         m_physics = std::make_unique<Galeshi::EnginePhysicsSystem>();
         m_physics->Init();
         m_physics->SetOnContactCallback([this](entt::entity e1, entt::entity e2) {

@@ -129,6 +129,7 @@ Squad coordination and shared blackboards are not implemented.
 - Navigation commands for AI agents.
 - Entities created by scripts are tagged with `LuaEntityComponent` and removed on hot reload.
 - Unified `Galeshi` API: namespaced gameplay modules (`world`, `input`, `physics`, `audio`, `animation`, `ai`, `navigation`, `ui`, `particles`, `engine`) plus entity handles with methods. The legacy global functions remain available for existing scripts. See [docs/LUA_API.md](docs/LUA_API.md).
+- Skeletal animation from Lua: declare an imported model with `Galeshi.animation.model(path)`, spawn its mesh hierarchy, or pass it to `animation.play()` / `apply()` for playback and state-machine control.
 
 ```lua
 local player = nil

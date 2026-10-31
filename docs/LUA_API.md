@@ -111,12 +111,50 @@ Buses are `Master`, `Music`, `SFX`, `Voice`, and `Ambient`.
 
 ### `Galeshi.animation`
 
+State-machine helpers:
+
 ```lua
 Galeshi.animation.set_state(entity, "Run")
 Galeshi.animation.set_parameter(entity, "Speed", 1.0)
 Galeshi.animation.get_parameter(entity, "Speed", 0.0)
 Galeshi.animation.trigger(entity, "Jump")
 ```
+
+#### Skeletal animation models
+
+A skeletal model can be declared once and then spawned or passed directly to
+playback. Clip indices are **1-based** in Lua; clip names are also accepted.
+
+```lua
+local model = Galeshi.animation.model("assets/models/character.fbx")
+-- or: Galeshi.animation.load("assets/models/character.fbx")
+
+print(model.path, model.mesh_count, model.bone_count)
+print(model:clip_count(), model:clip_name(1), model:duration(1))
+
+-- Create the full imported mesh hierarchy, SkeletalComponent and state machine.
+local actor = model:spawn("Character", 0.0, 0.0, 0.0)
+
+-- Start the first clip (index 1) or select it by name.
+Galeshi.animation.play(actor, model, 1)
+-- Galeshi.animation.play(actor, model, "Run")
+
+-- Attach a model to an existing entity and play from its skeletal component.
+local other = Galeshi.world.find("ExistingCharacter")
+Galeshi.animation.apply(other, model)
+Galeshi.animation.play_clip(other, "Run")
+
+Galeshi.animation.stop(actor)
+local playing = Galeshi.animation.is_playing(actor)
+```
+
+Model object fields: `path`, `name`, `valid`, `has_animation`, `mesh_count`,
+`bone_count`, `num_clips`, `clips` (1-based array), `durations` (1-based array).
+Methods: `clip_count()`, `clip_name(index)`, `duration(index)`, `spawn(...)`,
+`apply(entity)`, `play(entity[, clip])`.
+
+The host must bind an `AssetManager` (`ScriptEngine::BindAssets`); the editor
+and `GaleshiRuntime` do this automatically.
 
 ### `Galeshi.ai` and `Galeshi.navigation`
 
