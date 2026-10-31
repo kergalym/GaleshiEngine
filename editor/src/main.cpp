@@ -926,6 +926,9 @@ protected:
         if (m_loadingState.isLoading) return; // Pause engine during load
         if (!m_projectLoaded) return;
 
+        // This update path is independent of m_realtimeRendering. Pausing
+        // render passes must not stop scene simulation: physics, scripting,
+        // AI, animation, groom, particles and time continue every frame.
         const auto updateStart = ProfileClock::now();
         m_cpuProfile = CpuProfileSample{};
         m_cpuProfile.frameMs = dt * 1000.0f;
@@ -1418,6 +1421,7 @@ private:
         m_scene.AudioBuses().fill(Galeshi::AudioBusSettings{});
         if (m_assets) m_assets->Clear();
         m_lastViewportTexture = BGFX_INVALID_HANDLE;
+        m_showCollisionWireframes = true;
 
         m_currentScenePath.clear();
         m_uiCanvasEntity = entt::null;
@@ -1446,6 +1450,7 @@ private:
         m_assets->Clear();
         if (m_particles) m_particles->Reset();
         m_lastViewportTexture = BGFX_INVALID_HANDLE;
+        m_showCollisionWireframes = true;
 
         m_history.clear();
         m_historyIndex = -1;
@@ -2168,11 +2173,16 @@ private:
             // Never show the previous mode's cached viewport after Play/Stop.
             m_lastViewportTexture = BGFX_INVALID_HANDLE;
             if (!m_editor.isPlaying) {
+                // Collision wireframes are editor-only helpers. Hide them
+                // during Play, but keep the collider entity and all attached
+                // meshes/children untouched.
+                m_showCollisionWireframes = false;
                 PushHistory();
                 m_editor.isPlaying = true;
                 EnsurePhysicsBodies();
             } else {
                 m_editor.isPlaying = false;
+                m_showCollisionWireframes = true;
                 m_audio.StopAll();
                 m_physics->Reset();
                 if (m_particles) m_particles->Reset();
@@ -2284,11 +2294,16 @@ private:
                 // The camera can move while paused; do not reuse stale TAA
                 // history when the viewport starts rendering again.
                 m_postProcess.ResetTaaHistory();
+                spdlog::info("[Render] Render passes {}",
+                             realtime ? "resumed; scene updates unchanged"
+                                      : "paused; scene updates continue");
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip(
-                    "Pause scene and post-process rendering while keeping "
-                    "the editor and its last viewport image responsive.");
+                    "Skip GPU render passes only. Physics, animation, scripts, "
+                    "AI, particles and scene time keep running.\n"
+                    "The viewport shows the last completed frame until "
+                    "rendering is resumed.");
             }
             ImGui::Separator();
 
@@ -6251,8 +6266,9 @@ if (ImGui::BeginMenu("File")) {
             }
 
             // Collision shape gizmos. Hidden during Play so authored volumes
-            // never leak into the running game.
-            if (!m_editor.isPlaying) {
+            // never leak into the running game. Only the debug wireframe is
+            // hidden; the collider component and attached meshes stay intact.
+            if (!m_editor.isPlaying && m_showCollisionWireframes) {
                 auto colliderView =
                     m_scene.Registry().view<Galeshi::ColliderComponent>();
                 for (auto e : colliderView) {
@@ -6444,11 +6460,11 @@ if (ImGui::BeginMenu("File")) {
                 std::snprintf(entitiesText, sizeof(entitiesText), "Entities: %d",
                               static_cast<int>(m_scene.AllEntities().size()));
 
-                const bool renderingPaused =
+                const bool renderPassesPaused =
                     !m_realtimeRendering && !m_isGameMode;
-                const char* realtimeText = renderingPaused
-                    ? "Rendering: PAUSED"
-                    : "Rendering: Realtime";
+                const char* realtimeText = renderPassesPaused
+                    ? "Render passes: PAUSED (scene running)"
+                    : "Render passes: Realtime";
 
                 const float lineHeight = ImGui::GetTextLineHeight();
                 const ImVec2 padding(8.0f, 5.0f);
@@ -6480,7 +6496,7 @@ if (ImGui::BeginMenu("File")) {
                     IM_COL32(0, 0, 0, 180), realtimeText);
                 drawList->AddText(
                     ImVec2(textPos.x, textPos.y + lineHeight * 2.0f),
-                    renderingPaused
+                    renderPassesPaused
                         ? IM_COL32(255, 190, 90, 255)
                         : IM_COL32(140, 220, 150, 255),
                     realtimeText);
@@ -9611,7 +9627,11 @@ void DrawDetails() {
     bool                    m_pendingEffectsEnable = false;
     // When false, the viewport skips all scene, shadow, reflection and
     // post-process GPU work and keeps displaying the last completed image.
+    // OnUpdate is deliberately unaffected: only render passes are paused.
     bool                    m_realtimeRendering = true;
+    // Play hides only the collider debug wireframe. Collider entities and
+    // their attached meshes remain rendered and selectable in the Outliner.
+    bool                    m_showCollisionWireframes = true;
     bgfx::TextureHandle     m_lastViewportTexture = BGFX_INVALID_HANDLE;
 
     std::unique_ptr<Galeshi::AssetManager>    m_assets;

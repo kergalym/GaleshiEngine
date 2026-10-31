@@ -88,7 +88,7 @@ Implemented post-processing passes:
 - Chromatic aberration
 - Invert
 - Scene-wide post-processing volumes with per-effect tuning for bloom, DoF, motion blur, tonemap, color correction, vignette, ambient occlusion (SSAO/HBAO/GTAO), SSR, anti-aliasing, god rays, atmosphere, and fog. The highest-priority enabled volume applies to the entire scene; bounds are editor-only visualization. The Post-Process menu edits the active source (volume or global settings), so menu and volume controls override each other on the last change.
-- Realtime Rendering toggle in the Rendering menu pauses scene, shadow, reflection and post-process GPU work while keeping the editor responsive and displaying the last completed viewport frame.
+- Realtime Rendering toggle in the Rendering menu pauses only scene, shadow, reflection and post-process GPU render passes while keeping the editor responsive and displaying the last completed viewport frame. Physics, animation, scripts, AI, particles and scene time keep updating normally.
 
 ---
 
@@ -177,6 +177,7 @@ end
 - Docking ImGui interface.
 - Viewport with orbit camera, selection, and drag movement.
 - World Outliner and Details panels, with independent collision/physics child nodes. Detaching is available only for children of collision shapes; skeletal-model children stay locked, and detach preserves their world transform.
+- Play hides collision-shape debug wireframes only; collider entities and attached meshes remain rendered. Stop restores the wireframes.
 - Content Browser with model import and a right-click script-template menu that creates Lua files in `assets/scripts`.
 - Create entities, lights, physics primitives, cloth, landscape, and AI agents.
 - `Testing -> Build Scene` rebuilds the PBR test scene: 12 colored spheres (3 albedo samples and a 3x3 metallic/roughness grid) plus the physics demo objects and ground.
