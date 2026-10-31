@@ -2771,6 +2771,18 @@ if (ImGui::BeginMenu("File")) {
 
         std::unordered_set<entt::entity> toDestroy;
         for (auto entity : m_editor.SelectedAll(&m_scene)) {
+            // A skeletal mesh owns its imported child hierarchy. Deleting an
+            // individual child would corrupt the character model; only the
+            // skeletal root itself may be deleted as a whole.
+            if (HasSkeletalParent(entity.Handle())) {
+                spdlog::warn("[Editor] Cannot delete '{}': parent is a "
+                             "skeletal mesh",
+                             entity.HasComponent<Galeshi::NameComponent>()
+                                 ? entity.GetComponent<Galeshi::NameComponent>().name
+                                 : std::to_string(static_cast<uint32_t>(
+                                       entity.Handle())));
+                continue;
+            }
             CollectEntityHierarchy(entity.Handle(), toDestroy);
         }
         if (toDestroy.empty()) {
@@ -7025,6 +7037,93 @@ if (ImGui::BeginMenu("File")) {
         ImGui::PopID();
     }
 
+    bool HasSkeletalParent(entt::entity handle) {
+        auto& reg = m_scene.Registry();
+        if (!reg.valid(handle) ||
+            !reg.all_of<Galeshi::ParentComponent>(handle)) {
+            return false;
+        }
+        const entt::entity parent =
+            reg.get<Galeshi::ParentComponent>(handle).parent;
+        return reg.valid(parent) &&
+               reg.all_of<Galeshi::SkeletalComponent>(parent);
+    }
+
+    bool HasCollisionShapeParent(entt::entity handle) {
+        auto& reg = m_scene.Registry();
+        if (!reg.valid(handle) ||
+            !reg.all_of<Galeshi::ParentComponent>(handle)) {
+            return false;
+        }
+        const entt::entity parent =
+            reg.get<Galeshi::ParentComponent>(handle).parent;
+        return reg.valid(parent) &&
+               reg.all_of<Galeshi::ColliderComponent>(parent) &&
+               !reg.all_of<Galeshi::SkeletalComponent>(parent);
+    }
+
+    void SetLocalTransformFromWorld(entt::entity handle,
+                                    const glm::mat4& world) {
+        auto& reg = m_scene.Registry();
+        if (!reg.all_of<Galeshi::TransformComponent>(handle)) return;
+        auto& tf = reg.get<Galeshi::TransformComponent>(handle);
+        glm::vec3 scale, translation, skew;
+        glm::vec4 perspective;
+        glm::quat rotation;
+        if (glm::decompose(world, scale, rotation, translation, skew,
+                           perspective)) {
+            tf.position = translation;
+            tf.rotation = glm::normalize(rotation);
+            tf.scale = scale;
+        } else {
+            tf.position = glm::vec3(world[3]);
+        }
+    }
+
+    // Detach is a collision-shape feature: a child can leave a collision
+    // shape parent, but never a skeletal parent. The world transform is kept.
+    void DetachChildFromCollisionShape(entt::entity child) {
+        auto& reg = m_scene.Registry();
+        if (!HasCollisionShapeParent(child)) return;
+
+        PushHistory();
+        const glm::mat4 world = EntityWorldMatrix(child);
+        reg.remove<Galeshi::ParentComponent>(child);
+        SetLocalTransformFromWorld(child, world);
+        spdlog::info("[Outliner] Detached child {} from collision shape",
+                     static_cast<uint32_t>(child));
+    }
+
+    void DetachCollisionShapeChildren(entt::entity parent) {
+        auto& reg = m_scene.Registry();
+        if (!reg.valid(parent) ||
+            !reg.all_of<Galeshi::ColliderComponent>(parent) ||
+            reg.all_of<Galeshi::SkeletalComponent>(parent)) {
+            return;
+        }
+
+        std::vector<std::pair<entt::entity, glm::mat4>> children;
+        auto childView = reg.view<Galeshi::ParentComponent>();
+        for (auto child : childView) {
+            if (childView.get<Galeshi::ParentComponent>(child).parent != parent)
+                continue;
+            glm::mat4 world(1.0f);
+            if (reg.all_of<Galeshi::TransformComponent>(child))
+                world = EntityWorldMatrix(child);
+            children.emplace_back(child, world);
+        }
+        if (children.empty()) return;
+
+        PushHistory();
+        for (const auto& [child, world] : children) {
+            if (!reg.valid(child)) continue;
+            reg.remove<Galeshi::ParentComponent>(child);
+            SetLocalTransformFromWorld(child, world);
+        }
+        spdlog::info("[Outliner] Detached {} children from collision shape {}",
+                     children.size(), static_cast<uint32_t>(parent));
+    }
+
         void DrawOutliner() {
         ImGui::Begin("World Outliner");
         auto& reg = m_scene.Registry();
@@ -7078,6 +7177,13 @@ if (ImGui::BeginMenu("File")) {
         auto IsModelRoot = [&](entt::entity root,
                                const std::vector<entt::entity>& children) {
             if (reg.all_of<Galeshi::SkeletalComponent>(root)) return true;
+            // Collision and physics shapes are real hierarchy nodes, not
+            // imported-model wrappers. Keep their attached meshes visible so
+            // each child can be selected and detached independently.
+            if (reg.all_of<Galeshi::ColliderComponent>(root) ||
+                reg.all_of<Galeshi::RigidBodyComponent>(root)) {
+                return false;
+            }
             if (children.empty() || reg.all_of<Galeshi::MeshComponent>(root))
                 return false;
             for (entt::entity child : children) {
@@ -7105,7 +7211,20 @@ if (ImGui::BeginMenu("File")) {
                 if (pc.parent == e) children.push_back(child);
             });
             if (IsModelRoot(e, children)) {
-                children.clear();
+                // Imported model roots collapse their own mesh submeshes, but
+                // must keep non-mesh attachments visible. In particular, a
+                // skeletal character's collision shape must remain a separate
+                // Outliner node that can be selected and detached.
+                children.erase(
+                    std::remove_if(
+                        children.begin(), children.end(),
+                        [&](entt::entity child) {
+                            if (!reg.all_of<Galeshi::MeshComponent>(child))
+                                return false;
+                            return !reg.get<Galeshi::MeshComponent>(child)
+                                        .sourceAssetPath.empty();
+                        }),
+                    children.end());
             }
             bool hasChildren = !children.empty();
 
@@ -7122,7 +7241,29 @@ if (ImGui::BeginMenu("File")) {
             if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
                 m_editor.Select(Galeshi::Entity(e, &m_scene));
 
-            if (ImGui::BeginDragDropSource()) {
+            // Detach belongs to collision shapes. A skeletal mesh parent
+            // keeps its children locked; collision shapes may release their
+            // own children while preserving their world transforms.
+            const bool detachFromCollisionParent =
+                HasCollisionShapeParent(e);
+            const bool detachCollisionChildren =
+                reg.all_of<Galeshi::ColliderComponent>(e) &&
+                !reg.all_of<Galeshi::SkeletalComponent>(e) &&
+                !children.empty();
+            if ((detachFromCollisionParent || detachCollisionChildren) &&
+                ImGui::BeginPopupContextItem("##node_context")) {
+                if (detachFromCollisionParent &&
+                    ImGui::MenuItem("Detach from Collision Shape")) {
+                    DetachChildFromCollisionShape(e);
+                }
+                if (detachCollisionChildren &&
+                    ImGui::MenuItem("Detach Children")) {
+                    DetachCollisionShapeChildren(e);
+                }
+                ImGui::EndPopup();
+            }
+
+            if (!HasSkeletalParent(e) && ImGui::BeginDragDropSource()) {
                 ImGui::SetDragDropPayload("ENTITY", &e, sizeof(entt::entity));
                 ImGui::Text("Move %s", name.c_str());
                 ImGui::EndDragDropSource();
@@ -7153,7 +7294,10 @@ if (ImGui::BeginMenu("File")) {
                 }
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ENTITY")) {
                     entt::entity dragged = *(const entt::entity*)payload->Data;
-                    if (dragged != e) {
+                    if (HasSkeletalParent(dragged)) {
+                        spdlog::warn("[Outliner] Cannot move a child of a "
+                                     "skeletal mesh");
+                    } else if (dragged != e) {
                         // Cycle detection: check if 'e' is a descendant of 'dragged'
                         bool isCycle = false;
                         entt::entity curr = e;
@@ -7221,7 +7365,10 @@ if (ImGui::BeginMenu("File")) {
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ENTITY")) {
                 entt::entity dragged = *(const entt::entity*)payload->Data;
-                if (reg.all_of<Galeshi::ParentComponent>(dragged)) {
+                if (HasSkeletalParent(dragged)) {
+                    spdlog::warn("[Outliner] Cannot detach a child of a "
+                                 "skeletal mesh");
+                } else if (reg.all_of<Galeshi::ParentComponent>(dragged)) {
                     PushHistory();
                     // 1) Remember world matrix BEFORE unparent
                     glm::mat4 worldA_old = GetWorldMatrix(dragged);
@@ -7819,6 +7966,38 @@ void DrawDetails() {
         
             if (ImGui::DragFloat3("Scale", glm::value_ptr(scl), 0.05f)) { for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().scale = scl; }
             if (ImGui::DragFloat3("Rotation", glm::value_ptr(rot), 1.0f)) { glm::quat q = glm::quat(glm::radians(rot)); for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().rotation = q; }
+
+            if (HasCollisionShapeParent(selectedHandle)) {
+                if (ImGui::Button("Detach from Collision Shape")) {
+                    DetachChildFromCollisionShape(selectedHandle);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Detach this child from its collision shape while "
+                        "preserving the current world transform.");
+                }
+            }
+            if (selected[0].HasComponent<Galeshi::ColliderComponent>() &&
+                !selected[0].HasComponent<Galeshi::SkeletalComponent>()) {
+                int directChildren = 0;
+                auto childView = reg.view<Galeshi::ParentComponent>();
+                for (auto child : childView) {
+                    if (childView.get<Galeshi::ParentComponent>(child).parent ==
+                        selectedHandle) {
+                        ++directChildren;
+                    }
+                }
+                if (directChildren > 0) {
+                    if (ImGui::Button("Detach Children")) {
+                        DetachCollisionShapeChildren(selectedHandle);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "Detach all direct children of this collision "
+                            "shape. Skeletal parents keep their children locked.");
+                    }
+                }
+            }
         }
 
         // --- Post-process volume inspector --------------------------------
