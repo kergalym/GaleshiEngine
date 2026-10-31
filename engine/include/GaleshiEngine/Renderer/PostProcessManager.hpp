@@ -77,7 +77,12 @@ public:
     bool BloomEnabled() const { return m_bloomEnabled; }
     bgfx::TextureHandle RenderBloom(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float threshold, float intensity, float radius);
 
-    bgfx::TextureHandle RenderColorCorrection(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height, float exposure, float contrast, float saturation);
+    bgfx::TextureHandle RenderColorCorrection(
+        bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo,
+        bgfx::ViewId viewId, uint16_t width, uint16_t height,
+        float exposure, float contrast, float saturation,
+        float paletteAmount, const glm::vec3& paletteShadow,
+        const glm::vec3& paletteMid, const glm::vec3& paletteHighlight);
     bgfx::TextureHandle RenderVignette(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height, float intensity, float smoothness);
     bgfx::TextureHandle RenderChromatic(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height, float intensity);
     bgfx::TextureHandle RenderTonemap(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float exposure, float contrast, float saturation);
@@ -299,6 +304,9 @@ private:
     bgfx::FrameBufferHandle m_bloomFboB = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_colorParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_colorCorrectionParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_envPaletteShadow = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_envPaletteMid = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_envPaletteHighlight = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_vignetteParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_chromaParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_taaPrevVP = BGFX_INVALID_HANDLE;

@@ -161,6 +161,33 @@ struct EditorPreferences {
     float cameraFovDegrees = 60.0f;
 };
 
+struct EnvironmentPalettePreset {
+    const char* name;
+    glm::vec3 shadow;
+    glm::vec3 mid;
+    glm::vec3 highlight;
+    float amount;
+};
+
+static const EnvironmentPalettePreset kEnvironmentPalettePresets[] = {
+    {"Neutral",       {0.07f, 0.09f, 0.14f}, {0.48f, 0.45f, 0.40f},
+                      {1.00f, 0.94f, 0.82f}, 1.0f},
+    {"Warm Sunset",   {0.12f, 0.05f, 0.10f}, {0.55f, 0.33f, 0.22f},
+                      {1.00f, 0.72f, 0.42f}, 0.85f},
+    {"Cold Moonlight",{0.02f, 0.05f, 0.12f}, {0.25f, 0.38f, 0.55f},
+                      {0.75f, 0.88f, 1.00f}, 0.80f},
+    {"Teal & Orange", {0.02f, 0.12f, 0.14f}, {0.55f, 0.42f, 0.28f},
+                      {1.00f, 0.72f, 0.35f}, 0.80f},
+    {"Sepia",         {0.08f, 0.05f, 0.02f}, {0.55f, 0.40f, 0.22f},
+                      {1.00f, 0.92f, 0.72f}, 0.90f},
+    {"Noir",          {0.00f, 0.00f, 0.00f}, {0.45f, 0.45f, 0.45f},
+                      {1.00f, 1.00f, 1.00f}, 1.00f},
+    {"Verdant",       {0.02f, 0.08f, 0.04f}, {0.25f, 0.50f, 0.25f},
+                      {0.80f, 1.00f, 0.65f}, 0.85f},
+    {"Cyberpunk",     {0.03f, 0.01f, 0.10f}, {0.45f, 0.08f, 0.45f},
+                      {0.10f, 0.90f, 0.95f}, 0.85f},
+};
+
 class GaleshiEditorApp final : public Galeshi::Application {
     Galeshi::AudioSystem m_audio;
     Galeshi::ScriptEngine m_scripts;
@@ -201,6 +228,7 @@ class GaleshiEditorApp final : public Galeshi::Application {
     PreferencesSection m_preferencesSection = PreferencesSection::General;
     bool m_showPreferences = false;
     bool m_showAudioMixer = false;
+    bool m_showEnvironmentPalette = false;
     int m_selectedAxis = 0;
     std::vector<std::string> m_recentProjects;
     bool m_pickingScene = false;
@@ -1100,6 +1128,7 @@ protected:
         DrawScriptComponents();
         DrawUIDesigner();
         DrawAudioMixer();
+        DrawEnvironmentPaletteWindow();
         DrawPreferencesWindow();
 
         // Play mode draws the authored canvases inside the viewport image.
@@ -2147,6 +2176,9 @@ private:
             }
             bool ssr = m_postProcess.SsrEnabled();
             if (ImGui::MenuItem("SSR", nullptr, &ssr)) m_postProcess.SetSsrEnabled(ssr);
+            ImGui::Separator();
+            ImGui::MenuItem("Environment Palette...", nullptr,
+                            &m_showEnvironmentPalette);
             ImGui::Separator();
             if (ImGui::MenuItem("Reset All Effects")) {
                 m_postProcess.SetInvertEnabled(false);
@@ -4188,7 +4220,10 @@ if (ImGui::BeginMenu("File")) {
             m_postProcess.SetFogEnabled(pp.fogEnabled);
             m_postProcess.SetFogVolumetric(pp.fogVolumetric);
             m_postProcess.SetInvertEnabled(pp.invertEnabled);
-            spdlog::info("[Scene] Restored global post-process settings");
+            spdlog::info("[Scene] Restored global post-process settings "
+                         "(environment palette={}, amount={})",
+                         pp.environmentPaletteEnabled,
+                         pp.environmentPaletteAmount);
         }
 
         // The view and effect set may have changed completely; never reuse a
@@ -4397,6 +4432,82 @@ if (ImGui::BeginMenu("File")) {
         return s.dofAutoFocus ? AutoFocusDistance() : s.dofFocusDistance;
     }
 
+    void ApplyEnvironmentPalettePreset(
+        Galeshi::PostProcessSettings& settings,
+        const EnvironmentPalettePreset& preset) {
+        settings.environmentPaletteEnabled = true;
+        settings.environmentPaletteAmount = preset.amount;
+        settings.environmentPaletteShadow = preset.shadow;
+        settings.environmentPaletteMid = preset.mid;
+        settings.environmentPaletteHighlight = preset.highlight;
+    }
+
+    bool DrawEnvironmentPaletteControls(Galeshi::PostProcessSettings& settings) {
+        bool changed = false;
+        changed |= ImGui::Checkbox("Enabled##environment_palette",
+                                   &settings.environmentPaletteEnabled);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Apply a shadow/midtone/highlight palette to the final\n"
+                "environment render while preserving luminance.");
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(140.0f);
+        changed |= ImGui::SliderFloat("Amount##environment_palette",
+                                      &settings.environmentPaletteAmount,
+                                      0.0f, 1.0f, "%.2f");
+
+        changed |= ImGui::ColorEdit3(
+            "Shadows##environment_palette",
+            glm::value_ptr(settings.environmentPaletteShadow));
+        changed |= ImGui::ColorEdit3(
+            "Midtones##environment_palette",
+            glm::value_ptr(settings.environmentPaletteMid));
+        changed |= ImGui::ColorEdit3(
+            "Highlights##environment_palette",
+            glm::value_ptr(settings.environmentPaletteHighlight));
+
+        ImGui::TextDisabled("Presets");
+        int index = 0;
+        for (const EnvironmentPalettePreset& preset :
+             kEnvironmentPalettePresets) {
+            if ((index % 4) != 0) ImGui::SameLine();
+            if (ImGui::Button(preset.name)) {
+                ApplyEnvironmentPalettePreset(settings, preset);
+                changed = true;
+            }
+            ++index;
+        }
+        return changed;
+    }
+
+    void DrawEnvironmentPaletteWindow() {
+        if (!m_showEnvironmentPalette) return;
+        if (!ImGui::Begin("Environment Palette", &m_showEnvironmentPalette)) {
+            ImGui::End();
+            return;
+        }
+
+        ImGui::TextDisabled(
+            "A colour palette applied to the final environment render. "
+            "The filter runs in the color-correction pass after tonemapping, "
+            "so it does not affect the editor UI.");
+        ImGui::Separator();
+
+        Galeshi::PostProcessSettings& settings =
+            m_scene.GlobalPostProcess();
+        ImGui::PushID(&settings);
+        const bool changed = DrawEnvironmentPaletteControls(settings);
+        ImGui::PopID();
+        if (changed) m_scene.SetHasGlobalPostProcess(true);
+
+        ImGui::Separator();
+        ImGui::TextDisabled(
+            "A Post-Process Volume overrides these values while the camera "
+            "is inside it.");
+        ImGui::End();
+    }
+
     void DrawPostProcessVolumeSettings(Galeshi::PostProcessVolumeComponent& volume) {
         auto& s = volume.settings;
 
@@ -4472,6 +4583,13 @@ if (ImGui::BeginMenu("File")) {
                              0.01f, 0.0f, 5.0f);
             ImGui::DragFloat("Saturation##cc", &s.colorSaturation,
                              0.01f, 0.0f, 5.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Environment Palette")) {
+            ImGui::PushID(&s);
+            DrawEnvironmentPaletteControls(s);
+            ImGui::PopID();
             ImGui::TreePop();
         }
 
@@ -5636,8 +5754,16 @@ if (ImGui::BeginMenu("File")) {
                 m_postProcess.RenderTonemap(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 40, renderW, renderH, pp.exposure, pp.contrast, pp.saturation);
                 m_postProcess.SwapFbos();
 
-                // 10. Color Correction (View 41)
-                m_postProcess.RenderColorCorrection(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 41, renderW, renderH, pp.colorExposure, pp.colorContrast, pp.colorSaturation);
+                // 10. Color Correction + environment palette (View 41)
+                m_postProcess.RenderColorCorrection(
+                    m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
+                    41, renderW, renderH, pp.colorExposure, pp.colorContrast,
+                    pp.colorSaturation,
+                    pp.environmentPaletteEnabled
+                        ? pp.environmentPaletteAmount
+                        : 0.0f,
+                    pp.environmentPaletteShadow, pp.environmentPaletteMid,
+                    pp.environmentPaletteHighlight);
                 m_postProcess.SwapFbos();
 
                 // 11. Vignette (View 42)

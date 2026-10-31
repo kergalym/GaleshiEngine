@@ -43,6 +43,16 @@ struct PostProcessSettings {
     float colorContrast   = 1.0f;
     float colorSaturation = 1.0f;
 
+    // Environment colour palette.  The final environment render is remapped
+    // through a three-point colour ramp (shadows, midtones, highlights) while
+    // preserving the original luminance.  This is applied after tonemapping
+    // and before UI, so it acts as an environment-wide colour filter.
+    bool      environmentPaletteEnabled = false;
+    float     environmentPaletteAmount  = 1.0f;
+    glm::vec3 environmentPaletteShadow{0.07f, 0.09f, 0.14f};
+    glm::vec3 environmentPaletteMid{0.48f, 0.45f, 0.40f};
+    glm::vec3 environmentPaletteHighlight{1.0f, 0.94f, 0.82f};
+
     // Vignette
     float vignetteIntensity  = 0.35f;
     float vignetteSmoothness = 0.9f;

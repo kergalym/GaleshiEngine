@@ -263,6 +263,9 @@ void PostProcessManager::Init() {
 
         u_colorParams           = bgfx::createUniform("u_colorParams", bgfx::UniformType::Vec4);
         u_colorCorrectionParams = bgfx::createUniform("u_colorCorrectionParams", bgfx::UniformType::Vec4);
+        u_envPaletteShadow      = bgfx::createUniform("u_envPaletteShadow", bgfx::UniformType::Vec4);
+        u_envPaletteMid         = bgfx::createUniform("u_envPaletteMid", bgfx::UniformType::Vec4);
+        u_envPaletteHighlight   = bgfx::createUniform("u_envPaletteHighlight", bgfx::UniformType::Vec4);
         u_vignetteParams        = bgfx::createUniform("u_vignetteParams", bgfx::UniformType::Vec4);
         u_chromaParams          = bgfx::createUniform("u_chromaParams", bgfx::UniformType::Vec4);
 
@@ -538,6 +541,8 @@ void PostProcessManager::Shutdown() {
     destroyProg(m_bloomBlurProg); destroyProg(m_bloomCombineProg);
     destroyProg(m_colorCorrectionProg); destroyProg(m_vignetteProg); destroyProg(m_chromaticProg);
     destroyUni(u_colorParams); destroyUni(u_colorCorrectionParams);
+    destroyUni(u_envPaletteShadow); destroyUni(u_envPaletteMid);
+    destroyUni(u_envPaletteHighlight);
     destroyUni(u_vignetteParams); destroyUni(u_chromaParams);
     destroyUni(u_bloomThreshold); destroyUni(u_bloomTexelSize); destroyUni(u_bloomDir);
     destroyUni(u_bloomIntensity); destroyUni(s_bloomTex);
@@ -1103,13 +1108,34 @@ bgfx::TextureHandle PostProcessManager::RenderBloom(bgfx::TextureHandle color, b
 }
 
 
-bgfx::TextureHandle PostProcessManager::RenderColorCorrection(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height, float exposure, float contrast, float saturation) {
-    if (!bgfx::isValid(m_colorCorrectionProg) || !bgfx::isValid(u_colorCorrectionParams)) return color;
+bgfx::TextureHandle PostProcessManager::RenderColorCorrection(
+    bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo,
+    bgfx::ViewId viewId, uint16_t width, uint16_t height,
+    float exposure, float contrast, float saturation,
+    float paletteAmount, const glm::vec3& paletteShadow,
+    const glm::vec3& paletteMid, const glm::vec3& paletteHighlight) {
+    if (!bgfx::isValid(m_colorCorrectionProg) ||
+        !bgfx::isValid(u_colorCorrectionParams)) {
+        return color;
+    }
     bgfx::setViewFrameBuffer(viewId, targetFbo);
     bgfx::setViewRect(viewId, 0, 0, width, height);
     bgfx::setTexture(0, s_texColor, color);
-    float params[4] = { exposure, contrast, saturation, 0.0f };
+    float params[4] = { exposure, contrast, saturation,
+                        std::clamp(paletteAmount, 0.0f, 1.0f) };
     bgfx::setUniform(u_colorCorrectionParams, params);
+    if (bgfx::isValid(u_envPaletteShadow) &&
+        bgfx::isValid(u_envPaletteMid) &&
+        bgfx::isValid(u_envPaletteHighlight)) {
+        float shadow[4] = { paletteShadow.r, paletteShadow.g,
+                            paletteShadow.b, 1.0f };
+        float mid[4] = { paletteMid.r, paletteMid.g, paletteMid.b, 1.0f };
+        float highlight[4] = { paletteHighlight.r, paletteHighlight.g,
+                               paletteHighlight.b, 1.0f };
+        bgfx::setUniform(u_envPaletteShadow, shadow);
+        bgfx::setUniform(u_envPaletteMid, mid);
+        bgfx::setUniform(u_envPaletteHighlight, highlight);
+    }
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);

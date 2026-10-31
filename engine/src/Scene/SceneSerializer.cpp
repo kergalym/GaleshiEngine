@@ -81,6 +81,11 @@ json PostProcessSettingsToJson(const PostProcessSettings& s) {
         {"colorExposure", s.colorExposure},
         {"colorContrast", s.colorContrast},
         {"colorSaturation", s.colorSaturation},
+        {"environmentPaletteEnabled", s.environmentPaletteEnabled},
+        {"environmentPaletteAmount", s.environmentPaletteAmount},
+        {"environmentPaletteShadow", Vec3ToJson(s.environmentPaletteShadow)},
+        {"environmentPaletteMid", Vec3ToJson(s.environmentPaletteMid)},
+        {"environmentPaletteHighlight", Vec3ToJson(s.environmentPaletteHighlight)},
         {"vignetteIntensity", s.vignetteIntensity},
         {"vignetteSmoothness", s.vignetteSmoothness},
         {"chromaticAberration", s.chromaticAberration},
@@ -147,6 +152,23 @@ void PostProcessSettingsFromJson(const json& js, PostProcessSettings& s) {
     s.colorExposure = js.value("colorExposure", s.colorExposure);
     s.colorContrast = js.value("colorContrast", s.colorContrast);
     s.colorSaturation = js.value("colorSaturation", s.colorSaturation);
+    s.environmentPaletteEnabled = js.value("environmentPaletteEnabled",
+                                           s.environmentPaletteEnabled);
+    s.environmentPaletteAmount = js.value("environmentPaletteAmount",
+                                          s.environmentPaletteAmount);
+    s.environmentPaletteAmount =
+        std::clamp(s.environmentPaletteAmount, 0.0f, 1.0f);
+    if (js.contains("environmentPaletteShadow")) {
+        s.environmentPaletteShadow =
+            Vec3FromJson(js.at("environmentPaletteShadow"));
+    }
+    if (js.contains("environmentPaletteMid")) {
+        s.environmentPaletteMid = Vec3FromJson(js.at("environmentPaletteMid"));
+    }
+    if (js.contains("environmentPaletteHighlight")) {
+        s.environmentPaletteHighlight =
+            Vec3FromJson(js.at("environmentPaletteHighlight"));
+    }
     s.vignetteIntensity = js.value("vignetteIntensity", s.vignetteIntensity);
     s.vignetteSmoothness = js.value("vignetteSmoothness", s.vignetteSmoothness);
     s.chromaticAberration = js.value("chromaticAberration",

@@ -79,6 +79,7 @@ Implemented post-processing passes:
 - God Rays
 - ACES tonemapping
 - Color correction
+- Environment color palette filter with luminance-preserving shadow/midtone/highlight grading and presets
 - Vignette
 - Chromatic aberration
 - Invert
