@@ -21,6 +21,17 @@ struct AmbientOcclusionParams {
     float resolutionScale = 0.25f; // AO source resolution relative to viewport
 };
 
+// Screen-space diffuse global illumination. The trace runs at half resolution
+// and the result is composited into the lit HDR buffer.
+struct SSGIParams {
+    bool  enabled   = false;
+    float intensity = 1.0f;
+    float radius    = 5.0f;
+    float thickness = 0.08f;
+    int   rays      = 6;
+    int   steps     = 12;
+};
+
 class PostProcessManager {
 public:
     PostProcessManager();
@@ -72,7 +83,27 @@ public:
                                 bgfx::ViewId viewId, uint16_t width, uint16_t height,
                                 const AmbientOcclusionParams& params);
     bgfx::TextureHandle AOTexture() const { return m_aoValid ? m_aoFullTexA : m_whiteTex2D; }
-    bgfx::TextureHandle RenderSSR(bgfx::TextureHandle color, bgfx::TextureHandle normal, bgfx::TextureHandle depth, bgfx::FrameBufferHandle targetFbo, const glm::mat4& proj, const glm::mat4& invProj, const float camPos[4], bgfx::ViewId viewId, uint16_t width, uint16_t height, float intensity);
+    bgfx::TextureHandle RenderSSGI(bgfx::TextureHandle color,
+                                   bgfx::TextureHandle normal,
+                                   bgfx::TextureHandle worldPos,
+                                   bgfx::TextureHandle depth,
+                                   const glm::mat4& view,
+                                   const glm::mat4& proj,
+                                   bgfx::ViewId viewId,
+                                   uint16_t width, uint16_t height,
+                                   const SSGIParams& params);
+    bgfx::TextureHandle RenderScreenSpaceLighting(
+        bgfx::TextureHandle color, bgfx::TextureHandle normal,
+        bgfx::TextureHandle depth, bgfx::TextureHandle worldPos,
+        bgfx::TextureHandle albedoMr, bgfx::TextureHandle materialData,
+        bgfx::TextureHandle aoTex, bgfx::TextureHandle ssgiTex,
+        bgfx::FrameBufferHandle targetFbo,
+        const glm::mat4& view, const glm::mat4& proj,
+        const glm::mat4& invProj, const float camPos[4], bgfx::ViewId viewId,
+        uint16_t width, uint16_t height,
+        bool ssrEnabled, float ssrIntensity,
+        bool ssgiEnabled, float ssgiIntensity,
+        uint16_t ssgiWidth, uint16_t ssgiHeight);
     void SetBloomEnabled(bool v) { m_bloomEnabled = v; }
     bool BloomEnabled() const { return m_bloomEnabled; }
     bgfx::TextureHandle RenderBloom(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float threshold, float intensity, float radius);
@@ -96,6 +127,8 @@ public:
     bool SsaoEnabled() const { return m_ssaoEnabled; }
     void SetSsaoEnabled(bool v) { m_ssaoEnabled = v; }
     bool SsrEnabled() const { return m_ssrEnabled; }
+    bool SsgiEnabled() const { return m_ssgiEnabled; }
+    void SetSsgiEnabled(bool v) { m_ssgiEnabled = v; }
     void SetTaaEnabled(bool v) { m_taaEnabled = v; }
     bool TaaEnabled() const { return m_taaEnabled; }
     void ResetTaaHistory() { m_historyValid = false; }
@@ -190,6 +223,7 @@ private:
     bgfx::ProgramHandle m_aoDetailProg   = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_aoBlurProg     = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_ssrProg     = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_ssgiProg    = BGFX_INVALID_HANDLE;
 
     bgfx::UniformHandle s_texColor    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_texDepth    = BGFX_INVALID_HANDLE;
@@ -251,6 +285,12 @@ private:
     bgfx::UniformHandle u_ssrProj     = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_ssrParams   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_ssrNormal   = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_ssgiViewProj = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_ssgiView    = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_ssgiParams  = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_ssgiSource  = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_ssgiCompositeParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_ssgi        = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_smaaEdges   = BGFX_INVALID_HANDLE;
 
     bgfx::VertexBufferHandle m_vbh    = BGFX_INVALID_HANDLE;
@@ -265,6 +305,11 @@ private:
     bgfx::TextureHandle     m_blitDepth   = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_pingFbo     = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_blitFboA    = BGFX_INVALID_HANDLE;
+
+    // --- Screen-space GI (half-resolution radiance trace) ---
+    bgfx::TextureHandle     m_ssgiTraceTex = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_ssgiTraceFbo = BGFX_INVALID_HANDLE;
+    uint16_t m_ssgiWidth = 0, m_ssgiHeight = 0;
 
     // --- Ambient occlusion chain (reduced res -> full res) ---
     bgfx::TextureHandle     m_aoHalfTex   = BGFX_INVALID_HANDLE;
@@ -283,6 +328,7 @@ private:
     bool m_fxaaEnabled   = false;
     bool m_ssaoEnabled   = false;
     bool m_ssrEnabled    = false;
+    bool m_ssgiEnabled   = false;
     bool m_bloomEnabled = true;
     bool m_taaEnabled    = false;
     bgfx::ProgramHandle m_taaProg;

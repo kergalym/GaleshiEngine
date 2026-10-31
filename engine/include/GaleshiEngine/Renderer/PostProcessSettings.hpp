@@ -88,6 +88,17 @@ struct PostProcessSettings {
     bool  ssrEnabled  = false;
     float ssrIntensity = 1.0f;
 
+    // Screen-space global illumination. The indirect diffuse bounce is traced
+    // at half resolution from the lit HDR buffer and composited with a
+    // depth-aware bilateral filter. Disabled by default because it is the most
+    // expensive screen-space effect.
+    bool  ssgiEnabled   = false;
+    float ssgiIntensity = 1.0f;
+    float ssgiRadius    = 5.0f;   // maximum ray length in world units
+    float ssgiThickness = 0.08f;  // view-space depth bias for a hit
+    int   ssgiRays      = 6;      // diffuse hemisphere rays, 1..8
+    int   ssgiSteps     = 12;     // screen-space march steps per ray, 2..24
+
     // Anti-aliasing
     bool  fxaaEnabled = false;
     bool  smaaEnabled = false;

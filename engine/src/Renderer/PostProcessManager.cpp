@@ -200,7 +200,7 @@ void PostProcessManager::Init() {
             bgfx::isValid(m_aoDetailProg), bgfx::isValid(m_aoBlurProg));
     }
 
-    // SSR
+    // Screen-space lighting: SSGI trace + combined SSGI/SSR composite.
     {
         auto vs = LoadBinShader("shaders/vs_fullscreen.bin");
         auto fs = LoadBinShader("shaders/fs_ssr.bin");
@@ -212,6 +212,25 @@ void PostProcessManager::Init() {
             s_ssrNormal  = bgfx::createUniform("s_ssrNormal",     bgfx::UniformType::Sampler);
             s_smaaEdges  = bgfx::createUniform("s_edges",         bgfx::UniformType::Sampler);
         }
+        auto ssgiVs = LoadBinShader("shaders/vs_fullscreen.bin");
+        auto ssgiFs = LoadBinShader("shaders/fs_ssgi.bin");
+        if (bgfx::isValid(ssgiVs) && bgfx::isValid(ssgiFs)) {
+            m_ssgiProg = bgfx::createProgram(ssgiVs, ssgiFs, true);
+        } else {
+            if (bgfx::isValid(ssgiVs)) bgfx::destroy(ssgiVs);
+            if (bgfx::isValid(ssgiFs)) bgfx::destroy(ssgiFs);
+            spdlog::error("[PP] Failed to load SSGI shaders");
+        }
+        // These are shared with the SSGI/SSR composite, so create them even
+        // when the optional trace program is unavailable.
+        u_ssgiViewProj = bgfx::createUniform("u_ssgiViewProj", bgfx::UniformType::Mat4);
+        u_ssgiView = bgfx::createUniform("u_ssgiView", bgfx::UniformType::Mat4);
+        u_ssgiParams = bgfx::createUniform("u_ssgiParams", bgfx::UniformType::Vec4);
+        u_ssgiSource = bgfx::createUniform("u_ssgiSource", bgfx::UniformType::Vec4);
+        u_ssgiCompositeParams =
+            bgfx::createUniform("u_ssgiCompositeParams",
+                                bgfx::UniformType::Vec4);
+        s_ssgi = bgfx::createUniform("s_ssgi", bgfx::UniformType::Sampler);
     }
 
     { auto vs = LoadBinShader("shaders/vs_fullscreen.bin");
@@ -383,8 +402,9 @@ void PostProcessManager::Init() {
             bgfx::isValid(m_atmosphereProg), bgfx::isValid(m_godraysProg));
     }
 
-    spdlog::info("[PP] programs: ssr={} smaa={}/{} bloom={}/{}/{} tonemap={} color={} vig={} chroma={} fxaa={} taa={} sky={} ibl={}/{}/{} brdf={}",
-        bgfx::isValid(m_ssrProg), bgfx::isValid(m_smaaEdgeProg), bgfx::isValid(m_smaaBlendProg),
+    spdlog::info("[PP] programs: ssr={} ssgi={} smaa={}/{} bloom={}/{}/{} tonemap={} color={} vig={} chroma={} fxaa={} taa={} sky={} ibl={}/{}/{} brdf={}",
+        bgfx::isValid(m_ssrProg), bgfx::isValid(m_ssgiProg),
+        bgfx::isValid(m_smaaEdgeProg), bgfx::isValid(m_smaaBlendProg),
         bgfx::isValid(m_bloomExtractProg), bgfx::isValid(m_bloomBlurProg), bgfx::isValid(m_bloomCombineProg),
         bgfx::isValid(m_tonemapProg), bgfx::isValid(m_colorCorrectionProg), bgfx::isValid(m_vignetteProg),
         bgfx::isValid(m_chromaticProg), bgfx::isValid(m_fxaaProg), bgfx::isValid(m_taaProg),
@@ -510,7 +530,7 @@ void PostProcessManager::Shutdown() {
     destroyProg(m_aoSampleProg); destroyProg(m_hbaoProg); destroyProg(m_gtaoProg);
     destroyProg(m_aoUpsampleProg);
     destroyProg(m_aoDetailProg); destroyProg(m_aoBlurProg);
-    destroyProg(m_ssrProg); destroyProg(m_taaProg);
+    destroyProg(m_ssrProg); destroyProg(m_ssgiProg); destroyProg(m_taaProg);
     destroyProg(m_dofCocProg); destroyProg(m_dofBlurProg); destroyProg(m_dofCompositeProg);
     destroyProg(m_motionBlurProg);
     destroyProg(m_mbVelocityProg);
@@ -597,6 +617,8 @@ void PostProcessManager::Shutdown() {
     destroyTex(m_aoHalfTex); destroyTex(m_aoFullTexA); destroyTex(m_aoFullTexB);
     destroyFbo(m_aoHalfFbo); destroyFbo(m_aoFullFboA); destroyFbo(m_aoFullFboB);
     destroyUni(u_ssrInvProj); destroyUni(u_ssrProj); destroyUni(u_ssrParams); destroyUni(s_ssrNormal);
+    destroyUni(u_ssgiViewProj); destroyUni(u_ssgiView); destroyUni(u_ssgiParams);
+    destroyUni(u_ssgiSource); destroyUni(u_ssgiCompositeParams); destroyUni(s_ssgi);
     destroyUni(s_smaaEdges);
     if (bgfx::isValid(m_blitFboA)) { bgfx::destroy(m_blitFboA); m_blitFboA = BGFX_INVALID_HANDLE; }
     destroyTex(m_blitTexA); destroyTex(m_blitTexB);
@@ -609,7 +631,9 @@ void PostProcessManager::Shutdown() {
     destroyTex(m_outputColor); destroyTex(m_outputDepth); destroyFbo(m_outputFbo);
     destroyTex(m_pingColor); destroyFbo(m_pingFbo);
     destroyTex(m_blitDepth);
+    destroyTex(m_ssgiTraceTex); destroyFbo(m_ssgiTraceFbo);
     m_width = m_height = 0;
+    m_ssgiWidth = m_ssgiHeight = 0;
 }
 
 void PostProcessManager::EnsureAOFbo(uint16_t w, uint16_t h, float resolutionScale) {
@@ -670,6 +694,8 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
     if (bgfx::isValid(m_smaaColorTex)) bgfx::destroy(m_smaaColorTex);
     if (bgfx::isValid(m_blitTexB))    bgfx::destroy(m_blitTexB);
     if (bgfx::isValid(m_blitDepth))   bgfx::destroy(m_blitDepth);
+    if (bgfx::isValid(m_ssgiTraceFbo)) bgfx::destroy(m_ssgiTraceFbo);
+    if (bgfx::isValid(m_ssgiTraceTex)) bgfx::destroy(m_ssgiTraceTex);
 
     const uint64_t flags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
     // The whole post-processing chain works in linear HDR; tonemapping and
@@ -691,6 +717,14 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
     m_pingColor = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags | BGFX_TEXTURE_BLIT_DST);
     bgfx::TextureHandle pingAtt[] = { m_pingColor };
     m_pingFbo = bgfx::createFrameBuffer(1, pingAtt, false);
+
+    // --- SSGI trace target (half resolution) ---
+    m_ssgiWidth  = std::max<uint16_t>(1, static_cast<uint16_t>(w / 2));
+    m_ssgiHeight = std::max<uint16_t>(1, static_cast<uint16_t>(h / 2));
+    m_ssgiTraceTex = bgfx::createTexture2D(
+        m_ssgiWidth, m_ssgiHeight, false, 1, bgfx::TextureFormat::RGBA16F,
+        flags | BGFX_TEXTURE_BLIT_DST);
+    m_ssgiTraceFbo = bgfx::createFrameBuffer(1, &m_ssgiTraceTex, false);
 
     // --- Motion blur velocity (full resolution) ---
     m_mbVelocityTex = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F,
@@ -1031,17 +1065,105 @@ void PostProcessManager::RenderAmbientOcclusion(bgfx::TextureHandle worldPos,
     m_aoValid = true;
 }
 
-bgfx::TextureHandle PostProcessManager::RenderSSR(bgfx::TextureHandle color, bgfx::TextureHandle normal, bgfx::TextureHandle depth, bgfx::FrameBufferHandle targetFbo, const glm::mat4& proj, const glm::mat4& invProj, const float camPos[4], bgfx::ViewId viewId, uint16_t width, uint16_t height, float intensity) {
-    if (!bgfx::isValid(m_ssrProg) || !bgfx::isValid(u_ssrInvProj)) return BGFX_INVALID_HANDLE;
+bgfx::TextureHandle PostProcessManager::RenderSSGI(
+    bgfx::TextureHandle color, bgfx::TextureHandle normal,
+    bgfx::TextureHandle worldPos, bgfx::TextureHandle depth,
+    const glm::mat4& view, const glm::mat4& proj,
+    bgfx::ViewId viewId, uint16_t width, uint16_t height,
+    const SSGIParams& params) {
+    if (!params.enabled || !bgfx::isValid(m_ssgiProg) ||
+        !bgfx::isValid(m_ssgiTraceFbo) || !bgfx::isValid(u_ssgiViewProj) ||
+        !bgfx::isValid(s_texColor) || !bgfx::isValid(s_worldPos) ||
+        !bgfx::isValid(s_normalRough) || !bgfx::isValid(s_texDepth) ||
+        width == 0 || height == 0) {
+        return BGFX_INVALID_HANDLE;
+    }
+
+    bgfx::setViewFrameBuffer(viewId, m_ssgiTraceFbo);
+    bgfx::setViewRect(viewId, 0, 0, m_ssgiWidth, m_ssgiHeight);
+    bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR, 0x000000ff);
+    bgfx::setTexture(0, s_texColor, color);
+    bgfx::setTexture(1, s_worldPos, worldPos);
+    bgfx::setTexture(2, s_normalRough, normal);
+    bgfx::setTexture(3, s_texDepth, depth);
+
+    const glm::mat4 viewProj = proj * view;
+    bgfx::setUniform(u_ssgiViewProj, glm::value_ptr(viewProj));
+    bgfx::setUniform(u_ssgiView, glm::value_ptr(view));
+    const float ssgiParams[4] = {
+        std::max(params.radius, 0.05f),
+        std::max(params.thickness, 0.001f),
+        static_cast<float>(std::clamp(params.steps, 2, 24)),
+        static_cast<float>(std::clamp(params.rays, 1, 8))
+    };
+    bgfx::setUniform(u_ssgiParams, ssgiParams);
+    bgfx::setVertexBuffer(0, m_vbh);
+    bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+    bgfx::submit(viewId, m_ssgiProg);
+    return m_ssgiTraceTex;
+}
+
+bgfx::TextureHandle PostProcessManager::RenderScreenSpaceLighting(
+    bgfx::TextureHandle color, bgfx::TextureHandle normal,
+    bgfx::TextureHandle depth, bgfx::TextureHandle worldPos,
+    bgfx::TextureHandle albedoMr, bgfx::TextureHandle materialData,
+    bgfx::TextureHandle aoTex, bgfx::TextureHandle ssgiTex,
+    bgfx::FrameBufferHandle targetFbo,
+    const glm::mat4& view, const glm::mat4& proj,
+    const glm::mat4& invProj, const float camPos[4], bgfx::ViewId viewId,
+    uint16_t width, uint16_t height,
+    bool ssrEnabled, float ssrIntensity,
+    bool ssgiEnabled, float ssgiIntensity,
+    uint16_t ssgiWidth, uint16_t ssgiHeight) {
+    if (!bgfx::isValid(m_ssrProg) || !bgfx::isValid(u_ssrInvProj) ||
+        !bgfx::isValid(s_ssgi) || !bgfx::isValid(s_worldPos) ||
+        !bgfx::isValid(s_albedoMr) || !bgfx::isValid(s_materialTex) ||
+        !bgfx::isValid(s_aoTex) || !bgfx::isValid(targetFbo) ||
+        width == 0 || height == 0) {
+        return BGFX_INVALID_HANDLE;
+    }
+
     bgfx::setViewFrameBuffer(viewId, targetFbo);
     bgfx::setViewRect(viewId, 0, 0, width, height);
-    bgfx::setTexture(0, s_texColor,  color);
+    bgfx::setTexture(0, s_texColor, color);
     bgfx::setTexture(1, s_ssrNormal, normal);
-    bgfx::setTexture(2, s_texDepth,  depth);
+    bgfx::setTexture(2, s_texDepth, depth);
+    bgfx::setTexture(3, s_ssgi,
+                     bgfx::isValid(ssgiTex) ? ssgiTex : m_blackTex2D);
+    bgfx::setTexture(4, s_worldPos, worldPos);
+    bgfx::setTexture(5, s_albedoMr, albedoMr);
+    bgfx::setTexture(6, s_aoTex,
+                     bgfx::isValid(aoTex) ? aoTex : m_whiteTex2D);
+    bgfx::setTexture(7, s_materialTex, materialData);
+
     bgfx::setUniform(u_ssrInvProj, glm::value_ptr(invProj));
     bgfx::setUniform(u_ssrProj, glm::value_ptr(proj));
-    float ssrParams[4] = { std::max(intensity, 0.0f), 0.0f, 0.0f, 0.0f };
+    bgfx::setUniform(u_ssgiView, glm::value_ptr(view));
+    bgfx::setUniform(u_camPos, camPos);
+    const float texel[4] = {
+        1.0f / static_cast<float>(width),
+        1.0f / static_cast<float>(height),
+        static_cast<float>(width), static_cast<float>(height)
+    };
+    bgfx::setUniform(u_texelSize, texel);
+    const float ssrParams[4] = {
+        std::max(ssrIntensity, 0.0f), ssrEnabled ? 1.0f : 0.0f, 0.0f, 0.0f
+    };
     bgfx::setUniform(u_ssrParams, ssrParams);
+
+    const uint16_t sw = std::max<uint16_t>(1, ssgiWidth);
+    const uint16_t sh = std::max<uint16_t>(1, ssgiHeight);
+    const float ssgiSource[4] = {
+        static_cast<float>(sw), static_cast<float>(sh),
+        1.0f / static_cast<float>(sw), 1.0f / static_cast<float>(sh)
+    };
+    bgfx::setUniform(u_ssgiSource, ssgiSource);
+    const float ssgiComposite[4] = {
+        std::max(ssgiIntensity, 0.0f), ssgiEnabled ? 1.0f : 0.0f, 0.0f, 0.0f
+    };
+    bgfx::setUniform(u_ssgiCompositeParams, ssgiComposite);
+
     bgfx::setVertexBuffer(0, m_vbh);
     bgfx::setIndexBuffer(m_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);

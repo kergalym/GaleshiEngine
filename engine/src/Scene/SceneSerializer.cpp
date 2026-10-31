@@ -105,6 +105,12 @@ json PostProcessSettingsToJson(const PostProcessSettings& s) {
         {"aoSteps", s.aoSteps},
         {"ssrEnabled", s.ssrEnabled},
         {"ssrIntensity", s.ssrIntensity},
+        {"ssgiEnabled", s.ssgiEnabled},
+        {"ssgiIntensity", s.ssgiIntensity},
+        {"ssgiRadius", s.ssgiRadius},
+        {"ssgiThickness", s.ssgiThickness},
+        {"ssgiRays", s.ssgiRays},
+        {"ssgiSteps", s.ssgiSteps},
         {"fxaaEnabled", s.fxaaEnabled},
         {"smaaEnabled", s.smaaEnabled},
         {"taaEnabled", s.taaEnabled},
@@ -201,6 +207,16 @@ void PostProcessSettingsFromJson(const json& js, PostProcessSettings& s) {
 
     s.ssrEnabled = js.value("ssrEnabled", s.ssrEnabled);
     s.ssrIntensity = js.value("ssrIntensity", s.ssrIntensity);
+    s.ssgiEnabled = js.value("ssgiEnabled", s.ssgiEnabled);
+    s.ssgiIntensity = js.value("ssgiIntensity", s.ssgiIntensity);
+    s.ssgiRadius = js.value("ssgiRadius", s.ssgiRadius);
+    s.ssgiThickness = js.value("ssgiThickness", s.ssgiThickness);
+    s.ssgiRays = js.value("ssgiRays", s.ssgiRays);
+    s.ssgiSteps = js.value("ssgiSteps", s.ssgiSteps);
+    if (s.ssgiRadius < 0.05f) s.ssgiRadius = 0.05f;
+    if (s.ssgiThickness < 0.001f) s.ssgiThickness = 0.001f;
+    s.ssgiRays = std::clamp(s.ssgiRays, 1, 8);
+    s.ssgiSteps = std::clamp(s.ssgiSteps, 2, 24);
     s.fxaaEnabled = js.value("fxaaEnabled", s.fxaaEnabled);
     s.smaaEnabled = js.value("smaaEnabled", s.smaaEnabled);
     s.taaEnabled = js.value("taaEnabled", s.taaEnabled);

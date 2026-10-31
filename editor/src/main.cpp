@@ -1807,8 +1807,9 @@ private:
         setView(19, "Planar Reflection");
         setView(20, "Deferred Lighting");
         setView(21, "Particles");
+        setView(22, "SSGI Trace");
         setView(23, "Motion Velocity");
-        setView(24, "SSR");
+        setView(24, "SSGI + SSR Composite");
         setView(25, "Motion Blur");
         setView(26, "Atmosphere");
         setView(27, "God Rays");
@@ -2206,6 +2207,9 @@ private:
             }
             bool ssr = m_postProcess.SsrEnabled();
             if (ImGui::MenuItem("SSR", nullptr, &ssr)) m_postProcess.SetSsrEnabled(ssr);
+            bool ssgi = m_postProcess.SsgiEnabled();
+            if (ImGui::MenuItem("SSGI (Indirect Lighting)", nullptr, &ssgi))
+                m_postProcess.SetSsgiEnabled(ssgi);
             ImGui::Separator();
             ImGui::MenuItem("Environment Palette...", nullptr,
                             &m_showEnvironmentPalette);
@@ -2215,6 +2219,7 @@ private:
                 m_postProcess.SetFxaaEnabled(false);
                 m_postProcess.SetSsaoEnabled(false); // DEBUG
                 m_postProcess.SetSsrEnabled(false); // DEBUG
+                m_postProcess.SetSsgiEnabled(false);
                 m_postProcess.SetFogEnabled(false);
                 m_postProcess.SetFogVolumetric(false);
             }
@@ -4224,6 +4229,7 @@ if (ImGui::BeginMenu("File")) {
         pp.ssaoEnabled = m_postProcess.SsaoEnabled();
         pp.aoMode = m_globalAoMode;
         pp.ssrEnabled = m_postProcess.SsrEnabled();
+        pp.ssgiEnabled = m_postProcess.SsgiEnabled();
         pp.fxaaEnabled = m_postProcess.FxaaEnabled();
         pp.smaaEnabled = m_postProcess.SmaaEnabled();
         pp.taaEnabled = m_postProcess.TaaEnabled();
@@ -4282,6 +4288,7 @@ if (ImGui::BeginMenu("File")) {
             m_postProcess.SetSsaoEnabled(pp.ssaoEnabled);
             m_globalAoMode = pp.aoMode;
             m_postProcess.SetSsrEnabled(pp.ssrEnabled);
+            m_postProcess.SetSsgiEnabled(pp.ssgiEnabled);
             m_postProcess.SetFxaaEnabled(pp.fxaaEnabled);
             m_postProcess.SetSmaaEnabled(pp.smaaEnabled);
             m_postProcess.SetTaaEnabled(pp.taaEnabled);
@@ -4317,6 +4324,7 @@ if (ImGui::BeginMenu("File")) {
         s.ssaoEnabled        = m_postProcess.SsaoEnabled();
         s.aoMode             = m_globalAoMode;
         s.ssrEnabled         = m_postProcess.SsrEnabled();
+        s.ssgiEnabled        = m_postProcess.SsgiEnabled();
         s.fxaaEnabled        = m_postProcess.FxaaEnabled();
         s.smaaEnabled        = m_postProcess.SmaaEnabled();
         s.taaEnabled         = m_postProcess.TaaEnabled();
@@ -4735,6 +4743,20 @@ if (ImGui::BeginMenu("File")) {
             ImGui::Checkbox("Enabled##ssr", &s.ssrEnabled);
             ImGui::DragFloat("Intensity##ssr", &s.ssrIntensity,
                              0.01f, 0.0f, 5.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Screen-Space GI")) {
+            ImGui::Checkbox("Enabled##ssgi", &s.ssgiEnabled);
+            ImGui::DragFloat("Intensity##ssgi", &s.ssgiIntensity,
+                             0.01f, 0.0f, 5.0f);
+            ImGui::DragFloat("Radius##ssgi", &s.ssgiRadius,
+                             0.05f, 0.05f, 50.0f, "%.2f m");
+            ImGui::DragFloat("Thickness##ssgi", &s.ssgiThickness,
+                             0.001f, 0.001f, 1.0f, "%.3f");
+            ImGui::SliderInt("Rays##ssgi", &s.ssgiRays, 1, 8);
+            ImGui::SliderInt("Steps##ssgi", &s.ssgiSteps, 2, 24);
+            ImGui::TextDisabled("Half-resolution diffuse bounce");
             ImGui::TreePop();
         }
 
@@ -5674,13 +5696,41 @@ if (ImGui::BeginMenu("File")) {
                 // ID order. The ping-pong swaps happen on the CPU, so the call
                 // order must match the GPU view order exactly.
 
-                // 1. SSR (View 24)
-                if (pp.ssrEnabled) {
-                    if (bgfx::isValid(m_postProcess.RenderSSR(
+                // 1. SSGI trace (View 22) and SSGI/SSR composite (View 24).
+                // The trace is half-resolution; the composite performs a
+                // depth-aware upsample and adds the diffuse bounce before
+                // applying the specular SSR pass.
+                Galeshi::SSGIParams ssgi;
+                ssgi.enabled = pp.ssgiEnabled;
+                ssgi.intensity = pp.ssgiIntensity;
+                ssgi.radius = pp.ssgiRadius;
+                ssgi.thickness = pp.ssgiThickness;
+                ssgi.rays = pp.ssgiRays;
+                ssgi.steps = pp.ssgiSteps;
+
+                bgfx::TextureHandle ssgiTex = BGFX_INVALID_HANDLE;
+                if (ssgi.enabled) {
+                    ssgiTex = m_postProcess.RenderSSGI(
+                        m_postProcess.OutputTexture(), m_framebuffer->Normal(),
+                        m_framebuffer->WorldPos(), m_framebuffer->Depth(),
+                        m_camera.View(), proj, 22, renderW, renderH, ssgi);
+                }
+
+                if (pp.ssrEnabled || ssgi.enabled) {
+                    const uint16_t ssgiW = static_cast<uint16_t>(
+                        std::max<int>(1, renderW / 2));
+                    const uint16_t ssgiH = static_cast<uint16_t>(
+                        std::max<int>(1, renderH / 2));
+                    if (bgfx::isValid(m_postProcess.RenderScreenSpaceLighting(
                             m_postProcess.OutputTexture(), m_framebuffer->Normal(),
-                            m_framebuffer->Depth(), m_postProcess.PingFbo(),
-                            proj, invProj, camPos, 24, renderW, renderH,
-                            pp.ssrIntensity))) {
+                            m_framebuffer->Depth(), m_framebuffer->WorldPos(),
+                            m_framebuffer->Color(), m_framebuffer->Material(),
+                            m_postProcess.AOTexture(), ssgiTex,
+                            m_postProcess.PingFbo(), m_camera.View(), proj,
+                            invProj, camPos, 24, renderW, renderH,
+                            pp.ssrEnabled, pp.ssrIntensity,
+                            ssgi.enabled, pp.ssgiIntensity,
+                            ssgiW, ssgiH))) {
                         m_postProcess.SwapFbos();
                     }
                 }

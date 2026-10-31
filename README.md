@@ -20,6 +20,7 @@ GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20
 | Renderer core | Working | bgfx with the Vulkan backend |
 | Deferred PBR | Working | Metallic-roughness PBR with G-Buffer |
 | IBL | Working | Irradiance and prefiltered environment cubemaps |
+| SSGI | Working | Half-resolution screen-space indirect diffuse lighting with bilateral upsample |
 | Shadow maps | Working | 3-cascade directional PSSM, point and spot shadows |
 | Tiled light culling | Working | 16x16 tiles, up to 64 point lights in the deferred path |
 | Post-processing | Working | DoF, motion blur, atmosphere, fog, and the full stack are tested; effects can be isolated with `GALESHI_EFFECTS` |
@@ -47,6 +48,7 @@ The primary rendering path is deferred:
 - G-Buffer: albedo/metallic, normal/roughness, world position, per-object motion vectors, and depth.
 - Metallic-roughness PBR: GGX distribution, Smith geometry, Schlick Fresnel.
 - IBL: generated irradiance and prefiltered environment cubemaps. The deferred lighting shader evaluates the split-sum BRDF analytically to stay within the Vulkan descriptor budget.
+- SSGI: half-resolution screen-space diffuse global illumination. A cosine-weighted hemisphere trace samples the lit HDR buffer, and a depth-aware bilateral composite applies receiver albedo, AO, and metallic response.
 - Directional shadows: three-cascade PSSM with log-linear split selection and tight orthographic projections.
 - Point shadows: a cubemap for the first point light.
 - Spot shadows: up to four spot lights.
@@ -70,6 +72,7 @@ Implemented post-processing passes:
 
 - SSAO, HBAO, and GTAO ambient occlusion with quarter/half-resolution AO evaluation and a bilateral upsample
 - SSR, using an approximate screen-space raymarch
+- SSGI, half-resolution screen-space diffuse indirect lighting with depth-aware upsample
 - Bloom
 - TAA
 - SMAA
