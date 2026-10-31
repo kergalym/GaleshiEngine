@@ -180,6 +180,7 @@ end
 - World Outliner and Details panels, with independent collision/physics child nodes. Detaching is available only for children of collision shapes; skeletal-model children stay locked, and detach preserves their world transform.
 - Collision-shape wireframes keep the same visibility across Play/Stop and are controlled only by their per-collider Visible in Editor flag; attached meshes are never hidden by Play mode.
 - Content Browser with model import and a right-click script-template menu that creates Lua files in `assets/scripts`. Models, textures and audio can also be dragged in from any file manager; drops on the browser import into the current folder, other drops go to `assets/`.
+- `File -> New Scene` replaces the current document with an empty scene and releases the previous scene's mesh, material and texture GPU resources before continuing. `File -> Recent Scenes` keeps up to ten recently loaded/saved scenes per project for quick loading.
 - Create entities, lights, physics primitives, cloth, landscape, AI agents, and gameplay cameras.
 - Camera entities expose FOV, clip planes, primary/priority selection and local Transform offset. A camera parented to a character follows it; during Play the selected primary camera overrides the editor viewport, and Stop restores the orbit camera and its previous view.
 - `Testing -> Build Scene` rebuilds the PBR test scene: 12 colored spheres (3 albedo samples and a 3x3 metallic/roughness grid) plus the physics demo objects and ground.

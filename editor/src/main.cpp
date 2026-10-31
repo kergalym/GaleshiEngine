@@ -262,6 +262,7 @@ class GaleshiEditorApp final : public Galeshi::Application {
     entt::entity m_stateMachineEditorEntity = entt::null;
     int m_selectedAxis = 0;
     std::vector<std::string> m_recentProjects;
+    std::vector<std::string> m_recentScenes;
     bool m_pickingScene = false;
     char m_newProjectName[128] = "MyGame";
     char m_newProjectPath[512] = "";
@@ -530,6 +531,148 @@ protected:
         m_recentProjects.insert(m_recentProjects.begin(), std::move(path));
         if (m_recentProjects.size() > 10) m_recentProjects.resize(10);
         SaveRecentProjects();
+    }
+
+    // -------------------------------------------------------------------
+    // Recent scenes
+    // -------------------------------------------------------------------
+    static std::filesystem::path RecentScenesPath() {
+        const char* home = std::getenv("HOME");
+        if (!home) return {};
+        return std::filesystem::path(home) / ".galeshi_recent_scenes.json";
+    }
+
+    static std::string NormalizeRecentScenePath(const std::string& path) {
+        if (path.empty()) return {};
+        std::error_code ec;
+        const auto absolute = std::filesystem::absolute(path, ec);
+        return ec ? path : absolute.lexically_normal().string();
+    }
+
+    std::string RecentScenesProjectKey() const {
+        return NormalizeRecentScenePath(
+            Galeshi::ProjectManager::GetProjectPath());
+    }
+
+    void LoadRecentScenes() {
+        m_recentScenes.clear();
+        const std::filesystem::path recentPath = RecentScenesPath();
+        const std::string projectKey = RecentScenesProjectKey();
+        if (recentPath.empty() || projectKey.empty()) return;
+
+        std::ifstream f(recentPath);
+        if (!f.is_open()) return;
+        try {
+            nlohmann::json root;
+            f >> root;
+            if (!root.is_object() || !root.contains(projectKey) ||
+                !root[projectKey].is_array()) {
+                return;
+            }
+            for (const auto& entry : root[projectKey]) {
+                if (!entry.is_string()) continue;
+                const std::string path =
+                    NormalizeRecentScenePath(entry.get<std::string>());
+                if (path.empty()) continue;
+                if (std::filesystem::path(path).extension() != ".json") continue;
+                if (std::find(m_recentScenes.begin(), m_recentScenes.end(),
+                              path) == m_recentScenes.end()) {
+                    m_recentScenes.push_back(path);
+                }
+            }
+            if (m_recentScenes.size() > 10) m_recentScenes.resize(10);
+        } catch (const std::exception& e) {
+            spdlog::warn("[RecentScenes] Could not read {}: {}",
+                         recentPath.string(), e.what());
+        }
+    }
+
+    void SaveRecentScenes() {
+        const std::filesystem::path recentPath = RecentScenesPath();
+        const std::string projectKey = RecentScenesProjectKey();
+        if (recentPath.empty() || projectKey.empty()) return;
+
+        // Keep lists that belong to other projects intact.
+        nlohmann::json root = nlohmann::json::object();
+        std::ifstream in(recentPath);
+        if (in.is_open()) {
+            try {
+                nlohmann::json existing;
+                in >> existing;
+                if (existing.is_object()) root = std::move(existing);
+            } catch (...) {
+                // A corrupt cache is replaced with a fresh object.
+            }
+        }
+
+        root[projectKey] = m_recentScenes;
+        const std::filesystem::path tempPath =
+            std::filesystem::path(recentPath.string() + ".tmp");
+        std::ofstream out(tempPath, std::ios::trunc);
+        if (!out.is_open()) {
+            spdlog::warn("[RecentScenes] Could not write {}",
+                         tempPath.string());
+            return;
+        }
+        out << root.dump(4);
+        out.close();
+
+        std::error_code ec;
+        std::filesystem::rename(tempPath, recentPath, ec);
+        if (ec) {
+            std::filesystem::remove(tempPath, ec);
+            spdlog::warn("[RecentScenes] Could not replace {}: {}",
+                         recentPath.string(), ec.message());
+        }
+    }
+
+    void AddRecentScene(std::string path) {
+        path = NormalizeRecentScenePath(path);
+        if (path.empty() || RecentScenesProjectKey().empty()) return;
+        if (std::filesystem::path(path).extension() != ".json") return;
+
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(path, ec)) return;
+
+        auto it = std::find(m_recentScenes.begin(), m_recentScenes.end(), path);
+        if (it != m_recentScenes.end()) m_recentScenes.erase(it);
+        m_recentScenes.insert(m_recentScenes.begin(), std::move(path));
+        if (m_recentScenes.size() > 10) m_recentScenes.resize(10);
+        SaveRecentScenes();
+    }
+
+    void RemoveRecentScene(const std::string& path) {
+        const std::string normalized = NormalizeRecentScenePath(path);
+        auto it = std::find(m_recentScenes.begin(), m_recentScenes.end(),
+                            normalized);
+        if (it == m_recentScenes.end()) return;
+        m_recentScenes.erase(it);
+        SaveRecentScenes();
+    }
+
+    void ClearRecentScenes() {
+        if (m_recentScenes.empty()) return;
+        m_recentScenes.clear();
+        SaveRecentScenes();
+        spdlog::info("[RecentScenes] Cleared");
+    }
+
+    std::string RecentSceneLabel(const std::string& path) const {
+        const std::filesystem::path scenePath(path);
+        const std::string projectPath =
+            Galeshi::ProjectManager::GetProjectPath();
+        if (!projectPath.empty()) {
+            const std::filesystem::path base(projectPath);
+            const std::filesystem::path relative =
+                scenePath.lexically_relative(base);
+            if (!relative.empty()) {
+                const auto first = relative.begin();
+                if (first != relative.end() && *first != "..") {
+                    return relative.generic_string();
+                }
+            }
+        }
+        return scenePath.filename().string();
     }
 
     static std::filesystem::path PreferencesPath() {
@@ -915,9 +1058,10 @@ protected:
         }
         m_browser    = std::make_unique<Galeshi::ContentBrowser>(browserRoot);
         m_serializer = std::make_unique<Galeshi::SceneSerializer>(m_scene, *m_assets);
+        LoadRecentScenes();
 
         // The editor deliberately starts with an empty scene.  Scenes are
-        // loaded explicitly through File -> Load Scene.
+        // loaded explicitly through File -> Load Scene or File -> Recent Scenes.
         spdlog::info("[Editor] Starting with an empty scene");
 
         // Первый снапшот для Undo/Redo
@@ -1163,6 +1307,7 @@ protected:
             // Space is now used by Lua (Jump)
 
             if (ImGui::GetIO().KeyCtrl) {
+                if (ImGui::IsKeyPressed(ImGuiKey_N)) NewScene();
                 if (ImGui::IsKeyPressed(ImGuiKey_I)) OpenFileDialog();
                 if (ImGui::IsKeyPressed(ImGuiKey_S)) SaveScene();
                 if (ImGui::IsKeyPressed(ImGuiKey_O)) LoadScene();
@@ -1210,6 +1355,7 @@ protected:
                 CaptureSceneViewState();
                 if (m_serializer->Save(chosenSave)) {
                     m_currentScenePath = std::filesystem::absolute(chosenSave).lexically_normal().string();
+                    AddRecentScene(m_currentScenePath);
                     spdlog::info("[Editor] Scene saved to {}", m_currentScenePath);
                 } else {
                     spdlog::error("[Editor] Failed to save scene to {}", chosenSave);
@@ -1220,8 +1366,7 @@ protected:
         // Load Scene dialog (.json)
         std::string chosenLoad = m_scenePicker.Draw();
         if (!chosenLoad.empty()) {
-            m_editor.ClearSelection();
-            StartAsyncLoad(chosenLoad);
+            LoadSceneFromPath(chosenLoad);
         }
 
         // Static tree-mesh picker for the selected landscape vegetation.
@@ -1402,6 +1547,7 @@ private:
             ReleaseUnusedSceneAssets();
             if (s.sceneLoaded.exchange(false, std::memory_order_acquire)) {
                 ApplySceneViewState();
+                AddRecentScene(m_currentScenePath);
             }
         }
     }
@@ -1456,7 +1602,7 @@ private:
     // The scene must release its shared mesh/material/texture references
     // before the AssetManager cache is cleared; only then are the bgfx buffers
     // and textures actually destroyed.
-    void UnloadSceneContent() {
+    void UnloadSceneContent(bool pushUndoSnapshot = true) {
         if (!m_assets) return;
 
         m_editor.ClearSelection();
@@ -1481,7 +1627,9 @@ private:
         m_currentScenePath.clear();
         m_uiCanvasEntity = entt::null;
         m_uiWidgetIndex = -1;
-        if (m_serializer) PushHistory(); // empty-scene snapshot for Undo/Redo
+        if (pushUndoSnapshot && m_serializer) {
+            PushHistory(); // empty-scene snapshot for Undo/Redo
+        }
     }
 
     void DrawLoadingModal() {
@@ -2164,6 +2312,7 @@ private:
         ImGui::PopStyleVar();
         if (!menuBarOpen) return;
 
+        std::string recentSceneToLoad;
         const float barHeight = ImGui::GetWindowSize().y;
         const float rowHeight = ImGui::GetFrameHeight();
         const float rowOffset = (barHeight - rowHeight) * 0.5f;
@@ -2397,9 +2546,46 @@ private:
             ImGui::EndMenu();
         }
 if (ImGui::BeginMenu("File")) {
+            if (ImGui::MenuItem("New Scene", "Ctrl+N")) NewScene();
+            if (ImGui::MenuItem("Load Scene...", "Ctrl+O")) LoadScene();
+            if (ImGui::BeginMenu("Recent Scenes")) {
+                if (m_recentScenes.empty()) {
+                    ImGui::MenuItem("No recent scenes", nullptr, false, false);
+                } else {
+                    for (size_t i = 0; i < m_recentScenes.size(); ++i) {
+                        const std::string scenePath = m_recentScenes[i];
+                        std::error_code ec;
+                        const bool exists =
+                            std::filesystem::is_regular_file(scenePath, ec);
+                        std::string label = RecentSceneLabel(scenePath);
+                        if (label.empty()) label = scenePath;
+                        if (!exists) label += " (missing)";
+
+                        ImGui::PushID(static_cast<int>(i));
+                        if (ImGui::MenuItem(
+                                label.c_str(), nullptr,
+                                scenePath == m_currentScenePath, exists)) {
+                            recentSceneToLoad = scenePath;
+                        }
+                        if (ImGui::IsItemHovered(
+                                ImGuiHoveredFlags_AllowWhenDisabled)) {
+                            ImGui::SetTooltip(
+                                "%s%s", scenePath.c_str(),
+                                exists ? "\nClick to load."
+                                       : "\nFile not found.");
+                        }
+                        ImGui::PopID();
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Clear Recent Scenes")) {
+                        ClearRecentScenes();
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveScene();
             if (ImGui::MenuItem("Import Model...", "Ctrl+I")) OpenFileDialog();
-            if (ImGui::MenuItem("Load Scene", "Ctrl+O")) LoadScene();
-                if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveScene();
             ImGui::Separator();
             if (ImGui::MenuItem("Exit")) RequestExit();
             ImGui::EndMenu();
@@ -2713,6 +2899,12 @@ if (ImGui::BeginMenu("File")) {
         }
 
         ImGui::EndMainMenuBar();
+
+        // Start loading after the menu popup has been closed, so the loading
+        // state cannot invalidate the menu while it is still being drawn.
+        if (!recentSceneToLoad.empty()) {
+            LoadSceneFromPath(recentSceneToLoad);
+        }
     }
 
     // -------------------------------------------------------------------
@@ -2769,6 +2961,66 @@ if (ImGui::BeginMenu("File")) {
     void LoadScene() {
         // Load Scene -> модальный диалог для .json файлов
         m_scenePicker.Open(SceneStartDirectory(), "Load Scene", { ".json" });
+    }
+
+    void StopPlayForSceneChange() {
+        if (!m_editor.isPlaying && !m_usingGameCamera) return;
+        const bool wasPlaying = m_editor.isPlaying;
+        m_editor.isPlaying = false;
+        if (m_usingGameCamera) DeactivateGameplayCamera();
+        if (wasPlaying) {
+            m_audio.StopAll();
+            if (m_physics) m_physics->Reset();
+            if (m_particles) m_particles->Reset();
+        }
+        m_lastViewportTexture = BGFX_INVALID_HANDLE;
+    }
+
+    void LoadSceneFromPath(const std::string& path) {
+        if (m_loadingState.isLoading) return;
+        const std::string normalized = NormalizeRecentScenePath(path);
+        if (normalized.empty()) return;
+
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(normalized, ec)) {
+            spdlog::error("[Editor] Scene not found: {}", normalized);
+            RemoveRecentScene(normalized);
+            return;
+        }
+
+        StopPlayForSceneChange();
+        m_editor.ClearSelection();
+        StartAsyncLoad(normalized);
+    }
+
+    void NewScene() {
+        if (!m_assets || !m_serializer) return;
+        spdlog::info("[Editor] New Scene: releasing previous scene and GPU assets");
+
+        // This is the same safe replacement path used by Build Scene and
+        // cancelled loads: entities release their shared resources first,
+        // then AssetManager::Clear destroys the cached meshes and textures.
+        // Skip the intermediate undo snapshot; the empty scene gets a clean
+        // snapshot after all scene-level state has been reset below.
+        UnloadSceneContent(false);
+
+        m_scene.AudioBuses().fill(Galeshi::AudioBusSettings{});
+        m_scene.CameraState() = Galeshi::SceneCameraState{};
+        m_scene.GlobalPostProcess() = Galeshi::PostProcessSettings{};
+        m_scene.SetHasGlobalPostProcess(false);
+        m_postProcess.ResetTaaHistory();
+        m_iblGenerated = false;
+        m_lastIblSun = {999.0f, 999.0f, 999.0f};
+
+        m_history.clear();
+        m_historyIndex = -1;
+        m_uiCanvasEntity = entt::null;
+        m_uiWidgetIndex = -1;
+        m_lastViewportTexture = BGFX_INVALID_HANDLE;
+        RestoreEditorCamera();
+
+        PushHistory();
+        spdlog::info("[Editor] New empty scene created; previous VRAM resources released");
     }
 
     void CollectEntityHierarchy(entt::entity root,
