@@ -36,13 +36,14 @@ InputAxisSystem::InputAxisSystem() {
 void InputAxisSystem::ResetDefaults() {
     m_axes.clear();
 
+    // Arrow keys are reserved for editor viewport camera panning. Gameplay
+    // movement is WASD-only; exposing arrows through Horizontal/Vertical used
+    // to move the player while the viewport camera was being navigated.
     InputAxis horizontal;
     horizontal.name = "Horizontal";
     horizontal.bindings = {
         {InputBindingType::Key, "D", 1.0f},
         {InputBindingType::Key, "A", -1.0f},
-        {InputBindingType::Key, "Right", 1.0f},
-        {InputBindingType::Key, "Left", -1.0f},
     };
     m_axes.push_back(std::move(horizontal));
 
@@ -51,8 +52,6 @@ void InputAxisSystem::ResetDefaults() {
     vertical.bindings = {
         {InputBindingType::Key, "W", 1.0f},
         {InputBindingType::Key, "S", -1.0f},
-        {InputBindingType::Key, "Up", 1.0f},
-        {InputBindingType::Key, "Down", -1.0f},
     };
     m_axes.push_back(std::move(vertical));
 

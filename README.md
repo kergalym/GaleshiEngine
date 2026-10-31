@@ -316,7 +316,8 @@ Packaging is experimental:
 | --- | --- |
 | Right mouse drag | Orbit the editor camera |
 | Mouse wheel | Zoom |
-| Arrow keys | Pan the camera |
+| Arrow keys | Pan the editor camera only |
+| W / A / S / D | Move the player (when the scene is playing) |
 | Left click | Select an entity |
 | Left drag on center marker | Move the selected entity |
 | W / E / R | Switch gizmo mode (translate / rotate / scale) |
