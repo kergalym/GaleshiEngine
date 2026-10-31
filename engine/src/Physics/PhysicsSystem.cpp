@@ -29,6 +29,7 @@
 
 #include <glm/gtc/quaternion.hpp>
 #include <algorithm>
+#include <cmath>
 #include <unordered_map>
 #include <entt/entt.hpp>
 #include <functional>
@@ -485,6 +486,39 @@ void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene) {
     auto& reg = scene.Registry();
     auto view = reg.view<RigidBodyComponent, TransformComponent>();
 
+    auto computeParentWorld = [&](entt::entity entity) {
+        glm::mat4 parentWorld(1.0f);
+        entt::entity parent = entt::null;
+        if (reg.all_of<ParentComponent>(entity)) {
+            parent = reg.get<ParentComponent>(entity).parent;
+        }
+        if (!reg.valid(parent)) return parentWorld;
+
+        std::vector<entt::entity> chain;
+        entt::entity current = parent;
+        int depth = 0;
+        while (current != entt::null && depth++ < 128) {
+            chain.push_back(current);
+            if (reg.all_of<ParentComponent>(current))
+                current = reg.get<ParentComponent>(current).parent;
+            else
+                break;
+        }
+        for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+            if (reg.all_of<TransformComponent>(*it))
+                parentWorld = parentWorld *
+                    reg.get<TransformComponent>(*it).LocalMatrix();
+        }
+        return parentWorld;
+    };
+
+    // Static colliders that are parented to a moving entity must move with
+    // their parent. Jolt bodies are world-space, so without this the body
+    // stays behind while the child's local transform is rewritten every frame
+    // to compensate. A camera parented below such a collider then appears to
+    // shake or stay fixed while its character moves.
+    std::vector<entt::entity> parentedStaticBodies;
+
     for (auto e : view) {
         auto& rb = view.get<RigidBodyComponent>(e);
         auto& tf = view.get<TransformComponent>(e);
@@ -492,6 +526,17 @@ void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene) {
         if (rb.bodyId == 0xFFFFFFFFu) continue;
         JPH::BodyID id(rb.bodyId);
         if (!m_impl->bodyInterface->IsAdded(id)) continue;
+
+        const bool parentedStatic =
+            reg.all_of<ParentComponent>(e) &&
+            rb.motionType == RigidBodyComponent::MotionType::Static;
+        if (parentedStatic) {
+            // Keep the authored local transform; the body is moved to the
+            // composed parent pose after all regular body transforms have
+            // been read back into ECS.
+            parentedStaticBodies.push_back(e);
+            continue;
+        }
 
         const JPH::RVec3 p = m_impl->bodyInterface->GetPosition(id);
         const glm::vec3 worldPosition(static_cast<float>(p.GetX()),
@@ -507,27 +552,7 @@ void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene) {
         // moves all attached meshes away. Convert the body pose back into the
         // parent's local space instead.
         if (reg.all_of<ParentComponent>(e)) {
-            glm::mat4 parentWorld(1.0f);
-            entt::entity parent =
-                reg.get<ParentComponent>(e).parent;
-            if (reg.valid(parent)) {
-                std::vector<entt::entity> chain;
-                entt::entity current = parent;
-                int depth = 0;
-                while (current != entt::null && depth++ < 128) {
-                    chain.push_back(current);
-                    if (reg.all_of<ParentComponent>(current))
-                        current = reg.get<ParentComponent>(current).parent;
-                    else
-                        break;
-                }
-                for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
-                    if (reg.all_of<TransformComponent>(*it))
-                        parentWorld = parentWorld *
-                            reg.get<TransformComponent>(*it).LocalMatrix();
-                }
-            }
-
+            const glm::mat4 parentWorld = computeParentWorld(e);
             const glm::mat4 invParent = glm::inverse(parentWorld);
             tf.position = glm::vec3(
                 invParent * glm::vec4(worldPosition, 1.0f));
@@ -538,6 +563,37 @@ void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene) {
         } else {
             tf.position = worldPosition;
             tf.rotation = worldRotation;
+        }
+    }
+
+    for (entt::entity e : parentedStaticBodies) {
+        auto& rb = reg.get<RigidBodyComponent>(e);
+        auto& tf = reg.get<TransformComponent>(e);
+        if (rb.bodyId == 0xFFFFFFFFu) continue;
+        JPH::BodyID id(rb.bodyId);
+        if (!m_impl->bodyInterface->IsAdded(id)) continue;
+
+        const glm::mat4 world = computeParentWorld(e) * tf.LocalMatrix();
+        const glm::vec3 worldPosition(world[3]);
+        const glm::quat worldRotation =
+            glm::normalize(glm::quat_cast(glm::mat3(world)));
+
+        const JPH::RVec3 p = m_impl->bodyInterface->GetPosition(id);
+        const JPH::Quat q = m_impl->bodyInterface->GetRotation(id);
+        const float dx = worldPosition.x - static_cast<float>(p.GetX());
+        const float dy = worldPosition.y - static_cast<float>(p.GetY());
+        const float dz = worldPosition.z - static_cast<float>(p.GetZ());
+        const float rotationDot = std::abs(
+            worldRotation.w * q.GetW() + worldRotation.x * q.GetX() +
+            worldRotation.y * q.GetY() + worldRotation.z * q.GetZ());
+        if (dx * dx + dy * dy + dz * dz > 1e-10f ||
+            rotationDot < 0.999999f) {
+            m_impl->bodyInterface->SetPositionAndRotation(
+                id,
+                JPH::RVec3(worldPosition.x, worldPosition.y, worldPosition.z),
+                JPH::Quat(worldRotation.x, worldRotation.y, worldRotation.z,
+                          worldRotation.w),
+                JPH::EActivation::DontActivate);
         }
     }
 }
