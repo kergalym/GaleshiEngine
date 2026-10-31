@@ -7729,7 +7729,17 @@ void DrawDetails() {
                 changed |= ImGui::DragFloat("Restitution", &collider.restitution,
                                             0.01f, 0.0f, 1.0f);
                 changed |= ImGui::Checkbox("Is Trigger", &collider.isTrigger);
-                changed |= ImGui::Checkbox("Visible in Editor", &collider.visibleInEditor);
+
+                // Editor visibility is a debug-draw option only. Do not feed
+                // it into the physics rebuild path: toggling the wireframe
+                // must not recreate the body or disturb a mesh parented to
+                // the collider entity.
+                ImGui::Checkbox("Visible in Editor", &collider.visibleInEditor);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Shows or hides only the collider wireframe.\n"
+                        "Meshes attached to this entity remain visible.");
+                }
 
                 if (changed) RebuildPhysicsBody(sel);
 

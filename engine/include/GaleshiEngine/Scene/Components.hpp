@@ -177,8 +177,10 @@ struct ColliderComponent {
     float restitution = 0.0f;
     bool  isTrigger   = false;
 
-    // Editor-only visualization. Collider wireframes are always hidden while
-    // the scene is playing, regardless of this flag.
+    // Editor-only visualization. This flag must only control the collider
+    // wireframe; it never hides meshes attached to the collider entity or its
+    // children. Collider wireframes are always hidden while the scene is
+    // playing, regardless of this flag.
     bool visibleInEditor = true;
 };
 
