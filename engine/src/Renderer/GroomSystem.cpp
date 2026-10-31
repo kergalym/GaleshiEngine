@@ -563,6 +563,13 @@ void GroomSystem::Update(Scene& scene, AssetManager& assets, float dt) {
             continue;
         }
 
+        // Groom hair is only valid for skeletal characters. Do not generate
+        // hair from static meshes or stale components left on landscapes.
+        if (FindSkeletonRoot(scene, handle) == entt::null) {
+            groom.runtime.reset();
+            continue;
+        }
+
         const entt::entity target = FindTargetMesh(scene, handle, groom);
         if (target == entt::null) {
             groom.runtime.reset();

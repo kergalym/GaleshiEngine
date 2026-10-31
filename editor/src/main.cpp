@@ -231,6 +231,8 @@ class GaleshiEditorApp final : public Galeshi::Application {
     bool m_showPreferences = false;
     bool m_showAudioMixer = false;
     bool m_showEnvironmentPalette = false;
+    bool m_showStateMachineEditor = false;
+    entt::entity m_stateMachineEditorEntity = entt::null;
     int m_selectedAxis = 0;
     std::vector<std::string> m_recentProjects;
     bool m_pickingScene = false;
@@ -1135,6 +1137,7 @@ protected:
         DrawUIDesigner();
         DrawAudioMixer();
         DrawEnvironmentPaletteWindow();
+        DrawStateMachineEditor();
         DrawPreferencesWindow();
 
         // Play mode draws the authored canvases inside the viewport image.
@@ -2545,6 +2548,12 @@ if (ImGui::BeginMenu("File")) {
                     m_editor.camTarget;
                 m_editor.Select(e);
             }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Animation")) {
+            ImGui::MenuItem("State Machine Editor", nullptr,
+                            &m_showStateMachineEditor);
             ImGui::EndMenu();
         }
 
@@ -6999,6 +7008,378 @@ if (ImGui::BeginMenu("File")) {
         ImGui::End();
     }
 
+    void DrawAnimationStateMachineContents(Galeshi::Entity entity) {
+        if (!entity) return;
+        auto& registry = m_scene.Registry();
+        const entt::entity handle = entity.Handle();
+        if (!registry.valid(handle)) return;
+
+        auto* skeleton = registry.try_get<Galeshi::SkeletalComponent>(handle);
+        std::vector<std::string> clipNames;
+        if (skeleton && m_assets && !skeleton->sourcePath.empty()) {
+            auto model = m_assets->LoadModel(skeleton->sourcePath);
+            clipNames = model.animationNames;
+        }
+
+        std::vector<std::string> clipLabels;
+        clipLabels.reserve(clipNames.size());
+        for (size_t i = 0; i < clipNames.size(); ++i) {
+            clipLabels.push_back(clipNames[i].empty()
+                                     ? "Clip " + std::to_string(i)
+                                     : clipNames[i]);
+        }
+        if (clipLabels.empty()) clipLabels.push_back("No animation clips");
+        std::vector<const char*> clipItems;
+        clipItems.reserve(clipLabels.size());
+        for (const std::string& label : clipLabels) {
+            clipItems.push_back(label.c_str());
+        }
+
+        auto* machine =
+            registry.try_get<Galeshi::AnimationStateMachineComponent>(handle);
+        if (!machine) {
+            if (!skeleton) {
+                ImGui::TextDisabled(
+                    "This entity has no Skeletal Component.");
+                return;
+            }
+            if (ImGui::Button("+ Add Animation State Machine")) {
+                PushHistory();
+                auto& created =
+                    registry.emplace<Galeshi::AnimationStateMachineComponent>(
+                        handle);
+                created = Galeshi::AnimationSystem::CreateDefaultStateMachine(
+                    clipNames);
+                created.parameters = {
+                    {"Speed", 0.0f},
+                    {"PlayerVisible", 0.0f},
+                    {"TargetDistance", 100.0f}
+                };
+            }
+            return;
+        }
+
+        ImGui::PushID(static_cast<int>(handle));
+        ImGui::Checkbox("Enabled", &machine->enabled);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::DragFloat("Playback Speed", &machine->playbackSpeed,
+                         0.01f, 0.0f, 4.0f);
+        ImGui::Text("Current State: %d / %zu", machine->currentState,
+                    machine->states.size());
+        ImGui::TextDisabled("Clip duration: %.2fs",
+                            machine->currentClipDuration);
+
+        if (ImGui::TreeNodeEx("States", ImGuiTreeNodeFlags_DefaultOpen)) {
+            int removeState = -1;
+            for (int i = 0; i < static_cast<int>(machine->states.size()); ++i) {
+                auto& state = machine->states[static_cast<size_t>(i)];
+                ImGui::PushID(i);
+                char stateName[128];
+                std::snprintf(stateName, sizeof(stateName), "%s",
+                              state.name.c_str());
+                ImGui::SetNextItemWidth(160.0f);
+                if (ImGui::InputText("Name", stateName, sizeof(stateName))) {
+                    state.name = stateName;
+                }
+                ImGui::SameLine();
+                int clip = std::clamp(
+                    state.clip, 0, static_cast<int>(clipItems.size()) - 1);
+                ImGui::SetNextItemWidth(160.0f);
+                if (ImGui::Combo("Clip", &clip, clipItems.data(),
+                                 static_cast<int>(clipItems.size()))) {
+                    state.clip = clip;
+                }
+                ImGui::SameLine();
+                ImGui::Checkbox("Loop", &state.loop);
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(80.0f);
+                ImGui::DragFloat("Speed", &state.speed, 0.01f, 0.0f, 4.0f);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Set")) {
+                    machine->currentState = i;
+                    machine->previousState = -1;
+                    machine->stateTime = 0.0f;
+                    machine->blendElapsed = machine->blendDuration;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove")) removeState = i;
+                ImGui::PopID();
+            }
+            if (removeState >= 0 && machine->states.size() > 1) {
+                machine->states.erase(machine->states.begin() + removeState);
+                for (auto& transition : machine->transitions) {
+                    if (transition.fromState == removeState) {
+                        transition.fromState = -1;
+                    } else if (transition.fromState > removeState) {
+                        --transition.fromState;
+                    }
+                    if (transition.toState == removeState) {
+                        transition.toState = 0;
+                    } else if (transition.toState > removeState) {
+                        --transition.toState;
+                    }
+                }
+                if (machine->currentState >=
+                    static_cast<int>(machine->states.size())) {
+                    machine->currentState = 0;
+                }
+            }
+            if (ImGui::Button("+ Add State")) {
+                Galeshi::AnimationState state;
+                state.name = "State " +
+                             std::to_string(machine->states.size());
+                state.clip = std::clamp(
+                    machine->currentState, 0,
+                    std::max(0, static_cast<int>(clipItems.size()) - 1));
+                machine->states.push_back(state);
+            }
+            if (!clipNames.empty()) {
+                ImGui::SameLine();
+                if (ImGui::Button("+ Add All Clips")) {
+                    for (size_t clipIndex = 0; clipIndex < clipNames.size();
+                         ++clipIndex) {
+                        bool alreadyAdded = false;
+                        for (const auto& state : machine->states) {
+                            if (state.clip == static_cast<int>(clipIndex) &&
+                                state.name == clipNames[clipIndex]) {
+                                alreadyAdded = true;
+                                break;
+                            }
+                        }
+                        if (alreadyAdded) continue;
+                        Galeshi::AnimationState state;
+                        state.name = clipNames[clipIndex].empty()
+                            ? "Clip " + std::to_string(clipIndex)
+                            : clipNames[clipIndex];
+                        state.clip = static_cast<int>(clipIndex);
+                        machine->states.push_back(state);
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Create one state for every animation clip in the model.");
+                }
+            }
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNodeEx("Transitions", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* conditionNames[] = {
+                "Bool True", "Bool False", "Greater", "Less", "Trigger",
+                "Always"
+            };
+            int removeTransition = -1;
+            for (int i = 0; i < static_cast<int>(machine->transitions.size());
+                 ++i) {
+                auto& transition =
+                    machine->transitions[static_cast<size_t>(i)];
+                ImGui::PushID(1000 + i);
+                int from = transition.fromState + 1;
+                std::vector<const char*> fromNames;
+                fromNames.push_back("Any State");
+                for (const auto& state : machine->states) {
+                    fromNames.push_back(state.name.c_str());
+                }
+                ImGui::SetNextItemWidth(150.0f);
+                if (ImGui::Combo("From", &from, fromNames.data(),
+                                 static_cast<int>(fromNames.size()))) {
+                    transition.fromState = from - 1;
+                }
+                ImGui::SameLine();
+                int to = std::clamp(
+                    transition.toState, 0,
+                    std::max(0, static_cast<int>(machine->states.size()) - 1));
+                std::vector<const char*> toNames;
+                for (const auto& state : machine->states) {
+                    toNames.push_back(state.name.c_str());
+                }
+                ImGui::SetNextItemWidth(150.0f);
+                if (ImGui::Combo("To", &to, toNames.data(),
+                                 static_cast<int>(toNames.size()))) {
+                    transition.toState = to;
+                }
+                int condition = static_cast<int>(transition.condition);
+                ImGui::SetNextItemWidth(120.0f);
+                if (ImGui::Combo("Condition", &condition, conditionNames,
+                                 IM_ARRAYSIZE(conditionNames))) {
+                    transition.condition =
+                        static_cast<Galeshi::AnimationCondition>(condition);
+                }
+                ImGui::SameLine();
+                char parameter[128];
+                std::snprintf(parameter, sizeof(parameter), "%s",
+                              transition.parameter.c_str());
+                ImGui::SetNextItemWidth(120.0f);
+                if (ImGui::InputText("Parameter", parameter,
+                                     sizeof(parameter))) {
+                    transition.parameter = parameter;
+                }
+                ImGui::SetNextItemWidth(90.0f);
+                ImGui::DragFloat("Threshold", &transition.threshold, 0.01f);
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(90.0f);
+                ImGui::DragFloat("Blend", &transition.duration, 0.01f,
+                                 0.0f, 4.0f);
+                ImGui::SameLine();
+                ImGui::Checkbox("On", &transition.enabled);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove")) removeTransition = i;
+                ImGui::Separator();
+                ImGui::PopID();
+            }
+            if (removeTransition >= 0) {
+                machine->transitions.erase(
+                    machine->transitions.begin() + removeTransition);
+            }
+            if (ImGui::Button("+ Add Transition")) {
+                Galeshi::AnimationTransition transition;
+                transition.fromState = machine->currentState;
+                transition.toState =
+                    (machine->currentState + 1) %
+                    std::max<size_t>(1, machine->states.size());
+                machine->transitions.push_back(transition);
+            }
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNodeEx("Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
+            int removeParameter = -1;
+            for (int i = 0; i < static_cast<int>(machine->parameters.size());
+                 ++i) {
+                auto& parameter = machine->parameters[static_cast<size_t>(i)];
+                ImGui::PushID(2000 + i);
+                char parameterName[128];
+                std::snprintf(parameterName, sizeof(parameterName), "%s",
+                              parameter.name.c_str());
+                ImGui::SetNextItemWidth(160.0f);
+                if (ImGui::InputText("Name", parameterName,
+                                     sizeof(parameterName))) {
+                    parameter.name = parameterName;
+                }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(120.0f);
+                ImGui::DragFloat("Value", &parameter.value, 0.01f);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Trigger")) parameter.value = 1.0f;
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Remove")) removeParameter = i;
+                ImGui::PopID();
+            }
+            if (removeParameter >= 0) {
+                machine->parameters.erase(machine->parameters.begin() +
+                                          removeParameter);
+            }
+            if (ImGui::Button("+ Add Parameter")) {
+                machine->parameters.push_back({"Parameter", 0.0f});
+            }
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
+
+    void DrawStateMachineEditor() {
+        if (!m_showStateMachineEditor) return;
+        if (!ImGui::Begin("Animation State Machine Editor",
+                          &m_showStateMachineEditor)) {
+            ImGui::End();
+            return;
+        }
+
+        struct CharacterEntry {
+            entt::entity entity = entt::null;
+            std::string label;
+        };
+        std::vector<CharacterEntry> characters;
+        auto view = m_scene.Registry().view<Galeshi::SkeletalComponent>();
+        for (entt::entity handle : view) {
+            std::string name = "Entity " + std::to_string((uint32_t)handle);
+            if (m_scene.Registry().all_of<Galeshi::NameComponent>(handle)) {
+                name = m_scene.Registry().get<Galeshi::NameComponent>(handle).name;
+            }
+            const std::string lower = [&]() {
+                std::string value = name;
+                for (char& c : value) {
+                    c = static_cast<char>(
+                        std::tolower(static_cast<unsigned char>(c)));
+                }
+                return value;
+            }();
+            const bool player =
+                m_scene.Registry().all_of<Galeshi::PlayerTagComponent>(handle) ||
+                lower.find("player") != std::string::npos;
+            const bool npc =
+                m_scene.Registry().all_of<Galeshi::AIControllerComponent>(handle) ||
+                m_scene.Registry().all_of<Galeshi::NavAgentComponent>(handle) ||
+                m_scene.Registry().all_of<Galeshi::BehaviorTreeComponent>(handle) ||
+                lower.find("npc") != std::string::npos;
+            characters.push_back({handle, name + (player ? "  [Player]"
+                                             : npc   ? "  [NPC]"
+                                                     : "  [Character]")});
+        }
+        std::sort(characters.begin(), characters.end(),
+                  [](const CharacterEntry& a, const CharacterEntry& b) {
+                      return a.label < b.label;
+                  });
+
+        if (characters.empty()) {
+            ImGui::TextDisabled("No skeletal characters in the scene.");
+            ImGui::End();
+            return;
+        }
+
+        bool found = false;
+        for (const CharacterEntry& entry : characters) {
+            if (entry.entity == m_stateMachineEditorEntity) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            m_stateMachineEditorEntity = characters.front().entity;
+        }
+
+        int current = 0;
+        for (int i = 0; i < static_cast<int>(characters.size()); ++i) {
+            if (characters[static_cast<size_t>(i)].entity ==
+                m_stateMachineEditorEntity) {
+                current = i;
+                break;
+            }
+        }
+        std::vector<const char*> labels;
+        labels.reserve(characters.size());
+        for (const CharacterEntry& entry : characters) {
+            labels.push_back(entry.label.c_str());
+        }
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::Combo("##character", &current, labels.data(),
+                         static_cast<int>(labels.size()))) {
+            m_stateMachineEditorEntity =
+                characters[static_cast<size_t>(current)].entity;
+        }
+        if (ImGui::Button("Select in Scene")) {
+            Galeshi::Entity entity(m_stateMachineEditorEntity, &m_scene);
+            if (entity) m_editor.Select(entity);
+        }
+        ImGui::SameLine();
+        if (m_scene.Registry().all_of<Galeshi::SkeletalComponent>(
+                m_stateMachineEditorEntity)) {
+            const auto& skeleton = m_scene.Registry().get<Galeshi::SkeletalComponent>(
+                m_stateMachineEditorEntity);
+            ImGui::TextDisabled("Source: %s",
+                                skeleton.sourcePath.empty()
+                                    ? "(none)"
+                                    : skeleton.sourcePath.c_str());
+        }
+        ImGui::Separator();
+        ImGui::BeginChild("##state_machine_scroll");
+        DrawAnimationStateMachineContents(
+            Galeshi::Entity(m_stateMachineEditorEntity, &m_scene));
+        ImGui::EndChild();
+        ImGui::End();
+    }
+
 void DrawDetails() {
         ImGui::Begin("Details");
 
@@ -7109,20 +7490,21 @@ void DrawDetails() {
         }
 
         // --- Groom hair inspector ----------------------------------------
-        if (auto sel = m_editor.Selected(&m_scene); sel &&
-            sel.HasComponent<Galeshi::GroomComponent>()) {
-            auto& groom = sel.GetComponent<Galeshi::GroomComponent>();
-            if (ImGui::CollapsingHeader("Groom Hair",
-                                        ImGuiTreeNodeFlags_DefaultOpen)) {
-                DrawGroomSettings(groom);
-            }
-        } else if (auto sel = m_editor.Selected(&m_scene); sel) {
-            // Groom hair needs a skeletal character. Accept either the
-            // character root or one of its skinned mesh children.
-            if (IsSkeletalCharacter(sel) &&
-                ImGui::Button("+ Add Groom Hair")) {
-                PushHistory();
-                sel.AddComponent<Galeshi::GroomComponent>();
+        if (auto sel = m_editor.Selected(&m_scene); sel) {
+            // Groom hair is only meaningful for skeletal characters. In
+            // particular, never expose it for landscape entities even if an
+            // old scene still contains a stale GroomComponent.
+            if (IsSkeletalCharacter(sel)) {
+                if (sel.HasComponent<Galeshi::GroomComponent>()) {
+                    auto& groom = sel.GetComponent<Galeshi::GroomComponent>();
+                    if (ImGui::CollapsingHeader(
+                            "Groom Hair", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        DrawGroomSettings(groom);
+                    }
+                } else if (ImGui::Button("+ Add Groom Hair")) {
+                    PushHistory();
+                    sel.AddComponent<Galeshi::GroomComponent>();
+                }
             }
         }
 
@@ -7950,184 +8332,14 @@ void DrawDetails() {
             ImGui::Text("Active Clip: %d  Time: %.2fs", skel.activeAnimation, skel.currentTime);
         }
 
-        if (selected[0].HasComponent<Galeshi::SkeletalComponent>() &&
-            !selected[0].HasComponent<Galeshi::AnimationStateMachineComponent>()) {
-            if (ImGui::Button("+ Add Animation State Machine")) {
-                PushHistory();
-                auto& skel = selected[0].GetComponent<Galeshi::SkeletalComponent>();
-                auto model = m_assets->LoadModel(skel.sourcePath);
-                auto& machine = selected[0].AddComponent<Galeshi::AnimationStateMachineComponent>();
-                machine = Galeshi::AnimationSystem::CreateDefaultStateMachine(model.animationNames);
-                machine.parameters = {
-                    {"Speed", 0.0f},
-                    {"PlayerVisible", 0.0f},
-                    {"TargetDistance", 100.0f}
-                };
+        if (selected[0].HasComponent<Galeshi::SkeletalComponent>() ||
+            selected[0].HasComponent<Galeshi::AnimationStateMachineComponent>()) {
+            if (ImGui::CollapsingHeader("Animation State Machine",
+                                        ImGuiTreeNodeFlags_DefaultOpen)) {
+                DrawAnimationStateMachineContents(selected[0]);
             }
         }
 
-        if (selected[0].HasComponent<Galeshi::AnimationStateMachineComponent>() &&
-            ImGui::CollapsingHeader("Animation State Machine", ImGuiTreeNodeFlags_DefaultOpen)) {
-            auto& machine = selected[0].GetComponent<Galeshi::AnimationStateMachineComponent>();
-            int clipCount = 1;
-            if (selected[0].HasComponent<Galeshi::SkeletalComponent>()) {
-                auto model = m_assets->LoadModel(
-                    selected[0].GetComponent<Galeshi::SkeletalComponent>().sourcePath);
-                clipCount = std::max<int>(1, static_cast<int>(model.animationNames.size()));
-            }
-
-            ImGui::Checkbox("Enabled", &machine.enabled);
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(120.0f);
-            ImGui::DragFloat("Playback Speed", &machine.playbackSpeed, 0.01f, 0.0f, 4.0f);
-            ImGui::Text("Current State: %d / %zu",
-                        machine.currentState, machine.states.size());
-            ImGui::TextDisabled("Clip duration: %.2fs", machine.currentClipDuration);
-
-            if (ImGui::TreeNodeEx("States", ImGuiTreeNodeFlags_DefaultOpen)) {
-                int removeState = -1;
-                for (int i = 0; i < static_cast<int>(machine.states.size()); ++i) {
-                    auto& state = machine.states[static_cast<size_t>(i)];
-                    ImGui::PushID(i);
-                    char stateName[128];
-                    std::snprintf(stateName, sizeof(stateName), "%s", state.name.c_str());
-                    ImGui::SetNextItemWidth(160.0f);
-                    if (ImGui::InputText("Name", stateName, sizeof(stateName))) {
-                        state.name = stateName;
-                    }
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(80.0f);
-                    ImGui::DragInt("Clip", &state.clip, 1.0f, 0, std::max(0, clipCount - 1));
-                    ImGui::SameLine();
-                    ImGui::Checkbox("Loop", &state.loop);
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(80.0f);
-                    ImGui::DragFloat("Speed", &state.speed, 0.01f, 0.0f, 4.0f);
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Set")) {
-                        machine.currentState = i;
-                        machine.previousState = -1;
-                        machine.stateTime = 0.0f;
-                        machine.blendElapsed = machine.blendDuration;
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Remove")) removeState = i;
-                    ImGui::PopID();
-                }
-                if (removeState >= 0 && machine.states.size() > 1) {
-                    machine.states.erase(machine.states.begin() + removeState);
-                    for (auto& transition : machine.transitions) {
-                        if (transition.fromState == removeState) transition.fromState = -1;
-                        else if (transition.fromState > removeState) --transition.fromState;
-                        if (transition.toState == removeState) transition.toState = 0;
-                        else if (transition.toState > removeState) --transition.toState;
-                    }
-                    if (machine.currentState >= static_cast<int>(machine.states.size()))
-                        machine.currentState = 0;
-                }
-                if (ImGui::Button("+ Add State")) {
-                    Galeshi::AnimationState state;
-                    state.name = "State " + std::to_string(machine.states.size());
-                    state.clip = 0;
-                    machine.states.push_back(state);
-                }
-                ImGui::TreePop();
-            }
-
-            if (ImGui::TreeNodeEx("Transitions", ImGuiTreeNodeFlags_DefaultOpen)) {
-                const char* conditionNames[] = {
-                    "Bool True", "Bool False", "Greater", "Less", "Trigger", "Always"
-                };
-                int removeTransition = -1;
-                for (int i = 0; i < static_cast<int>(machine.transitions.size()); ++i) {
-                    auto& transition = machine.transitions[static_cast<size_t>(i)];
-                    ImGui::PushID(1000 + i);
-                    int from = transition.fromState + 1;
-                    std::vector<const char*> fromNames;
-                    fromNames.push_back("Any State");
-                    for (const auto& state : machine.states) fromNames.push_back(state.name.c_str());
-                    ImGui::SetNextItemWidth(150.0f);
-                    if (ImGui::Combo("From", &from, fromNames.data(),
-                                     static_cast<int>(fromNames.size()))) {
-                        transition.fromState = from - 1;
-                    }
-                    ImGui::SameLine();
-                    int to = std::clamp(transition.toState, 0,
-                                        std::max(0, static_cast<int>(machine.states.size()) - 1));
-                    std::vector<const char*> toNames;
-                    for (const auto& state : machine.states) toNames.push_back(state.name.c_str());
-                    ImGui::SetNextItemWidth(150.0f);
-                    if (ImGui::Combo("To", &to, toNames.data(),
-                                     static_cast<int>(toNames.size()))) {
-                        transition.toState = to;
-                    }
-                    int condition = static_cast<int>(transition.condition);
-                    ImGui::SetNextItemWidth(120.0f);
-                    if (ImGui::Combo("Condition", &condition, conditionNames,
-                                     IM_ARRAYSIZE(conditionNames))) {
-                        transition.condition = static_cast<Galeshi::AnimationCondition>(condition);
-                    }
-                    ImGui::SameLine();
-                    char parameter[128];
-                    std::snprintf(parameter, sizeof(parameter), "%s", transition.parameter.c_str());
-                    ImGui::SetNextItemWidth(120.0f);
-                    if (ImGui::InputText("Parameter", parameter, sizeof(parameter))) {
-                        transition.parameter = parameter;
-                    }
-                    ImGui::SetNextItemWidth(90.0f);
-                    ImGui::DragFloat("Threshold", &transition.threshold, 0.01f);
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(90.0f);
-                    ImGui::DragFloat("Blend", &transition.duration, 0.01f, 0.0f, 4.0f);
-                    ImGui::SameLine();
-                    ImGui::Checkbox("On", &transition.enabled);
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Remove")) removeTransition = i;
-                    ImGui::Separator();
-                    ImGui::PopID();
-                }
-                if (removeTransition >= 0) {
-                    machine.transitions.erase(machine.transitions.begin() + removeTransition);
-                }
-                if (ImGui::Button("+ Add Transition")) {
-                    Galeshi::AnimationTransition transition;
-                    transition.fromState = machine.currentState;
-                    transition.toState = (machine.currentState + 1) % std::max<size_t>(1, machine.states.size());
-                    machine.transitions.push_back(transition);
-                }
-                ImGui::TreePop();
-            }
-
-            if (ImGui::TreeNodeEx("Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
-                int removeParameter = -1;
-                for (int i = 0; i < static_cast<int>(machine.parameters.size()); ++i) {
-                    auto& parameter = machine.parameters[static_cast<size_t>(i)];
-                    ImGui::PushID(2000 + i);
-                    char parameterName[128];
-                    std::snprintf(parameterName, sizeof(parameterName), "%s", parameter.name.c_str());
-                    ImGui::SetNextItemWidth(160.0f);
-                    if (ImGui::InputText("Name", parameterName, sizeof(parameterName))) {
-                        parameter.name = parameterName;
-                    }
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(120.0f);
-                    ImGui::DragFloat("Value", &parameter.value, 0.01f);
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Trigger")) parameter.value = 1.0f;
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Remove")) removeParameter = i;
-                    ImGui::PopID();
-                }
-                if (removeParameter >= 0) {
-                    machine.parameters.erase(machine.parameters.begin() + removeParameter);
-                }
-                if (ImGui::Button("+ Add Parameter")) {
-                    machine.parameters.push_back({"Parameter", 0.0f});
-                }
-                ImGui::TreePop();
-            }
-        }
-        
         if (selected[0].HasComponent<Galeshi::DirectionalLightComponent>() && ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen)) {
             auto& dl = selected[0].GetComponent<Galeshi::DirectionalLightComponent>();
             ImGui::DragFloat3("Direction", glm::value_ptr(dl.direction), 0.05f, -1.0f, 1.0f);

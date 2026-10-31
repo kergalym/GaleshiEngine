@@ -101,6 +101,7 @@ public:
 private:
     void BuildApi();
     void DestroyEntity(entt::entity entity);
+    bool HasPhysicsBody(uint32_t entityId) const;
 
     sol::state m_lua;
     sol::table m_api;
@@ -132,6 +133,14 @@ private:
     std::function<void()> m_requestExit;
 
     std::unordered_map<std::string, sol::protected_function> m_uiHandlers;
+
+    // Script-driven transform movement for entities that have no live Jolt
+    // body (for example a parented character root without a collider).
+    struct FallbackVelocity {
+        glm::vec3 value{0.0f};
+        uint64_t frame = 0;
+    };
+    std::unordered_map<uint32_t, FallbackVelocity> m_fallbackVelocities;
 
     struct AIControllerInstance {
         sol::environment env;

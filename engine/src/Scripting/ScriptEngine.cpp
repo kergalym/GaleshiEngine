@@ -907,17 +907,28 @@ void ScriptEngine::BuildApi() {
     };
     const auto getVelocity = [this, resolve, makeVec3](sol::object value) {
         const entt::entity entity = resolve(value);
-        const glm::vec3 velocity = (entity != entt::null && m_getVelocity)
-            ? m_getVelocity(static_cast<uint32_t>(entity))
-            : glm::vec3(0.0f);
-        return makeVec3(velocity);
+        if (entity == entt::null) return makeVec3(glm::vec3(0.0f));
+        const uint32_t id = static_cast<uint32_t>(entity);
+        if (m_getVelocity && HasPhysicsBody(id)) {
+            return makeVec3(m_getVelocity(id));
+        }
+        const auto it = m_fallbackVelocities.find(id);
+        return makeVec3(it != m_fallbackVelocities.end()
+                            ? it->second.value
+                            : glm::vec3(0.0f));
     };
     const auto setVelocity = [this, resolve, readVec3Args](
                                   sol::object value, sol::variadic_args args) {
         const entt::entity entity = resolve(value);
         glm::vec3 velocity{0.0f};
         if (entity == entt::null || !readVec3Args(args, velocity)) return false;
-        if (m_setVelocity) m_setVelocity(static_cast<uint32_t>(entity), velocity);
+        const uint32_t id = static_cast<uint32_t>(entity);
+        if (m_setVelocity && HasPhysicsBody(id)) {
+            m_setVelocity(id, velocity);
+            m_fallbackVelocities.erase(id);
+        } else {
+            m_fallbackVelocities[id] = FallbackVelocity{velocity, m_frame};
+        }
         return true;
     };
     const auto destroyBody = [this, resolve](sol::object value) {
@@ -1825,6 +1836,17 @@ void ScriptEngine::BindFunctions() {
     BuildApi();
 }
 
+bool ScriptEngine::HasPhysicsBody(uint32_t entityId) const {
+    if (!m_scene) return false;
+    const entt::entity entity = static_cast<entt::entity>(entityId);
+    auto& registry = m_scene->Registry();
+    if (!registry.valid(entity) ||
+        !registry.all_of<RigidBodyComponent>(entity)) {
+        return false;
+    }
+    return registry.get<RigidBodyComponent>(entity).bodyId != 0xFFFFFFFFu;
+}
+
 void ScriptEngine::DestroyEntity(entt::entity entity) {
     if (!m_scene || !m_scene->Registry().valid(entity)) return;
     auto& registry = m_scene->Registry();
@@ -2056,16 +2078,36 @@ void ScriptEngine::Update(float dt) {
         } catch (const sol::error& e) {
             AddLog(std::string("[RUNALWAYS ERROR] ") + e.what());
         }
-        return;
+    } else {
+        auto updateFunc = m_lua["update"];
+        if (updateFunc.valid() &&
+            updateFunc.get_type() == sol::type::function) {
+            try {
+                updateFunc(dt);
+            } catch (const sol::error& e) {
+                AddLog(std::string("[UPDATE ERROR] ") + e.what());
+            }
+        }
     }
 
-    auto updateFunc = m_lua["update"];
-    if (updateFunc.valid() && updateFunc.get_type() == sol::type::function) {
-        try {
-            updateFunc(dt);
-        } catch (const sol::error& e) {
-            AddLog(std::string("[UPDATE ERROR] ") + e.what());
+    // Apply script velocities for character roots that have no live Jolt body.
+    // Scripts must refresh the velocity during this Update; stale entries are
+    // kept for get_velocity() but no longer move the entity.
+    if (!m_scene || dt == 0.0f) return;
+    auto& registry = m_scene->Registry();
+    for (auto it = m_fallbackVelocities.begin();
+         it != m_fallbackVelocities.end();) {
+        const entt::entity entity = static_cast<entt::entity>(it->first);
+        if (!registry.valid(entity) || HasPhysicsBody(it->first)) {
+            it = m_fallbackVelocities.erase(it);
+            continue;
         }
+        if (it->second.frame == m_frame &&
+            registry.all_of<TransformComponent>(entity)) {
+            registry.get<TransformComponent>(entity).position +=
+                it->second.value * dt;
+        }
+        ++it;
     }
 }
 
