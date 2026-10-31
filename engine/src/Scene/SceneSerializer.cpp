@@ -729,7 +729,6 @@ std::string SceneSerializer::SaveToString() const {
             const auto& s = volume.settings;
             je["postProcessVolume"] = {
                 {"enabled", volume.enabled},
-                {"global", volume.global},
                 {"priority", volume.priority},
                 {"size", Vec3ToJson(volume.size)},
                 {"visibleInEditor", volume.visibleInEditor},
@@ -1459,7 +1458,6 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             const auto& jv = je["postProcessVolume"];
             auto& volume = e.AddComponent<PostProcessVolumeComponent>();
             volume.enabled = jv.value("enabled", true);
-            volume.global = jv.value("global", false);
             volume.priority = jv.value("priority", 0);
             if (jv.contains("size")) volume.size = Vec3FromJson(jv.at("size"));
             volume.visibleInEditor = jv.value("visibleInEditor", true);

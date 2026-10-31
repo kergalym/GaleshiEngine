@@ -366,11 +366,11 @@ struct AudioListenerComponent {
     bool primary = true;
 };
 
-// Spatial post-processing volume. When the camera is inside the box (or when
-// Global is enabled) its settings override the editor's post-process defaults.
+// Scene-wide post-processing volume. Its settings apply to the entire scene
+// (independent of camera position), with the highest-priority enabled volume
+// winning. The size is only an editor visualization/bounds helper.
 struct PostProcessVolumeComponent {
     bool      enabled  = true;
-    bool      global   = false;
     int       priority = 0;
     glm::vec3 size{20.0f, 10.0f, 20.0f};
     bool      visibleInEditor = true;

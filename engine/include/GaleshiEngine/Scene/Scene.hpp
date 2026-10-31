@@ -56,9 +56,9 @@ public:
     SceneCameraState& CameraState() { return m_cameraState; }
     const SceneCameraState& CameraState() const { return m_cameraState; }
 
-    // Global post-process settings used as the base for every scene.  Active
-    // PostProcessVolumeComponents override this; the editor applies the
-    // toggle values to PostProcessManager when a scene is loaded.
+    // Global post-process settings used as the base for every scene. Enabled
+    // PostProcessVolumeComponents override this scene-wide; the editor applies
+    // the toggle values to PostProcessManager when a scene is loaded.
     PostProcessSettings& GlobalPostProcess() { return m_globalPostProcess; }
     const PostProcessSettings& GlobalPostProcess() const {
         return m_globalPostProcess;

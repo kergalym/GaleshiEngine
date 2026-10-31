@@ -4359,30 +4359,17 @@ if (ImGui::BeginMenu("File")) {
     Galeshi::PostProcessSettings ResolvePostProcessSettings() {
         Galeshi::PostProcessSettings result = DefaultPostProcessSettings();
 
+        // Post-process volumes are scene-wide. The camera position and the
+        // authored bounds do not gate the effect; the enabled volume with the
+        // highest priority supplies the settings for the entire scene.
         const auto& reg = m_scene.Registry();
-        auto view = reg.view<Galeshi::PostProcessVolumeComponent,
-                             Galeshi::TransformComponent>();
+        auto view = reg.view<Galeshi::PostProcessVolumeComponent>();
         int bestPriority = std::numeric_limits<int>::min();
-        const glm::vec3 cameraPos = m_camera.Position();
-
         for (auto e : view) {
             const auto& volume =
                 view.get<Galeshi::PostProcessVolumeComponent>(e);
             if (!volume.enabled) continue;
-
-            bool active = volume.global;
-            if (!active) {
-                const glm::mat4 world = EntityWorldMatrix(e);
-                const glm::mat4 invWorld = glm::inverse(world);
-                const glm::vec3 local =
-                    glm::vec3(invWorld * glm::vec4(cameraPos, 1.0f));
-                const glm::vec3 half = volume.size * 0.5f;
-                active = std::abs(local.x) <= half.x &&
-                         std::abs(local.y) <= half.y &&
-                         std::abs(local.z) <= half.z;
-            }
-
-            if (active && volume.priority > bestPriority) {
+            if (volume.priority > bestPriority) {
                 bestPriority = volume.priority;
                 result = volume.settings;
             }
@@ -4606,8 +4593,8 @@ if (ImGui::BeginMenu("File")) {
 
         ImGui::Separator();
         ImGui::TextDisabled(
-            "A Post-Process Volume overrides these values while the camera "
-            "is inside it.");
+            "An enabled Post-Process Volume overrides these values for the "
+            "entire scene. The highest-priority volume wins.");
         ImGui::End();
     }
 
@@ -4615,17 +4602,22 @@ if (ImGui::BeginMenu("File")) {
         auto& s = volume.settings;
 
         ImGui::Checkbox("Enabled", &volume.enabled);
-        ImGui::SameLine();
-        ImGui::Checkbox("Global", &volume.global);
         ImGui::DragInt("Priority", &volume.priority, 1.0f, -100, 100);
-        if (!volume.global) {
-            ImGui::DragFloat3("Size", glm::value_ptr(volume.size),
-                              0.1f, 0.1f, 10000.0f);
-        }
+        ImGui::DragFloat3("Editor Bounds", glm::value_ptr(volume.size),
+                          0.1f, 0.1f, 10000.0f);
         ImGui::Checkbox("Visible in Editor", &volume.visibleInEditor);
+
+        if (!volume.enabled) {
+            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
+                               "Status: disabled");
+        } else {
+            ImGui::TextColored(ImVec4(0.45f, 0.90f, 0.55f, 1.0f),
+                               "Status: active (entire scene)");
+        }
         ImGui::TextDisabled(
-            "The highest-priority volume containing the camera overrides "
-            "global Post-Process toggles.");
+            "Volumes affect the whole scene; the highest-priority enabled "
+            "volume overrides global Post-Process settings. Editor Bounds "
+            "are shown only as a reference and do not limit the effect.");
 
         if (ImGui::TreeNode("Bloom")) {
             ImGui::Checkbox("Enabled##bloom", &s.bloomEnabled);
@@ -6255,9 +6247,7 @@ if (ImGui::BeginMenu("File")) {
                     const bool isSelected = sel && sel.Handle() == e;
                     const glm::vec4 color = isSelected
                         ? glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)
-                        : (volume.global
-                               ? glm::vec4(0.20f, 0.80f, 1.00f, 0.85f)
-                               : glm::vec4(0.65f, 0.30f, 1.00f, 0.85f));
+                        : glm::vec4(0.65f, 0.30f, 1.00f, 0.85f);
 
                     const glm::mat4 world = EntityWorldMatrix(e);
                     glm::vec3 worldScale, translation, worldSkew;

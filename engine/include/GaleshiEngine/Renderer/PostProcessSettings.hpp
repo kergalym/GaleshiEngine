@@ -11,9 +11,10 @@ enum class AmbientOcclusionMode : int {
     GTAO = 2
 };
 
-// Tuning parameters for every post-processing effect. A
-// PostProcessVolumeComponent overrides these values while the camera is inside
-// its bounds; otherwise the editor's global toggles/defaults are used.
+// Tuning parameters for every post-processing effect. An enabled
+// PostProcessVolumeComponent overrides these values for the entire scene,
+// independent of camera position; otherwise the editor's global
+// toggles/defaults are used.
 struct PostProcessSettings {
     // Bloom
     bool  bloomEnabled   = true;

@@ -87,7 +87,7 @@ Implemented post-processing passes:
 - Vignette
 - Chromatic aberration
 - Invert
-- Spatial post-processing volumes with per-effect tuning for bloom, DoF, motion blur, tonemap, color correction, vignette, ambient occlusion (SSAO/HBAO/GTAO), SSR, anti-aliasing, god rays, atmosphere, and fog.
+- Scene-wide post-processing volumes with per-effect tuning for bloom, DoF, motion blur, tonemap, color correction, vignette, ambient occlusion (SSAO/HBAO/GTAO), SSR, anti-aliasing, god rays, atmosphere, and fog. The highest-priority enabled volume applies to the entire scene; bounds are editor-only visualization.
 
 ---
 
