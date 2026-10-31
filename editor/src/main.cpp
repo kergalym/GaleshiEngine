@@ -7008,16 +7008,67 @@ if (ImGui::BeginMenu("File")) {
         ImGui::End();
     }
 
-    void DrawAnimationStateMachineContents(Galeshi::Entity entity) {
+    std::string FindCharacterModelPath(entt::entity entity) {
+        if (!m_assets) return {};
+        auto& registry = m_scene.Registry();
+        if (!registry.valid(entity)) return {};
+
+        if (registry.all_of<Galeshi::SkeletalComponent>(entity)) {
+            const auto& source =
+                registry.get<Galeshi::SkeletalComponent>(entity).sourcePath;
+            if (!source.empty()) return source;
+        }
+
+        // Find the first descendant mesh belonging to a model with bones or
+        // animation clips. The editor does not need Player/NPC tags for this;
+        // the imported model type is the source of truth.
+        std::vector<entt::entity> pending{entity};
+        std::unordered_set<entt::entity> visited;
+        while (!pending.empty()) {
+            const entt::entity current = pending.back();
+            pending.pop_back();
+            if (!registry.valid(current) || !visited.insert(current).second) {
+                continue;
+            }
+            if (registry.all_of<Galeshi::MeshComponent>(current)) {
+                const auto& mesh =
+                    registry.get<Galeshi::MeshComponent>(current);
+                if (!mesh.sourceAssetPath.empty()) {
+                    auto model = m_assets->LoadModel(mesh.sourceAssetPath);
+                    if (model.hasAnimation || model.totalBones > 0) {
+                        return mesh.sourceAssetPath;
+                    }
+                }
+            }
+            auto childView = registry.view<Galeshi::ParentComponent>();
+            for (entt::entity child : childView) {
+                if (childView.get<Galeshi::ParentComponent>(child).parent ==
+                    current) {
+                    pending.push_back(child);
+                }
+            }
+        }
+        return {};
+    }
+
+    void DrawAnimationStateMachineContents(
+        Galeshi::Entity entity,
+        const std::string& fallbackModelPath = {}) {
         if (!entity) return;
         auto& registry = m_scene.Registry();
         const entt::entity handle = entity.Handle();
         if (!registry.valid(handle)) return;
 
         auto* skeleton = registry.try_get<Galeshi::SkeletalComponent>(handle);
+        std::string modelPath = fallbackModelPath;
+        if (skeleton && !skeleton->sourcePath.empty()) {
+            modelPath = skeleton->sourcePath;
+        }
+        if (modelPath.empty()) modelPath = FindCharacterModelPath(handle);
+
         std::vector<std::string> clipNames;
-        if (skeleton && m_assets && !skeleton->sourcePath.empty()) {
-            auto model = m_assets->LoadModel(skeleton->sourcePath);
+        if (!modelPath.empty() && m_assets) {
+            auto model = m_assets->LoadModel(modelPath);
             clipNames = model.animationNames;
         }
 
@@ -7039,9 +7090,36 @@ if (ImGui::BeginMenu("File")) {
             registry.try_get<Galeshi::AnimationStateMachineComponent>(handle);
         if (!machine) {
             if (!skeleton) {
-                ImGui::TextDisabled(
-                    "This entity has no Skeletal Component.");
+                if (modelPath.empty()) {
+                    ImGui::TextDisabled(
+                        "This entity has no skeletal mesh.");
+                    return;
+                }
+                ImGui::TextDisabled("Skeletal model: %s", modelPath.c_str());
+                if (ImGui::Button("+ Set Up Skeletal Character")) {
+                    PushHistory();
+                    auto model = m_assets->LoadModel(modelPath);
+                    auto& created =
+                        registry.emplace<Galeshi::SkeletalComponent>(handle);
+                    created.sourcePath = m_assets->MakeRelativePath(modelPath);
+                    created.isAnimated = model.hasAnimation;
+                    created.boneMatrices.assign(256, glm::mat4(1.0f));
+                    auto& createdMachine =
+                        registry.emplace<
+                            Galeshi::AnimationStateMachineComponent>(handle);
+                    createdMachine =
+                        Galeshi::AnimationSystem::CreateDefaultStateMachine(
+                            model.animationNames);
+                    createdMachine.parameters = {
+                        {"Speed", 0.0f},
+                        {"PlayerVisible", 0.0f},
+                        {"TargetDistance", 100.0f}
+                    };
+                }
                 return;
+            }
+            if (skeleton->sourcePath.empty() && !modelPath.empty()) {
+                skeleton->sourcePath = m_assets->MakeRelativePath(modelPath);
             }
             if (ImGui::Button("+ Add Animation State Machine")) {
                 PushHistory();
@@ -7289,34 +7367,68 @@ if (ImGui::BeginMenu("File")) {
         struct CharacterEntry {
             entt::entity entity = entt::null;
             std::string label;
+            std::string sourcePath;
         };
         std::vector<CharacterEntry> characters;
-        auto view = m_scene.Registry().view<Galeshi::SkeletalComponent>();
-        for (entt::entity handle : view) {
-            std::string name = "Entity " + std::to_string((uint32_t)handle);
-            if (m_scene.Registry().all_of<Galeshi::NameComponent>(handle)) {
-                name = m_scene.Registry().get<Galeshi::NameComponent>(handle).name;
-            }
-            const std::string lower = [&]() {
-                std::string value = name;
-                for (char& c : value) {
-                    c = static_cast<char>(
-                        std::tolower(static_cast<unsigned char>(c)));
+        std::unordered_map<entt::entity, size_t> characterIndices;
+        auto& registry = m_scene.Registry();
+
+        auto addCharacter = [&](entt::entity entity,
+                                const std::string& sourcePath) {
+            if (!registry.valid(entity)) return;
+            const auto existing = characterIndices.find(entity);
+            if (existing != characterIndices.end()) {
+                CharacterEntry& entry =
+                    characters[existing->second];
+                if (entry.sourcePath.empty() && !sourcePath.empty()) {
+                    entry.sourcePath = sourcePath;
                 }
-                return value;
-            }();
-            const bool player =
-                m_scene.Registry().all_of<Galeshi::PlayerTagComponent>(handle) ||
-                lower.find("player") != std::string::npos;
-            const bool npc =
-                m_scene.Registry().all_of<Galeshi::AIControllerComponent>(handle) ||
-                m_scene.Registry().all_of<Galeshi::NavAgentComponent>(handle) ||
-                m_scene.Registry().all_of<Galeshi::BehaviorTreeComponent>(handle) ||
-                lower.find("npc") != std::string::npos;
-            characters.push_back({handle, name + (player ? "  [Player]"
-                                             : npc   ? "  [NPC]"
-                                                     : "  [Character]")});
+                return;
+            }
+            std::string name = "Entity " + std::to_string((uint32_t)entity);
+            if (registry.all_of<Galeshi::NameComponent>(entity)) {
+                name = registry.get<Galeshi::NameComponent>(entity).name;
+            }
+            characterIndices.emplace(entity, characters.size());
+            characters.push_back({entity, name, sourcePath});
+        };
+
+        // Direct skeletal-character roots.
+        auto skeletonView = registry.view<Galeshi::SkeletalComponent>();
+        for (entt::entity handle : skeletonView) {
+            const auto& skeleton = skeletonView.get<Galeshi::SkeletalComponent>(handle);
+            addCharacter(handle, skeleton.sourcePath);
         }
+
+        // Also detect imported skeletal mesh hierarchies that do not yet have
+        // a SkeletalComponent on their root. The model's bone/animation data
+        // is the type check; Player/NPC tags are intentionally not consulted.
+        std::unordered_map<std::string, bool> skeletalModelCache;
+        auto isSkeletalModel = [&](const std::string& path) {
+            if (path.empty()) return false;
+            const auto cached = skeletalModelCache.find(path);
+            if (cached != skeletalModelCache.end()) return cached->second;
+            auto model = m_assets ? m_assets->LoadModel(path)
+                                  : Galeshi::AssetManager::LoadedModel{};
+            const bool skeletal = model.hasAnimation || model.totalBones > 0;
+            skeletalModelCache.emplace(path, skeletal);
+            return skeletal;
+        };
+
+        auto meshView = registry.view<Galeshi::MeshComponent>();
+        for (entt::entity handle : meshView) {
+            const auto& mesh = meshView.get<Galeshi::MeshComponent>(handle);
+            if (!isSkeletalModel(mesh.sourceAssetPath)) continue;
+            entt::entity root = handle;
+            for (int depth = 0; depth < 128 &&
+                                registry.valid(root) &&
+                                registry.all_of<Galeshi::ParentComponent>(root);
+                 ++depth) {
+                root = registry.get<Galeshi::ParentComponent>(root).parent;
+            }
+            addCharacter(root, mesh.sourceAssetPath);
+        }
+
         std::sort(characters.begin(), characters.end(),
                   [](const CharacterEntry& a, const CharacterEntry& b) {
                       return a.label < b.label;
@@ -7363,19 +7475,30 @@ if (ImGui::BeginMenu("File")) {
             if (entity) m_editor.Select(entity);
         }
         ImGui::SameLine();
-        if (m_scene.Registry().all_of<Galeshi::SkeletalComponent>(
-                m_stateMachineEditorEntity)) {
-            const auto& skeleton = m_scene.Registry().get<Galeshi::SkeletalComponent>(
-                m_stateMachineEditorEntity);
-            ImGui::TextDisabled("Source: %s",
-                                skeleton.sourcePath.empty()
-                                    ? "(none)"
-                                    : skeleton.sourcePath.c_str());
+        std::string selectedSourcePath;
+        for (const CharacterEntry& entry : characters) {
+            if (entry.entity == m_stateMachineEditorEntity) {
+                selectedSourcePath = entry.sourcePath;
+                break;
+            }
         }
+        if (registry.all_of<Galeshi::SkeletalComponent>(
+                m_stateMachineEditorEntity)) {
+            const auto& skeleton = registry.get<Galeshi::SkeletalComponent>(
+                m_stateMachineEditorEntity);
+            if (!skeleton.sourcePath.empty()) {
+                selectedSourcePath = skeleton.sourcePath;
+            }
+        }
+        ImGui::TextDisabled("Source: %s",
+                            selectedSourcePath.empty()
+                                ? "(skeletal mesh not assigned)"
+                                : selectedSourcePath.c_str());
         ImGui::Separator();
         ImGui::BeginChild("##state_machine_scroll");
         DrawAnimationStateMachineContents(
-            Galeshi::Entity(m_stateMachineEditorEntity, &m_scene));
+            Galeshi::Entity(m_stateMachineEditorEntity, &m_scene),
+            selectedSourcePath);
         ImGui::EndChild();
         ImGui::End();
     }
