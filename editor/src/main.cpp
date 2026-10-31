@@ -1194,7 +1194,13 @@ protected:
             UpdateGameplayCamera();
         } else {
             // Логика камеры
-            const bool cameraControllable = m_viewportHovered && !m_editor.GizmoLocked() && !ImGuizmo::IsUsing() && !ImGuizmo::IsOver();
+            // The viewport camera must remain free to navigate through the
+            // scene, including over collision-shape wireframes and their
+            // transform gizmos. Only an actively manipulated gizmo may block
+            // camera input; merely hovering it must not.
+            const bool cameraControllable =
+                m_viewportHovered && !m_editor.GizmoLocked() &&
+                !ImGuizmo::IsUsing();
             
             // Зум
             if (m_viewportHovered) {

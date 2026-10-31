@@ -176,7 +176,7 @@ end
 ## Editor
 
 - Docking ImGui interface.
-- Viewport with orbit camera, selection, and drag movement.
+- Viewport with orbit camera, selection, and drag movement. Camera navigation ignores collision shapes and their transform gizmos while moving, so it cannot be blocked by hovering them.
 - World Outliner and Details panels, with independent collision/physics child nodes. Detaching is available only for children of collision shapes; skeletal-model children stay locked, and detach preserves their world transform.
 - Collision-shape wireframes keep the same visibility across Play/Stop and are controlled only by their per-collider Visible in Editor flag; attached meshes are never hidden by Play mode.
 - Content Browser with model import and a right-click script-template menu that creates Lua files in `assets/scripts`. Models, textures and audio can also be dragged in from any file manager; drops on the browser import into the current folder, other drops go to `assets/`.
