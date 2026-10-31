@@ -19,6 +19,7 @@ protected:
     void OnStart() override {
         m_scripts.BindFunctions();
         m_scripts.BindECS(m_scene);
+        m_scripts.BindEngine([this]() { RequestExit(); });
         if (!m_scripts.RunScript("assets/scripts/ui_menu.lua")) {
             spdlog::warn("[UI] ui_menu.lua not found; events will only be logged");
         }
@@ -145,20 +146,8 @@ private:
                                                                     : "changed",
                      event.widgetId, handler);
 
-        sol::state& lua = m_scripts.GetState();
-        sol::object functionObject = lua[handler];
-        if (!functionObject.valid() ||
-            functionObject.get_type() != sol::type::function) {
-            spdlog::warn("[UI] Lua handler '{}' is not defined", handler);
-            return;
-        }
-        sol::protected_function function = functionObject;
-        sol::protected_function_result result =
-            function(event.widgetId, event.value, event.checked);
-        if (!result.valid()) {
-            sol::error error = result;
-            spdlog::error("[UI] Lua error in '{}': {}", handler, error.what());
-        }
+        m_scripts.CallUIHandler(handler, event.widgetId, event.value,
+                                event.checked);
     }
 
     Galeshi::Scene m_scene;

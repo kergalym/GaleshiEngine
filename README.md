@@ -126,18 +126,20 @@ Squad coordination and shared blackboards are not implemented.
 - Sound playback.
 - Navigation commands for AI agents.
 - Entities created by scripts are tagged with `LuaEntityComponent` and removed on hot reload.
+- Unified `Galeshi` API: namespaced gameplay modules (`world`, `input`, `physics`, `audio`, `animation`, `ai`, `navigation`, `ui`, `particles`, `engine`) plus entity handles with methods. The legacy global functions remain available for existing scripts. See [docs/LUA_API.md](docs/LUA_API.md).
 
 ```lua
 local player = nil
 
 function RunOnce()
-    player = new_physics_cube("Player", 0.0, 5.0, 0.0, 2.0)
+    player = Galeshi.physics.create_box("Player", 0.0, 5.0, 0.0, 2.0)
 end
 
 function RunAlways(dt)
-    if not player then return end
-    local velocity = get_velocity(player)
-    -- Per-frame game logic here.
+    if not player or not player:valid() then return end
+    local velocity = Galeshi.physics.get_velocity(player)
+    local horizontal = Galeshi.input.axis("Horizontal")
+    Galeshi.physics.set_velocity(player, horizontal * 8.0, velocity.y, 0.0)
 end
 ```
 

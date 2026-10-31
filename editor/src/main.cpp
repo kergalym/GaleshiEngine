@@ -721,11 +721,40 @@ protected:
                     }
                 }
             });
-        m_scripts.BindAudio([this](const std::string& p){ m_audio.PlaySound(p); });
+        m_scripts.BindAudio(
+            [this](const std::string& path, bool loop) {
+                m_audio.PlaySound(path, loop);
+            },
+            [this](const std::string& path) { m_audio.StopSound(path); },
+            [this](const std::string& path) {
+                return m_audio.IsSoundPlaying(path);
+            },
+            [this]() { m_audio.StopAll(); });
         m_scripts.BindAI();
-        m_scripts.BindPhysics([this](const glm::vec3& he, const glm::vec3& pos, entt::entity e) {
-            return m_physics->CreateBox(he, pos, e);
-        });
+        Galeshi::ScriptEngine::PhysicsBindings scriptPhysics;
+        scriptPhysics.createBox =
+            [this](const glm::vec3& halfExtents, const glm::vec3& position,
+                   entt::entity entity, bool isStatic) {
+                return m_physics->CreateBox(halfExtents, position, entity,
+                                            isStatic);
+            };
+        scriptPhysics.createSphere =
+            [this](float radius, const glm::vec3& position,
+                   entt::entity entity, bool isStatic) {
+                return m_physics->CreateSphere(radius, position, entity,
+                                               isStatic);
+            };
+        scriptPhysics.createCapsule =
+            [this](float halfHeight, float radius, const glm::vec3& position,
+                   entt::entity entity, bool isStatic) {
+                return m_physics->CreateCapsule(halfHeight, radius, position,
+                                                entity, isStatic);
+            };
+        scriptPhysics.destroyBody = [this](uint32_t bodyId) {
+            if (m_physics) m_physics->DestroyBody(bodyId);
+        };
+        m_scripts.BindPhysics(scriptPhysics);
+        m_scripts.BindEngine([this]() { RequestExit(); });
         spdlog::info("[Subsystem] m_scripts.RunScript(init.lua) begin");
         if (!m_scripts.RunScript("assets/scripts/init.lua"))
             spdlog::error("[Subsystem] m_scripts.RunScript(init.lua) failed");
@@ -765,6 +794,15 @@ protected:
         });
         m_navSystem = std::make_unique<Galeshi::NavigationSystem>();
         m_navSystem->Init();
+        m_scripts.BindNavigation(
+            [this](const glm::vec3& start, const glm::vec3& end,
+                   std::vector<glm::vec3>& path) {
+                return m_navSystem &&
+                       m_navSystem->FindPath(start, end, path);
+            },
+            [this]() {
+                return m_navSystem && m_navSystem->BuildFromScene(m_scene);
+            });
         m_debug = std::make_unique<Galeshi::DebugRenderer>();
         m_debug->Init();
         
@@ -2783,22 +2821,8 @@ if (ImGui::BeginMenu("File")) {
             break;
         }
         if (handler.empty()) return;
-
-        sol::state& lua = m_scripts.GetState();
-        sol::object functionObject = lua[handler];
-        if (!functionObject.valid() ||
-            functionObject.get_type() != sol::type::function) {
-            spdlog::warn("[UI] Lua handler '{}' is not defined", handler);
-            return;
-        }
-
-        sol::protected_function function = functionObject;
-        sol::protected_function_result result =
-            function(event.widgetId, event.value, event.checked);
-        if (!result.valid()) {
-            sol::error error = result;
-            spdlog::error("[UI] Lua error in '{}': {}", handler, error.what());
-        }
+        m_scripts.CallUIHandler(handler, event.widgetId, event.value,
+                                event.checked);
     }
 
     entt::entity ActiveUICanvasEntity() {
