@@ -2180,65 +2180,93 @@ private:
         ImGui::SameLine();
 
                 if (ImGui::BeginMenu("Post-Process")) {
-            bool bloom = m_postProcess.BloomEnabled();
-            if (ImGui::MenuItem("Bloom", nullptr, &bloom)) m_postProcess.SetBloomEnabled(bloom);
-            bool inv = m_postProcess.InvertEnabled();
-            if (ImGui::MenuItem("Invert Colors", nullptr, &inv)) m_postProcess.SetInvertEnabled(inv);
-            bool fxaa = m_postProcess.FxaaEnabled();
-            if (ImGui::MenuItem("FXAA", nullptr, &fxaa)) m_postProcess.SetFxaaEnabled(fxaa);
+            // Edit the active source (highest-priority volume or global
+            // settings). The manager toggles are kept in sync so disabling
+            // the volume falls back to the same global state.
+            auto& pp = ActivePostProcessSettings();
+            ImGui::TextDisabled(
+                "Editing: %s",
+                ActivePostProcessVolume() ? "active Post-Process Volume"
+                                          : "global Post-Process settings");
+            ImGui::Separator();
+            auto menuToggle = [&](const char* label, bool& value,
+                                  void (Galeshi::PostProcessManager::*setter)(bool)) {
+                bool next = value;
+                if (ImGui::MenuItem(label, nullptr, &next)) {
+                    value = next;
+                    (m_postProcess.*setter)(next);
+                }
+            };
+
+            menuToggle("Bloom", pp.bloomEnabled,
+                       &Galeshi::PostProcessManager::SetBloomEnabled);
+            menuToggle("Invert Colors", pp.invertEnabled,
+                       &Galeshi::PostProcessManager::SetInvertEnabled);
+            menuToggle("FXAA", pp.fxaaEnabled,
+                       &Galeshi::PostProcessManager::SetFxaaEnabled);
             if (ImGui::BeginMenu("Ambient Occlusion")) {
-                bool ao = m_postProcess.SsaoEnabled();
-                if (ImGui::MenuItem("Enabled", nullptr, &ao))
-                    m_postProcess.SetSsaoEnabled(ao);
+                menuToggle("Enabled", pp.ssaoEnabled,
+                           &Galeshi::PostProcessManager::SetSsaoEnabled);
                 ImGui::Separator();
                 if (ImGui::MenuItem("SSAO", nullptr,
-                        m_globalAoMode == Galeshi::AmbientOcclusionMode::SSAO))
-                    m_globalAoMode = Galeshi::AmbientOcclusionMode::SSAO;
+                        pp.aoMode == Galeshi::AmbientOcclusionMode::SSAO)) {
+                    pp.aoMode = Galeshi::AmbientOcclusionMode::SSAO;
+                    m_globalAoMode = pp.aoMode;
+                }
                 if (ImGui::MenuItem("HBAO", nullptr,
-                        m_globalAoMode == Galeshi::AmbientOcclusionMode::HBAO))
-                    m_globalAoMode = Galeshi::AmbientOcclusionMode::HBAO;
+                        pp.aoMode == Galeshi::AmbientOcclusionMode::HBAO)) {
+                    pp.aoMode = Galeshi::AmbientOcclusionMode::HBAO;
+                    m_globalAoMode = pp.aoMode;
+                }
                 if (ImGui::MenuItem("GTAO", nullptr,
-                        m_globalAoMode == Galeshi::AmbientOcclusionMode::GTAO))
-                    m_globalAoMode = Galeshi::AmbientOcclusionMode::GTAO;
+                        pp.aoMode == Galeshi::AmbientOcclusionMode::GTAO)) {
+                    pp.aoMode = Galeshi::AmbientOcclusionMode::GTAO;
+                    m_globalAoMode = pp.aoMode;
+                }
                 ImGui::EndMenu();
             }
-            bool smaa = m_postProcess.SmaaEnabled();
-            if (ImGui::MenuItem("SMAA", nullptr, &smaa)) m_postProcess.SetSmaaEnabled(smaa);
-            bool taa = m_postProcess.TaaEnabled();
-            if (ImGui::MenuItem("TAA", nullptr, &taa)) m_postProcess.SetTaaEnabled(taa);
-
-            bool dof = m_postProcess.DofEnabled();
-            if (ImGui::MenuItem("Depth of Field", nullptr, &dof)) m_postProcess.SetDofEnabled(dof);
-
-            bool mb = m_postProcess.MotionBlurEnabled();
-            if (ImGui::MenuItem("Motion Blur", nullptr, &mb)) m_postProcess.SetMotionBlurEnabled(mb);
-
-            bool atmo = m_postProcess.AtmosphereEnabled();
-            if (ImGui::MenuItem("Atmosphere", nullptr, &atmo)) m_postProcess.SetAtmosphereEnabled(atmo);
-
-            bool gr = m_postProcess.GodRaysEnabled();
-            if (ImGui::MenuItem("Volumetric Light", nullptr, &gr)) m_postProcess.SetGodRaysEnabled(gr);
-            bool fog = m_postProcess.FogEnabled();
-            if (ImGui::MenuItem("Fog", nullptr, &fog)) m_postProcess.SetFogEnabled(fog);
-            bool fogVolumetric = m_postProcess.FogVolumetric();
-            if (ImGui::MenuItem("Volumetric Fog", nullptr, &fogVolumetric)) {
-                m_postProcess.SetFogVolumetric(fogVolumetric);
-                if (fogVolumetric) m_postProcess.SetFogEnabled(true);
+            menuToggle("SMAA", pp.smaaEnabled,
+                       &Galeshi::PostProcessManager::SetSmaaEnabled);
+            menuToggle("TAA", pp.taaEnabled,
+                       &Galeshi::PostProcessManager::SetTaaEnabled);
+            menuToggle("Depth of Field", pp.dofEnabled,
+                       &Galeshi::PostProcessManager::SetDofEnabled);
+            menuToggle("Motion Blur", pp.motionBlurEnabled,
+                       &Galeshi::PostProcessManager::SetMotionBlurEnabled);
+            menuToggle("Atmosphere", pp.atmosphereEnabled,
+                       &Galeshi::PostProcessManager::SetAtmosphereEnabled);
+            menuToggle("Volumetric Light", pp.godRaysEnabled,
+                       &Galeshi::PostProcessManager::SetGodRaysEnabled);
+            menuToggle("Fog", pp.fogEnabled,
+                       &Galeshi::PostProcessManager::SetFogEnabled);
+            if (ImGui::MenuItem("Volumetric Fog", nullptr,
+                                &pp.fogVolumetric)) {
+                m_postProcess.SetFogVolumetric(pp.fogVolumetric);
+                if (pp.fogVolumetric) {
+                    pp.fogEnabled = true;
+                    m_postProcess.SetFogEnabled(true);
+                }
             }
-            bool ssr = m_postProcess.SsrEnabled();
-            if (ImGui::MenuItem("SSR", nullptr, &ssr)) m_postProcess.SetSsrEnabled(ssr);
-            bool ssgi = m_postProcess.SsgiEnabled();
-            if (ImGui::MenuItem("SSGI (Indirect Lighting)", nullptr, &ssgi))
-                m_postProcess.SetSsgiEnabled(ssgi);
+            menuToggle("SSR", pp.ssrEnabled,
+                       &Galeshi::PostProcessManager::SetSsrEnabled);
+            menuToggle("SSGI (Indirect Lighting)", pp.ssgiEnabled,
+                       &Galeshi::PostProcessManager::SetSsgiEnabled);
             ImGui::Separator();
             ImGui::MenuItem("Environment Palette...", nullptr,
                             &m_showEnvironmentPalette);
             ImGui::Separator();
             if (ImGui::MenuItem("Reset All Effects")) {
+                pp.invertEnabled = false;
+                pp.fxaaEnabled = false;
+                pp.ssaoEnabled = false;
+                pp.ssrEnabled = false;
+                pp.ssgiEnabled = false;
+                pp.fogEnabled = false;
+                pp.fogVolumetric = false;
                 m_postProcess.SetInvertEnabled(false);
                 m_postProcess.SetFxaaEnabled(false);
-                m_postProcess.SetSsaoEnabled(false); // DEBUG
-                m_postProcess.SetSsrEnabled(false); // DEBUG
+                m_postProcess.SetSsaoEnabled(false);
+                m_postProcess.SetSsrEnabled(false);
                 m_postProcess.SetSsgiEnabled(false);
                 m_postProcess.SetFogEnabled(false);
                 m_postProcess.SetFogVolumetric(false);
@@ -4356,25 +4384,58 @@ if (ImGui::BeginMenu("File")) {
         return s;
     }
 
-    Galeshi::PostProcessSettings ResolvePostProcessSettings() {
-        Galeshi::PostProcessSettings result = DefaultPostProcessSettings();
-
-        // Post-process volumes are scene-wide. The camera position and the
-        // authored bounds do not gate the effect; the enabled volume with the
-        // highest priority supplies the settings for the entire scene.
-        const auto& reg = m_scene.Registry();
-        auto view = reg.view<Galeshi::PostProcessVolumeComponent>();
+    // The active post-process source is the highest-priority enabled volume,
+    // or the scene-global settings when no volume is enabled. Both the
+    // Post-Process menu and the volume inspector edit this active source, so
+    // the most recently changed control always wins instead of the menu being
+    // silently shadowed by a volume.
+    Galeshi::PostProcessVolumeComponent* ActivePostProcessVolume() {
+        auto view = m_scene.Registry()
+            .view<Galeshi::PostProcessVolumeComponent>();
+        Galeshi::PostProcessVolumeComponent* best = nullptr;
         int bestPriority = std::numeric_limits<int>::min();
         for (auto e : view) {
-            const auto& volume =
+            auto& volume =
                 view.get<Galeshi::PostProcessVolumeComponent>(e);
             if (!volume.enabled) continue;
             if (volume.priority > bestPriority) {
                 bestPriority = volume.priority;
-                result = volume.settings;
+                best = &volume;
             }
         }
-        return result;
+        return best;
+    }
+
+    Galeshi::PostProcessSettings& ActivePostProcessSettings() {
+        if (auto* volume = ActivePostProcessVolume())
+            return volume->settings;
+
+        // With no active volume the manager toggles are authoritative. Mirror
+        // them into the scene-global settings so the menu always displays the
+        // values that are actually being rendered.
+        Galeshi::PostProcessSettings& global = m_scene.GlobalPostProcess();
+        global.bloomEnabled      = m_postProcess.BloomEnabled();
+        global.dofEnabled        = m_postProcess.DofEnabled();
+        global.motionBlurEnabled = m_postProcess.MotionBlurEnabled();
+        global.ssaoEnabled       = m_postProcess.SsaoEnabled();
+        global.aoMode            = m_globalAoMode;
+        global.ssrEnabled        = m_postProcess.SsrEnabled();
+        global.ssgiEnabled       = m_postProcess.SsgiEnabled();
+        global.fxaaEnabled       = m_postProcess.FxaaEnabled();
+        global.smaaEnabled       = m_postProcess.SmaaEnabled();
+        global.taaEnabled        = m_postProcess.TaaEnabled();
+        global.godRaysEnabled    = m_postProcess.GodRaysEnabled();
+        global.atmosphereEnabled = m_postProcess.AtmosphereEnabled();
+        global.fogEnabled        = m_postProcess.FogEnabled();
+        global.fogVolumetric     = m_postProcess.FogVolumetric();
+        global.invertEnabled     = m_postProcess.InvertEnabled();
+        return global;
+    }
+
+    Galeshi::PostProcessSettings ResolvePostProcessSettings() {
+        if (auto* volume = ActivePostProcessVolume())
+            return volume->settings;
+        return DefaultPostProcessSettings();
     }
 
     glm::vec3 CameraForward() const {
@@ -4582,14 +4643,19 @@ if (ImGui::BeginMenu("File")) {
             "A colour palette applied to the final environment render. "
             "The filter runs in the color-correction pass after tonemapping, "
             "so it does not affect the editor UI.");
+        auto* activeVolume = ActivePostProcessVolume();
+        ImGui::TextDisabled("Editing: %s",
+                            activeVolume ? "active Post-Process Volume"
+                                         : "global Post-Process settings");
         ImGui::Separator();
 
         Galeshi::PostProcessSettings& settings =
-            m_scene.GlobalPostProcess();
+            activeVolume ? activeVolume->settings
+                         : m_scene.GlobalPostProcess();
         ImGui::PushID(&settings);
         const bool changed = DrawEnvironmentPaletteControls(settings);
         ImGui::PopID();
-        if (changed) m_scene.SetHasGlobalPostProcess(true);
+        if (changed && !activeVolume) m_scene.SetHasGlobalPostProcess(true);
 
         ImGui::Separator();
         ImGui::TextDisabled(
@@ -4610,14 +4676,18 @@ if (ImGui::BeginMenu("File")) {
         if (!volume.enabled) {
             ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.65f, 1.0f),
                                "Status: disabled");
-        } else {
+        } else if (ActivePostProcessVolume() == &volume) {
             ImGui::TextColored(ImVec4(0.45f, 0.90f, 0.55f, 1.0f),
                                "Status: active (entire scene)");
+        } else {
+            ImGui::TextColored(ImVec4(0.95f, 0.78f, 0.35f, 1.0f),
+                               "Status: overridden by a higher-priority volume");
         }
         ImGui::TextDisabled(
             "Volumes affect the whole scene; the highest-priority enabled "
-            "volume overrides global Post-Process settings. Editor Bounds "
-            "are shown only as a reference and do not limit the effect.");
+            "volume overrides global Post-Process settings. The Post-Process "
+            "menu edits the active source. Editor Bounds are only a visual "
+            "reference and do not limit the effect.");
 
         if (ImGui::TreeNode("Bloom")) {
             ImGui::Checkbox("Enabled##bloom", &s.bloomEnabled);
