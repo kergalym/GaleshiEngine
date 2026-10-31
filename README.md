@@ -57,6 +57,7 @@ The primary rendering path is deferred:
 - Automatic mesh LOD generation and distance-based LOD selection.
 - Conservative occlusion culling with GPU occlusion queries and a low-resolution occluder depth map.
 - Cascade-aware PSSM depth bias, normal-offset tuning, and texel-snapped cascades for stable distant shadows.
+- Adjustable PSSM shadow sharpness, including hard single-tap shadows and a Sharp Shadows preset.
 - Per-object motion vectors for Motion Blur and TAA, with camera fallback for sky.
 - Scalable render resolution with optional dynamic-resolution scaling.
 - Analytical height fog plus an optional volumetric ray-marched mode with PSSM shadow shafts.

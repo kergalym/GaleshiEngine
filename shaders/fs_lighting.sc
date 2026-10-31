@@ -121,9 +121,19 @@ float calculateShadow(vec4 lightSpacePos, float NdotL, int cascadeIdx) {
     else if (cascadeIdx == 1) cascadeBias = u_cascadeDepthBias.y;
     else cascadeBias = u_cascadeDepthBias.z;
     float bias = max(cascadeBias + u_pssmParams.x * (1.0 - NdotL), 0.000001);
-    float pcfRadius = max(u_pssmParams.y, 0.5);
+    float pcfRadius = max(u_pssmParams.y, 0.0);
     float shadow = 0.0;
     vec2 texelSize = vec2(1.0 / 2048.0, 1.0 / 2048.0);
+
+    // Radius 0 means a genuinely hard shadow: one center tap instead of
+    // eight coincident PCF taps.
+    if (pcfRadius <= 0.001) {
+        float centerDepth;
+        if (cascadeIdx == 0) centerDepth = texture2D(s_shadowMap0, projCoords.xy).r;
+        else if (cascadeIdx == 1) centerDepth = texture2D(s_shadowMap1, projCoords.xy).r;
+        else centerDepth = texture2D(s_shadowMap2, projCoords.xy).r;
+        return (currentDepth - bias > centerDepth) ? 1.0 : 0.0;
+    }
 
     // Rotated Poisson Disk (8 samples)
     float angle = fract(sin(dot(projCoords.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
@@ -286,7 +296,8 @@ float calcSpotShadow0(vec4 lightSpacePos, float NdotL) {
     float currentDepth = projCoords.z;
     float bias = max(0.0005 * (1.0 - NdotL), 0.00005);
     float shadow = 0.0;
-    vec2 texelSize = vec2(1.0 / 1024.0, 1.0 / 1024.0);
+    vec2 texelSize = vec2(1.0 / 1024.0, 1.0 / 1024.0) *
+                     clamp(u_pssmParams.y, 0.0, 1.0);
     float pcfDepth;
 
     pcfDepth = texture2D(s_spotShadowMap0, projCoords.xy + vec2(-1.0, -1.0) * texelSize).r;
@@ -324,7 +335,8 @@ float calcSpotShadow1(vec4 lightSpacePos, float NdotL) {
     float currentDepth = projCoords.z;
     float bias = max(0.0005 * (1.0 - NdotL), 0.00005);
     float shadow = 0.0;
-    vec2 texelSize = vec2(1.0 / 1024.0, 1.0 / 1024.0);
+    vec2 texelSize = vec2(1.0 / 1024.0, 1.0 / 1024.0) *
+                     clamp(u_pssmParams.y, 0.0, 1.0);
     float pcfDepth;
 
     pcfDepth = texture2D(s_spotShadowMap1, projCoords.xy + vec2(-1.0, -1.0) * texelSize).r;
@@ -362,7 +374,8 @@ float calcSpotShadow2(vec4 lightSpacePos, float NdotL) {
     float currentDepth = projCoords.z;
     float bias = max(0.0005 * (1.0 - NdotL), 0.00005);
     float shadow = 0.0;
-    vec2 texelSize = vec2(1.0 / 1024.0, 1.0 / 1024.0);
+    vec2 texelSize = vec2(1.0 / 1024.0, 1.0 / 1024.0) *
+                     clamp(u_pssmParams.y, 0.0, 1.0);
     float pcfDepth;
 
     pcfDepth = texture2D(s_spotShadowMap2, projCoords.xy + vec2(-1.0, -1.0) * texelSize).r;
@@ -400,7 +413,8 @@ float calcSpotShadow3(vec4 lightSpacePos, float NdotL) {
     float currentDepth = projCoords.z;
     float bias = max(0.0005 * (1.0 - NdotL), 0.00005);
     float shadow = 0.0;
-    vec2 texelSize = vec2(1.0 / 1024.0, 1.0 / 1024.0);
+    vec2 texelSize = vec2(1.0 / 1024.0, 1.0 / 1024.0) *
+                     clamp(u_pssmParams.y, 0.0, 1.0);
     float pcfDepth;
 
     pcfDepth = texture2D(s_spotShadowMap3, projCoords.xy + vec2(-1.0, -1.0) * texelSize).r;

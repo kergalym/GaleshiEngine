@@ -110,7 +110,7 @@ vec2 sampleShadow(vec4 lightSpacePos, int cascade, float bias)
     }
 
     vec2 texel = vec2(1.0 / 2048.0, 1.0 / 2048.0);
-    float radius = max(u_pssmParams.y, 0.5);
+    float radius = max(u_pssmParams.y, 0.0);
     float occ = 0.0;
     occ += proj.z - bias > shadowDepthAt(proj.xy, cascade) ? 1.0 : 0.0;
     occ += proj.z - bias > shadowDepthAt(proj.xy + vec2( radius, 0.0) * texel, cascade) ? 1.0 : 0.0;

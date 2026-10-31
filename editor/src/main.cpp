@@ -201,7 +201,9 @@ class GaleshiEditorApp final : public Galeshi::Application {
     float m_pssmSlopeBias = 0.00025f;
     float m_pssmNormalOffsetTexels = 1.75f;
     float m_pssmNormalOffsetSlope = 0.5f;
-    float m_pssmPcfRadius = 1.5f;
+    // 0 = softest PCF, 1 = single-tap hard shadows. The effective PCF
+    // radius is derived in PssmPcfRadius().
+    float m_pssmShadowSharpness = 0.625f;
     // Viewport render scaling. Dynamic resolution adjusts m_dynamicScale in
     // 5% steps while the manual scale is used when dynamic mode is disabled.
     float m_renderScale = 1.0f;
@@ -2233,14 +2235,24 @@ private:
                                  0.05f, 0.0f, 4.0f, "%.2f");
                 ImGui::SliderFloat("Normal Slope", &m_pssmNormalOffsetSlope,
                                    0.0f, 2.0f, "%.2f");
-                ImGui::SliderFloat("PCF Radius", &m_pssmPcfRadius,
-                                   0.5f, 4.0f, "%.2f");
+                ImGui::SliderFloat("Shadow Sharpness",
+                                   &m_pssmShadowSharpness,
+                                   0.0f, 1.0f, "%.2f");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("1.0 = hard single-tap shadows, 0.0 = soft PCF.\n"
+                                      "This is a global directional-shadow setting.");
+                }
+                ImGui::TextDisabled("PCF radius: %.2f texels", PssmPcfRadius());
+                bool sharpShadows = m_pssmShadowSharpness >= 0.999f;
+                if (ImGui::Checkbox("Sharp Shadows", &sharpShadows)) {
+                    m_pssmShadowSharpness = sharpShadows ? 1.0f : 0.625f;
+                }
                 if (ImGui::Button("Reset PSSM Tuning")) {
                     m_pssmDepthBiasTexels = 0.75f;
                     m_pssmSlopeBias = 0.00025f;
                     m_pssmNormalOffsetTexels = 1.75f;
                     m_pssmNormalOffsetSlope = 0.5f;
-                    m_pssmPcfRadius = 1.5f;
+                    m_pssmShadowSharpness = 0.625f;
                 }
                 ImGui::EndMenu();
             }
@@ -4231,6 +4243,11 @@ if (ImGui::BeginMenu("File")) {
         m_postProcess.ResetTaaHistory();
     }
 
+    float PssmPcfRadius() const {
+        const float sharpness = glm::clamp(m_pssmShadowSharpness, 0.0f, 1.0f);
+        return (1.0f - sharpness) * 4.0f;
+    }
+
     Galeshi::PostProcessSettings DefaultPostProcessSettings() const {
         Galeshi::PostProcessSettings s =
             m_scene.HasGlobalPostProcess()
@@ -5554,7 +5571,7 @@ if (ImGui::BeginMenu("File")) {
 
                 m_postProcess.RenderLightCulling(plCount, plPosA, currVP, renderW, renderH);
                 const float pssmParams[4] = {
-                    m_pssmSlopeBias, m_pssmPcfRadius,
+                    m_pssmSlopeBias, PssmPcfRadius(),
                     m_pssmNormalOffsetSlope,
                     bgfx::getCaps()->originBottomLeft ? 0.0f : 1.0f
                 };
@@ -5737,7 +5754,7 @@ if (ImGui::BeginMenu("File")) {
                         -waterSunDir[0], -waterSunDir[1], -waterSunDir[2], 0.0f
                     };
                     const float translucencyPssm[4] = {
-                        m_pssmSlopeBias, m_pssmPcfRadius,
+                        m_pssmSlopeBias, PssmPcfRadius(),
                         m_pssmNormalOffsetSlope,
                         bgfx::getCaps()->originBottomLeft ? 0.0f : 1.0f
                     };
@@ -7512,12 +7529,22 @@ void DrawDetails() {
                 }
 
                 ImGui::Separator();
-                ImGui::Text("Shadow Depth");
+                ImGui::Text("Shadows");
                 ImGui::Checkbox("Cast Shadows", &m.castsShadow);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Include this material's geometry in the shadow-depth passes.");
+                }
+                ImGui::SliderFloat("Shadow Sharpness (Global)",
+                                   &m_pssmShadowSharpness,
+                                   0.0f, 1.0f, "%.2f");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Global PSSM sharpness: 1.0 = razor-sharp single-tap\n"
+                                      "shadows, 0.0 = soft PCF. Affects every cast shadow.");
+                }
                 ImGui::SliderFloat("Shadow Depth Offset", &m.shadowDepthOffset, -0.25f, 0.25f, "%.3f m");
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Offsets the caster along its normal in the shadow depth pass.\n"
-                                      "Use small values for thin cards or to reduce self-shadow acne.");
+                    ImGui::SetTooltip("Offsets the caster along its normal in the shadow-depth pass.\n"
+                                      "This changes self-shadow bias, not edge sharpness.");
                 }
 
                 ImGui::Separator();
