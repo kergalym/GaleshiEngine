@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
-#include <vector>
 
 namespace Galeshi {
 class Scene; class Camera; class AssetManager; class Frustum; class Material;
@@ -83,8 +82,6 @@ private:
     void RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle program,
                                  bgfx::ViewId viewId);
     void BindMaterial(const Material& mat);
-    void BeginBonePaletteCache();
-    void BindBonePalette(Scene& scene, uint32_t rootId, bool hasSkeleton);
     bool EnsureReflectionTarget(uint16_t width, uint16_t height);
     void DestroyReflectionTarget();
     bool EnsureOcclusionTarget(uint16_t width, uint16_t height);
@@ -176,12 +173,6 @@ private:
     bgfx::UniformHandle u_pointLightCount = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_boneMatrices = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_boneTexture = BGFX_INVALID_HANDLE;
-    bgfx::TextureHandle m_identityBoneTexture = BGFX_INVALID_HANDLE;
-    std::vector<glm::vec4> m_boneScratch;
-    uint64_t m_boneCacheGeneration = 0;
-    uint64_t m_boneCacheRootGeneration = 0;
-    uint32_t m_boneCacheRoot = 0xFFFFFFFFu;
-    bool m_boneCacheUsesTexture = false;
     bgfx::UniformHandle s_albedoMap = BGFX_INVALID_HANDLE, s_metallicRoughnessMap = BGFX_INVALID_HANDLE, s_normalMap = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_irradianceMap = BGFX_INVALID_HANDLE, s_envMap = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_emissiveMap = BGFX_INVALID_HANDLE, s_occlusionMap = BGFX_INVALID_HANDLE;

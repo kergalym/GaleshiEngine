@@ -225,16 +225,25 @@ std::shared_ptr<Texture> AssetManager::LoadTexture(const std::string& originalPa
         TextureCacheKey(LowerAssetPath(AssetBaseName(normalized)), srgb));
     if (embedded != m_embeddedTextures.end()) return embedded->second;
 
+    // Resolve against the project root, not the process working directory.
+    // The editor normally runs from build/bin, while scene texture paths are
+    // project-relative; checking `path` directly silently replaced external
+    // character textures with the white fallback.
     std::error_code ec;
-    bool exists = std::filesystem::exists(path, ec);
+    const std::string resolved = ResolvePath(path);
+    bool exists = std::filesystem::exists(resolved, ec);
+    std::string resolvedFallback;
     if (!exists && normalized != path) {
         ec.clear();
-        exists = std::filesystem::exists(normalized, ec);
+        resolvedFallback = ResolvePath(normalized);
+        exists = std::filesystem::exists(resolvedFallback, ec);
     }
     if (!exists) return m_white;
 
-    Texture* raw = Texture::LoadFromFile(ResolvePath(path), srgb);
-    if (!raw && normalized != path) raw = Texture::LoadFromFile(normalized, srgb);
+    Texture* raw = Texture::LoadFromFile(resolved, srgb);
+    if (!raw && !resolvedFallback.empty()) {
+        raw = Texture::LoadFromFile(resolvedFallback, srgb);
+    }
     if (!raw) return m_white;
 
     std::shared_ptr<Texture> tex(raw);
