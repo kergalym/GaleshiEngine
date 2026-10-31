@@ -109,6 +109,32 @@ static const char* LoadingStageText(LoadingState::Stage stage) {
 
 using ProfileClock = std::chrono::steady_clock;
 
+// Asset-extension helpers shared by drag & drop, import dialogs and the
+// Outliner. Keeping the list in one place prevents a format from being
+// accepted in one place and silently rejected in another.
+static std::string AssetExtensionLower(const std::string& path) {
+    std::string extension =
+        std::filesystem::path(path).extension().string();
+    for (char& c : extension)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return extension;
+}
+
+static bool IsModelAssetPath(const std::string& path) {
+    const std::string extension = AssetExtensionLower(path);
+    return extension == ".fbx" || extension == ".gltf" ||
+           extension == ".glb" || extension == ".obj" ||
+           extension == ".dae";
+}
+
+static bool IsImageAssetPath(const std::string& path) {
+    const std::string extension = AssetExtensionLower(path);
+    return extension == ".png" || extension == ".jpg" ||
+           extension == ".jpeg" || extension == ".bmp" ||
+           extension == ".tga" || extension == ".dds" ||
+           extension == ".ktx";
+}
+
 inline float ProfileElapsedMs(ProfileClock::time_point begin,
                               ProfileClock::time_point end) {
     return std::chrono::duration<float, std::milli>(end - begin).count();
@@ -412,9 +438,9 @@ protected:
     void OnFileDrop(const std::string& filepath) override {
         if (!m_projectLoaded || !m_assets) return;
         namespace fs = std::filesystem;
-        std::string ext = fs::path(filepath).extension().string();
-        for (auto& c : ext) c = std::tolower(c);
-        if (ext == ".fbx" || ext == ".gltf" || ext == ".glb" || ext == ".png" || ext == ".jpg" || ext == ".wav" || ext == ".mp3") {
+        const std::string ext = AssetExtensionLower(filepath);
+        if (IsModelAssetPath(filepath) || IsImageAssetPath(filepath) ||
+            ext == ".wav" || ext == ".mp3") {
             const std::string projectPath = Galeshi::ProjectManager::GetProjectPath();
             if (projectPath.empty()) {
                 spdlog::error("[Editor] Cannot import '{}': no project is open", filepath);
@@ -1180,16 +1206,10 @@ protected:
         if (!chosenTreeMesh.empty()) {
             auto& registry = m_scene.Registry();
             if (m_vegetationMeshTarget != entt::null &&
-                registry.valid(m_vegetationMeshTarget) &&
-                registry.all_of<Galeshi::VegetationComponent>(
-                    m_vegetationMeshTarget)) {
-                auto& vegetation = registry.get<Galeshi::VegetationComponent>(
-                    m_vegetationMeshTarget);
-                vegetation.treeMeshPath =
-                    m_assets ? m_assets->MakeRelativePath(chosenTreeMesh)
-                             : chosenTreeMesh;
-                spdlog::info("[Editor] Vegetation tree mesh: {}",
-                             vegetation.treeMeshPath);
+                registry.valid(m_vegetationMeshTarget)) {
+                AssignLandscapeTreeModel(
+                    Galeshi::Entity(m_vegetationMeshTarget, &m_scene),
+                    chosenTreeMesh);
             }
             m_vegetationMeshTarget = entt::null;
         } else if (!m_vegetationMeshPicker.IsOpen()) {
@@ -6347,6 +6367,19 @@ if (ImGui::BeginMenu("File")) {
             // selected material by OnAssetDropped().
             const ImVec2 dropImageMin = ImGui::GetItemRectMin();
             const ImVec2 dropImageMax = ImGui::GetItemRectMax();
+            if (!m_isGameMode) {
+                Galeshi::Entity dropSelection = m_editor.Selected(&m_scene);
+                if (const ImGuiPayload* active = ImGui::GetDragDropPayload();
+                    active && active->IsDataType("GALESHI_ASSET_PATH") &&
+                    IsModelAssetPath(static_cast<const char*>(active->Data)) &&
+                    dropSelection &&
+                    dropSelection.HasComponent<Galeshi::LandscapeComponent>() &&
+                    ImGui::IsItemHovered(
+                        ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+                    ImGui::SetTooltip(
+                        "Drop to assign this model as the Landscape tree mesh.");
+                }
+            }
             if (!m_isGameMode && ImGui::BeginDragDropTarget()) {
                 if (const ImGuiPayload* payload =
                         ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
@@ -6960,6 +6993,10 @@ if (ImGui::BeginMenu("File")) {
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_DefaultOpen;
             if (m_editor.IsSelected(Galeshi::Entity(e, &m_scene))) flags |= ImGuiTreeNodeFlags_Selected;
             if (!hasChildren) flags |= ImGuiTreeNodeFlags_Leaf;
+            // Landscape rows are asset drop targets for static tree models;
+            // spanning the row makes that target much easier to hit.
+            if (reg.all_of<Galeshi::LandscapeComponent>(e))
+                flags |= ImGuiTreeNodeFlags_SpanAvailWidth;
 
             bool open = ImGui::TreeNodeEx("##node", flags, "%s", name.c_str());
 
@@ -6972,6 +7009,29 @@ if (ImGui::BeginMenu("File")) {
                 ImGui::EndDragDropSource();
             }
             if (ImGui::BeginDragDropTarget()) {
+                // A model dropped on a Landscape node becomes its instanced
+                // static tree mesh. Other entities keep accepting only
+                // Outliner reparenting drops.
+                if (reg.all_of<Galeshi::LandscapeComponent>(e)) {
+                    if (const ImGuiPayload* active =
+                            ImGui::GetDragDropPayload();
+                        active && active->IsDataType("GALESHI_ASSET_PATH") &&
+                        ImGui::IsItemHovered(
+                            ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+                        ImGui::SetTooltip(
+                            "Drop a model to use it as this Landscape's "
+                            "instanced tree mesh.");
+                    }
+                    if (const ImGuiPayload* payload =
+                            ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
+                        const char* path =
+                            static_cast<const char*>(payload->Data);
+                        if (path && IsModelAssetPath(path)) {
+                            AssignLandscapeTreeModel(
+                                Galeshi::Entity(e, &m_scene), path);
+                        }
+                    }
+                }
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ENTITY")) {
                     entt::entity dragged = *(const entt::entity*)payload->Data;
                     if (dragged != e) {
@@ -7996,7 +8056,7 @@ void DrawDetails() {
                                   "Drop a static tree model here");
                 drawList->AddText(ImVec2(dropMin.x + 10.0f, dropMin.y + 30.0f),
                                   IM_COL32(130, 135, 145, 255),
-                                  "FBX / glTF / GLB / OBJ");
+                                  "FBX / glTF / GLB / OBJ / DAE");
             } else {
                 const ImVec4 clipRect(dropMin.x, dropMin.y, dropMax.x,
                                       dropMax.y);
@@ -8022,19 +8082,15 @@ void DrawDetails() {
                 }
                 m_vegetationMeshPicker.Open(
                     start, "Select Static Tree Model",
-                    {".fbx", ".gltf", ".glb", ".obj"});
+                    {".fbx", ".gltf", ".glb", ".obj", ".dae"});
             }
             if (ImGui::BeginDragDropTarget()) {
                 if (const ImGuiPayload* payload =
                         ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
                     const char* path = static_cast<const char*>(payload->Data);
                     const std::string candidate = path ? path : "";
-                    std::string ext = std::filesystem::path(candidate)
-                                          .extension().string();
-                    for (char& c : ext) c = static_cast<char>(std::tolower(c));
-                    if (ext == ".fbx" || ext == ".gltf" || ext == ".glb" ||
-                        ext == ".obj") {
-                        veg.treeMeshPath = candidate;
+                    if (IsModelAssetPath(candidate)) {
+                        AssignLandscapeTreeModel(selected[0], candidate);
                     }
                 }
                 ImGui::EndDragDropTarget();
@@ -8738,13 +8794,54 @@ void DrawDetails() {
     void OpenFileDialog() {
         const char* home = std::getenv("HOME");
         std::string start = home ? home : "/";
-        m_filePicker.Open(start, "Load Model", { ".fbx", ".gltf", ".glb", ".obj", ".dae" });
+        m_filePicker.Open(start, "Load Model",
+                          { ".fbx", ".gltf", ".glb", ".obj", ".dae" });
+    }
+
+    // Assign a static tree model to a Landscape's instanced vegetation.
+    // The model is validated before the component/path is changed so a
+    // broken FBX cannot silently replace a working tree mesh.
+    void AssignLandscapeTreeModel(Galeshi::Entity landscapeEntity,
+                                  const std::string& originalPath) {
+        if (!m_assets || !landscapeEntity) return;
+        if (!landscapeEntity.HasComponent<Galeshi::LandscapeComponent>()) {
+            spdlog::warn("[Editor] Tree model '{}' was dropped on a non-landscape entity",
+                         originalPath);
+            return;
+        }
+        if (!IsModelAssetPath(originalPath)) {
+            spdlog::warn("[Editor] Unsupported tree model format: {}",
+                         originalPath);
+            return;
+        }
+
+        const std::string path = m_assets->MakeRelativePath(originalPath);
+        auto model = m_assets->LoadModel(path);
+        if (model.meshes.empty()) {
+            spdlog::error("[Editor] Cannot use '{}' as a landscape tree: "
+                          "the model contains no meshes", path);
+            return;
+        }
+
+        PushHistory();
+        auto& landscape =
+            landscapeEntity.GetComponent<Galeshi::LandscapeComponent>();
+        auto& vegetation =
+            landscapeEntity.HasComponent<Galeshi::VegetationComponent>()
+                ? landscapeEntity.GetComponent<Galeshi::VegetationComponent>()
+                : landscapeEntity.AddComponent<Galeshi::VegetationComponent>();
+        vegetation.treeMeshPath = path;
+        vegetation.enabled = true;
+        vegetation.dirty = true;
+        Galeshi::VegetationGenerator::Generate(landscape, vegetation);
+        m_editor.Select(landscapeEntity);
+
+        spdlog::info("[Editor] Landscape tree model: {} ({} meshes, {} materials)",
+                     path, model.meshes.size(), model.materials.size());
     }
 
     void OnAssetDoubleClicked(const std::string& path) {
-        namespace fs = std::filesystem;
-        std::string ext = fs::path(path).extension().string();
-        for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+        const std::string ext = AssetExtensionLower(path);
 
         if (ext == ".lua") {
             m_currentLuaFile = path;
@@ -8756,11 +8853,9 @@ void DrawDetails() {
             }
             return;
         }
-        if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") {
+        if (IsModelAssetPath(path)) {
             SpawnFromModel(path, glm::vec3(0.0f));
-        } else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-                   ext == ".bmp" || ext == ".tga" ||
-                   ext == ".dds" || ext == ".ktx") {
+        } else if (IsImageAssetPath(path)) {
             // Применяем к выделенному объекту
             Galeshi::Entity sel = m_editor.Selected(&m_scene);
             if (sel && sel.HasComponent<Galeshi::MaterialComponent>()) {
@@ -8805,9 +8900,7 @@ void DrawDetails() {
     }
 
     void OnAssetDropped(const std::string& path, glm::vec3 pos) {
-        namespace fs = std::filesystem;
-        std::string ext = fs::path(path).extension().string();
-        for (auto& c : ext) c = static_cast<char>(std::tolower(c));
+        const std::string ext = AssetExtensionLower(path);
 
         if (ext == ".lua") {
             m_currentLuaFile = path;
@@ -8819,15 +8912,22 @@ void DrawDetails() {
             }
             return;
         }
-        if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") {
-            SpawnFromModel(path, pos, true);
+        if (IsModelAssetPath(path)) {
+            // Dropping a model onto the selected Landscape assigns it as
+            // the instanced tree mesh. Deselect the Landscape to spawn a
+            // regular model entity instead.
+            Galeshi::Entity selected = m_editor.Selected(&m_scene);
+            if (selected &&
+                selected.HasComponent<Galeshi::LandscapeComponent>()) {
+                AssignLandscapeTreeModel(selected, path);
+            } else {
+                SpawnFromModel(path, pos, true);
+            }
             return;
         }
 
         // Если бросили текстуру на объект с материалом — установить в albedo
-        if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-            ext == ".bmp" || ext == ".tga" ||
-            ext == ".dds" || ext == ".ktx") {
+        if (IsImageAssetPath(path)) {
             Galeshi::Entity sel = m_editor.Selected(&m_scene);
             if (sel && sel.HasComponent<Galeshi::MaterialComponent>()) {
                 auto& matc = sel.GetComponent<Galeshi::MaterialComponent>();
