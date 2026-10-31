@@ -163,6 +163,7 @@ end
 - Primitive cube, sphere, and capsule meshes.
 - Landscape heightfield generation with Raise, Lower, Smooth, Flatten, and Noise brushes.
 - Deterministic procedural tree and grass generation, rendered with per-instance matrices and instanced shadow passes.
+- Optional static tree-model override for landscape tree instances; all meshes and materials from the selected model are instanced.
 - Skeletal animation clip sampling with weighted pose blending.
 - Serializable animation state machines with parameters, triggers, transitions, and blend durations.
 - PBR material parameters and texture slots.

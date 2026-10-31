@@ -213,6 +213,11 @@ struct VegetationComponent {
     glm::vec4 canopyColor{0.16f, 0.42f, 0.12f, 1.0f};
     glm::vec4 grassColor{0.22f, 0.52f, 0.14f, 1.0f};
 
+    // Optional static tree model. When set, every mesh/material in the loaded
+    // model is drawn for each tree instance instead of the procedural trunk
+    // and canopy meshes. An empty path keeps the procedural trees.
+    std::string treeMeshPath;
+
     // Local-space instance transforms (landscape entity space).
     std::vector<glm::mat4> treeInstances;
     std::vector<glm::mat4> grassInstances;

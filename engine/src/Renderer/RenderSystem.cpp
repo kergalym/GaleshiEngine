@@ -995,6 +995,22 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
     const float flags[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     const float noSSS[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
+    auto submitMaterialGroup = [&](Mesh& mesh, const Material& material,
+                                   bgfx::InstanceDataBuffer& idb,
+                                   uint32_t count) {
+        BindMaterial(material);
+        bgfx::setInstanceDataBuffer(&idb, 0, count);
+        bgfx::setVertexBuffer(0, mesh.VB());
+        bgfx::setIndexBuffer(mesh.IB());
+        const uint64_t face = reflectionView
+            ? (material.twoSided ? 0 : BGFX_STATE_CULL_CCW)
+            : FaceState(material.twoSided);
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                       BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
+                       BGFX_STATE_MSAA | face);
+        bgfx::submit(viewId, program);
+    };
+
     auto submitGroup = [&](Mesh& mesh, const glm::vec4& color, float roughness,
                            bool twoSided, bgfx::InstanceDataBuffer& idb,
                            uint32_t count) {
@@ -1053,6 +1069,31 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
             continue;
         }
 
+        struct CustomTreeDraw {
+            std::shared_ptr<Mesh> mesh;
+            std::shared_ptr<Material> material;
+        };
+        std::vector<CustomTreeDraw> customTreeMeshes;
+        if (!vegetation.treeMeshPath.empty()) {
+            auto treeModel = m_assets->LoadModel(vegetation.treeMeshPath);
+            customTreeMeshes.reserve(treeModel.meshes.size());
+            for (size_t i = 0; i < treeModel.meshes.size(); ++i) {
+                if (!treeModel.meshes[i] || !treeModel.meshes[i]->Valid()) continue;
+                std::shared_ptr<Material> material;
+                if (i < treeModel.meshMaterialIndex.size()) {
+                    const int materialIndex = treeModel.meshMaterialIndex[i];
+                    if (materialIndex >= 0 &&
+                        materialIndex < static_cast<int>(treeModel.materials.size())) {
+                        material = treeModel.materials[static_cast<size_t>(materialIndex)];
+                    }
+                }
+                if (!material && !treeModel.materials.empty()) {
+                    material = treeModel.materials.front();
+                }
+                customTreeMeshes.push_back({treeModel.meshes[i], material});
+            }
+        }
+
         const glm::mat4 world = EntityWorldMatrix(scene, handle);
         float minHeight = 0.0f;
         float maxHeight = 0.0f;
@@ -1062,7 +1103,16 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
         }
         const float halfX = landscape.sizeX * 0.5f * landscape.scale;
         const float halfZ = landscape.sizeZ * 0.5f * landscape.scale;
-        const float maxTreeHeight = 5.0f * std::max(1.0f, vegetation.treeMaxScale);
+        float maxTreeHeight = 5.0f * std::max(1.0f, vegetation.treeMaxScale);
+        for (const CustomTreeDraw& draw : customTreeMeshes) {
+            if (!draw.mesh) continue;
+            glm::vec3 localMin, localMax;
+            draw.mesh->LocalAABB(localMin, localMax);
+            maxTreeHeight = std::max(
+                maxTreeHeight,
+                std::max(0.0f, localMax.y) *
+                    std::max(vegetation.treeMaxScale, 0.05f));
+        }
         const glm::vec3 localCenter(0.0f, (minHeight + maxHeight) * 0.5f + maxTreeHeight * 0.5f, 0.0f);
         const glm::vec3 localExtents(halfX, (maxHeight - minHeight) * 0.5f + maxTreeHeight, halfZ);
         const glm::vec3 worldCenter = glm::vec3(world * glm::vec4(localCenter, 1.0f));
@@ -1079,8 +1129,22 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
             bgfx::InstanceDataBuffer idb;
             const uint32_t count = UploadInstances(vegetation.treeInstances, 0, idb);
             if (count > 0) {
-                submitGroup(*trunkMesh, vegetation.trunkColor, 0.92f, false, idb, count);
-                submitGroup(*canopyMesh, vegetation.canopyColor, 0.82f, false, idb, count);
+                if (!customTreeMeshes.empty()) {
+                    for (const CustomTreeDraw& draw : customTreeMeshes) {
+                        if (draw.material) {
+                            submitMaterialGroup(*draw.mesh, *draw.material,
+                                                idb, count);
+                        } else {
+                            submitGroup(*draw.mesh, vegetation.trunkColor, 0.9f,
+                                        false, idb, count);
+                        }
+                    }
+                } else {
+                    submitGroup(*trunkMesh, vegetation.trunkColor, 0.92f, false,
+                                idb, count);
+                    submitGroup(*canopyMesh, vegetation.canopyColor, 0.82f, false,
+                                idb, count);
+                }
             }
         }
 
@@ -1120,6 +1184,30 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
         if (vegetation.dirty) {
             VegetationGenerator::Generate(view.get<LandscapeComponent>(handle), vegetation);
         }
+        struct CustomTreeShadowDraw {
+            std::shared_ptr<Mesh> mesh;
+            bool twoSided = false;
+        };
+        std::vector<CustomTreeShadowDraw> customTreeMeshes;
+        if (!vegetation.treeMeshPath.empty()) {
+            auto treeModel = m_assets->LoadModel(vegetation.treeMeshPath);
+            customTreeMeshes.reserve(treeModel.meshes.size());
+            for (size_t i = 0; i < treeModel.meshes.size(); ++i) {
+                if (!treeModel.meshes[i] || !treeModel.meshes[i]->Valid()) continue;
+                bool twoSided = false;
+                if (i < treeModel.meshMaterialIndex.size()) {
+                    const int materialIndex = treeModel.meshMaterialIndex[i];
+                    if (materialIndex >= 0 &&
+                        materialIndex < static_cast<int>(treeModel.materials.size()) &&
+                        treeModel.materials[static_cast<size_t>(materialIndex)]) {
+                        twoSided = treeModel.materials[
+                            static_cast<size_t>(materialIndex)]->twoSided;
+                    }
+                }
+                customTreeMeshes.push_back({treeModel.meshes[i], twoSided});
+            }
+        }
+
         const glm::mat4 world = EntityWorldMatrix(scene, handle);
         bgfx::setTransform(glm::value_ptr(world));
 
@@ -1127,8 +1215,14 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
             bgfx::InstanceDataBuffer idb;
             const uint32_t count = UploadInstances(vegetation.treeInstances, 0, idb);
             if (count > 0) {
-                submitShadow(*trunkMesh, false, idb, count);
-                submitShadow(*canopyMesh, false, idb, count);
+                if (!customTreeMeshes.empty()) {
+                    for (const CustomTreeShadowDraw& draw : customTreeMeshes) {
+                        submitShadow(*draw.mesh, draw.twoSided, idb, count);
+                    }
+                } else {
+                    submitShadow(*trunkMesh, false, idb, count);
+                    submitShadow(*canopyMesh, false, idb, count);
+                }
             }
         }
         if (vegetation.grassCastShadows && !vegetation.grassInstances.empty()) {

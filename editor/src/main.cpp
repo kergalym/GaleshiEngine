@@ -2638,6 +2638,15 @@ if (ImGui::BeginMenu("File")) {
                 retainedModels.push_back(skeleton.sourcePath);
             }
         }
+        auto vegetationView =
+            m_scene.Registry().view<Galeshi::VegetationComponent>();
+        for (auto e : vegetationView) {
+            const auto& vegetation =
+                vegetationView.get<Galeshi::VegetationComponent>(e);
+            if (!vegetation.treeMeshPath.empty()) {
+                retainedModels.push_back(vegetation.treeMeshPath);
+            }
+        }
         m_assets->ReleaseUnusedAssets(retainedModels);
     }
 
@@ -7353,6 +7362,41 @@ void DrawDetails() {
             changed |= ImGui::ColorEdit4("Trunk Color", glm::value_ptr(veg.trunkColor));
             changed |= ImGui::ColorEdit4("Canopy Color", glm::value_ptr(veg.canopyColor));
             changed |= ImGui::ColorEdit4("Grass Color", glm::value_ptr(veg.grassColor));
+
+            ImGui::Separator();
+            ImGui::Text("Static Tree Mesh");
+            char treeMeshBuffer[512];
+            std::snprintf(treeMeshBuffer, sizeof(treeMeshBuffer), "%s",
+                          veg.treeMeshPath.c_str());
+            ImGui::SetNextItemWidth(-90.0f);
+            if (ImGui::InputText("##tree_mesh_path", treeMeshBuffer,
+                                 sizeof(treeMeshBuffer))) {
+                veg.treeMeshPath = treeMeshBuffer;
+            }
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload =
+                        ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
+                    const char* path = static_cast<const char*>(payload->Data);
+                    const std::string candidate = path ? path : "";
+                    std::string ext = std::filesystem::path(candidate)
+                                          .extension().string();
+                    for (char& c : ext) c = static_cast<char>(std::tolower(c));
+                    if (ext == ".fbx" || ext == ".gltf" || ext == ".glb" ||
+                        ext == ".obj") {
+                        veg.treeMeshPath = candidate;
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Clear##tree_mesh")) veg.treeMeshPath.clear();
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Return to the procedural trunk + canopy trees.");
+            }
+            ImGui::TextDisabled(
+                "Empty = procedural trees. All meshes/materials in the model "
+                "are used. Drag a model here from the Content Browser.");
+
             if (changed) veg.dirty = true;
             const bool hasLandscape = selected[0].HasComponent<Galeshi::LandscapeComponent>();
             if (!hasLandscape) ImGui::BeginDisabled();

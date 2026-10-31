@@ -564,7 +564,8 @@ std::string SceneSerializer::SaveToString() const {
                 {"seed", veg.seed},
                 {"trunkColor", Vec4ToJson(veg.trunkColor)},
                 {"canopyColor", Vec4ToJson(veg.canopyColor)},
-                {"grassColor", Vec4ToJson(veg.grassColor)}
+                {"grassColor", Vec4ToJson(veg.grassColor)},
+                {"treeMeshPath", m_assets.MakeRelativePath(veg.treeMeshPath)}
             };
         }
 
@@ -1208,6 +1209,7 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             if (jv.contains("trunkColor")) vegetation.trunkColor = Vec4FromJson(jv.at("trunkColor"));
             if (jv.contains("canopyColor")) vegetation.canopyColor = Vec4FromJson(jv.at("canopyColor"));
             if (jv.contains("grassColor")) vegetation.grassColor = Vec4FromJson(jv.at("grassColor"));
+            vegetation.treeMeshPath = jv.value("treeMeshPath", std::string{});
             if (const auto* landscape = reg.try_get<LandscapeComponent>(e.Handle())) {
                 VegetationGenerator::Generate(*landscape, vegetation);
             }
