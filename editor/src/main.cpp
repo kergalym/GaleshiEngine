@@ -1172,6 +1172,27 @@ protected:
             StartAsyncLoad(chosenLoad);
         }
 
+        // Static tree-mesh picker for the selected landscape vegetation.
+        std::string chosenTreeMesh = m_vegetationMeshPicker.Draw();
+        if (!chosenTreeMesh.empty()) {
+            auto& registry = m_scene.Registry();
+            if (m_vegetationMeshTarget != entt::null &&
+                registry.valid(m_vegetationMeshTarget) &&
+                registry.all_of<Galeshi::VegetationComponent>(
+                    m_vegetationMeshTarget)) {
+                auto& vegetation = registry.get<Galeshi::VegetationComponent>(
+                    m_vegetationMeshTarget);
+                vegetation.treeMeshPath =
+                    m_assets ? m_assets->MakeRelativePath(chosenTreeMesh)
+                             : chosenTreeMesh;
+                spdlog::info("[Editor] Vegetation tree mesh: {}",
+                             vegetation.treeMeshPath);
+            }
+            m_vegetationMeshTarget = entt::null;
+        } else if (!m_vegetationMeshPicker.IsOpen()) {
+            m_vegetationMeshTarget = entt::null;
+        }
+
         m_cpuProfile.imguiMs = ProfileElapsedMs(imguiStart, ProfileClock::now());
         if (m_showProfiler) {
             UpdateGpuProfilerStats();
@@ -2486,20 +2507,20 @@ if (ImGui::BeginMenu("File")) {
                 tc.position = {m_editor.camTarget.x, 0.0f, m_editor.camTarget.z};
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("Groom Hair")) {
+            {
                 Galeshi::Entity selected = m_editor.Selected(&m_scene);
-                if (selected &&
-                    (selected.HasComponent<Galeshi::MeshComponent>() ||
-                     selected.HasComponent<Galeshi::SkeletalComponent>())) {
+                const bool canAttachGroom =
+                    selected && IsSkeletalCharacter(selected);
+                if (ImGui::MenuItem("Groom Hair", nullptr, false,
+                                    canAttachGroom)) {
                     PushHistory();
                     selected.AddComponent<Galeshi::GroomComponent>();
                     m_editor.Select(selected);
-                } else {
-                    auto e = m_scene.CreateEntity("GroomHair");
-                    e.AddComponent<Galeshi::GroomComponent>();
-                    e.GetComponent<Galeshi::TransformComponent>().position =
-                        m_editor.camTarget;
-                    m_editor.Select(e);
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) &&
+                    !canAttachGroom) {
+                    ImGui::SetTooltip(
+                        "Select a skeletal character or one of its skinned meshes.");
                 }
             }
             if (ImGui::MenuItem("Audio Source")) {
@@ -2626,6 +2647,21 @@ if (ImGui::BeginMenu("File")) {
                 CollectEntityHierarchy(child, out);
             }
         }
+    }
+
+    bool IsSkeletalCharacter(Galeshi::Entity entity) {
+        if (!entity) return false;
+        auto& registry = m_scene.Registry();
+        entt::entity current = entity.Handle();
+        int depth = 0;
+        while (registry.valid(current) && depth++ < 128) {
+            if (registry.all_of<Galeshi::SkeletalComponent>(current)) {
+                return true;
+            }
+            if (!registry.all_of<Galeshi::ParentComponent>(current)) break;
+            current = registry.get<Galeshi::ParentComponent>(current).parent;
+        }
+        return false;
     }
 
     void ReleaseUnusedSceneAssets() {
@@ -7080,10 +7116,11 @@ void DrawDetails() {
                                         ImGuiTreeNodeFlags_DefaultOpen)) {
                 DrawGroomSettings(groom);
             }
-        } else if (auto sel = m_editor.Selected(&m_scene); sel &&
-                   (sel.HasComponent<Galeshi::MeshComponent>() ||
-                    sel.HasComponent<Galeshi::SkeletalComponent>())) {
-            if (ImGui::Button("+ Add Groom Hair")) {
+        } else if (auto sel = m_editor.Selected(&m_scene); sel) {
+            // Groom hair needs a skeletal character. Accept either the
+            // character root or one of its skinned mesh children.
+            if (IsSkeletalCharacter(sel) &&
+                ImGui::Button("+ Add Groom Hair")) {
                 PushHistory();
                 sel.AddComponent<Galeshi::GroomComponent>();
             }
@@ -7183,10 +7220,13 @@ void DrawDetails() {
             if (sel.HasComponent<Galeshi::NameComponent>() && sel.GetComponent<Galeshi::NameComponent>().name == "Ground") {
                 isGround = true;
             }
+            const bool isLandscape =
+                sel.HasComponent<Galeshi::LandscapeComponent>();
 
             if (!isLight && !isGround && !selectedIsCollisionShape) {
                 if (!sel.HasComponent<Galeshi::AudioSourceComponent>()) {
-                    if (ImGui::Button("+ Add Audio Source")) {
+                    if (!isLandscape &&
+                        ImGui::Button("+ Add Audio Source")) {
                         sel.AddComponent<Galeshi::AudioSourceComponent>();
                     }
                 } else {
@@ -7281,7 +7321,8 @@ void DrawDetails() {
                             sel.RemoveComponent<Galeshi::AudioListenerComponent>();
                         }
                     }
-                } else if (ImGui::Button("+ Add Audio Listener")) {
+                } else if (!isLandscape &&
+                           ImGui::Button("+ Add Audio Listener")) {
                     sel.AddComponent<Galeshi::AudioListenerComponent>();
                 }
             }
@@ -7365,13 +7406,58 @@ void DrawDetails() {
 
             ImGui::Separator();
             ImGui::Text("Static Tree Mesh");
-            char treeMeshBuffer[512];
-            std::snprintf(treeMeshBuffer, sizeof(treeMeshBuffer), "%s",
-                          veg.treeMeshPath.c_str());
-            ImGui::SetNextItemWidth(-90.0f);
-            if (ImGui::InputText("##tree_mesh_path", treeMeshBuffer,
-                                 sizeof(treeMeshBuffer))) {
-                veg.treeMeshPath = treeMeshBuffer;
+
+            // A large dedicated drop target makes the whole field accept
+            // Content Browser drops instead of relying on the narrow text
+            // input. Clicking it opens the model picker.
+            const float dropWidth = ImGui::GetContentRegionAvail().x;
+            ImGui::InvisibleButton("##tree_mesh_drop",
+                                   ImVec2(dropWidth, 52.0f));
+            const ImVec2 dropMin = ImGui::GetItemRectMin();
+            const ImVec2 dropMax = ImGui::GetItemRectMax();
+            const bool dropHovered = ImGui::IsItemHovered();
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            drawList->AddRectFilled(
+                dropMin, dropMax,
+                dropHovered ? IM_COL32(44, 48, 56, 255)
+                            : IM_COL32(28, 30, 34, 255), 4.0f);
+            drawList->AddRect(dropMin, dropMax,
+                              dropHovered ? IM_COL32(120, 160, 220, 255)
+                                          : IM_COL32(80, 84, 92, 255),
+                              4.0f);
+            if (veg.treeMeshPath.empty()) {
+                drawList->AddText(ImVec2(dropMin.x + 10.0f, dropMin.y + 10.0f),
+                                  IM_COL32(200, 205, 215, 255),
+                                  "Drop a static tree model here");
+                drawList->AddText(ImVec2(dropMin.x + 10.0f, dropMin.y + 30.0f),
+                                  IM_COL32(130, 135, 145, 255),
+                                  "FBX / glTF / GLB / OBJ");
+            } else {
+                const ImVec4 clipRect(dropMin.x, dropMin.y, dropMax.x,
+                                      dropMax.y);
+                drawList->AddText(
+                    ImGui::GetFont(), ImGui::GetFontSize(),
+                    ImVec2(dropMin.x + 10.0f, dropMin.y + 10.0f),
+                    IM_COL32(220, 225, 235, 255), veg.treeMeshPath.c_str(),
+                    nullptr, dropWidth - 20.0f, &clipRect);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Drag a model from the Content Browser or click to choose.\n"
+                    "All meshes/materials in the model are used as the tree.");
+            }
+            if (ImGui::IsItemClicked()) {
+                m_vegetationMeshTarget = selected[0].Handle();
+                std::string start = "assets";
+                const std::string projectPath =
+                    Galeshi::ProjectManager::GetProjectPath();
+                if (!projectPath.empty()) {
+                    start = (std::filesystem::path(projectPath) / "assets")
+                                .string();
+                }
+                m_vegetationMeshPicker.Open(
+                    start, "Select Static Tree Model",
+                    {".fbx", ".gltf", ".glb", ".obj"});
             }
             if (ImGui::BeginDragDropTarget()) {
                 if (const ImGuiPayload* payload =
@@ -7388,14 +7474,14 @@ void DrawDetails() {
                 }
                 ImGui::EndDragDropTarget();
             }
-            ImGui::SameLine();
+
             if (ImGui::Button("Clear##tree_mesh")) veg.treeMeshPath.clear();
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Return to the procedural trunk + canopy trees.");
             }
+            ImGui::SameLine();
             ImGui::TextDisabled(
-                "Empty = procedural trees. All meshes/materials in the model "
-                "are used. Drag a model here from the Content Browser.");
+                "Empty = procedural trees. All model meshes are instanced.");
 
             if (changed) veg.dirty = true;
             const bool hasLandscape = selected[0].HasComponent<Galeshi::LandscapeComponent>();
@@ -8752,6 +8838,8 @@ void DrawDetails() {
     Galeshi::FilePickerDialog m_filePicker;
     Galeshi::FilePickerDialog m_filePickerSave;
     Galeshi::FilePickerDialog m_scenePicker;
+    Galeshi::FilePickerDialog m_vegetationMeshPicker;
+    entt::entity m_vegetationMeshTarget = entt::null;
     TextEditor m_luaEditor;
     std::string m_currentLuaFile;
     bool m_luaEditorInitialized = false;
