@@ -1421,7 +1421,6 @@ private:
         m_scene.AudioBuses().fill(Galeshi::AudioBusSettings{});
         if (m_assets) m_assets->Clear();
         m_lastViewportTexture = BGFX_INVALID_HANDLE;
-        m_showCollisionWireframes = true;
 
         m_currentScenePath.clear();
         m_uiCanvasEntity = entt::null;
@@ -1450,7 +1449,6 @@ private:
         m_assets->Clear();
         if (m_particles) m_particles->Reset();
         m_lastViewportTexture = BGFX_INVALID_HANDLE;
-        m_showCollisionWireframes = true;
 
         m_history.clear();
         m_historyIndex = -1;
@@ -2173,16 +2171,11 @@ private:
             // Never show the previous mode's cached viewport after Play/Stop.
             m_lastViewportTexture = BGFX_INVALID_HANDLE;
             if (!m_editor.isPlaying) {
-                // Collision wireframes are editor-only helpers. Hide them
-                // during Play, but keep the collider entity and all attached
-                // meshes/children untouched.
-                m_showCollisionWireframes = false;
                 PushHistory();
                 m_editor.isPlaying = true;
                 EnsurePhysicsBodies();
             } else {
                 m_editor.isPlaying = false;
-                m_showCollisionWireframes = true;
                 m_audio.StopAll();
                 m_physics->Reset();
                 if (m_particles) m_particles->Reset();
@@ -5324,6 +5317,99 @@ if (ImGui::BeginMenu("File")) {
         }
     }
 
+    void DrawCollisionShapeGizmos() {
+        if (!m_debug) return;
+        Galeshi::Entity selected = m_editor.Selected(&m_scene);
+        auto colliderView =
+            m_scene.Registry().view<Galeshi::ColliderComponent>();
+        for (auto e : colliderView) {
+            const auto& collider =
+                colliderView.get<Galeshi::ColliderComponent>(e);
+            if (!collider.visibleInEditor) continue;
+
+            const bool isSelected = selected && selected.Handle() == e;
+            const glm::vec4 color = isSelected
+                ? glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)
+                : (collider.isTrigger
+                       ? glm::vec4(0.30f, 0.60f, 1.00f, 0.90f)
+                       : glm::vec4(0.20f, 1.00f, 0.40f, 0.75f));
+
+            const glm::mat4 world = EntityWorldMatrix(e);
+            auto toWorld = [&world](const glm::vec3& p) {
+                return glm::vec3(world * glm::vec4(p, 1.0f));
+            };
+            const glm::vec3 c = collider.offset;
+
+            switch (collider.shapeType) {
+                case Galeshi::ColliderShapeType::Box: {
+                    const glm::vec3 h = collider.halfExtents;
+                    glm::vec3 p[8] = {
+                        toWorld(c + glm::vec3(-h.x, -h.y, -h.z)),
+                        toWorld(c + glm::vec3( h.x, -h.y, -h.z)),
+                        toWorld(c + glm::vec3( h.x, -h.y,  h.z)),
+                        toWorld(c + glm::vec3(-h.x, -h.y,  h.z)),
+                        toWorld(c + glm::vec3(-h.x,  h.y, -h.z)),
+                        toWorld(c + glm::vec3( h.x,  h.y, -h.z)),
+                        toWorld(c + glm::vec3( h.x,  h.y,  h.z)),
+                        toWorld(c + glm::vec3(-h.x,  h.y,  h.z)),
+                    };
+                    auto edge = [&](int a, int b) {
+                        m_debug->AddLine(p[a], p[b], color);
+                    };
+                    edge(0, 1); edge(1, 2); edge(2, 3); edge(3, 0);
+                    edge(4, 5); edge(5, 6); edge(6, 7); edge(7, 4);
+                    edge(0, 4); edge(1, 5); edge(2, 6); edge(3, 7);
+                    break;
+                }
+                case Galeshi::ColliderShapeType::Sphere: {
+                    const int segments = 32;
+                    const float r = collider.radius;
+                    for (int i = 0; i < segments; ++i) {
+                        const float a1 = static_cast<float>(i) / segments * 6.2831853f;
+                        const float a2 = static_cast<float>(i + 1) / segments * 6.2831853f;
+                        m_debug->AddLine(
+                            toWorld(c + glm::vec3(std::cos(a1) * r, std::sin(a1) * r, 0.0f)),
+                            toWorld(c + glm::vec3(std::cos(a2) * r, std::sin(a2) * r, 0.0f)),
+                            color);
+                        m_debug->AddLine(
+                            toWorld(c + glm::vec3(std::cos(a1) * r, 0.0f, std::sin(a1) * r)),
+                            toWorld(c + glm::vec3(std::cos(a2) * r, 0.0f, std::sin(a2) * r)),
+                            color);
+                        m_debug->AddLine(
+                            toWorld(c + glm::vec3(0.0f, std::cos(a1) * r, std::sin(a1) * r)),
+                            toWorld(c + glm::vec3(0.0f, std::cos(a2) * r, std::sin(a2) * r)),
+                            color);
+                    }
+                    break;
+                }
+                case Galeshi::ColliderShapeType::Capsule: {
+                    const int segments = 24;
+                    const float r = collider.radius;
+                    const float hh = collider.halfHeight;
+                    for (int ring = 0; ring < 2; ++ring) {
+                        const float y = c.y + (ring == 0 ? -hh : hh);
+                        for (int i = 0; i < segments; ++i) {
+                            const float a1 = static_cast<float>(i) / segments * 6.2831853f;
+                            const float a2 = static_cast<float>(i + 1) / segments * 6.2831853f;
+                            m_debug->AddLine(
+                                toWorld({c.x + std::cos(a1) * r, y, c.z + std::sin(a1) * r}),
+                                toWorld({c.x + std::cos(a2) * r, y, c.z + std::sin(a2) * r}),
+                                color);
+                        }
+                    }
+                    for (int i = 0; i < 4; ++i) {
+                        const float a = static_cast<float>(i) * 1.5707963f;
+                        m_debug->AddLine(
+                            toWorld({c.x + std::cos(a) * r, c.y - hh, c.z + std::sin(a) * r}),
+                            toWorld({c.x + std::cos(a) * r, c.y + hh, c.z + std::sin(a) * r}),
+                            color);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     // -------------------------------------------------------------------
     // Viewport & Picking & Sculpting
     // -------------------------------------------------------------------
@@ -6077,11 +6163,13 @@ if (ImGui::BeginMenu("File")) {
             m_cpuProfile.postFxMs = postFxAccumMs;
         }
 
-        // Debug rendering (View 50). All editor-only overlays (grid, axes,
-        // nav/AI debug, collider and post-process-volume bounds) are hidden
-        // while Play is active so they never leak into the running scene.
-        if (m_debug && !m_isGameMode && !m_editor.isPlaying && m_framebuffer) {
+        // Debug rendering (View 50). Editor-only overlays (grid, axes,
+        // nav/AI debug, lights and post-process-volume bounds) are hidden
+        // while Play is active, but collision-shape wireframes remain visible.
+        if (m_debug && !m_isGameMode && m_framebuffer) {
             m_debug->Begin();
+            Galeshi::Entity sel = m_editor.Selected(&m_scene);
+            if (!m_editor.isPlaying) {
             m_debug->AddGrid(50.0f, 2.0f, {0.3f, 0.3f, 0.3f, 0.4f});
             m_debug->AddAxes({0, 0.05f, 0}, 2.0f);
             if (m_navSystem) {
@@ -6205,7 +6293,6 @@ if (ImGui::BeginMenu("File")) {
                     }
                 }
             }
-            Galeshi::Entity sel = m_editor.Selected(&m_scene);
             if (!m_editor.isPlaying && sel && sel.HasComponent<Galeshi::TransformComponent>() && !sel.HasComponent<Galeshi::SkeletalComponent>()) {
                 auto& tc = sel.GetComponent<Galeshi::TransformComponent>();
                 m_debug->AddBox(tc.position, tc.scale + glm::vec3(0.1f), {1, 1, 0, 1});
@@ -6265,99 +6352,11 @@ if (ImGui::BeginMenu("File")) {
                 }
             }
 
-            // Collision shape gizmos. Hidden during Play so authored volumes
-            // never leak into the running game. Only the debug wireframe is
-            // hidden; the collider component and attached meshes stay intact.
-            if (!m_editor.isPlaying && m_showCollisionWireframes) {
-                auto colliderView =
-                    m_scene.Registry().view<Galeshi::ColliderComponent>();
-                for (auto e : colliderView) {
-                    const auto& collider =
-                        colliderView.get<Galeshi::ColliderComponent>(e);
-                    if (!collider.visibleInEditor) continue;
+            } // !isPlaying: editor-only overlays
 
-                    const bool isSelected = sel && sel.Handle() == e;
-                    const glm::vec4 color = isSelected
-                        ? glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)
-                        : (collider.isTrigger
-                               ? glm::vec4(0.30f, 0.60f, 1.00f, 0.90f)
-                               : glm::vec4(0.20f, 1.00f, 0.40f, 0.75f));
-
-                    const glm::mat4 world = EntityWorldMatrix(e);
-                    auto toWorld = [&world](const glm::vec3& p) {
-                        return glm::vec3(world * glm::vec4(p, 1.0f));
-                    };
-                    const glm::vec3 c = collider.offset;
-
-                    switch (collider.shapeType) {
-                        case Galeshi::ColliderShapeType::Box: {
-                            const glm::vec3 h = collider.halfExtents;
-                            glm::vec3 p[8] = {
-                                toWorld(c + glm::vec3(-h.x, -h.y, -h.z)),
-                                toWorld(c + glm::vec3( h.x, -h.y, -h.z)),
-                                toWorld(c + glm::vec3( h.x, -h.y,  h.z)),
-                                toWorld(c + glm::vec3(-h.x, -h.y,  h.z)),
-                                toWorld(c + glm::vec3(-h.x,  h.y, -h.z)),
-                                toWorld(c + glm::vec3( h.x,  h.y, -h.z)),
-                                toWorld(c + glm::vec3( h.x,  h.y,  h.z)),
-                                toWorld(c + glm::vec3(-h.x,  h.y,  h.z)),
-                            };
-                            auto edge = [&](int a, int b) {
-                                m_debug->AddLine(p[a], p[b], color);
-                            };
-                            edge(0, 1); edge(1, 2); edge(2, 3); edge(3, 0);
-                            edge(4, 5); edge(5, 6); edge(6, 7); edge(7, 4);
-                            edge(0, 4); edge(1, 5); edge(2, 6); edge(3, 7);
-                            break;
-                        }
-                        case Galeshi::ColliderShapeType::Sphere: {
-                            const int segments = 32;
-                            const float r = collider.radius;
-                            for (int i = 0; i < segments; ++i) {
-                                const float a1 = static_cast<float>(i) / segments * 6.2831853f;
-                                const float a2 = static_cast<float>(i + 1) / segments * 6.2831853f;
-                                m_debug->AddLine(
-                                    toWorld(c + glm::vec3(std::cos(a1) * r, std::sin(a1) * r, 0.0f)),
-                                    toWorld(c + glm::vec3(std::cos(a2) * r, std::sin(a2) * r, 0.0f)),
-                                    color);
-                                m_debug->AddLine(
-                                    toWorld(c + glm::vec3(std::cos(a1) * r, 0.0f, std::sin(a1) * r)),
-                                    toWorld(c + glm::vec3(std::cos(a2) * r, 0.0f, std::sin(a2) * r)),
-                                    color);
-                                m_debug->AddLine(
-                                    toWorld(c + glm::vec3(0.0f, std::cos(a1) * r, std::sin(a1) * r)),
-                                    toWorld(c + glm::vec3(0.0f, std::cos(a2) * r, std::sin(a2) * r)),
-                                    color);
-                            }
-                            break;
-                        }
-                        case Galeshi::ColliderShapeType::Capsule: {
-                            const int segments = 24;
-                            const float r = collider.radius;
-                            const float hh = collider.halfHeight;
-                            for (int ring = 0; ring < 2; ++ring) {
-                                const float y = c.y + (ring == 0 ? -hh : hh);
-                                for (int i = 0; i < segments; ++i) {
-                                    const float a1 = static_cast<float>(i) / segments * 6.2831853f;
-                                    const float a2 = static_cast<float>(i + 1) / segments * 6.2831853f;
-                                    m_debug->AddLine(
-                                        toWorld({c.x + std::cos(a1) * r, y, c.z + std::sin(a1) * r}),
-                                        toWorld({c.x + std::cos(a2) * r, y, c.z + std::sin(a2) * r}),
-                                        color);
-                                }
-                            }
-                            for (int i = 0; i < 4; ++i) {
-                                const float a = static_cast<float>(i) * 1.5707963f;
-                                m_debug->AddLine(
-                                    toWorld({c.x + std::cos(a) * r, c.y - hh, c.z + std::sin(a) * r}),
-                                    toWorld({c.x + std::cos(a) * r, c.y + hh, c.z + std::sin(a) * r}),
-                                    color);
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
+            // Collision shape gizmos stay visible across Play/Stop. Only the
+            // per-collider Visible in Editor flag controls the wireframe.
+            DrawCollisionShapeGizmos();
 
             // Post-process volume bounds.
             if (!m_editor.isPlaying) {
@@ -9629,9 +9628,6 @@ void DrawDetails() {
     // post-process GPU work and keeps displaying the last completed image.
     // OnUpdate is deliberately unaffected: only render passes are paused.
     bool                    m_realtimeRendering = true;
-    // Play hides only the collider debug wireframe. Collider entities and
-    // their attached meshes remain rendered and selectable in the Outliner.
-    bool                    m_showCollisionWireframes = true;
     bgfx::TextureHandle     m_lastViewportTexture = BGFX_INVALID_HANDLE;
 
     std::unique_ptr<Galeshi::AssetManager>    m_assets;

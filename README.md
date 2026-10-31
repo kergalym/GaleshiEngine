@@ -177,7 +177,7 @@ end
 - Docking ImGui interface.
 - Viewport with orbit camera, selection, and drag movement.
 - World Outliner and Details panels, with independent collision/physics child nodes. Detaching is available only for children of collision shapes; skeletal-model children stay locked, and detach preserves their world transform.
-- Play hides collision-shape debug wireframes only; collider entities and attached meshes remain rendered. Stop restores the wireframes.
+- Collision-shape wireframes keep the same visibility across Play/Stop and are controlled only by their per-collider Visible in Editor flag; attached meshes are never hidden by Play mode.
 - Content Browser with model import and a right-click script-template menu that creates Lua files in `assets/scripts`.
 - Create entities, lights, physics primitives, cloth, landscape, and AI agents.
 - `Testing -> Build Scene` rebuilds the PBR test scene: 12 colored spheres (3 albedo samples and a 3x3 metallic/roughness grid) plus the physics demo objects and ground.

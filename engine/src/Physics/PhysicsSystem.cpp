@@ -27,6 +27,7 @@
 #include <Jolt/Physics/Body/BodyLock.h>
 #include "GaleshiEngine/Scene/Components.hpp"
 
+#include <glm/gtc/quaternion.hpp>
 #include <algorithm>
 #include <unordered_map>
 #include <entt/entt.hpp>
@@ -493,12 +494,51 @@ void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene) {
         if (!m_impl->bodyInterface->IsAdded(id)) continue;
 
         const JPH::RVec3 p = m_impl->bodyInterface->GetPosition(id);
-        tf.position = glm::vec3(static_cast<float>(p.GetX()),
-                                static_cast<float>(p.GetY()),
-                                static_cast<float>(p.GetZ()));
-
+        const glm::vec3 worldPosition(static_cast<float>(p.GetX()),
+                                      static_cast<float>(p.GetY()),
+                                      static_cast<float>(p.GetZ()));
         const JPH::Quat q = m_impl->bodyInterface->GetRotation(id);
-        tf.rotation = glm::quat(q.GetW(), q.GetX(), q.GetY(), q.GetZ());
+        const glm::quat worldRotation(q.GetW(), q.GetX(), q.GetY(), q.GetZ());
+
+        // Jolt bodies live in world space, while TransformComponent stores a
+        // local transform. For a nested collider (for example a collision
+        // capsule parented to a character), writing the world transform
+        // directly to the local transform applies the parent offset twice and
+        // moves all attached meshes away. Convert the body pose back into the
+        // parent's local space instead.
+        if (reg.all_of<ParentComponent>(e)) {
+            glm::mat4 parentWorld(1.0f);
+            entt::entity parent =
+                reg.get<ParentComponent>(e).parent;
+            if (reg.valid(parent)) {
+                std::vector<entt::entity> chain;
+                entt::entity current = parent;
+                int depth = 0;
+                while (current != entt::null && depth++ < 128) {
+                    chain.push_back(current);
+                    if (reg.all_of<ParentComponent>(current))
+                        current = reg.get<ParentComponent>(current).parent;
+                    else
+                        break;
+                }
+                for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+                    if (reg.all_of<TransformComponent>(*it))
+                        parentWorld = parentWorld *
+                            reg.get<TransformComponent>(*it).LocalMatrix();
+                }
+            }
+
+            const glm::mat4 invParent = glm::inverse(parentWorld);
+            tf.position = glm::vec3(
+                invParent * glm::vec4(worldPosition, 1.0f));
+            const glm::quat parentRotation =
+                glm::normalize(glm::quat_cast(glm::mat3(parentWorld)));
+            tf.rotation =
+                glm::normalize(glm::inverse(parentRotation) * worldRotation);
+        } else {
+            tf.position = worldPosition;
+            tf.rotation = worldRotation;
+        }
     }
 }
 
