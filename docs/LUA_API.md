@@ -4,6 +4,11 @@
 the gameplay-facing C++ subsystems.  The older global functions remain
 available for compatibility, but new scripts should use `Galeshi`.
 
+The Content Browser can generate starter scripts: right-click inside the file
+list and choose a template under **Create Script**. Files are written to
+`assets/scripts`; the editor opens the new file in the Lua Editor. Existing
+files are never overwritten — a numeric suffix is added instead.
+
 ```lua
 local player = Galeshi.world.create("Player")
 player:set_position(0, 2, 0)

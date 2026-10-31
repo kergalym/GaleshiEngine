@@ -6,12 +6,221 @@
 #include <spdlog/spdlog.h>
 #include <bgfx/bgfx.h>
 #include <cctype>
+#include <fstream>
 
 #include <algorithm>
 
 namespace fs = std::filesystem;
 
 namespace Galeshi {
+
+namespace {
+
+struct ScriptTemplate {
+    const char* id;
+    const char* label;
+    const char* description;
+    const char* defaultName;
+    const char* source;
+};
+
+const ScriptTemplate kScriptTemplates[] = {
+    {
+        "empty",
+        "Empty Script",
+        "Lifecycle callbacks only.",
+        "empty_script.lua",
+        R"LUA(-- Empty Galeshi script.
+-- RunOnce() is called once after this file is loaded or hot-reloaded.
+-- RunAlways(dt) is called once per frame.
+
+function RunOnce()
+end
+
+function RunAlways(dt)
+end
+)LUA"
+    },
+    {
+        "player_controller",
+        "Player Controller",
+        "Physics movement and jumping for an entity named Player.",
+        "player_controller.lua",
+        R"LUA(-- Player Controller
+-- Assign this file in Edit -> Scripts, or use it as the main script.
+local playerName = "Player"
+local moveSpeed = 8.0
+local jumpImpulse = 1000.0
+local player = nil
+
+local function acquirePlayer()
+    player = Galeshi.world.find(playerName)
+end
+
+function RunOnce()
+    acquirePlayer()
+end
+
+function RunAlways(dt)
+    if not player or not player:valid() then
+        acquirePlayer()
+        if not player then return end
+    end
+
+    local velocity = Galeshi.physics.get_velocity(player)
+    local moveX = Galeshi.input.axis("Horizontal") * moveSpeed
+    local moveZ = Galeshi.input.axis("Vertical") * moveSpeed
+    Galeshi.physics.set_velocity(player, moveX, velocity.y, moveZ)
+
+    if Galeshi.input.axis("Jump") > 0.5 and math.abs(velocity.y) < 0.5 then
+        Galeshi.physics.add_impulse(player, 0.0, jumpImpulse, 0.0)
+    end
+end
+)LUA"
+    },
+    {
+        "ai_controller",
+        "AI Controller",
+        "Chase an entity named Player.",
+        "ai_controller.lua",
+        R"LUA(-- AI Controller
+-- Attach this file to an entity with an AI Controller component.
+local targetName = "Player"
+local moveSpeed = 3.5
+local chaseRadius = 20.0
+
+function update_ai(eid, dt)
+    local agent = Galeshi.world.entity(eid)
+    if not agent or not agent:valid() then return end
+
+    Galeshi.ai.set_speed(agent, moveSpeed)
+    local target = Galeshi.world.find(targetName)
+    if not target or not target:valid() then return end
+
+    local position = target:position()
+    local agentPosition = agent:position()
+    local dx = position.x - agentPosition.x
+    local dz = position.z - agentPosition.z
+    if dx * dx + dz * dz <= chaseRadius * chaseRadius then
+        Galeshi.ai.set_target(agent, position.x, position.y, position.z)
+    end
+end
+)LUA"
+    },
+    {
+        "ai_patrol",
+        "AI Patrol",
+        "Patrol between four waypoints.",
+        "ai_patrol.lua",
+        R"LUA(-- AI Patrol
+-- Attach this file to an entity with an AI Controller component.
+local waypoints = {
+    { x =  5, y = 0, z =  5 },
+    { x = -5, y = 0, z =  5 },
+    { x = -5, y = 0, z = -5 },
+    { x =  5, y = 0, z = -5 },
+}
+local currentWaypoint = 1
+local waitTimer = 0.0
+
+function update_ai(eid, dt)
+    local agent = Galeshi.world.entity(eid)
+    if not agent or not agent:valid() then return end
+
+    if Galeshi.ai.path_done(agent) then
+        waitTimer = waitTimer + dt
+        if waitTimer >= 1.5 then
+            waitTimer = 0.0
+            currentWaypoint = (currentWaypoint % #waypoints) + 1
+            local waypoint = waypoints[currentWaypoint]
+            Galeshi.ai.set_target(agent, waypoint.x, waypoint.y, waypoint.z)
+        end
+    end
+end
+)LUA"
+    },
+    {
+        "ui_menu",
+        "UI Menu",
+        "Register handlers for UI Designer widgets.",
+        "ui_menu.lua",
+        R"LUA(-- UI Menu
+-- Set these handler names on canvas/widgets in the UI Designer.
+Galeshi.ui.on("on_menu_open", function()
+    Galeshi.log("UI: menu opened")
+end)
+
+Galeshi.ui.on("on_play_clicked", function(widgetId)
+    Galeshi.log("UI: " .. tostring(widgetId) .. " clicked")
+end)
+
+Galeshi.ui.on("on_volume_changed", function(widgetId, value)
+    Galeshi.audio.set_bus("SFX", value)
+end)
+
+Galeshi.ui.on("on_fullscreen_toggled", function(widgetId, value, checked)
+    Galeshi.log("UI: fullscreen=" .. tostring(checked))
+end)
+)LUA"
+    },
+    {
+        "rotator",
+        "Object Rotator",
+        "Rotate an entity named Rotator.",
+        "object_rotator.lua",
+        R"LUA(-- Object Rotator
+local targetName = "Rotator"
+local degreesPerSecond = 45.0
+local target = nil
+
+local function acquireTarget()
+    target = Galeshi.world.find(targetName)
+end
+
+function RunOnce()
+    acquireTarget()
+end
+
+function RunAlways(dt)
+    if not target or not target:valid() then
+        acquireTarget()
+        return
+    end
+
+    local euler = target:euler()
+    target:set_euler(euler.x, euler.y + degreesPerSecond * dt, euler.z)
+end
+)LUA"
+    },
+    {
+        "physics_demo",
+        "Physics Demo",
+        "Spawn and push a dynamic box.",
+        "physics_demo.lua",
+        R"LUA(-- Physics Demo
+local cube = nil
+
+function RunOnce()
+    cube = Galeshi.physics.create_box("ScriptCube", 0.0, 6.0, 0.0, 1.0)
+    if cube then
+        Galeshi.physics.set_velocity(cube, 2.0, 0.0, 1.0)
+    end
+end
+
+function RunAlways(dt)
+end
+)LUA"
+    },
+};
+
+const ScriptTemplate* FindScriptTemplate(const std::string& id) {
+    for (const ScriptTemplate& scriptTemplate : kScriptTemplates) {
+        if (id == scriptTemplate.id) return &scriptTemplate;
+    }
+    return nullptr;
+}
+
+} // namespace
 
 ContentBrowser::ContentBrowser(std::string rootDir, AssetManager* assets)
     : m_root(std::move(rootDir)), m_assets(assets), m_current(m_root) {
@@ -43,6 +252,62 @@ void ContentBrowser::Refresh() {
     if (!timeEc) {
         m_lastWriteTime = writeTime;
     }
+}
+
+std::string ContentBrowser::CreateScript(const std::string& templateId) {
+    const ScriptTemplate* scriptTemplate = FindScriptTemplate(templateId);
+    if (!scriptTemplate) {
+        spdlog::warn("[ContentBrowser] Unknown script template '{}'", templateId);
+        return {};
+    }
+
+    const fs::path scriptsDirectory = fs::path(m_root) / "scripts";
+    std::error_code ec;
+    fs::create_directories(scriptsDirectory, ec);
+    if (ec) {
+        spdlog::error("[ContentBrowser] Cannot create scripts directory '{}': {}",
+                      scriptsDirectory.string(), ec.message());
+        return {};
+    }
+
+    fs::path target = scriptsDirectory / scriptTemplate->defaultName;
+    if (fs::exists(target, ec)) {
+        const std::string stem = target.stem().string();
+        const std::string extension = target.extension().string();
+        bool foundFreeName = false;
+        for (int suffix = 1; suffix < 10000; ++suffix) {
+            target = scriptsDirectory /
+                     (stem + "_" + std::to_string(suffix) + extension);
+            if (!fs::exists(target, ec)) {
+                foundFreeName = true;
+                break;
+            }
+        }
+        if (!foundFreeName) {
+            spdlog::error("[ContentBrowser] No free filename for template '{}'",
+                          scriptTemplate->label);
+            return {};
+        }
+    }
+
+    std::ofstream out(target, std::ios::binary);
+    if (!out.is_open()) {
+        spdlog::error("[ContentBrowser] Cannot create script '{}'",
+                      target.string());
+        return {};
+    }
+    out << scriptTemplate->source;
+    if (!out.good()) {
+        spdlog::error("[ContentBrowser] Failed to write script '{}'",
+                      target.string());
+        return {};
+    }
+    out.close();
+
+    spdlog::info("[ContentBrowser] Created script '{}' from template '{}'",
+                 target.string(), scriptTemplate->label);
+    Refresh();
+    return target.string();
 }
 
 void ContentBrowser::UpdateAutoRefresh() {
@@ -185,6 +450,27 @@ std::string ContentBrowser::Draw() {
 
         ImGui::PopID();
     }
+
+    // Right-click anywhere in the file list to create one of the built-in
+    // script templates. New files are always placed in <assets>/scripts.
+    if (ImGui::BeginPopupContextWindow("content_browser_context",
+                                       ImGuiPopupFlags_MouseButtonRight)) {
+        ImGui::TextDisabled("Create Script");
+        ImGui::Separator();
+        for (const ScriptTemplate& scriptTemplate : kScriptTemplates) {
+            if (ImGui::MenuItem(scriptTemplate.label)) {
+                const std::string created = CreateScript(scriptTemplate.id);
+                if (!created.empty()) clicked = created;
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s\nTarget: %s", scriptTemplate.description,
+                                  (fs::path(m_root) / "scripts").string().c_str());
+            }
+        }
+        ImGui::EndPopup();
+    }
+
     ImGui::EndChild();
 
     return clicked;
