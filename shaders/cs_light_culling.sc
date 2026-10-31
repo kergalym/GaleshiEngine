@@ -9,8 +9,9 @@ uniform mat4 u_cullViewProj;
 uniform vec4 u_cullPointLightPosRadius[MAX_LIGHTS];
 uniform vec4 u_cullPointLightCount;
 
-BUFFER_WO(s_tileLightCounts, uint, 0);
-BUFFER_WO(s_tileLightIndices, uint, 1);
+// Layout: [0 .. totalTiles) = per-tile counts,
+//         [totalTiles + tileIdx * MAX_LIGHTS_PER_TILE + n] = light indices.
+BUFFER_WO(s_tileLights, uint, 0);
 
 NUM_THREADS(1, 1, 1)
 void main() {
@@ -18,6 +19,7 @@ void main() {
     if (tileId.x >= uint(u_cullParams.x) || tileId.y >= uint(u_cullParams.y)) return;
 
     uint tileIdx = tileId.y * uint(u_cullParams.x) + tileId.x;
+    uint totalTiles = uint(u_cullParams.x) * uint(u_cullParams.y);
     uint count = 0;
 
     vec2 tileMinUV = vec2(float(tileId.x) * TILE_SIZE, float(tileId.y) * TILE_SIZE) / u_cullParams.zw;
@@ -39,11 +41,11 @@ void main() {
         if (maxUV.x >= tileMinUV.x && minUV.x <= tileMaxUV.x &&
             maxUV.y >= tileMinUV.y && minUV.y <= tileMaxUV.y) {
             if (count < MAX_LIGHTS_PER_TILE) {
-                uint offset = tileIdx * MAX_LIGHTS_PER_TILE + count;
-                s_tileLightIndices[offset] = uint(i);
+                uint offset = totalTiles + tileIdx * MAX_LIGHTS_PER_TILE + count;
+                s_tileLights[offset] = uint(i);
                 count++;
             }
         }
     }
-    s_tileLightCounts[tileIdx] = count;
+    s_tileLights[tileIdx] = count;
 }

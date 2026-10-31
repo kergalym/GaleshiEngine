@@ -121,6 +121,7 @@ void PostProcessManager::Init() {
             s_normalRough = bgfx::createUniform("s_normalRough", bgfx::UniformType::Sampler);
             s_worldPos    = bgfx::createUniform("s_worldPos",    bgfx::UniformType::Sampler);
             s_materialTex = bgfx::createUniform("s_materialTex", bgfx::UniformType::Sampler);
+            s_materialFeatures = bgfx::createUniform("s_materialFeatures", bgfx::UniformType::Sampler);
             s_shadowMap0  = bgfx::createUniform("s_shadowMap0",  bgfx::UniformType::Sampler);
             s_shadowMap1  = bgfx::createUniform("s_shadowMap1",  bgfx::UniformType::Sampler);
             s_shadowMap2  = bgfx::createUniform("s_shadowMap2",  bgfx::UniformType::Sampler);
@@ -500,8 +501,7 @@ void PostProcessManager::Shutdown() {
     destroyProg(m_program); destroyProg(m_invertProg); destroyProg(m_fxaaProg);
     destroyProg(m_lightingProg);
     destroyProg(m_lightCullingProg);
-    if (bgfx::isValid(m_tileLightCountBuffer)) bgfx::destroy(m_tileLightCountBuffer);
-    if (bgfx::isValid(m_tileLightIndexBuffer)) bgfx::destroy(m_tileLightIndexBuffer);
+    if (bgfx::isValid(m_tileLightBuffer)) bgfx::destroy(m_tileLightBuffer);
     destroyUni(u_cullParams); destroyUni(u_cullViewProj);
     destroyUni(u_cullPointLightPosRadius); destroyUni(u_cullPointLightCount); destroyUni(u_tileParams);
     destroyProg(m_aoSampleProg); destroyProg(m_hbaoProg); destroyProg(m_gtaoProg);
@@ -565,7 +565,7 @@ void PostProcessManager::Shutdown() {
     destroyUni(u_cascadeDepthBias); destroyUni(u_pssmParams);
     destroyUni(u_lightDir); destroyUni(u_lightCol);
     destroyUni(u_fogColorDensity); destroyUni(u_fogParams); destroyUni(u_fogParams2);
-    destroyUni(s_albedoMr); destroyUni(s_normalRough); destroyUni(s_worldPos); destroyUni(s_materialTex);
+    destroyUni(s_albedoMr); destroyUni(s_normalRough); destroyUni(s_worldPos); destroyUni(s_materialTex); destroyUni(s_materialFeatures);
     destroyUni(s_shadowMap0); destroyUni(s_shadowMap1); destroyUni(s_shadowMap2); destroyUni(u_lightVP0); destroyUni(u_lightVP1); destroyUni(u_lightVP2); 
     destroyUni(u_plPos); destroyUni(u_plCol); destroyUni(u_plCnt);
     destroyUni(u_slPos); destroyUni(u_slDir); destroyUni(u_slCol); destroyUni(u_slCnt); if (bgfx::isValid(m_pointShadowFbos[0])) {
@@ -764,11 +764,11 @@ void PostProcessManager::RenderLightCulling(int pointLightCount, const float poi
     uint16_t tilesY = (height + 15) / 16;
     uint32_t totalTiles = tilesX * tilesY;
 
-    if (!bgfx::isValid(m_tileLightCountBuffer) || totalTiles != m_numCullTiles) {
-        if (bgfx::isValid(m_tileLightCountBuffer)) bgfx::destroy(m_tileLightCountBuffer);
-        if (bgfx::isValid(m_tileLightIndexBuffer)) bgfx::destroy(m_tileLightIndexBuffer);
-        m_tileLightCountBuffer = bgfx::createDynamicIndexBuffer(totalTiles, BGFX_BUFFER_INDEX32 | BGFX_BUFFER_COMPUTE_READ_WRITE);
-        m_tileLightIndexBuffer = bgfx::createDynamicIndexBuffer(totalTiles * 64, BGFX_BUFFER_INDEX32 | BGFX_BUFFER_COMPUTE_READ_WRITE);
+    if (!bgfx::isValid(m_tileLightBuffer) || totalTiles != m_numCullTiles) {
+        if (bgfx::isValid(m_tileLightBuffer)) bgfx::destroy(m_tileLightBuffer);
+        m_tileLightBuffer = bgfx::createDynamicIndexBuffer(
+            totalTiles * (1 + 64),
+            BGFX_BUFFER_INDEX32 | BGFX_BUFFER_COMPUTE_READ_WRITE);
         m_numCullTiles = totalTiles;
     }
 
@@ -779,15 +779,16 @@ void PostProcessManager::RenderLightCulling(int pointLightCount, const float poi
     bgfx::setUniform(u_cullPointLightCount, countArr);
     bgfx::setUniform(u_cullPointLightPosRadius, pointLightPosRadius, 64);
 
-    bgfx::setBuffer(0, m_tileLightCountBuffer, bgfx::Access::Write);
-    bgfx::setBuffer(1, m_tileLightIndexBuffer, bgfx::Access::Write);
+    if (bgfx::isValid(m_tileLightBuffer)) {
+        bgfx::setBuffer(0, m_tileLightBuffer, bgfx::Access::Write);
+    }
 
     bgfx::dispatch(19, m_lightCullingProg, tilesX, tilesY, 1);
 }
 
 bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::TextureHandle albedoMr, bgfx::TextureHandle normalRough, bgfx::TextureHandle worldPos,
-    bgfx::TextureHandle materialData,
+    bgfx::TextureHandle materialData, bgfx::TextureHandle materialFeatures,
     bgfx::TextureHandle shadowMap0, bgfx::TextureHandle shadowMap1, bgfx::TextureHandle shadowMap2,
     const glm::mat4& lightMtx0, const glm::mat4& lightMtx1, const glm::mat4& lightMtx2,
     const glm::mat4& invViewProj, 
@@ -846,8 +847,8 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     if (bgfx::isValid(envTex))  bgfx::setTexture(7, s_iblEnv,        envTex);
 
     // Ambient occlusion at slot 8. The split-sum BRDF LUT used this slot
-    // before; it is now evaluated analytically, because AO cannot share the
-    // tile-light SSBO binding at slot 14.
+    // before; it is now evaluated analytically so the descriptor budget can
+    // carry AO, subsurface features and the combined tile-light buffer.
     const bgfx::TextureHandle aoTex = AOTexture();
     if (bgfx::isValid(s_aoTex) && bgfx::isValid(aoTex)) {
         bgfx::setTexture(8, s_aoTex, aoTex);
@@ -857,6 +858,13 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     if (bgfx::isValid(s_materialTex) && bgfx::isValid(materialData)) {
         bgfx::setTexture(9, s_materialTex, materialData);
     }
+    // Subsurface feature G-buffer. Slot 14 was previously the tiled-light
+    // count SSBO; counts and indices now share the single buffer at slot 15.
+    if (bgfx::isValid(s_materialFeatures) && bgfx::isValid(materialFeatures)) {
+        bgfx::setTexture(14, s_materialFeatures, materialFeatures);
+    } else if (bgfx::isValid(s_materialFeatures) && bgfx::isValid(m_blackTex2D)) {
+        bgfx::setTexture(14, s_materialFeatures, m_blackTex2D);
+    }
     
 
     if (pointLightCount > 0) {
@@ -865,9 +873,8 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     }
     float plArr[4] = { float(pointLightCount), 0, 0, 0 };
     bgfx::setUniform(u_plCnt, plArr);
-    if (bgfx::isValid(m_tileLightCountBuffer)) {
-        bgfx::setBuffer(14, m_tileLightCountBuffer, bgfx::Access::Read);
-        bgfx::setBuffer(15, m_tileLightIndexBuffer, bgfx::Access::Read);
+    if (bgfx::isValid(m_tileLightBuffer)) {
+        bgfx::setBuffer(15, m_tileLightBuffer, bgfx::Access::Read);
         float tp[4] = { (float)((width + 15) / 16), (float)((height + 15) / 16), (float)width, (float)height };
         bgfx::setUniform(u_tileParams, tp);
     }

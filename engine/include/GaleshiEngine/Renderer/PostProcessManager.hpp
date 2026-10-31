@@ -52,7 +52,7 @@ public:
 
     void RenderLightCulling(int pointLightCount, const float pointLightPosRadius[][4], const glm::mat4& viewProj, uint16_t width, uint16_t height);
     bgfx::TextureHandle RenderLighting(bgfx::TextureHandle albedoMr, bgfx::TextureHandle normalRough, bgfx::TextureHandle worldPos,
-                                       bgfx::TextureHandle materialData,
+                                       bgfx::TextureHandle materialData, bgfx::TextureHandle materialFeatures,
                                        bgfx::TextureHandle shadowMap0, bgfx::TextureHandle shadowMap1, bgfx::TextureHandle shadowMap2,
                                        const glm::mat4& lightMtx0, const glm::mat4& lightMtx1, const glm::mat4& lightMtx2,
                                        const glm::mat4& invViewProj, 
@@ -160,8 +160,10 @@ bgfx::TextureHandle EnvScratch() const { return m_envScratch; }
 private:
     // --- Tiled Light Culling ---
     bgfx::ProgramHandle m_lightCullingProg = BGFX_INVALID_HANDLE;
-    bgfx::DynamicIndexBufferHandle m_tileLightCountBuffer = BGFX_INVALID_HANDLE;
-    bgfx::DynamicIndexBufferHandle m_tileLightIndexBuffer = BGFX_INVALID_HANDLE;
+    // Counts occupy the first totalTiles words; indices follow at
+    // totalTiles + tileIdx * 64. Keeping both in one SSBO leaves a descriptor
+    // slot free for the subsurface material-feature texture.
+    bgfx::DynamicIndexBufferHandle m_tileLightBuffer = BGFX_INVALID_HANDLE;
     uint32_t m_numCullTiles = 0;
     bgfx::UniformHandle u_cullParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_cullViewProj = BGFX_INVALID_HANDLE;
@@ -197,6 +199,7 @@ private:
     bgfx::UniformHandle s_normalRough = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_worldPos    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_materialTex = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_materialFeatures = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_shadowMap0  = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_shadowMap1  = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_shadowMap2  = BGFX_INVALID_HANDLE;

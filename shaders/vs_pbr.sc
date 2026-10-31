@@ -6,6 +6,7 @@ $output v_worldPos, v_normal, v_tangent, v_uv, v_motion
 SAMPLER2D(s_boneMatrices, 3);
 uniform mat4 u_prevViewProj;
 uniform mat4 u_prevModel;
+uniform vec4 u_shadowDepthOffset;
 
 vec2 clipToScreenUV(vec4 clip) {
     float w = max(clip.w, 0.0001);
@@ -37,9 +38,15 @@ void main()
     vec4 skinnedPos = mul(skinMat, vec4(a_position, 1.0));
     vec4 worldPos   = mul(u_model[0], skinnedPos);
     vec4 prevWorld  = mul(u_prevModel, skinnedPos);
-    v_worldPos      = worldPos.xyz;
 
-    v_normal  = mul(u_model[0], mul(skinMat, vec4(a_normal, 0.0))).xyz;
+    vec3 worldNormal = mul(u_model[0], mul(skinMat, vec4(a_normal, 0.0))).xyz;
+    // Used only by the point-shadow pass; regular scene draws bind zero.
+    if (abs(u_shadowDepthOffset.x) > 1e-6) {
+        worldPos.xyz += normalize(worldNormal) * u_shadowDepthOffset.x;
+    }
+    v_worldPos = worldPos.xyz;
+
+    v_normal  = worldNormal;
     v_tangent = mul(u_model[0], mul(skinMat, vec4(a_tangent, 0.0))).xyz;
 
     v_uv = a_texcoord0;

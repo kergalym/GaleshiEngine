@@ -284,8 +284,12 @@ void RenderSystem::Init(AssetManager* assets) {
     m_program = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_pbr.bin");
     m_gbufferProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_gbuffer.bin");
     m_shadowProg = ShaderManager::LoadProgram("shaders/vs_shadow.bin", "shaders/fs_shadow.bin");
+    m_shadowSkinnedProg = ShaderManager::LoadProgram(
+        "shaders/vs_shadow_skinned.bin", "shaders/fs_shadow.bin");
     m_shadowPointProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_shadow_point.bin");
     m_glassProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_glass.bin");
+    m_translucentProg = ShaderManager::LoadProgram(
+        "shaders/vs_translucent.bin", "shaders/fs_translucent.bin");
     m_waterProg = ShaderManager::LoadProgram("shaders/vs_water.bin", "shaders/fs_water.bin");
     m_hairProg = ShaderManager::LoadProgram("shaders/vs_hair.bin", "shaders/fs_hair.bin");
     m_instancedProg = ShaderManager::LoadProgram(
@@ -299,10 +303,11 @@ void RenderSystem::Init(AssetManager* assets) {
     m_occlusionSupported =
         (bgfx::getCaps()->supported & BGFX_CAPS_OCCLUSION_QUERY) != 0;
     m_occlusionEnabled = m_occlusionSupported;
-    spdlog::info("[RenderSystem] programs: pbr={} gbuffer={} shadow={} shadowPoint={} glass={} water={} hair={} vegetation={} occlusion={}",
+    spdlog::info("[RenderSystem] programs: pbr={} gbuffer={} shadow={} shadowSkinned={} shadowPoint={} glass={} translucent={} water={} hair={} vegetation={} occlusion={}",
         bgfx::isValid(m_program), bgfx::isValid(m_gbufferProg),
-        bgfx::isValid(m_shadowProg), bgfx::isValid(m_shadowPointProg),
-        bgfx::isValid(m_glassProg), bgfx::isValid(m_waterProg),
+        bgfx::isValid(m_shadowProg), bgfx::isValid(m_shadowSkinnedProg),
+        bgfx::isValid(m_shadowPointProg), bgfx::isValid(m_glassProg),
+        bgfx::isValid(m_translucentProg), bgfx::isValid(m_waterProg),
         bgfx::isValid(m_hairProg), bgfx::isValid(m_instancedProg),
         m_occlusionSupported);
     u_shadowLightPos = bgfx::createUniform("u_shadowLightPos", bgfx::UniformType::Vec4);
@@ -322,6 +327,21 @@ void RenderSystem::Init(AssetManager* assets) {
     u_pointLightCount = bgfx::createUniform("u_pointLightCount", bgfx::UniformType::Vec4);
     u_materialParams = bgfx::createUniform("u_materialParams", bgfx::UniformType::Vec4);
     u_materialFlags = bgfx::createUniform("u_materialFlags", bgfx::UniformType::Vec4);
+    u_subsurfaceParams = bgfx::createUniform("u_subsurfaceParams", bgfx::UniformType::Vec4);
+    u_shadowDepthOffset = bgfx::createUniform("u_shadowDepthOffset", bgfx::UniformType::Vec4);
+    u_translucencyParams = bgfx::createUniform("u_translucencyParams", bgfx::UniformType::Vec4);
+    u_translucencyColor = bgfx::createUniform("u_translucencyColor", bgfx::UniformType::Vec4);
+    u_translucencyShadow = bgfx::createUniform("u_translucencyShadow", bgfx::UniformType::Vec4);
+    u_cascadeSplits = bgfx::createUniform("u_cascadeSplits", bgfx::UniformType::Vec4);
+    u_pssmParams = bgfx::createUniform("u_pssmParams", bgfx::UniformType::Vec4);
+    u_lightViewProj0 = bgfx::createUniform("u_lightViewProj0", bgfx::UniformType::Mat4);
+    u_lightViewProj1 = bgfx::createUniform("u_lightViewProj1", bgfx::UniformType::Mat4);
+    u_lightViewProj2 = bgfx::createUniform("u_lightViewProj2", bgfx::UniformType::Mat4);
+    s_translucentDepth = bgfx::createUniform("s_translucentDepth", bgfx::UniformType::Sampler);
+    s_translucentShadow0 = bgfx::createUniform("s_translucentShadow0", bgfx::UniformType::Sampler);
+    s_translucentShadow1 = bgfx::createUniform("s_translucentShadow1", bgfx::UniformType::Sampler);
+    s_translucentShadow2 = bgfx::createUniform("s_translucentShadow2", bgfx::UniformType::Sampler);
+    s_translucentEnvCube = bgfx::createUniform("s_translucentEnvCube", bgfx::UniformType::Sampler);
     u_glassParams = bgfx::createUniform("u_glassParams", bgfx::UniformType::Vec4);
     u_cameraForward = bgfx::createUniform("u_cameraForward", bgfx::UniformType::Vec4);
     u_waterParams0 = bgfx::createUniform("u_waterParams0", bgfx::UniformType::Vec4);
@@ -378,8 +398,10 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(m_program)) bgfx::destroy(m_program);
     if (bgfx::isValid(m_gbufferProg)) bgfx::destroy(m_gbufferProg);
     if (bgfx::isValid(m_shadowProg)) bgfx::destroy(m_shadowProg);
+    if (bgfx::isValid(m_shadowSkinnedProg)) bgfx::destroy(m_shadowSkinnedProg);
     if (bgfx::isValid(m_shadowPointProg)) bgfx::destroy(m_shadowPointProg);
     if (bgfx::isValid(m_glassProg)) bgfx::destroy(m_glassProg);
+    if (bgfx::isValid(m_translucentProg)) bgfx::destroy(m_translucentProg);
     if (bgfx::isValid(m_waterProg)) bgfx::destroy(m_waterProg);
     if (bgfx::isValid(m_hairProg)) bgfx::destroy(m_hairProg);
     if (bgfx::isValid(m_instancedProg)) bgfx::destroy(m_instancedProg);
@@ -401,6 +423,21 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(u_pointLightCount)) bgfx::destroy(u_pointLightCount);
     if (bgfx::isValid(u_materialParams)) bgfx::destroy(u_materialParams);
     if (bgfx::isValid(u_materialFlags)) bgfx::destroy(u_materialFlags);
+    if (bgfx::isValid(u_subsurfaceParams)) bgfx::destroy(u_subsurfaceParams);
+    if (bgfx::isValid(u_shadowDepthOffset)) bgfx::destroy(u_shadowDepthOffset);
+    if (bgfx::isValid(u_translucencyParams)) bgfx::destroy(u_translucencyParams);
+    if (bgfx::isValid(u_translucencyColor)) bgfx::destroy(u_translucencyColor);
+    if (bgfx::isValid(u_translucencyShadow)) bgfx::destroy(u_translucencyShadow);
+    if (bgfx::isValid(u_cascadeSplits)) bgfx::destroy(u_cascadeSplits);
+    if (bgfx::isValid(u_pssmParams)) bgfx::destroy(u_pssmParams);
+    if (bgfx::isValid(u_lightViewProj0)) bgfx::destroy(u_lightViewProj0);
+    if (bgfx::isValid(u_lightViewProj1)) bgfx::destroy(u_lightViewProj1);
+    if (bgfx::isValid(u_lightViewProj2)) bgfx::destroy(u_lightViewProj2);
+    if (bgfx::isValid(s_translucentDepth)) bgfx::destroy(s_translucentDepth);
+    if (bgfx::isValid(s_translucentShadow0)) bgfx::destroy(s_translucentShadow0);
+    if (bgfx::isValid(s_translucentShadow1)) bgfx::destroy(s_translucentShadow1);
+    if (bgfx::isValid(s_translucentShadow2)) bgfx::destroy(s_translucentShadow2);
+    if (bgfx::isValid(s_translucentEnvCube)) bgfx::destroy(s_translucentEnvCube);
     if (bgfx::isValid(u_glassParams)) bgfx::destroy(u_glassParams);
     if (bgfx::isValid(u_cameraForward)) bgfx::destroy(u_cameraForward);
     if (bgfx::isValid(u_waterParams0)) bgfx::destroy(u_waterParams0);
@@ -591,6 +628,9 @@ void RenderSystem::RenderOcclusion(Scene& scene, const Camera& camera,
                            glm::value_ptr(camera.Projection()));
     bgfx::setViewMode(viewId, bgfx::ViewMode::Sequential);
 
+    const float zeroOffset[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    bgfx::setUniform(u_shadowDepthOffset, zeroOffset);
+
     const Frustum frustum(camera.Projection() * camera.View());
     const float tanHalfFov =
         std::max(1.0f / std::max(std::abs(camera.Projection()[1][1]), 1e-6f), 1e-4f);
@@ -615,7 +655,8 @@ void RenderSystem::RenderOcclusion(Scene& scene, const Camera& camera,
         const auto& mc = view.get<MeshComponent>(handle);
         const auto& matc = view.get<MaterialComponent>(handle);
         if (!mc.mesh || !mc.mesh->Valid() || !matc.material ||
-            matc.material->isGlass || HasSkeletonRoot(scene, handle) ||
+            matc.material->isGlass || matc.material->translucencyEnabled ||
+            HasSkeletonRoot(scene, handle) ||
             scene.Registry().all_of<SoftBodyComponent>(handle)) {
             continue;
         }
@@ -798,7 +839,8 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         if (!mc.mesh || !mc.mesh->Valid() || !matc.material) continue;
         // Transparent glass is submitted later in RenderGlass, after the
         // post-processed image has been copied into the color attachment.
-        if (matc.material->isGlass) continue;
+        // Lit translucency has its own forward pass before tonemapping.
+        if (matc.material->isGlass || matc.material->translucencyEnabled) continue;
 
         const glm::mat4 model = EntityWorldMatrix(scene, h);
         const uint32_t entityId = static_cast<uint32_t>(entt::to_integral(h));
@@ -951,6 +993,7 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
     const float metallic[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     const float emissive[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     const float flags[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    const float noSSS[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
     auto submitGroup = [&](Mesh& mesh, const glm::vec4& color, float roughness,
                            bool twoSided, bgfx::InstanceDataBuffer& idb,
@@ -984,6 +1027,7 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
         bgfx::setUniform(u_emissiveFactor, emissive);
         bgfx::setUniform(u_materialParams, params);
         bgfx::setUniform(u_materialFlags, flags);
+        bgfx::setUniform(u_subsurfaceParams, noSSS);
         bgfx::setInstanceDataBuffer(&idb, 0, count);
         bgfx::setVertexBuffer(0, mesh.VB());
         bgfx::setIndexBuffer(mesh.IB());
@@ -1111,24 +1155,79 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
     std::unordered_map<const Mesh*, ShadowInstanceBatch> instanceBatches;
     if (canInstanceStatic) instanceBatches.reserve(64);
 
+    static std::vector<glm::vec4> identityBoneData(kMaxBones * 4,
+                                                    glm::vec4(0.0f));
+    static bool initShadowIdentity = false;
+    if (!initShadowIdentity) {
+        const glm::mat4 id(1.0f);
+        for (int i = 0; i < kMaxBones; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                identityBoneData[i * 4 + j] = id[j];
+            }
+        }
+        initShadowIdentity = true;
+    }
+    std::vector<glm::vec4> shadowBoneData(kMaxBones * 4);
+
     auto viewIter = scene.Registry().view<TransformComponent, MeshComponent>();
     for (auto h : viewIter) {
         const auto& mc = viewIter.get<MeshComponent>(h);
         if (!mc.mesh || !mc.mesh->Valid()) continue;
         bool twoSided = false;
+        float shadowDepthOffset = 0.0f;
         if (scene.Registry().all_of<MaterialComponent>(h)) {
             const auto& matc = scene.Registry().get<MaterialComponent>(h);
             if (matc.material) {
-                if (matc.material->isGlass) continue;
+                if (matc.material->isGlass || !matc.material->castsShadow) continue;
                 twoSided = matc.material->twoSided;
+                shadowDepthOffset = matc.material->shadowDepthOffset;
             }
         }
 
         const glm::mat4 model = EntityWorldMatrix(scene, h);
+        const bool hasSkeleton = HasSkeletonRoot(scene, h);
+
+        // Skinned casters need their palette applied in the directional/spot
+        // depth pass as well. The regular vs_shadow path only knows positions
+        // and would otherwise cast the bind pose.
+        if (hasSkeleton && bgfx::isValid(m_shadowSkinnedProg)) {
+            const entt::entity root = FindRootEntity(scene, h);
+            const std::vector<glm::vec4>* bones = &identityBoneData;
+            if (scene.Registry().all_of<SkeletalComponent>(root)) {
+                auto& skel = scene.Registry().get<SkeletalComponent>(root);
+                if (skel.isAnimated && !skel.sourcePath.empty()) {
+                    if (skel.boneMatrices.size() != kMaxBones) {
+                        skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
+                    }
+                    for (int i = 0; i < kMaxBones; ++i) {
+                        for (int j = 0; j < 4; ++j) {
+                            shadowBoneData[i * 4 + j] = skel.boneMatrices[i][j];
+                        }
+                    }
+                    bones = &shadowBoneData;
+                }
+            }
+            bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
+                bgfx::copy(bones->data(), kMaxBones * 4 * sizeof(glm::vec4)));
+            bgfx::setTexture(3, s_boneMatrices, m_boneTexture);
+
+            const float offset[4] = {shadowDepthOffset, 0.0f, 0.0f, 0.0f};
+            bgfx::setUniform(u_shadowDepthOffset, offset);
+            bgfx::setTransform(glm::value_ptr(model));
+            bgfx::setVertexBuffer(0, mc.mesh->VB());
+            bgfx::setIndexBuffer(mc.mesh->IB());
+            bgfx::setState(BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
+                           FaceState(twoSided));
+            bgfx::submit(viewId, m_shadowSkinnedProg);
+            continue;
+        }
 
         // Static meshes can share the shadow draw. Skinned meshes stay on the
         // per-entity path so their existing palette handling is preserved.
-        if (canInstanceStatic && !HasSkeletonRoot(scene, h)) {
+        // Materials with a non-zero depth offset are also kept per-entity so
+        // the offset uniform cannot leak into the rest of the batch.
+        if (canInstanceStatic && !hasSkeleton &&
+            std::abs(shadowDepthOffset) < 1e-4f) {
             const auto result = instanceBatches.try_emplace(mc.mesh.get());
             ShadowInstanceBatch& batch = result.first->second;
             if (result.second) batch.mesh = mc.mesh;
@@ -1140,6 +1239,8 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
             continue;
         }
 
+        const float offset[4] = {shadowDepthOffset, 0.0f, 0.0f, 0.0f};
+        bgfx::setUniform(u_shadowDepthOffset, offset);
         bgfx::setTransform(glm::value_ptr(model));
         bgfx::setVertexBuffer(0, mc.mesh->VB());
         bgfx::setIndexBuffer(mc.mesh->IB());
@@ -1147,6 +1248,10 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
                        FaceState(twoSided));
         bgfx::submit(viewId, m_shadowProg);
     }
+
+    // Instanced shadow batching only handles the default offset (zero).
+    const float zeroOffset[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    bgfx::setUniform(u_shadowDepthOffset, zeroOffset);
 
     if (canInstanceStatic) {
         const uint64_t state = BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS;
@@ -1195,17 +1300,20 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
         const auto& mc = viewIter.get<MeshComponent>(h);
         if (!mc.mesh || !mc.mesh->Valid()) continue;
         bool twoSided = false;
+        float shadowDepthOffset = 0.0f;
         if (scene.Registry().all_of<MaterialComponent>(h)) {
             const auto& matc = scene.Registry().get<MaterialComponent>(h);
             if (matc.material) {
-                if (matc.material->isGlass) continue;
+                if (matc.material->isGlass || !matc.material->castsShadow) continue;
                 twoSided = matc.material->twoSided;
+                shadowDepthOffset = matc.material->shadowDepthOffset;
             }
         }
 
         const glm::mat4 model = EntityWorldMatrix(scene, h);
 
-        if (canInstanceStatic && !HasSkeletonRoot(scene, h)) {
+        if (canInstanceStatic && !HasSkeletonRoot(scene, h) &&
+            std::abs(shadowDepthOffset) < 1e-4f) {
             const auto result = instanceBatches.try_emplace(mc.mesh.get());
             ShadowInstanceBatch& batch = result.first->second;
             if (result.second) batch.mesh = mc.mesh;
@@ -1216,6 +1324,9 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
             }
             continue;
         }
+
+        const float offset[4] = {shadowDepthOffset, 0.0f, 0.0f, 0.0f};
+        bgfx::setUniform(u_shadowDepthOffset, offset);
 
         // Skeletal animation support
         const entt::entity root = FindRootEntity(scene, h);
@@ -1251,6 +1362,9 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
                        FaceState(twoSided));
         bgfx::submit(viewId, m_shadowPointProg);
     }
+
+    const float zeroOffset[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    bgfx::setUniform(u_shadowDepthOffset, zeroOffset);
 
     if (canInstanceStatic) {
         const uint64_t state = BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS;
@@ -1288,6 +1402,19 @@ void RenderSystem::BindMaterial(const Material& mat) {
     bgfx::setUniform(u_emissiveFactor, emi);
     bgfx::setUniform(u_materialParams, params);
     bgfx::setUniform(u_materialFlags, flags);
+    // Subsurface color is premultiplied by strength so a zero vector
+    // disables the feature without an extra branch in the G-buffer.
+    const float sss[4] = {
+        mat.subsurfaceEnabled ? mat.subsurfaceColor.r * mat.subsurfaceStrength : 0.0f,
+        mat.subsurfaceEnabled ? mat.subsurfaceColor.g * mat.subsurfaceStrength : 0.0f,
+        mat.subsurfaceEnabled ? mat.subsurfaceColor.b * mat.subsurfaceStrength : 0.0f,
+        mat.subsurfaceEnabled ? std::clamp(mat.subsurfaceRadius / 5.0f, 0.0f, 1.0f) : 0.0f
+    };
+    bgfx::setUniform(u_subsurfaceParams, sss);
+    // Main/reflection/glass draws must not inherit the last shadow-depth
+    // offset used by a point-shadow pass.
+    const float zeroOffset[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    bgfx::setUniform(u_shadowDepthOffset, zeroOffset);
 
     auto white = m_assets->WhiteTexture();
     auto flatN = m_assets->FlatNormalTexture();
@@ -1505,7 +1632,8 @@ bool RenderSystem::RenderPlanarReflection(Scene& scene, const Camera& camera,
         const auto& materialComponent = view.get<MaterialComponent>(handle);
         if (!meshComponent.mesh || !meshComponent.mesh->Valid() ||
             !materialComponent.material ||
-            materialComponent.material->isGlass) {
+            materialComponent.material->isGlass ||
+            materialComponent.material->translucencyEnabled) {
             continue;
         }
 
@@ -1874,6 +2002,8 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
 
     const float cam[4] = {camPos.x, camPos.y, camPos.z, 1.0f};
     bgfx::setUniform(u_cameraPosition, cam);
+    const float zeroOffset[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    bgfx::setUniform(u_shadowDepthOffset, zeroOffset);
 
     auto white = m_assets->WhiteTexture(), flatN = m_assets->FlatNormalTexture();
     static std::vector<glm::vec4> identityBoneData(kMaxBones * 4, glm::vec4(0.0f));
@@ -1935,6 +2065,246 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
                        BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_ALPHA |
                        BGFX_STATE_MSAA | FaceState(mat.twoSided));
         bgfx::submit(viewId, m_glassProg);
+    }
+}
+
+void RenderSystem::RenderTranslucency(Scene& scene, const Camera& camera,
+                                      bgfx::TextureHandle sceneDepth,
+                                      bgfx::TextureHandle envCube,
+                                      bgfx::TextureHandle shadowMap0,
+                                      bgfx::TextureHandle shadowMap1,
+                                      bgfx::TextureHandle shadowMap2,
+                                      const glm::mat4& lightMtx0,
+                                      const glm::mat4& lightMtx1,
+                                      const glm::mat4& lightMtx2,
+                                      const float cascadeSplits[4],
+                                      const float pssmParams[4],
+                                      const float lightDir[4],
+                                      const float lightColorIntensity[4],
+                                      bgfx::ViewId viewId,
+                                      uint16_t width, uint16_t height) {
+    if (!bgfx::isValid(m_translucentProg) || !m_assets ||
+        !bgfx::isValid(sceneDepth) || width == 0 || height == 0) {
+        return;
+    }
+
+    bgfx::setViewTransform(viewId, glm::value_ptr(camera.View()),
+                           glm::value_ptr(camera.Projection()));
+    bgfx::setViewRect(viewId, 0, 0, width, height);
+    bgfx::setViewClear(viewId, BGFX_CLEAR_NONE);
+    bgfx::setViewMode(viewId, bgfx::ViewMode::Sequential);
+    // A preceding transparent pass may have finished without submitting a
+    // draw (for example a scene with no hair). Discard that pending uniform
+    // state so setting u_cameraPosition here cannot collide with it.
+    bgfx::discard();
+
+    const glm::vec3 camPos = camera.Position();
+    const float cam[4] = {camPos.x, camPos.y, camPos.z, 1.0f};
+    const float zeroOffset[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    bgfx::setUniform(u_cameraPosition, cam);
+    bgfx::setUniform(u_shadowDepthOffset, zeroOffset);
+    bgfx::setUniform(u_lightDirection, lightDir);
+    bgfx::setUniform(u_lightColorIntensity, lightColorIntensity);
+    bgfx::setUniform(u_cascadeSplits, cascadeSplits);
+    bgfx::setUniform(u_pssmParams, pssmParams);
+    bgfx::setUniform(u_lightViewProj0, glm::value_ptr(lightMtx0));
+    bgfx::setUniform(u_lightViewProj1, glm::value_ptr(lightMtx1));
+    bgfx::setUniform(u_lightViewProj2, glm::value_ptr(lightMtx2));
+
+    // Point lights are evaluated directly in the fragment shader. The cap
+    // matches RenderSystem::kMaxPointLights (4), so no tiled-light buffer is
+    // needed in this forward pass.
+    float plPos[kMaxPointLights][4] = {};
+    float plCol[kMaxPointLights][4] = {};
+    int plCount = 0;
+    auto plview = scene.Registry().view<TransformComponent, PointLightComponent>();
+    for (auto h : plview) {
+        if (plCount >= kMaxPointLights) break;
+        const auto& tc = plview.get<TransformComponent>(h);
+        const auto& pl = plview.get<PointLightComponent>(h);
+        plPos[plCount][0] = tc.position.x;
+        plPos[plCount][1] = tc.position.y;
+        plPos[plCount][2] = tc.position.z;
+        plPos[plCount][3] = pl.radius;
+        plCol[plCount][0] = pl.color.r;
+        plCol[plCount][1] = pl.color.g;
+        plCol[plCount][2] = pl.color.b;
+        plCol[plCount][3] = pl.intensity;
+        ++plCount;
+    }
+    if (plCount > 0) {
+        bgfx::setUniform(u_pointLightPosRadius, plPos, plCount);
+        bgfx::setUniform(u_pointLightColorInt, plCol, plCount);
+    }
+    const float plCountArr[4] = {static_cast<float>(plCount), 0.0f, 0.0f, 0.0f};
+    bgfx::setUniform(u_pointLightCount, plCountArr);
+
+    bgfx::setTexture(4, s_translucentShadow0, shadowMap0);
+    bgfx::setTexture(5, s_translucentShadow1, shadowMap1);
+    bgfx::setTexture(6, s_translucentShadow2, shadowMap2);
+    bgfx::setTexture(7, s_translucentEnvCube, envCube);
+    bgfx::setTexture(8, s_translucentDepth, sceneDepth);
+
+    struct TranslucentItem {
+        entt::entity entity = entt::null;
+        glm::mat4 model{1.0f};
+        std::shared_ptr<Mesh> mesh;
+        std::shared_ptr<Material> material;
+        float distanceSq = 0.0f;
+    };
+
+    std::vector<TranslucentItem> items;
+    items.reserve(64);
+    auto view = scene.Registry().view<TransformComponent, MeshComponent,
+                                      MaterialComponent>();
+    for (auto h : view) {
+        const auto& mc = view.get<MeshComponent>(h);
+        const auto& matc = view.get<MaterialComponent>(h);
+        if (!mc.mesh || !mc.mesh->Valid() || !matc.material ||
+            !matc.material->translucencyEnabled || matc.material->isGlass) {
+            continue;
+        }
+
+        TranslucentItem item;
+        item.entity = h;
+        item.mesh = mc.mesh;
+        item.material = matc.material;
+
+        entt::entity curr = h;
+        int depth = 0;
+        while (curr != entt::null && depth++ < 128) {
+            if (scene.Registry().all_of<TransformComponent>(curr)) {
+                item.model = item.model *
+                    scene.Registry().get<TransformComponent>(curr).LocalMatrix();
+            }
+            if (scene.Registry().all_of<ParentComponent>(curr)) {
+                curr = scene.Registry().get<ParentComponent>(curr).parent;
+            } else {
+                break;
+            }
+        }
+
+        const glm::vec3 worldPos = glm::vec3(item.model[3]);
+        item.distanceSq = glm::dot(worldPos - camPos, worldPos - camPos);
+        items.push_back(std::move(item));
+    }
+
+    // Painter's algorithm: furthest translucent surface first.
+    std::sort(items.begin(), items.end(),
+              [](const TranslucentItem& a, const TranslucentItem& b) {
+                  return a.distanceSq > b.distanceSq;
+              });
+
+    auto white = m_assets->WhiteTexture();
+    auto flatN = m_assets->FlatNormalTexture();
+    if (!white || !flatN) return;
+
+    static std::vector<glm::vec4> identityBoneData(kMaxBones * 4,
+                                                    glm::vec4(0.0f));
+    static bool initIdentity = false;
+    if (!initIdentity) {
+        const glm::mat4 id(1.0f);
+        for (int i = 0; i < kMaxBones; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                identityBoneData[i * 4 + j] = id[j];
+            }
+        }
+        initIdentity = true;
+    }
+    std::vector<glm::vec4> boneData(kMaxBones * 4);
+
+    for (const TranslucentItem& item : items) {
+        const Material& mat = *item.material;
+        const float alb[4] = {mat.albedoFactor.r, mat.albedoFactor.g,
+                              mat.albedoFactor.b, mat.albedoFactor.a};
+        const float met[4] = {mat.metallicFactor, 0.0f, 0.0f, 0.0f};
+        const float rgh[4] = {mat.roughnessFactor, 0.0f, 0.0f, 0.0f};
+        const float emi[4] = {mat.emissiveFactor.r, mat.emissiveFactor.g,
+                              mat.emissiveFactor.b, 0.0f};
+        const float params[4] = {mat.normalStrength, mat.occlusionStrength,
+                                 mat.alphaCutoff, mat.twoSided ? 1.0f : 0.0f};
+        const float flags[4] = {
+            mat.metallicMap ? 1.0f : 0.0f,
+            mat.roughnessMap ? 1.0f : 0.0f,
+            mat.specularMap ? 1.0f : 0.0f,
+            mat.opacityMap ? 1.0f : 0.0f
+        };
+        const float trans[4] = {mat.translucencyOpacity,
+                                mat.translucencyStrength,
+                                mat.translucencyThickness,
+                                mat.translucencyDistortion};
+        const float transColor[4] = {mat.translucencyColor.r,
+                                     mat.translucencyColor.g,
+                                     mat.translucencyColor.b, 1.0f};
+        const float transShadow[4] = {mat.translucencyShadowDepth,
+                                      0.0f, 0.0f, 0.0f};
+
+        bgfx::setUniform(u_albedoFactor, alb);
+        bgfx::setUniform(u_metallicFactor, met);
+        bgfx::setUniform(u_roughnessFactor, rgh);
+        bgfx::setUniform(u_emissiveFactor, emi);
+        bgfx::setUniform(u_materialParams, params);
+        bgfx::setUniform(u_materialFlags, flags);
+        bgfx::setUniform(u_translucencyParams, trans);
+        bgfx::setUniform(u_translucencyColor, transColor);
+        bgfx::setUniform(u_translucencyShadow, transShadow);
+
+        bgfx::setTexture(0, s_albedoMap,
+                         (mat.albedoMap ? mat.albedoMap : white)->Handle());
+        bgfx::setTexture(1, s_metallicRoughnessMap,
+                         (mat.metallicRoughnessMap ? mat.metallicRoughnessMap : white)->Handle());
+        bgfx::setTexture(2, s_normalMap,
+                         (mat.normalMap ? mat.normalMap : flatN)->Handle());
+        bgfx::setTexture(9, s_opacityMap,
+                         (mat.opacityMap ? mat.opacityMap : white)->Handle());
+        bgfx::setTexture(10, s_emissiveMap,
+                         (mat.emissiveMap ? mat.emissiveMap : white)->Handle());
+        bgfx::setTexture(11, s_occlusionMap,
+                         (mat.occlusionMap ? mat.occlusionMap : white)->Handle());
+        bgfx::setTexture(12, s_specularMap,
+                         (mat.specularMap ? mat.specularMap : white)->Handle());
+        bgfx::setTexture(13, s_metallicMap,
+                         (mat.metallicMap ? mat.metallicMap : white)->Handle());
+        bgfx::setTexture(14, s_roughnessMap,
+                         (mat.roughnessMap ? mat.roughnessMap : white)->Handle());
+
+        // Skeletal palette (same layout as the opaque PBR path).
+        const std::vector<glm::vec4>* bones = &identityBoneData;
+        entt::entity root = item.entity;
+        while (root != entt::null) {
+            if (scene.Registry().all_of<ParentComponent>(root)) {
+                root = scene.Registry().get<ParentComponent>(root).parent;
+            } else {
+                break;
+            }
+        }
+        if (scene.Registry().all_of<SkeletalComponent>(root)) {
+            auto& skel = scene.Registry().get<SkeletalComponent>(root);
+            if (skel.isAnimated && !skel.sourcePath.empty()) {
+                if (skel.boneMatrices.size() != kMaxBones) {
+                    skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
+                }
+                for (int i = 0; i < kMaxBones; ++i) {
+                    for (int j = 0; j < 4; ++j) {
+                        boneData[i * 4 + j] = skel.boneMatrices[i][j];
+                    }
+                }
+                bones = &boneData;
+            }
+        }
+        bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
+            bgfx::copy(bones->data(), kMaxBones * 4 * sizeof(glm::vec4)));
+        bgfx::setTexture(3, s_boneMatrices, m_boneTexture);
+
+        bgfx::setTransform(glm::value_ptr(item.model));
+        bgfx::setVertexBuffer(0, item.mesh->VB());
+        bgfx::setIndexBuffer(item.mesh->IB());
+        // Color-only HDR target: the shader performs the depth test against
+        // the copied opaque depth and never writes depth.
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                       BGFX_STATE_BLEND_ALPHA | BGFX_STATE_MSAA |
+                       FaceState(mat.twoSided));
+        bgfx::submit(viewId, m_translucentProg);
     }
 }
 } // namespace Galeshi

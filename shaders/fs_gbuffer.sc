@@ -21,6 +21,8 @@ uniform vec4 u_materialParams;
 // x = separate metallic map, y = separate roughness map,
 // z = specular map, w = opacity map
 uniform vec4 u_materialFlags;
+// rgb = subsurface color premultiplied by strength, a = normalized radius
+uniform vec4 u_subsurfaceParams;
 
 void main()
 {
@@ -86,4 +88,5 @@ void main()
     gl_FragData[2] = vec4(v_worldPos, 1.0 + specular); // RT2
     gl_FragData[3] = vec4(emissive, occlusion);        // RT3
     gl_FragData[4] = vec4(v_motion, 0.0, 1.0);         // RT4: screen-space motion
+    gl_FragData[5] = u_subsurfaceParams;               // RT5: SSS color + radius
 }

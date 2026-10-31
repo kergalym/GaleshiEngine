@@ -59,6 +59,19 @@ json MaterialToJson(const Material& m, const AssetManager& assets) {
         {"normalStrength", m.normalStrength},
         {"occlusionStrength", m.occlusionStrength},
         {"alphaCutoff", m.alphaCutoff},
+        {"subsurfaceEnabled", m.subsurfaceEnabled},
+        {"subsurfaceColor", Vec3ToJson(m.subsurfaceColor)},
+        {"subsurfaceStrength", m.subsurfaceStrength},
+        {"subsurfaceRadius", m.subsurfaceRadius},
+        {"translucencyEnabled", m.translucencyEnabled},
+        {"translucencyColor", Vec3ToJson(m.translucencyColor)},
+        {"translucencyOpacity", m.translucencyOpacity},
+        {"translucencyStrength", m.translucencyStrength},
+        {"translucencyThickness", m.translucencyThickness},
+        {"translucencyDistortion", m.translucencyDistortion},
+        {"translucencyShadowDepth", m.translucencyShadowDepth},
+        {"castsShadow", m.castsShadow},
+        {"shadowDepthOffset", m.shadowDepthOffset},
         {"albedoMapPath", relPath(m.albedoMap)},
         {"normalMapPath", relPath(m.normalMap)},
         {"mrMapPath", relPath(m.metallicRoughnessMap)},
@@ -92,6 +105,21 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     material->normalStrength = jm.value("normalStrength", 1.0f);
     material->occlusionStrength = jm.value("occlusionStrength", 1.0f);
     material->alphaCutoff = jm.value("alphaCutoff", 0.5f);
+    material->subsurfaceEnabled = jm.value("subsurfaceEnabled", false);
+    material->subsurfaceColor = jm.contains("subsurfaceColor")
+        ? Vec3FromJson(jm.at("subsurfaceColor")) : material->subsurfaceColor;
+    material->subsurfaceStrength = jm.value("subsurfaceStrength", 0.55f);
+    material->subsurfaceRadius = jm.value("subsurfaceRadius", 0.85f);
+    material->translucencyEnabled = jm.value("translucencyEnabled", false);
+    material->translucencyColor = jm.contains("translucencyColor")
+        ? Vec3FromJson(jm.at("translucencyColor")) : material->translucencyColor;
+    material->translucencyOpacity = jm.value("translucencyOpacity", 0.55f);
+    material->translucencyStrength = jm.value("translucencyStrength", 1.0f);
+    material->translucencyThickness = jm.value("translucencyThickness", 0.35f);
+    material->translucencyDistortion = jm.value("translucencyDistortion", 0.25f);
+    material->translucencyShadowDepth = jm.value("translucencyShadowDepth", 1.0f);
+    material->castsShadow = jm.value("castsShadow", true);
+    material->shadowDepthOffset = jm.value("shadowDepthOffset", 0.0f);
 
     std::string modelSource = textureRoot;
     if (modelSource.empty()) modelSource = material->sourcePath;

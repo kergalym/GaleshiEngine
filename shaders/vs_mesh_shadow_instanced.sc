@@ -2,7 +2,9 @@ $input a_position, i_data0, i_data1, i_data2, i_data3
 
 #include <bgfx_shader.sh>
 
-// Generic instanced position-only vertex shader for shadow maps.
+// Generic instanced position-only vertex shader for shadow maps. Materials
+// with a non-zero shadow-depth offset are submitted through the per-entity
+// path because the offset is per material, not per instance.
 void main()
 {
     mat4 instanceModel = mtxFromCols(i_data0, i_data1, i_data2, i_data3);

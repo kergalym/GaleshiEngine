@@ -43,11 +43,13 @@ varying_for() {
         vs_water|fs_water)                                   echo "$SRC_DIR/varying_water.def.sc" ;;
         vs_hair|fs_hair)                                     echo "$SRC_DIR/varying_hair.def.sc" ;;
         vs_pbr|fs_pbr|fs_gbuffer|fs_glass|fs_shadow_point)     echo "$SRC_DIR/varying_pbr.def.sc"   ;;
+        vs_translucent|fs_translucent)         echo "$SRC_DIR/varying_translucent.def.sc" ;;
         vs_particles|fs_particles)             echo "$SRC_DIR/varying_particles.def.sc" ;;
         vs_mesh_instanced)                     echo "$SRC_DIR/varying_mesh_instanced.def.sc" ;;
         vs_mesh_shadow_instanced)              echo "$SRC_DIR/varying_mesh_shadow_instanced.def.sc" ;;
         vs_line|fs_line)                       echo "$SRC_DIR/varying_line.def.sc"  ;;
         vs_shadow|fs_shadow)                   echo "$SRC_DIR/varying_shadow.def.sc";;
+        vs_shadow_skinned)                     echo "$SRC_DIR/varying_shadow_skinned.def.sc";;
         vs_imgui|fs_imgui) echo "$SRC_DIR/varying_imgui.def.sc" ;;
         *)                 echo "" ;;
     esac

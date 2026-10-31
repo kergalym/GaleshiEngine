@@ -5319,6 +5319,7 @@ if (ImGui::BeginMenu("File")) {
                     m_framebuffer->Normal(),
                     m_framebuffer->WorldPos(),
                     m_framebuffer->Material(),
+                    m_framebuffer->Features(),
                     m_shadowMaps[0], m_shadowMaps[1], m_shadowMaps[2],
                     lightMtx0, lightMtx1, lightMtx2,
                     invViewProj,
@@ -5464,6 +5465,32 @@ if (ImGui::BeginMenu("File")) {
                         m_camera.NearPlane(), m_camera.FarPlane());
                 }
                 m_cpuProfile.hairMs = ProfileElapsedMs(hairStart, ProfileClock::now());
+
+                // 8c. Lit translucency: alpha-blended forward pass over the
+                // HDR target, using the copied opaque depth for testing and
+                // the PSSM shadow maps for shadow/transmission depth.
+                {
+                    const bgfx::TextureHandle env =
+                        bgfx::isValid(m_postProcess.EnvCubeMap())
+                            ? m_postProcess.EnvCubeMap()
+                            : m_postProcess.BlackCube();
+                    bgfx::setViewFrameBuffer(39, m_postProcess.OutputFbo());
+                    bgfx::setViewRect(39, 0, 0, renderW, renderH);
+                    const float transLightDir[4] = {
+                        -waterSunDir[0], -waterSunDir[1], -waterSunDir[2], 0.0f
+                    };
+                    const float translucencyPssm[4] = {
+                        m_pssmSlopeBias, m_pssmPcfRadius,
+                        m_pssmNormalOffsetSlope,
+                        bgfx::getCaps()->originBottomLeft ? 0.0f : 1.0f
+                    };
+                    m_render->RenderTranslucency(
+                        m_scene, m_camera, m_postProcess.BlitDepth(), env,
+                        m_shadowMaps[0], m_shadowMaps[1], m_shadowMaps[2],
+                        lightMtx0, lightMtx1, lightMtx2,
+                        cascadeSplits, translucencyPssm,
+                        transLightDir, waterSunColor, 39, renderW, renderH);
+                }
                 postFxSegmentStart = ProfileClock::now();
 
                 // 9. Tonemap (View 40)
@@ -7143,6 +7170,26 @@ void DrawDetails() {
                     m.metallicFactor = 1.0f; m.roughnessFactor = 0.2f;
                     m.albedoFactor = glm::vec4(1.0f, 0.766f, 0.336f, 1.0f);
                 }
+                ImGui::SameLine();
+                if (ImGui::Button("Skin")) {
+                    m.metallicFactor = 0.0f; m.roughnessFactor = 0.52f;
+                    m.subsurfaceEnabled = true;
+                    m.subsurfaceColor = {0.82f, 0.28f, 0.18f};
+                    m.subsurfaceStrength = 0.55f;
+                    m.subsurfaceRadius = 0.85f;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Leaf")) {
+                    m.metallicFactor = 0.0f; m.roughnessFactor = 0.72f;
+                    m.twoSided = true;
+                    m.translucencyEnabled = true;
+                    m.translucencyColor = {0.72f, 0.92f, 0.30f};
+                    m.translucencyOpacity = 0.82f;
+                    m.translucencyStrength = 1.2f;
+                    m.translucencyThickness = 0.22f;
+                    m.translucencyDistortion = 0.3f;
+                    m.castsShadow = true;
+                }
 
                 ImGui::Separator();
 
@@ -7163,6 +7210,50 @@ void DrawDetails() {
                                       "When disabled, backfaces are culled.");
                 }
                 ImGui::ColorEdit3("Emissive Color", glm::value_ptr(m.emissiveFactor));
+
+                ImGui::Separator();
+                ImGui::Text("Subsurface Scattering");
+                ImGui::Checkbox("Enable Subsurface", &m.subsurfaceEnabled);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Wrapped diffuse/back-scatter lighting for skin, wax and leaves.\n"
+                                      "Evaluated in the deferred lighting pass.");
+                }
+                if (m.subsurfaceEnabled) {
+                    ImGui::ColorEdit3("Subsurface Color", glm::value_ptr(m.subsurfaceColor));
+                    ImGui::SliderFloat("Subsurface Strength", &m.subsurfaceStrength, 0.0f, 2.0f);
+                    ImGui::SliderFloat("Subsurface Radius", &m.subsurfaceRadius, 0.01f, 5.0f);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Scattering radius in world units.");
+                    }
+                }
+
+                ImGui::Separator();
+                ImGui::Text("Translucency");
+                ImGui::Checkbox("Enable Translucency", &m.translucencyEnabled);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Render this material in the lit forward translucency pass.\n"
+                                      "Backlight is transmitted through shadow depth.");
+                }
+                if (m.translucencyEnabled) {
+                    ImGui::ColorEdit3("Translucency Color", glm::value_ptr(m.translucencyColor));
+                    ImGui::SliderFloat("Translucency Opacity", &m.translucencyOpacity, 0.0f, 1.0f);
+                    ImGui::SliderFloat("Translucency Strength", &m.translucencyStrength, 0.0f, 4.0f);
+                    ImGui::SliderFloat("Translucency Thickness", &m.translucencyThickness, 0.0f, 1.0f);
+                    ImGui::SliderFloat("Translucency Distortion", &m.translucencyDistortion, 0.0f, 1.0f);
+                    ImGui::SliderFloat("Shadow Depth Scale", &m.translucencyShadowDepth, 0.0f, 1.0f);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("How strongly shadow-map depth attenuates transmitted light.");
+                    }
+                }
+
+                ImGui::Separator();
+                ImGui::Text("Shadow Depth");
+                ImGui::Checkbox("Cast Shadows", &m.castsShadow);
+                ImGui::SliderFloat("Shadow Depth Offset", &m.shadowDepthOffset, -0.25f, 0.25f, "%.3f m");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Offsets the caster along its normal in the shadow depth pass.\n"
+                                      "Use small values for thin cards or to reduce self-shadow acne.");
+                }
 
                 ImGui::Separator();
                 ImGui::Text("Texture Maps (drag from Content Browser):");

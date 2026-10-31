@@ -20,6 +20,24 @@ public:
     void RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx, const glm::vec3& lightPos, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo);
     void RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo);
     void RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height);
+    // Alpha-blended, lit forward pass for materials with translucencyEnabled.
+    // sceneDepth is the copied opaque depth used for the manual depth test;
+    // the PSSM shadow depth maps provide both surface shadowing and the
+    // light transmission depth used by the backlight lobe.
+    void RenderTranslucency(Scene& scene, const Camera& camera,
+                            bgfx::TextureHandle sceneDepth,
+                            bgfx::TextureHandle envCube,
+                            bgfx::TextureHandle shadowMap0,
+                            bgfx::TextureHandle shadowMap1,
+                            bgfx::TextureHandle shadowMap2,
+                            const glm::mat4& lightMtx0,
+                            const glm::mat4& lightMtx1,
+                            const glm::mat4& lightMtx2,
+                            const float cascadeSplits[4],
+                            const float pssmParams[4],
+                            const float lightDir[4],
+                            const float lightColorIntensity[4],
+                            bgfx::ViewId viewId, uint16_t width, uint16_t height);
     void RenderWater(Scene& scene, const Camera& camera,
                      bgfx::TextureHandle sceneColor, bgfx::TextureHandle sceneDepth,
                      bgfx::TextureHandle envCube,
@@ -123,6 +141,7 @@ private:
     bgfx::ProgramHandle m_program      = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_gbufferProg  = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_shadowProg = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_shadowSkinnedProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_shadowPointProg = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_shadowLightPos = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_prevViewProj = BGFX_INVALID_HANDLE;
@@ -131,6 +150,7 @@ private:
     bool m_hasPrevViewProj = false;
     std::unordered_map<uint32_t, glm::mat4> m_prevModels;
     bgfx::ProgramHandle m_glassProg    = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_translucentProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_waterProg    = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_hairProg     = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_instancedProg = BGFX_INVALID_HANDLE;
@@ -145,6 +165,21 @@ private:
     bgfx::UniformHandle u_lightColorIntensity = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_materialParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_materialFlags = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_subsurfaceParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_shadowDepthOffset = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_translucencyParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_translucencyColor = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_translucencyShadow = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_cascadeSplits = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_pssmParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lightViewProj0 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lightViewProj1 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lightViewProj2 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_translucentDepth = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_translucentShadow0 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_translucentShadow1 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_translucentShadow2 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_translucentEnvCube = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_glassParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_cameraForward = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_waterParams0 = BGFX_INVALID_HANDLE;

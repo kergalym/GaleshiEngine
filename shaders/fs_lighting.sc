@@ -41,8 +41,10 @@ uniform vec4 u_pointLightColorInt[64];
 uniform vec4 u_pointLightCount;
 uniform vec4 u_tileParams;
 
-BUFFER_RO(s_tileLightCounts, uint, 14);
-BUFFER_RO(s_tileLightIndices, uint, 15);
+// Slot 14 is the subsurface material-feature texture.
+SAMPLER2D(s_materialFeatures, 14);
+// Counts at the start of the buffer, indices at totalTiles + tile*64.
+BUFFER_RO(s_tileLights, uint, 15);
 
 uniform vec4 u_spotLightPosRadius[4];
 uniform vec4 u_spotLightDirInner[4];
@@ -138,6 +140,26 @@ float calculateShadow(vec4 lightSpacePos, float NdotL, int cascadeIdx) {
         shadow += (currentDepth - bias > pcfDepth) ? 1.0 : 0.0;
     }
     return shadow / 8.0;
+}
+
+// Distance between the receiving fragment and the nearest shadow-map depth.
+// For a thin surface lit from behind this is a useful (and free) thickness
+// estimate, so both subsurface and transmission shading can use the shadow
+// depth instead of a separate thickness map.
+float sampleShadowDepthGap(vec4 lightSpacePos, int cascadeIdx) {
+    vec3 projCoords = lightSpacePos.xyz / max(lightSpacePos.w, 0.0001);
+    projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    if (u_pssmParams.w > 0.5) projCoords.y = 1.0 - projCoords.y;
+    if (projCoords.z < 0.0 || projCoords.z > 1.0 ||
+        projCoords.x < 0.0 || projCoords.x > 1.0 ||
+        projCoords.y < 0.0 || projCoords.y > 1.0) {
+        return 0.0;
+    }
+    float shadowDepth;
+    if (cascadeIdx == 0) shadowDepth = texture2D(s_shadowMap0, projCoords.xy).r;
+    else if (cascadeIdx == 1) shadowDepth = texture2D(s_shadowMap1, projCoords.xy).r;
+    else shadowDepth = texture2D(s_shadowMap2, projCoords.xy).r;
+    return max(projCoords.z - shadowDepth, 0.0);
 }
 
 // Cheap single-tap shadow lookup used inside the volumetric fog march. The
@@ -463,6 +485,12 @@ void main()
     // RT2.w carries 1 + specular mask (0 stays reserved for sky pixels).
     float materialSpecular = clamp(wPos.w - 1.0, 0.0, 1.0);
 
+    // RT5 = subsurface color (premultiplied by strength) + normalized radius.
+    vec4 sssData = texture2D(s_materialFeatures, uv);
+    vec3 sssColor = sssData.rgb;
+    float sssRadiusNorm = sssData.a;
+    float sssAmount = clamp(max(sssColor.r, max(sssColor.g, sssColor.b)), 0.0, 1.0);
+
     // Ambient occlusion from the half-res SSAO chain multiplied by the
     // material's occlusion map. White (1.0) when the effect is disabled.
     // Only ambient/IBL light is modulated; direct light keeps using shadow maps.
@@ -517,16 +545,36 @@ void main()
     float shadowFactor = calculateShadow(lightSpacePos, NdotL, cascadeIdx);
     float visibility = 1.0 - shadowFactor;
 
-    finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L_dir, radiance_dir) * visibility;
+    // Standard direct light. SSS materials reduce the geometric diffuse
+    // slightly so the wrapped/back-scattered lobe does not double-expose.
+    finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L_dir, radiance_dir)
+                  * visibility * (1.0 - 0.25 * sssAmount);
+
+    if (sssAmount > 0.0001) {
+        // The shadow depth gap is an inexpensive thickness proxy. A larger
+        // radius lets light scatter further through the surface.
+        float depthGap = sampleShadowDepthGap(lightSpacePos, cascadeIdx);
+        float gapScale = mix(150.0, 55.0, sssRadiusNorm);
+        float transmissionDepth = exp(-depthGap * gapScale);
+        float sssVisibility = max(visibility, transmissionDepth * 0.82);
+        float wrapWidth = mix(0.16, 0.72, sssRadiusNorm);
+        float wrapped = saturate((dot(N, L_dir) + wrapWidth) / (1.0 + wrapWidth));
+        float backScatter = pow(saturate(dot(V, -L_dir)), 2.0) *
+                            (0.35 + 0.65 * sssRadiusNorm);
+        vec3 scatterTint = sssColor * mix(vec3_splat(0.65), albedo, 0.35);
+        finalColor += scatterTint * (wrapped * 0.38 + backScatter * 0.90) *
+                      radiance_dir * sssVisibility * (1.0 - metallic) * 0.65;
+    }
 
     // 3. Point Lights (Tiled)
     uvec2 pixel = uvec2(gl_FragCoord.xy);
     uvec2 tile = pixel / 16u;
     uint tileIdx = tile.y * uint(u_tileParams.x) + tile.x;
-    uint count = s_tileLightCounts[tileIdx];
+    uint totalTiles = uint(u_tileParams.x) * uint(u_tileParams.y);
+    uint count = s_tileLights[tileIdx];
 
     for (uint i = 0; i < count; ++i) {
-        uint lightIdx = s_tileLightIndices[tileIdx * 64u + i];
+        uint lightIdx = s_tileLights[totalTiles + tileIdx * 64u + i];
         vec3 lightPos = u_pointLightPosRadius[lightIdx].xyz;
         float radius = u_pointLightPosRadius[lightIdx].w;
         vec3 toLight = lightPos - wPos.xyz;
@@ -538,6 +586,15 @@ void main()
             atten *= window * window;
             vec3 radiance = u_pointLightColorInt[lightIdx].rgb * u_pointLightColorInt[lightIdx].a * atten;
             finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L, radiance);
+            if (sssAmount > 0.0001) {
+                float wrapWidth = mix(0.16, 0.72, sssRadiusNorm);
+                float wrapped = saturate((dot(N, L) + wrapWidth) / (1.0 + wrapWidth));
+                float backScatter = pow(saturate(dot(V, -L)), 2.0) *
+                                    (0.35 + 0.65 * sssRadiusNorm);
+                vec3 scatterTint = sssColor * mix(vec3_splat(0.65), albedo, 0.35);
+                finalColor += scatterTint * (wrapped * 0.38 + backScatter * 0.90) *
+                              radiance * (1.0 - metallic) * 0.55;
+            }
         }
     }
 
@@ -566,6 +623,15 @@ void main()
                 vec4 spotLightSpace = mul(u_spotLightVP0, vec4(wPos.xyz + N * 0.1, 1.0));
                 float spotShadow = calcSpotShadow0(spotLightSpace, max(dot(N, L), 0.0));
                 finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L, radiance) * (1.0 - spotShadow);
+                if (sssAmount > 0.0001) {
+                    float wrapWidth = mix(0.16, 0.72, sssRadiusNorm);
+                    float wrapped = saturate((dot(N, L) + wrapWidth) / (1.0 + wrapWidth));
+                    float backScatter = pow(saturate(dot(V, -L)), 2.0) *
+                                        (0.35 + 0.65 * sssRadiusNorm);
+                    vec3 scatterTint = sssColor * mix(vec3_splat(0.65), albedo, 0.35);
+                    finalColor += scatterTint * (wrapped * 0.38 + backScatter * 0.90) *
+                                  radiance * (1.0 - spotShadow) * (1.0 - metallic) * 0.45;
+                }
             }
         }
     }
@@ -591,6 +657,15 @@ void main()
                 vec4 spotLightSpace = mul(u_spotLightVP1, vec4(wPos.xyz + N * 0.1, 1.0));
                 float spotShadow = calcSpotShadow1(spotLightSpace, max(dot(N, L), 0.0));
                 finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L, radiance) * (1.0 - spotShadow);
+                if (sssAmount > 0.0001) {
+                    float wrapWidth = mix(0.16, 0.72, sssRadiusNorm);
+                    float wrapped = saturate((dot(N, L) + wrapWidth) / (1.0 + wrapWidth));
+                    float backScatter = pow(saturate(dot(V, -L)), 2.0) *
+                                        (0.35 + 0.65 * sssRadiusNorm);
+                    vec3 scatterTint = sssColor * mix(vec3_splat(0.65), albedo, 0.35);
+                    finalColor += scatterTint * (wrapped * 0.38 + backScatter * 0.90) *
+                                  radiance * (1.0 - spotShadow) * (1.0 - metallic) * 0.45;
+                }
             }
         }
     }
@@ -616,6 +691,15 @@ void main()
                 vec4 spotLightSpace = mul(u_spotLightVP2, vec4(wPos.xyz + N * 0.1, 1.0));
                 float spotShadow = calcSpotShadow2(spotLightSpace, max(dot(N, L), 0.0));
                 finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L, radiance) * (1.0 - spotShadow);
+                if (sssAmount > 0.0001) {
+                    float wrapWidth = mix(0.16, 0.72, sssRadiusNorm);
+                    float wrapped = saturate((dot(N, L) + wrapWidth) / (1.0 + wrapWidth));
+                    float backScatter = pow(saturate(dot(V, -L)), 2.0) *
+                                        (0.35 + 0.65 * sssRadiusNorm);
+                    vec3 scatterTint = sssColor * mix(vec3_splat(0.65), albedo, 0.35);
+                    finalColor += scatterTint * (wrapped * 0.38 + backScatter * 0.90) *
+                                  radiance * (1.0 - spotShadow) * (1.0 - metallic) * 0.45;
+                }
             }
         }
     }
@@ -641,6 +725,15 @@ void main()
                 vec4 spotLightSpace = mul(u_spotLightVP3, vec4(wPos.xyz + N * 0.1, 1.0));
                 float spotShadow = calcSpotShadow3(spotLightSpace, max(dot(N, L), 0.0));
                 finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L, radiance) * (1.0 - spotShadow);
+                if (sssAmount > 0.0001) {
+                    float wrapWidth = mix(0.16, 0.72, sssRadiusNorm);
+                    float wrapped = saturate((dot(N, L) + wrapWidth) / (1.0 + wrapWidth));
+                    float backScatter = pow(saturate(dot(V, -L)), 2.0) *
+                                        (0.35 + 0.65 * sssRadiusNorm);
+                    vec3 scatterTint = sssColor * mix(vec3_splat(0.65), albedo, 0.35);
+                    finalColor += scatterTint * (wrapped * 0.38 + backScatter * 0.90) *
+                                  radiance * (1.0 - spotShadow) * (1.0 - metallic) * 0.45;
+                }
             }
         }
     }
