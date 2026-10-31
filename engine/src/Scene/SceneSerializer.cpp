@@ -34,6 +34,179 @@ glm::vec4 Vec4FromJson(const json& j) { return { j.at(0).get<float>(), j.at(1).g
 json QuatToJson(const glm::quat& q) { return json::array({q.w, q.x, q.y, q.z}); }
 glm::quat QuatFromJson(const json& j) { return glm::quat(j.at(0).get<float>(), j.at(1).get<float>(), j.at(2).get<float>(), j.at(3).get<float>()); }
 
+json CameraStateToJson(const SceneCameraState& camera) {
+    return {
+        {"position", Vec3ToJson(camera.position)},
+        {"rotation", QuatToJson(camera.rotation)},
+        {"target", Vec3ToJson(camera.target)},
+        {"yaw", camera.yaw},
+        {"pitch", camera.pitch},
+        {"radius", camera.radius}
+    };
+}
+
+void CameraStateFromJson(const json& j, SceneCameraState& camera) {
+    if (j.contains("position")) camera.position = Vec3FromJson(j.at("position"));
+    if (j.contains("rotation")) {
+        camera.rotation = QuatFromJson(j.at("rotation"));
+        if (glm::length(camera.rotation) < 1e-6f) {
+            camera.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        } else {
+            camera.rotation = glm::normalize(camera.rotation);
+        }
+    }
+    if (j.contains("target")) camera.target = Vec3FromJson(j.at("target"));
+    camera.yaw = j.value("yaw", camera.yaw);
+    camera.pitch = j.value("pitch", camera.pitch);
+    camera.radius = j.value("radius", camera.radius);
+    camera.valid = true;
+}
+
+json PostProcessSettingsToJson(const PostProcessSettings& s) {
+    return {
+        {"bloomEnabled", s.bloomEnabled},
+        {"bloomThreshold", s.bloomThreshold},
+        {"bloomIntensity", s.bloomIntensity},
+        {"bloomRadius", s.bloomRadius},
+        {"dofEnabled", s.dofEnabled},
+        {"dofAutoFocus", s.dofAutoFocus},
+        {"dofFocusDistance", s.dofFocusDistance},
+        {"dofBlur", s.dofBlur},
+        {"motionBlurEnabled", s.motionBlurEnabled},
+        {"motionBlurAmount", s.motionBlurAmount},
+        {"motionBlurMaxVelocity", s.motionBlurMaxVelocity},
+        {"exposure", s.exposure},
+        {"contrast", s.contrast},
+        {"saturation", s.saturation},
+        {"colorExposure", s.colorExposure},
+        {"colorContrast", s.colorContrast},
+        {"colorSaturation", s.colorSaturation},
+        {"vignetteIntensity", s.vignetteIntensity},
+        {"vignetteSmoothness", s.vignetteSmoothness},
+        {"chromaticAberration", s.chromaticAberration},
+        {"ssaoEnabled", s.ssaoEnabled},
+        {"aoMode", static_cast<int>(s.aoMode)},
+        {"ssaoRadius", s.ssaoRadius},
+        {"ssaoBias", s.ssaoBias},
+        {"ssaoMaxDistance", s.ssaoMaxDistance},
+        {"ssaoStrength", s.ssaoStrength},
+        {"aoResolutionScale", s.aoResolutionScale},
+        {"aoRadius", s.aoRadius},
+        {"aoBias", s.aoBias},
+        {"aoThickness", s.aoThickness},
+        {"aoMaxDistance", s.aoMaxDistance},
+        {"aoStrength", s.aoStrength},
+        {"aoDirections", s.aoDirections},
+        {"aoSteps", s.aoSteps},
+        {"ssrEnabled", s.ssrEnabled},
+        {"ssrIntensity", s.ssrIntensity},
+        {"fxaaEnabled", s.fxaaEnabled},
+        {"smaaEnabled", s.smaaEnabled},
+        {"taaEnabled", s.taaEnabled},
+        {"taaBlend", s.taaBlend},
+        {"godRaysEnabled", s.godRaysEnabled},
+        {"godRaysIntensity", s.godRaysIntensity},
+        {"godRaysDecay", s.godRaysDecay},
+        {"godRaysDensity", s.godRaysDensity},
+        {"godRaysWeight", s.godRaysWeight},
+        {"atmosphereEnabled", s.atmosphereEnabled},
+        {"atmosphereIntensity", s.atmosphereIntensity},
+        {"fogEnabled", s.fogEnabled},
+        {"fogVolumetric", s.fogVolumetric},
+        {"fogColor", Vec3ToJson(s.fogColor)},
+        {"fogDensity", s.fogDensity},
+        {"fogHeightFalloff", s.fogHeightFalloff},
+        {"fogBaseHeight", s.fogBaseHeight},
+        {"fogStartDistance", s.fogStartDistance},
+        {"fogMaxDistance", s.fogMaxDistance},
+        {"fogSunScattering", s.fogSunScattering},
+        {"fogAnisotropy", s.fogAnisotropy},
+        {"fogSteps", s.fogSteps},
+        {"invertEnabled", s.invertEnabled}
+    };
+}
+
+void PostProcessSettingsFromJson(const json& js, PostProcessSettings& s) {
+    if (!js.is_object()) return;
+
+    s.bloomEnabled = js.value("bloomEnabled", s.bloomEnabled);
+    s.bloomThreshold = js.value("bloomThreshold", s.bloomThreshold);
+    s.bloomIntensity = js.value("bloomIntensity", s.bloomIntensity);
+    s.bloomRadius = js.value("bloomRadius", s.bloomRadius);
+    s.dofEnabled = js.value("dofEnabled", s.dofEnabled);
+    s.dofAutoFocus = js.value("dofAutoFocus", s.dofAutoFocus);
+    s.dofFocusDistance = js.value("dofFocusDistance", s.dofFocusDistance);
+    s.dofBlur = js.value("dofBlur", s.dofBlur);
+    s.motionBlurEnabled = js.value("motionBlurEnabled", s.motionBlurEnabled);
+    s.motionBlurAmount = js.value("motionBlurAmount", s.motionBlurAmount);
+    s.motionBlurMaxVelocity = js.value("motionBlurMaxVelocity",
+                                       s.motionBlurMaxVelocity);
+    s.exposure = js.value("exposure", s.exposure);
+    s.contrast = js.value("contrast", s.contrast);
+    s.saturation = js.value("saturation", s.saturation);
+    s.colorExposure = js.value("colorExposure", s.colorExposure);
+    s.colorContrast = js.value("colorContrast", s.colorContrast);
+    s.colorSaturation = js.value("colorSaturation", s.colorSaturation);
+    s.vignetteIntensity = js.value("vignetteIntensity", s.vignetteIntensity);
+    s.vignetteSmoothness = js.value("vignetteSmoothness", s.vignetteSmoothness);
+    s.chromaticAberration = js.value("chromaticAberration",
+                                     s.chromaticAberration);
+    s.ssaoEnabled = js.value("ssaoEnabled", s.ssaoEnabled);
+
+    int aoMode = js.value("aoMode", static_cast<int>(s.aoMode));
+    if (aoMode < 0) aoMode = 0;
+    if (aoMode > 2) aoMode = 2;
+    s.aoMode = static_cast<AmbientOcclusionMode>(aoMode);
+
+    s.ssaoRadius = js.value("ssaoRadius", s.ssaoRadius);
+    s.ssaoBias = js.value("ssaoBias", s.ssaoBias);
+    s.ssaoMaxDistance = js.value("ssaoMaxDistance", s.ssaoMaxDistance);
+    s.ssaoStrength = js.value("ssaoStrength", s.ssaoStrength);
+    s.aoResolutionScale = js.value("aoResolutionScale", s.aoResolutionScale);
+    if (s.aoResolutionScale < 0.25f) s.aoResolutionScale = 0.25f;
+    if (s.aoResolutionScale > 1.0f) s.aoResolutionScale = 1.0f;
+    s.aoRadius = js.value("aoRadius", s.aoRadius);
+    s.aoBias = js.value("aoBias", s.aoBias);
+    s.aoThickness = js.value("aoThickness", s.aoThickness);
+    s.aoMaxDistance = js.value("aoMaxDistance", s.aoMaxDistance);
+    s.aoStrength = js.value("aoStrength", s.aoStrength);
+    s.aoDirections = js.value("aoDirections", s.aoDirections);
+    s.aoSteps = js.value("aoSteps", s.aoSteps);
+    if (s.aoDirections < 1) s.aoDirections = 1;
+    if (s.aoDirections > 16) s.aoDirections = 16;
+    if (s.aoSteps < 1) s.aoSteps = 1;
+    if (s.aoSteps > 16) s.aoSteps = 16;
+
+    s.ssrEnabled = js.value("ssrEnabled", s.ssrEnabled);
+    s.ssrIntensity = js.value("ssrIntensity", s.ssrIntensity);
+    s.fxaaEnabled = js.value("fxaaEnabled", s.fxaaEnabled);
+    s.smaaEnabled = js.value("smaaEnabled", s.smaaEnabled);
+    s.taaEnabled = js.value("taaEnabled", s.taaEnabled);
+    s.taaBlend = js.value("taaBlend", s.taaBlend);
+    s.godRaysEnabled = js.value("godRaysEnabled", s.godRaysEnabled);
+    s.godRaysIntensity = js.value("godRaysIntensity", s.godRaysIntensity);
+    s.godRaysDecay = js.value("godRaysDecay", s.godRaysDecay);
+    s.godRaysDensity = js.value("godRaysDensity", s.godRaysDensity);
+    s.godRaysWeight = js.value("godRaysWeight", s.godRaysWeight);
+    s.atmosphereEnabled = js.value("atmosphereEnabled", s.atmosphereEnabled);
+    s.atmosphereIntensity = js.value("atmosphereIntensity",
+                                     s.atmosphereIntensity);
+    s.fogEnabled = js.value("fogEnabled", s.fogEnabled);
+    s.fogVolumetric = js.value("fogVolumetric", s.fogVolumetric);
+    if (js.contains("fogColor")) s.fogColor = Vec3FromJson(js.at("fogColor"));
+    s.fogDensity = js.value("fogDensity", s.fogDensity);
+    s.fogHeightFalloff = js.value("fogHeightFalloff", s.fogHeightFalloff);
+    s.fogBaseHeight = js.value("fogBaseHeight", s.fogBaseHeight);
+    s.fogStartDistance = js.value("fogStartDistance", s.fogStartDistance);
+    s.fogMaxDistance = js.value("fogMaxDistance", s.fogMaxDistance);
+    s.fogSunScattering = js.value("fogSunScattering", s.fogSunScattering);
+    s.fogAnisotropy = js.value("fogAnisotropy", s.fogAnisotropy);
+    s.fogSteps = js.value("fogSteps", s.fogSteps);
+    if (s.fogSteps < 1) s.fogSteps = 1;
+    if (s.fogSteps > 64) s.fogSteps = 64;
+    s.invertEnabled = js.value("invertEnabled", s.invertEnabled);
+}
+
 std::string TexturePath(const std::shared_ptr<Texture>& texture) {
     return texture ? texture->Path() : std::string{};
 }
@@ -315,6 +488,14 @@ std::string SceneSerializer::SaveToString() const {
         });
     }
 
+    if (m_scene.CameraState().valid) {
+        root["camera"] = CameraStateToJson(m_scene.CameraState());
+    }
+    if (m_scene.HasGlobalPostProcess()) {
+        root["postProcess"] =
+            PostProcessSettingsToJson(m_scene.GlobalPostProcess());
+    }
+
     for (size_t i = 0; i < entities.size(); ++i) {
         const entt::entity handle = entities[i];
         const auto& reg = m_scene.Registry();
@@ -513,67 +694,7 @@ std::string SceneSerializer::SaveToString() const {
                 {"priority", volume.priority},
                 {"size", Vec3ToJson(volume.size)},
                 {"visibleInEditor", volume.visibleInEditor},
-                {"settings", {
-                    {"bloomEnabled", s.bloomEnabled},
-                    {"bloomThreshold", s.bloomThreshold},
-                    {"bloomIntensity", s.bloomIntensity},
-                    {"bloomRadius", s.bloomRadius},
-                    {"dofEnabled", s.dofEnabled},
-                    {"dofAutoFocus", s.dofAutoFocus},
-                    {"dofFocusDistance", s.dofFocusDistance},
-                    {"dofBlur", s.dofBlur},
-                    {"motionBlurEnabled", s.motionBlurEnabled},
-                    {"motionBlurAmount", s.motionBlurAmount},
-                    {"motionBlurMaxVelocity", s.motionBlurMaxVelocity},
-                    {"exposure", s.exposure},
-                    {"contrast", s.contrast},
-                    {"saturation", s.saturation},
-                    {"colorExposure", s.colorExposure},
-                    {"colorContrast", s.colorContrast},
-                    {"colorSaturation", s.colorSaturation},
-                    {"vignetteIntensity", s.vignetteIntensity},
-                    {"vignetteSmoothness", s.vignetteSmoothness},
-                    {"chromaticAberration", s.chromaticAberration},
-                    {"ssaoEnabled", s.ssaoEnabled},
-                    {"aoMode", static_cast<int>(s.aoMode)},
-                    {"ssaoRadius", s.ssaoRadius},
-                    {"ssaoBias", s.ssaoBias},
-                    {"ssaoMaxDistance", s.ssaoMaxDistance},
-                    {"ssaoStrength", s.ssaoStrength},
-                    {"aoResolutionScale", s.aoResolutionScale},
-                    {"aoRadius", s.aoRadius},
-                    {"aoBias", s.aoBias},
-                    {"aoThickness", s.aoThickness},
-                    {"aoMaxDistance", s.aoMaxDistance},
-                    {"aoStrength", s.aoStrength},
-                    {"aoDirections", s.aoDirections},
-                    {"aoSteps", s.aoSteps},
-                    {"ssrEnabled", s.ssrEnabled},
-                    {"ssrIntensity", s.ssrIntensity},
-                    {"fxaaEnabled", s.fxaaEnabled},
-                    {"smaaEnabled", s.smaaEnabled},
-                    {"taaEnabled", s.taaEnabled},
-                    {"taaBlend", s.taaBlend},
-                    {"godRaysEnabled", s.godRaysEnabled},
-                    {"godRaysIntensity", s.godRaysIntensity},
-                    {"godRaysDecay", s.godRaysDecay},
-                    {"godRaysDensity", s.godRaysDensity},
-                    {"godRaysWeight", s.godRaysWeight},
-                    {"atmosphereEnabled", s.atmosphereEnabled},
-                    {"atmosphereIntensity", s.atmosphereIntensity},
-                    {"fogEnabled", s.fogEnabled},
-                    {"fogVolumetric", s.fogVolumetric},
-                    {"fogColor", Vec3ToJson(s.fogColor)},
-                    {"fogDensity", s.fogDensity},
-                    {"fogHeightFalloff", s.fogHeightFalloff},
-                    {"fogBaseHeight", s.fogBaseHeight},
-                    {"fogStartDistance", s.fogStartDistance},
-                    {"fogMaxDistance", s.fogMaxDistance},
-                    {"fogSunScattering", s.fogSunScattering},
-                    {"fogAnisotropy", s.fogAnisotropy},
-                    {"fogSteps", s.fogSteps},
-                    {"invertEnabled", s.invertEnabled}
-                }}
+                {"settings", PostProcessSettingsToJson(s)}
             };
         }
         if (reg.all_of<WaterComponent>(handle)) {
@@ -888,6 +1009,20 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             buses[static_cast<size_t>(index)].muted =
                 jb.value("muted", false);
         }
+    }
+
+    // Scene-level view and post-process state.  Reset first so loading an
+    // older scene cannot inherit the previous scene's camera or effects.
+    m_scene.CameraState() = SceneCameraState{};
+    m_scene.GlobalPostProcess() = PostProcessSettings{};
+    m_scene.SetHasGlobalPostProcess(false);
+    if (root.contains("camera") && root["camera"].is_object()) {
+        CameraStateFromJson(root["camera"], m_scene.CameraState());
+    }
+    if (root.contains("postProcess") && root["postProcess"].is_object()) {
+        PostProcessSettingsFromJson(root["postProcess"],
+                                    m_scene.GlobalPostProcess());
+        m_scene.SetHasGlobalPostProcess(true);
     }
 
     struct LoadedEntity {
@@ -1290,78 +1425,7 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             volume.visibleInEditor = jv.value("visibleInEditor", true);
 
             if (jv.contains("settings") && jv["settings"].is_object()) {
-                const auto& js = jv["settings"];
-                auto& s = volume.settings;
-                s.bloomEnabled = js.value("bloomEnabled", s.bloomEnabled);
-                s.bloomThreshold = js.value("bloomThreshold", s.bloomThreshold);
-                s.bloomIntensity = js.value("bloomIntensity", s.bloomIntensity);
-                s.bloomRadius = js.value("bloomRadius", s.bloomRadius);
-                s.dofEnabled = js.value("dofEnabled", s.dofEnabled);
-                s.dofAutoFocus = js.value("dofAutoFocus", s.dofAutoFocus);
-                s.dofFocusDistance = js.value("dofFocusDistance", s.dofFocusDistance);
-                s.dofBlur = js.value("dofBlur", s.dofBlur);
-                s.motionBlurEnabled = js.value("motionBlurEnabled", s.motionBlurEnabled);
-                s.motionBlurAmount = js.value("motionBlurAmount", s.motionBlurAmount);
-                s.motionBlurMaxVelocity = js.value("motionBlurMaxVelocity", s.motionBlurMaxVelocity);
-                s.exposure = js.value("exposure", s.exposure);
-                s.contrast = js.value("contrast", s.contrast);
-                s.saturation = js.value("saturation", s.saturation);
-                s.colorExposure = js.value("colorExposure", s.colorExposure);
-                s.colorContrast = js.value("colorContrast", s.colorContrast);
-                s.colorSaturation = js.value("colorSaturation", s.colorSaturation);
-                s.vignetteIntensity = js.value("vignetteIntensity", s.vignetteIntensity);
-                s.vignetteSmoothness = js.value("vignetteSmoothness", s.vignetteSmoothness);
-                s.chromaticAberration = js.value("chromaticAberration", s.chromaticAberration);
-                s.ssaoEnabled = js.value("ssaoEnabled", s.ssaoEnabled);
-                int aoMode = js.value("aoMode", static_cast<int>(s.aoMode));
-                if (aoMode < 0) aoMode = 0;
-                if (aoMode > 2) aoMode = 2;
-                s.aoMode = static_cast<AmbientOcclusionMode>(aoMode);
-                s.ssaoRadius = js.value("ssaoRadius", s.ssaoRadius);
-                s.ssaoBias = js.value("ssaoBias", s.ssaoBias);
-                s.ssaoMaxDistance = js.value("ssaoMaxDistance", s.ssaoMaxDistance);
-                s.ssaoStrength = js.value("ssaoStrength", s.ssaoStrength);
-                s.aoResolutionScale = js.value("aoResolutionScale", s.aoResolutionScale);
-                if (s.aoResolutionScale < 0.25f) s.aoResolutionScale = 0.25f;
-                if (s.aoResolutionScale > 1.0f) s.aoResolutionScale = 1.0f;
-                s.aoRadius = js.value("aoRadius", s.aoRadius);
-                s.aoBias = js.value("aoBias", s.aoBias);
-                s.aoThickness = js.value("aoThickness", s.aoThickness);
-                s.aoMaxDistance = js.value("aoMaxDistance", s.aoMaxDistance);
-                s.aoStrength = js.value("aoStrength", s.aoStrength);
-                s.aoDirections = js.value("aoDirections", s.aoDirections);
-                s.aoSteps = js.value("aoSteps", s.aoSteps);
-                if (s.aoDirections < 1) s.aoDirections = 1;
-                if (s.aoDirections > 16) s.aoDirections = 16;
-                if (s.aoSteps < 1) s.aoSteps = 1;
-                if (s.aoSteps > 16) s.aoSteps = 16;
-                s.ssrEnabled = js.value("ssrEnabled", s.ssrEnabled);
-                s.ssrIntensity = js.value("ssrIntensity", s.ssrIntensity);
-                s.fxaaEnabled = js.value("fxaaEnabled", s.fxaaEnabled);
-                s.smaaEnabled = js.value("smaaEnabled", s.smaaEnabled);
-                s.taaEnabled = js.value("taaEnabled", s.taaEnabled);
-                s.taaBlend = js.value("taaBlend", s.taaBlend);
-                s.godRaysEnabled = js.value("godRaysEnabled", s.godRaysEnabled);
-                s.godRaysIntensity = js.value("godRaysIntensity", s.godRaysIntensity);
-                s.godRaysDecay = js.value("godRaysDecay", s.godRaysDecay);
-                s.godRaysDensity = js.value("godRaysDensity", s.godRaysDensity);
-                s.godRaysWeight = js.value("godRaysWeight", s.godRaysWeight);
-                s.atmosphereEnabled = js.value("atmosphereEnabled", s.atmosphereEnabled);
-                s.atmosphereIntensity = js.value("atmosphereIntensity", s.atmosphereIntensity);
-                s.fogEnabled = js.value("fogEnabled", s.fogEnabled);
-                s.fogVolumetric = js.value("fogVolumetric", s.fogVolumetric);
-                if (js.contains("fogColor")) s.fogColor = Vec3FromJson(js.at("fogColor"));
-                s.fogDensity = js.value("fogDensity", s.fogDensity);
-                s.fogHeightFalloff = js.value("fogHeightFalloff", s.fogHeightFalloff);
-                s.fogBaseHeight = js.value("fogBaseHeight", s.fogBaseHeight);
-                s.fogStartDistance = js.value("fogStartDistance", s.fogStartDistance);
-                s.fogMaxDistance = js.value("fogMaxDistance", s.fogMaxDistance);
-                s.fogSunScattering = js.value("fogSunScattering", s.fogSunScattering);
-                s.fogAnisotropy = js.value("fogAnisotropy", s.fogAnisotropy);
-                s.fogSteps = js.value("fogSteps", s.fogSteps);
-                if (s.fogSteps < 1) s.fogSteps = 1;
-                if (s.fogSteps > 64) s.fogSteps = 64;
-                s.invertEnabled = js.value("invertEnabled", s.invertEnabled);
+                PostProcessSettingsFromJson(jv["settings"], volume.settings);
             }
         }
         if (je.contains("water") && je["water"].is_object()) {

@@ -34,7 +34,7 @@ GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20
 | UI Designer | ✅ Done | Canvas overlay, widget palette (Panel, Text, Button, Image, Slider, Checkbox, Progress, Input, Dropdown, Scroll, Toggle, Layout), live preview, and serialized UI widgets |
 | Gizmo | Partial | ImGuizmo is rendered, but its transform is not applied |
 | Glass material | WIP | Shader and UI flag exist, render pass is not connected |
-| Scene serialization | Working | ECS, materials, landscape/vegetation, animation, and AI components |
+| Scene serialization | Working | ECS, materials, landscape/vegetation, animation, AI components, editor camera view, and global post-process settings/volumes |
 | Runtime and packaging | ✅ Done | GameMode is a real editor runtime (`--game <gproj>`) that opens the project, loads `startScene`, and starts playing; AppImage packaging is available |
 | Automated tests | None | `BUILD_TESTING` is disabled |
 

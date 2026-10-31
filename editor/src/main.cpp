@@ -80,6 +80,7 @@ struct LoadingState {
     std::atomic<bool> isLoading{false};
     std::atomic<bool> cancelRequested{false};
     std::atomic<bool> workerRunning{false};
+    std::atomic<bool> sceneLoaded{false};
     std::atomic<float> progress{0.0f};
     std::atomic<Stage> stage{Stage::Idle};
     std::string scenePath;   // Written before the worker starts, read-only after.
@@ -369,6 +370,7 @@ protected:
 
         m_currentScenePath = fs::absolute(scenePath).lexically_normal().string();
         m_editor.isPlaying = true;
+        ApplySceneViewState();
         EnsurePhysicsBodies();
         m_uiCanvasEntity = entt::null;
         m_uiWidgetIndex = -1;
@@ -610,6 +612,8 @@ protected:
                                             m_serializer->Load(projectPath, &m_loadingState.cancelRequested)) {
                                             m_currentScenePath = std::filesystem::absolute(projectPath)
                                                 .lexically_normal().string();
+                                            m_loadingState.sceneLoaded.store(
+                                                true, std::memory_order_release);
                                         } else {
                                             spdlog::error("[ProjectManager] Failed to load scene: {}", projectPath);
                                         }
@@ -643,6 +647,8 @@ protected:
                             m_serializer->Load(chosenPath, &m_loadingState.cancelRequested)) {
                             m_currentScenePath = std::filesystem::absolute(chosenPath)
                                 .lexically_normal().string();
+                            m_loadingState.sceneLoaded.store(
+                                true, std::memory_order_release);
                         } else {
                             spdlog::error("[ProjectManager] Failed to load scene: {}", chosenPath);
                         }
@@ -1114,6 +1120,7 @@ protected:
         std::string chosenSave = m_filePickerSave.Draw();
         if (!chosenSave.empty()) {
             if (m_serializer) {
+                CaptureSceneViewState();
                 if (m_serializer->Save(chosenSave)) {
                     m_currentScenePath = std::filesystem::absolute(chosenSave).lexically_normal().string();
                     spdlog::info("[Editor] Scene saved to {}", m_currentScenePath);
@@ -1201,6 +1208,7 @@ private:
         s.isLoading = true;
         s.cancelRequested = false;
         s.workerRunning = true;
+        s.sceneLoaded = false;
         s.progress = 0.0f;
         s.stage = LoadingState::Stage::Preparing;
         s.scenePath = path;
@@ -1237,6 +1245,8 @@ private:
                     if (m_serializer->Load(path, &m_loadingState.cancelRequested)) {
                         m_currentScenePath =
                             std::filesystem::absolute(path).lexically_normal().string();
+                        state.sceneLoaded.store(true,
+                                                std::memory_order_release);
                     }
                 }
             }
@@ -1286,6 +1296,9 @@ private:
         if (s.loaderThread.joinable() && !s.workerRunning) {
             s.loaderThread.join();
             ReleaseUnusedSceneAssets();
+            if (s.sceneLoaded.exchange(false, std::memory_order_acquire)) {
+                ApplySceneViewState();
+            }
         }
     }
 
@@ -4084,8 +4097,110 @@ if (ImGui::BeginMenu("File")) {
     // -------------------------------------------------------------------
     // Post-processing volumes
     // -------------------------------------------------------------------
+    void CaptureSceneViewState() {
+        Galeshi::SceneCameraState& camera = m_scene.CameraState();
+        camera.valid = true;
+        camera.position = m_camera.Position();
+
+        // Camera rotation is the inverse of the view-matrix rotation.
+        const glm::mat3 cameraToWorld =
+            glm::transpose(glm::mat3(m_camera.View()));
+        camera.rotation = glm::normalize(glm::quat_cast(cameraToWorld));
+
+        camera.target = m_editor.camTarget;
+        camera.yaw = m_editor.camYaw;
+        camera.pitch = m_editor.camPitch;
+        camera.radius = m_editor.camRadius;
+
+        // Persist the global post-process state.  The manager owns the
+        // toggles; the remaining values live in Scene so custom global
+        // settings survive save/load without being reset to struct defaults.
+        Galeshi::PostProcessSettings& pp = m_scene.GlobalPostProcess();
+        pp.bloomEnabled = m_postProcess.BloomEnabled();
+        pp.dofEnabled = m_postProcess.DofEnabled();
+        pp.motionBlurEnabled = m_postProcess.MotionBlurEnabled();
+        pp.ssaoEnabled = m_postProcess.SsaoEnabled();
+        pp.aoMode = m_globalAoMode;
+        pp.ssrEnabled = m_postProcess.SsrEnabled();
+        pp.fxaaEnabled = m_postProcess.FxaaEnabled();
+        pp.smaaEnabled = m_postProcess.SmaaEnabled();
+        pp.taaEnabled = m_postProcess.TaaEnabled();
+        pp.godRaysEnabled = m_postProcess.GodRaysEnabled();
+        pp.atmosphereEnabled = m_postProcess.AtmosphereEnabled();
+        pp.fogEnabled = m_postProcess.FogEnabled();
+        pp.fogVolumetric = m_postProcess.FogVolumetric();
+        pp.invertEnabled = m_postProcess.InvertEnabled();
+        m_scene.SetHasGlobalPostProcess(true);
+    }
+
+    void ApplySceneViewState() {
+        const Galeshi::SceneCameraState& camera = m_scene.CameraState();
+        if (camera.valid) {
+            // Position + target are authoritative.  Reconstructing the orbit
+            // controls from them guarantees the restored camera position even
+            // if a hand-edited scene has inconsistent yaw/pitch/radius values.
+            const glm::vec3 offset = camera.position - camera.target;
+            const float offsetLength = glm::length(offset);
+            if (offsetLength > 1e-4f) {
+                m_editor.camTarget = camera.target;
+                m_editor.camRadius = glm::clamp(offsetLength, 0.5f, 200.0f);
+                m_editor.camPitch = glm::clamp(
+                    std::asin(glm::clamp(offset.y / offsetLength, -1.0f, 1.0f)),
+                    -1.5f, 1.5f);
+                m_editor.camYaw = std::atan2(offset.x, offset.z);
+            } else {
+                m_editor.camTarget = camera.target;
+                m_editor.camYaw = camera.yaw;
+                m_editor.camPitch = glm::clamp(camera.pitch, -1.5f, 1.5f);
+                m_editor.camRadius = glm::clamp(camera.radius, 0.5f, 200.0f);
+            }
+
+            const float aspect = GetRenderer() && GetRenderer()->Height() > 0
+                ? static_cast<float>(GetRenderer()->Width()) /
+                  static_cast<float>(GetRenderer()->Height())
+                : 16.0f / 9.0f;
+            m_camera.SetPerspective(
+                glm::radians(m_preferences.cameraFovDegrees), aspect,
+                0.1f, 1000.0f);
+            m_camera.Orbit(m_editor.camTarget, m_editor.camYaw,
+                           m_editor.camPitch, m_editor.camRadius);
+            spdlog::info("[Scene] Restored camera position=({}, {}, {}) "
+                         "target=({}, {}, {})",
+                         m_camera.Position().x, m_camera.Position().y,
+                         m_camera.Position().z, camera.target.x, camera.target.y,
+                         camera.target.z);
+        }
+
+        if (m_scene.HasGlobalPostProcess()) {
+            const Galeshi::PostProcessSettings& pp =
+                m_scene.GlobalPostProcess();
+            m_postProcess.SetBloomEnabled(pp.bloomEnabled);
+            m_postProcess.SetDofEnabled(pp.dofEnabled);
+            m_postProcess.SetMotionBlurEnabled(pp.motionBlurEnabled);
+            m_postProcess.SetSsaoEnabled(pp.ssaoEnabled);
+            m_globalAoMode = pp.aoMode;
+            m_postProcess.SetSsrEnabled(pp.ssrEnabled);
+            m_postProcess.SetFxaaEnabled(pp.fxaaEnabled);
+            m_postProcess.SetSmaaEnabled(pp.smaaEnabled);
+            m_postProcess.SetTaaEnabled(pp.taaEnabled);
+            m_postProcess.SetGodRaysEnabled(pp.godRaysEnabled);
+            m_postProcess.SetAtmosphereEnabled(pp.atmosphereEnabled);
+            m_postProcess.SetFogEnabled(pp.fogEnabled);
+            m_postProcess.SetFogVolumetric(pp.fogVolumetric);
+            m_postProcess.SetInvertEnabled(pp.invertEnabled);
+            spdlog::info("[Scene] Restored global post-process settings");
+        }
+
+        // The view and effect set may have changed completely; never reuse a
+        // TAA history from the previous scene/camera.
+        m_postProcess.ResetTaaHistory();
+    }
+
     Galeshi::PostProcessSettings DefaultPostProcessSettings() const {
-        Galeshi::PostProcessSettings s;
+        Galeshi::PostProcessSettings s =
+            m_scene.HasGlobalPostProcess()
+                ? m_scene.GlobalPostProcess()
+                : Galeshi::PostProcessSettings{};
         s.bloomEnabled       = m_postProcess.BloomEnabled();
         s.dofEnabled         = m_postProcess.DofEnabled();
         s.motionBlurEnabled  = m_postProcess.MotionBlurEnabled();
