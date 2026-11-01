@@ -51,11 +51,43 @@ private:
     // and refreshes the listing when needed.
     void UpdateAutoRefresh();
 
+    enum class Dialog {
+        None,
+        Rename,
+        Delete,
+        NewFolder,
+        NewLua
+    };
+
+    void OpenDialog(Dialog dialog, const std::filesystem::path& path,
+                    const std::string& defaultName = {});
+    void DrawDialogs();
+    bool RenameEntry(const std::filesystem::path& source,
+                     const std::string& newName);
+    bool DeleteEntry(const std::filesystem::path& path);
+    bool CreateFolder(const std::string& name);
+    bool CreateLuaFile(const std::string& name);
+    bool MoveEntry(const std::filesystem::path& source,
+                   const std::filesystem::path& destinationDir);
+    bool ValidateName(const std::string& name, std::string& error) const;
+    bool IsInsideRoot(const std::filesystem::path& path) const;
+    static std::string UniqueName(const std::filesystem::path& dir,
+                                  const std::string& base,
+                                  const std::string& extension,
+                                  bool directory);
+
     std::string           m_root;
     AssetManager*         m_assets = nullptr;
     std::filesystem::path m_current;
     std::vector<Entry>    m_entries;
     FilePickerDialog m_importPicker;
+    FilePickerDialog m_movePicker;
+    std::filesystem::path m_moveSource;
+    Dialog m_dialog = Dialog::None;
+    bool m_dialogPopupPending = false;
+    std::filesystem::path m_dialogPath;
+    char m_dialogName[256] = {};
+    std::string m_dialogError;
 
     bool                                  m_autoRefresh = true;
     std::chrono::steady_clock::time_point  m_lastCheck{};

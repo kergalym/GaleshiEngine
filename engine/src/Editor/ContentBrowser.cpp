@@ -6,6 +6,7 @@
 #include <spdlog/spdlog.h>
 #include <bgfx/bgfx.h>
 #include <cctype>
+#include <cstdio>
 #include <fstream>
 
 #include <algorithm>
@@ -222,6 +223,27 @@ const ScriptTemplate* FindScriptTemplate(const std::string& id) {
     return nullptr;
 }
 
+const char* kNewLuaSource =
+    "-- New Galeshi script.\n"
+    "\n"
+    "function RunOnce()\n"
+    "end\n"
+    "\n"
+    "function RunAlways(dt)\n"
+    "end\n";
+
+bool IsSubPath(const fs::path& child, const fs::path& parent) {
+    std::error_code ec;
+    const fs::path canonicalChild = fs::weakly_canonical(child, ec);
+    if (ec) return false;
+    ec.clear();
+    const fs::path canonicalParent = fs::weakly_canonical(parent, ec);
+    if (ec) return false;
+    if (canonicalChild == canonicalParent) return true;
+    const fs::path relative = canonicalChild.lexically_relative(canonicalParent);
+    return !relative.empty() && *relative.begin() != "..";
+}
+
 } // namespace
 
 ContentBrowser::ContentBrowser(std::string rootDir, AssetManager* assets)
@@ -357,6 +379,270 @@ std::string ContentBrowser::CreateScript(const std::string& templateId) {
     return target.string();
 }
 
+std::string ContentBrowser::UniqueName(const std::filesystem::path& dir,
+                                       const std::string& base,
+                                       const std::string& extension,
+                                       bool directory) {
+    (void)directory;
+    std::error_code ec;
+    fs::path target = dir / (base + extension);
+    if (!fs::exists(target, ec)) return target.filename().string();
+    for (int suffix = 1; suffix < 10000; ++suffix) {
+        target = dir / (base + "_" + std::to_string(suffix) + extension);
+        ec.clear();
+        if (!fs::exists(target, ec)) return target.filename().string();
+    }
+    return {};
+}
+
+bool ContentBrowser::ValidateName(const std::string& name,
+                                  std::string& error) const {
+    if (name.empty()) {
+        error = "Name cannot be empty.";
+        return false;
+    }
+    if (name == "." || name == "..") {
+        error = "Invalid name.";
+        return false;
+    }
+    if (name.find('/') != std::string::npos ||
+        name.find('\\') != std::string::npos) {
+        error = "Name cannot contain path separators.";
+        return false;
+    }
+    return true;
+}
+
+bool ContentBrowser::IsInsideRoot(const std::filesystem::path& path) const {
+    return IsSubPath(path, m_root);
+}
+
+void ContentBrowser::OpenDialog(Dialog dialog,
+                                const std::filesystem::path& path,
+                                const std::string& defaultName) {
+    m_dialog = dialog;
+    m_dialogPath = path;
+    m_dialogError.clear();
+    m_dialogPopupPending = true;
+    std::string name = defaultName;
+    if (name.empty()) name = path.filename().string();
+    std::snprintf(m_dialogName, sizeof(m_dialogName), "%s", name.c_str());
+}
+
+bool ContentBrowser::RenameEntry(const std::filesystem::path& source,
+                                 const std::string& newName) {
+    std::string error;
+    if (!ValidateName(newName, error)) {
+        m_dialogError = error;
+        return false;
+    }
+    const fs::path target = source.parent_path() / newName;
+    std::error_code ec;
+    if (fs::exists(target, ec) && target != source) {
+        m_dialogError = "An entry with that name already exists.";
+        return false;
+    }
+    if (target == source) return true;
+    fs::rename(source, target, ec);
+    if (ec) {
+        m_dialogError = "Rename failed: " + ec.message();
+        return false;
+    }
+    spdlog::info("[ContentBrowser] Renamed '{}' -> '{}'",
+                 source.string(), target.string());
+    Refresh();
+    return true;
+}
+
+bool ContentBrowser::DeleteEntry(const std::filesystem::path& path) {
+    if (!IsInsideRoot(path) || path == fs::path(m_root)) {
+        m_dialogError = "Refusing to delete the assets root.";
+        return false;
+    }
+    std::error_code ec;
+    const bool directory = fs::is_directory(path, ec);
+    ec.clear();
+    const uintmax_t removed = directory ? fs::remove_all(path, ec)
+                                        : fs::remove(path, ec);
+    if (ec || removed == 0) {
+        m_dialogError = "Delete failed: " + ec.message();
+        return false;
+    }
+    spdlog::info("[ContentBrowser] Deleted {} '{}'",
+                 directory ? "directory" : "file", path.string());
+    Refresh();
+    return true;
+}
+
+bool ContentBrowser::CreateFolder(const std::string& name) {
+    std::string error;
+    if (!ValidateName(name, error)) {
+        m_dialogError = error;
+        return false;
+    }
+    const fs::path target = m_current / name;
+    std::error_code ec;
+    if (fs::exists(target, ec)) {
+        m_dialogError = "An entry with that name already exists.";
+        return false;
+    }
+    if (!fs::create_directory(target, ec)) {
+        m_dialogError = "Create directory failed: " + ec.message();
+        return false;
+    }
+    spdlog::info("[ContentBrowser] Created directory '{}'", target.string());
+    Refresh();
+    return true;
+}
+
+bool ContentBrowser::CreateLuaFile(const std::string& name) {
+    std::string filename = name;
+    if (fs::path(filename).extension() != ".lua") filename += ".lua";
+    std::string error;
+    if (!ValidateName(filename, error)) {
+        m_dialogError = error;
+        return false;
+    }
+    const fs::path target = m_current / filename;
+    std::error_code ec;
+    if (fs::exists(target, ec)) {
+        m_dialogError = "A file with that name already exists.";
+        return false;
+    }
+    std::ofstream out(target, std::ios::binary);
+    if (!out.is_open()) {
+        m_dialogError = "Cannot create Lua file.";
+        return false;
+    }
+    out << kNewLuaSource;
+    if (!out.good()) {
+        m_dialogError = "Failed to write Lua file.";
+        return false;
+    }
+    out.close();
+    spdlog::info("[ContentBrowser] Created Lua script '{}'", target.string());
+    Refresh();
+    return true;
+}
+
+bool ContentBrowser::MoveEntry(const std::filesystem::path& source,
+                               const std::filesystem::path& destinationDir) {
+    std::error_code ec;
+    if (!fs::exists(source, ec) || !fs::is_directory(destinationDir, ec)) {
+        spdlog::error("[ContentBrowser] Move source or destination is invalid");
+        return false;
+    }
+    if (!IsInsideRoot(destinationDir)) {
+        spdlog::error("[ContentBrowser] Move destination is outside the assets root");
+        return false;
+    }
+    if (fs::is_directory(source, ec) && IsSubPath(destinationDir, source)) {
+        spdlog::error("[ContentBrowser] Cannot move a directory into itself");
+        return false;
+    }
+
+    const fs::path target = destinationDir / source.filename();
+    if (target == source) {
+        spdlog::warn("[ContentBrowser] Move target is the same path");
+        return false;
+    }
+    if (fs::exists(target, ec)) {
+        spdlog::error("[ContentBrowser] Move destination already exists: {}",
+                      target.string());
+        return false;
+    }
+    fs::rename(source, target, ec);
+    if (ec) {
+        spdlog::error("[ContentBrowser] Move failed '{}' -> '{}': {}",
+                      source.string(), target.string(), ec.message());
+        return false;
+    }
+    spdlog::info("[ContentBrowser] Moved '{}' -> '{}'",
+                 source.string(), target.string());
+    Refresh();
+    return true;
+}
+
+void ContentBrowser::DrawDialogs() {
+    if (m_dialog == Dialog::None) return;
+
+    const char* title = nullptr;
+    switch (m_dialog) {
+        case Dialog::Rename:    title = "Rename Entry##content_browser"; break;
+        case Dialog::Delete:    title = "Delete Entry##content_browser"; break;
+        case Dialog::NewFolder: title = "New Folder##content_browser"; break;
+        case Dialog::NewLua:    title = "New Lua Script##content_browser"; break;
+        default: return;
+    }
+
+    if (m_dialogPopupPending) {
+        ImGui::OpenPopup(title);
+        m_dialogPopupPending = false;
+    }
+    if (!ImGui::BeginPopupModal(title, nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize |
+                                ImGuiWindowFlags_NoSavedSettings)) {
+        return;
+    }
+
+    bool close = false;
+    if (!m_dialogError.empty()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s",
+                           m_dialogError.c_str());
+        ImGui::Separator();
+    }
+
+    if (m_dialog == Dialog::Rename || m_dialog == Dialog::NewFolder ||
+        m_dialog == Dialog::NewLua) {
+        ImGui::Text("Name:");
+        ImGui::SetNextItemWidth(320.0f);
+        ImGui::InputText("##dialog_name", m_dialogName,
+                         sizeof(m_dialogName));
+        if (ImGui::IsItemActivated()) m_dialogError.clear();
+    } else if (m_dialog == Dialog::Delete) {
+        const bool directory =
+            fs::is_directory(m_dialogPath);
+        ImGui::TextWrapped("Delete this %s?",
+                           directory ? "directory and its contents" : "file");
+        ImGui::TextWrapped("%s", m_dialogPath.string().c_str());
+        ImGui::TextDisabled("This cannot be undone.");
+    }
+
+    ImGui::Separator();
+    if (ImGui::Button("Cancel", ImVec2(100.0f, 0.0f))) {
+        close = true;
+    }
+    ImGui::SameLine();
+    const char* confirmLabel =
+        m_dialog == Dialog::Delete ? "Delete" : "Create";
+    if (m_dialog == Dialog::Rename) confirmLabel = "Rename";
+    if (ImGui::Button(confirmLabel, ImVec2(100.0f, 0.0f))) {
+        switch (m_dialog) {
+            case Dialog::Rename:
+                close = RenameEntry(m_dialogPath, m_dialogName);
+                break;
+            case Dialog::Delete:
+                close = DeleteEntry(m_dialogPath);
+                break;
+            case Dialog::NewFolder:
+                close = CreateFolder(m_dialogName);
+                break;
+            case Dialog::NewLua:
+                close = CreateLuaFile(m_dialogName);
+                break;
+            default:
+                break;
+        }
+    }
+
+    if (close) {
+        m_dialog = Dialog::None;
+        m_dialogError.clear();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 void ContentBrowser::UpdateAutoRefresh() {
     if (!m_autoRefresh) return;
 
@@ -488,6 +774,34 @@ std::string ContentBrowser::Draw() {
             }
         }
 
+        if (ImGui::BeginPopupContextItem("entry_context")) {
+            ImGui::TextDisabled("%s", e.name.c_str());
+            ImGui::Separator();
+            if (e.isDirectory) {
+                if (ImGui::MenuItem("Open")) {
+                    m_current = e.path;
+                    Refresh();
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::Separator();
+            }
+            if (ImGui::MenuItem("Rename...")) {
+                OpenDialog(Dialog::Rename, e.path, e.name);
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem("Move to...")) {
+                m_moveSource = e.path;
+                m_movePicker.PickFolder(m_current.string(),
+                                        "Move to Folder");
+                ImGui::CloseCurrentPopup();
+            }
+            if (ImGui::MenuItem("Delete")) {
+                OpenDialog(Dialog::Delete, e.path);
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
         // Источник для drag-n-drop (только файлы, не папки)
         if (!e.isDirectory &&
             ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
@@ -501,11 +815,25 @@ std::string ContentBrowser::Draw() {
         ImGui::PopID();
     }
 
-    // Right-click anywhere in the file list to create one of the built-in
-    // script templates. New files are always placed in <assets>/scripts.
-    if (ImGui::BeginPopupContextWindow("content_browser_context",
-                                       ImGuiPopupFlags_MouseButtonRight)) {
-        ImGui::TextDisabled("Create Script");
+    // Right-click empty space in the file list for creation operations.
+    // ImGuiPopupFlags_NoOpenOverItems keeps this separate from the
+    // per-entry context menu above.
+    if (ImGui::BeginPopupContextWindow(
+            "content_browser_context",
+            ImGuiPopupFlags_MouseButtonRight |
+                ImGuiPopupFlags_NoOpenOverItems)) {
+        if (ImGui::MenuItem("New Folder")) {
+            OpenDialog(Dialog::NewFolder, m_current,
+                       UniqueName(m_current, "New Folder", "", true));
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("New Lua Script")) {
+            OpenDialog(Dialog::NewLua, m_current,
+                       UniqueName(m_current, "new_script", ".lua", false));
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::Separator();
+        ImGui::TextDisabled("Create Script Templates");
         ImGui::Separator();
         for (const ScriptTemplate& scriptTemplate : kScriptTemplates) {
             if (ImGui::MenuItem(scriptTemplate.label)) {
@@ -523,6 +851,15 @@ std::string ContentBrowser::Draw() {
 
     ImGui::EndChild();
 
+    const std::string moveDestination = m_movePicker.Draw();
+    if (!moveDestination.empty() && !m_moveSource.empty()) {
+        MoveEntry(m_moveSource, moveDestination);
+        m_moveSource.clear();
+    } else if (!m_movePicker.IsOpen()) {
+        m_moveSource.clear();
+    }
+
+    DrawDialogs();
     return clicked;
 }
 
