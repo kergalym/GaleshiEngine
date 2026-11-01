@@ -36,6 +36,15 @@ public:
         // Inverse bind matrices by bone name, used to retarget animation
         // clips loaded from a separate FBX onto this model's skeleton.
         std::unordered_map<std::string, glm::mat4> boneOffsetMatrices;
+        // Rest-pose world transform of every node. Animation-only FBX files
+        // can use a different axis/unit convention from the character; this
+        // map lets retargeting remove that difference.
+        std::unordered_map<std::string, glm::mat4> nodeRestGlobals;
+        // Root-most skinned bone and its namespace prefix, for example
+        // "Korlan:Hips" -> "Korlan:". Used to remap animation namespaces
+        // (mixamorig:, Armature|, etc.) onto the selected character.
+        std::string                            rootBoneName;
+        std::string                            boneNamespacePrefix;
         int                                    totalBones = 0;
         bool hasAnimation = false;
         std::vector<std::string>                animationNames;
@@ -58,7 +67,8 @@ public:
     void UpdateAnimationClipRetargeted(const LoadedModel& animationModel,
                                        int clip, float time,
                                        const LoadedModel& targetModel,
-                                       std::vector<glm::mat4>& outBoneMatrices);
+                                       std::vector<glm::mat4>& outBoneMatrices,
+                                       float animationScale = 1.0f);
 
     // Samples two clips and blends their bone transforms.  blend is clamped
     // to [0, 1], where 0 is fully clipA and 1 is fully clipB.

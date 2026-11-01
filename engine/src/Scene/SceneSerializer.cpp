@@ -699,6 +699,7 @@ std::string SceneSerializer::SaveToString() const {
                 {"enabled", machine.enabled},
                 {"currentState", machine.currentState},
                 {"playbackSpeed", machine.playbackSpeed},
+                {"animationScale", machine.animationScale},
                 {"blendDuration", machine.blendDuration},
                 {"states", std::move(states)},
                 {"transitions", std::move(transitions)},
@@ -1428,6 +1429,7 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             machine.enabled = jm.value("enabled", true);
             machine.currentState = jm.value("currentState", 0);
             machine.playbackSpeed = jm.value("playbackSpeed", 1.0f);
+            machine.animationScale = jm.value("animationScale", 1.0f);
             machine.blendDuration = jm.value("blendDuration", 0.25f);
             if (jm.contains("states") && jm["states"].is_array()) {
                 for (const auto& js : jm["states"]) {

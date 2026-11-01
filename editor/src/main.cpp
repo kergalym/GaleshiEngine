@@ -8349,6 +8349,15 @@ if (ImGui::BeginMenu("File")) {
         ImGui::SetNextItemWidth(120.0f);
         ImGui::DragFloat("Playback Speed", &machine->playbackSpeed,
                          0.01f, 0.0f, 4.0f);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(120.0f);
+        ImGui::DragFloat("Animation Scale", &machine->animationScale,
+                         0.001f, 0.001f, 100.0f, "%.4f");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Uniform scale for retargeted animation translation.\n"
+                "Use 0.01 for UE4 centimeter animations on a meter character.");
+        }
         ImGui::Text("Current State: %d / %zu", machine->currentState,
                     machine->states.size());
         ImGui::TextDisabled("Clip duration: %.2fs",

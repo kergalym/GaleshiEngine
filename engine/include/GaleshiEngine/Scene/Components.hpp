@@ -111,6 +111,9 @@ struct AnimationStateMachineComponent {
     float blendElapsed = 0.0f;
     float blendDuration = 0.25f;
     float playbackSpeed = 1.0f;
+    // Scale applied to retargeted animation translation. This is the unit
+    // bridge for source clips authored in centimeters (0.01 for cm -> m).
+    float animationScale = 1.0f;
     bool initialized = false;
     float currentClipDuration = 0.0f;
 };

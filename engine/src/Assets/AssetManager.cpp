@@ -10,6 +10,7 @@
 #include <spdlog/spdlog.h>
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
@@ -488,6 +489,38 @@ void SampleNodeTransforms(const aiScene* scene, const aiAnimation* anim,
                              globalTransform, out, depth + 1);
     }
 }
+
+std::string StripBoneNamespace(std::string name) {
+    const size_t separator = name.find_last_of(":|");
+    if (separator != std::string::npos) name.erase(0, separator + 1);
+    return name;
+}
+
+std::string BoneNamespacePrefix(const std::string& name) {
+    const size_t separator = name.find_last_of(":|");
+    return separator == std::string::npos ? std::string{}
+                                          : name.substr(0, separator + 1);
+}
+
+std::string FindRootBoneName(const aiNode* node,
+                             const std::unordered_map<std::string, int>& boneMap,
+                             bool parentIsBone = false) {
+    if (!node) return {};
+    const bool isBone = boneMap.find(node->mName.C_Str()) != boneMap.end();
+    if (isBone && !parentIsBone) return node->mName.C_Str();
+    for (unsigned i = 0; i < node->mNumChildren; ++i) {
+        const std::string found =
+            FindRootBoneName(node->mChildren[i], boneMap, isBone);
+        if (!found.empty()) return found;
+    }
+    return {};
+}
+
+void ScaleMatrixTranslation(glm::mat4& matrix, float scale) {
+    matrix[3][0] *= scale;
+    matrix[3][1] *= scale;
+    matrix[3][2] *= scale;
+}
 } // namespace
 
 AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPath) {
@@ -523,6 +556,8 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
     g_currentAiScene = scene;
     out.importer = importer;
     out.rawScene = std::shared_ptr<aiScene>(const_cast<aiScene*>(scene), [](aiScene*){});
+    SampleNodeTransforms(scene, nullptr, 0.0f, scene->mRootNode,
+                         glm::mat4(1.0f), out.nodeRestGlobals);
 
     // === ДИАГНОСТИКА ===
     spdlog::info("[AssetManager] Scene stats:");
@@ -1044,6 +1079,11 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
     }
     out.boneMap = globalBoneMap;
     out.totalBones = nextBoneIndex;
+    out.rootBoneName = FindRootBoneName(scene->mRootNode, globalBoneMap);
+    if (out.rootBoneName.empty() && !globalBoneMap.empty()) {
+        out.rootBoneName = globalBoneMap.begin()->first;
+    }
+    out.boneNamespacePrefix = BoneNamespacePrefix(out.rootBoneName);
     out.hasAnimation = (out.rawScene && out.rawScene->mNumAnimations > 0);
     if (out.rawScene) {
         out.animationNames.reserve(out.rawScene->mNumAnimations);
@@ -1134,7 +1174,8 @@ void AssetManager::UpdateAnimationClip(const LoadedModel& model, int clip, float
 
 void AssetManager::UpdateAnimationClipRetargeted(
     const LoadedModel& animationModel, int clip, float time,
-    const LoadedModel& targetModel, std::vector<glm::mat4>& outBoneMatrices) {
+    const LoadedModel& targetModel, std::vector<glm::mat4>& outBoneMatrices,
+    float animationScale) {
     if (outBoneMatrices.size() != 256) {
         outBoneMatrices.assign(256, glm::mat4(1.0f));
     } else {
@@ -1150,6 +1191,7 @@ void AssetManager::UpdateAnimationClipRetargeted(
         clip >= static_cast<int>(animationModel.rawScene->mNumAnimations)) {
         return;
     }
+    animationScale = std::max(animationScale, 0.0f);
 
     std::unordered_map<std::string, glm::mat4> animatedNodes;
     animatedNodes.reserve(256);
@@ -1158,16 +1200,100 @@ void AssetManager::UpdateAnimationClipRetargeted(
         animationModel.rawScene->mAnimations[clip], time,
         animationModel.rawScene->mRootNode, glm::mat4(1.0f), animatedNodes);
 
+    // Animation exporters disagree about namespace prefixes. Blender may
+    // produce "Korlan:Hips", while UE4 animations use "Hips" or
+    // "mixamorig:Hips". Build aliases from the source node base name to the
+    // selected character's root-bone prefix without renaming any assets.
+    std::unordered_map<std::string, std::string> sourceByBase;
+    std::unordered_map<std::string, std::string> sourceByTargetName;
+    std::unordered_set<std::string> ambiguousBase;
+    std::unordered_set<std::string> ambiguousTarget;
+    const std::string& targetPrefix = targetModel.boneNamespacePrefix;
+    for (const auto& [nodeName, matrix] : animatedNodes) {
+        (void)matrix;
+        const std::string base = StripBoneNamespace(nodeName);
+        const auto baseInsert = sourceByBase.emplace(base, nodeName);
+        if (!baseInsert.second && baseInsert.first->second != nodeName) {
+            ambiguousBase.insert(base);
+        }
+        if (!targetPrefix.empty()) {
+            const std::string targetName = targetPrefix + base;
+            const auto targetInsert =
+                sourceByTargetName.emplace(targetName, nodeName);
+            if (!targetInsert.second &&
+                targetInsert.first->second != nodeName) {
+                ambiguousTarget.insert(targetName);
+            }
+        }
+    }
+    for (const auto& base : ambiguousBase) sourceByBase.erase(base);
+    for (const auto& targetName : ambiguousTarget) {
+        sourceByTargetName.erase(targetName);
+    }
+
+    int matchedBones = 0;
+    int aliasBones = 0;
+    int restCorrectedBones = 0;
     for (const auto& [boneName, targetIndex] : targetModel.boneMap) {
         if (targetIndex < 0 || targetIndex >= 255) continue;
-        const auto animated = animatedNodes.find(boneName);
+
+        auto animated = animatedNodes.find(boneName);
+        if (animated == animatedNodes.end() && !targetPrefix.empty()) {
+            const auto targetAlias = sourceByTargetName.find(boneName);
+            if (targetAlias != sourceByTargetName.end()) {
+                animated = animatedNodes.find(targetAlias->second);
+                if (animated != animatedNodes.end()) ++aliasBones;
+            }
+        }
+        if (animated == animatedNodes.end()) {
+            const auto baseAlias = sourceByBase.find(
+                StripBoneNamespace(boneName));
+            if (baseAlias != sourceByBase.end()) {
+                animated = animatedNodes.find(baseAlias->second);
+                if (animated != animatedNodes.end()) ++aliasBones;
+            }
+        }
+
         const auto offset = targetModel.boneOffsetMatrices.find(boneName);
         if (animated == animatedNodes.end() ||
             offset == targetModel.boneOffsetMatrices.end()) {
             continue;
         }
-        outBoneMatrices[static_cast<size_t>(targetIndex)] =
-            animated->second * offset->second;
+        ++matchedBones;
+
+        // Convert the source pose into a motion delta around its own rest
+        // pose, then apply it to the target bind pose. This removes source
+        // axis/unit differences. animationScale is the unit bridge for
+        // UE4 centimeters -> Blender/meter animations.
+        auto sourceRest = animationModel.nodeRestGlobals.find(animated->first);
+        if (sourceRest == animationModel.nodeRestGlobals.end()) {
+            sourceRest = animationModel.nodeRestGlobals.find(
+                StripBoneNamespace(animated->first));
+        }
+        if (sourceRest != animationModel.nodeRestGlobals.end()) {
+            const glm::mat4 targetBind = glm::inverse(offset->second);
+            glm::mat4 delta =
+                glm::inverse(sourceRest->second) * animated->second;
+            if (std::abs(animationScale - 1.0f) > 1e-6f) {
+                ScaleMatrixTranslation(delta, animationScale);
+            }
+            outBoneMatrices[static_cast<size_t>(targetIndex)] =
+                targetBind * delta * offset->second;
+            ++restCorrectedBones;
+        } else {
+            outBoneMatrices[static_cast<size_t>(targetIndex)] =
+                animated->second * offset->second;
+        }
+    }
+
+    static std::unordered_set<const void*> loggedRetargets;
+    if (loggedRetargets.insert(animationModel.rawScene.get()).second) {
+        spdlog::info(
+            "[Retarget] root bone='{}' prefix='{}' matched={}/{} alias={} "
+            "rest-corrected={} scale={:.4f}",
+            targetModel.rootBoneName, targetModel.boneNamespacePrefix,
+            matchedBones, animatedNodes.size(), aliasBones,
+            restCorrectedBones, animationScale);
     }
 }
 

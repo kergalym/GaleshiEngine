@@ -171,7 +171,7 @@ end
 - Multiple draggable tree species for landscape vegetation; each has its own model, density, size and texture override row, and can be painted or generated together. Dropped tree models default to Size `0.010`. Density scales the species' generated instance count, while Size scales the model itself. Models can be dropped from the Content Browser or viewport; each species' Tree Textures row accepts Albedo/Normal/MR/Emissive/Occlusion/Opacity/Specular drops, while the Landscape keeps its own material texture row.
 - Tree and grass painting brushes with adjustable density and instance size. A single click stamps foliage and dragging continues the stroke. Painted instances are serialized with the scene, and `Hide Default Instances` hides generated procedural trees/grass while keeping authored tree species and painted vegetation visible.
 - Skeletal animation clip sampling with weighted pose blending.
-- Serializable animation state machines with parameters, triggers, transitions, and blend durations. Each state can use clips embedded in the character FBX or a separate animation FBX; separate clips are retargeted onto the character skeleton by bone name.
+- Serializable animation state machines with parameters, triggers, transitions, and blend durations. Each state can use clips embedded in the character FBX or a separate animation FBX; separate clips are retargeted onto the character skeleton by bone name. Runtime retargeting also remaps namespace prefixes such as `mixamorig:` or `Korlan:` onto the selected character's root-bone prefix, and provides an `Animation Scale` multiplier for unit conversion (for example `0.01` for UE4 centimeter clips on a meter character).
 - PBR material parameters and texture slots.
 
 ## Editor

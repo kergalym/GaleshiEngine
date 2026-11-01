@@ -266,7 +266,8 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
                 assets.UpdateAnimationClip(animationModel, clip, time, out);
             } else {
                 assets.UpdateAnimationClipRetargeted(
-                    animationModel, clip, time, targetModel, out);
+                    animationModel, clip, time, targetModel, out,
+                    machine->animationScale);
             }
         };
 
