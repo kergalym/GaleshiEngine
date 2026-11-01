@@ -207,7 +207,12 @@ struct LandscapeComponent {
 struct VegetationTreeType {
     std::string meshPath;
     float density = 1.0f;
-    float scale = 1.0f;
+    float scale = 0.010f;
+
+    // Optional per-species texture override. Empty texture slots use the
+    // imported model's own materials; once any slot is assigned, this
+    // material is applied to the species' tree meshes.
+    std::shared_ptr<Material> material;
 
     // Runtime-generated instances are deterministic from the vegetation seed
     // and are not serialized. Painted instances are authored by the brush and

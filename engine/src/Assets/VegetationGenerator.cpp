@@ -159,7 +159,7 @@ void VegetationGenerator::Generate(const LandscapeComponent& landscape,
             auto& type = vegetation.treeTypes[static_cast<size_t>(typeIndex)];
             // Custom species use their own Size (native model scale) rather
             // than the procedural tree scale range.
-            const float scale = std::max(type.scale, 0.01f) *
+            const float scale = std::max(type.scale, 0.001f) *
                                 RandomRange(rng, 0.92f, 1.08f);
             const float widthScale = scale * RandomRange(rng, 0.90f, 1.10f);
             glm::mat4 transform = glm::translate(

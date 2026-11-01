@@ -168,7 +168,7 @@ end
 - Primitive cube, sphere, and capsule meshes.
 - Landscape heightfield generation with Raise, Lower, Smooth, Flatten, and Noise brushes, with a terrain-following brush outline.
 - Deterministic procedural tree and grass generation, rendered with per-instance matrices and instanced shadow passes.
-- Multiple draggable tree species for landscape vegetation; each has its own model, density and size, and can be painted or generated together. Density scales the species' generated instance count, while Size scales the model itself. Models can be dropped from the Content Browser or viewport.
+- Multiple draggable tree species for landscape vegetation; each has its own model, density, size and texture override row, and can be painted or generated together. Dropped tree models default to Size `0.010`. Density scales the species' generated instance count, while Size scales the model itself. Models can be dropped from the Content Browser or viewport; each species' Tree Textures row accepts Albedo/Normal/MR/Emissive/Occlusion/Opacity/Specular drops, while the Landscape keeps its own material texture row.
 - Tree and grass painting brushes with adjustable density and instance size. A single click stamps foliage and dragging continues the stroke. Painted instances are serialized with the scene, and `Hide Default Instances` hides generated procedural trees/grass while keeping authored tree species and painted vegetation visible.
 - Skeletal animation clip sampling with weighted pose blending.
 - Serializable animation state machines with parameters, triggers, transitions, and blend durations.

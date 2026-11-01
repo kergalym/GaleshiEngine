@@ -599,12 +599,16 @@ std::string SceneSerializer::SaveToString() const {
             const auto& veg = reg.get<VegetationComponent>(handle);
             json treeTypes = json::array();
             for (const auto& type : veg.treeTypes) {
-                treeTypes.push_back({
+                json jt = {
                     {"meshPath", m_assets.MakeRelativePath(type.meshPath)},
                     {"density", type.density},
                     {"scale", type.scale},
                     {"paintedInstances", Mat4ArrayToJson(type.paintedInstances)}
-                });
+                };
+                if (type.material) {
+                    jt["material"] = MaterialToJson(*type.material, m_assets);
+                }
+                treeTypes.push_back(std::move(jt));
             }
             je["vegetation"] = {
                 {"enabled", veg.enabled},
@@ -1287,10 +1291,15 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                     type.density = std::clamp(
                         jt.value("density", 1.0f), 0.0f, 100.0f);
                     type.scale = std::clamp(
-                        jt.value("scale", 1.0f), 0.01f, 100.0f);
+                        jt.value("scale", 0.010f), 0.001f, 100.0f);
                     if (jt.contains("paintedInstances"))
                         Mat4ArrayFromJson(jt["paintedInstances"],
                                           type.paintedInstances);
+                    if (jt.contains("material") &&
+                        jt["material"].is_object()) {
+                        type.material = MaterialFromJson(
+                            jt["material"], m_assets, type.meshPath);
+                    }
                     vegetation.treeTypes.push_back(std::move(type));
                 }
             }

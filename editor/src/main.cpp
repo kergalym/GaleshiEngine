@@ -9255,6 +9255,7 @@ void DrawDetails() {
                  typeIndex < static_cast<int>(veg.treeTypes.size());
                  ++typeIndex) {
                 auto& type = veg.treeTypes[static_cast<size_t>(typeIndex)];
+                EnsureTreeTypeMaterial(type, typeIndex);
                 ImGui::PushID(typeIndex);
                 ImGui::Separator();
                 ImGui::Text("Tree Type %d", typeIndex + 1);
@@ -9346,15 +9347,48 @@ void DrawDetails() {
                         "the base Trees count.");
                 }
                 ImGui::SetNextItemWidth(160.0f);
-                if (ImGui::DragFloat("Size", &type.scale, 0.01f,
-                                     0.01f, 100.0f, "%.2f")) {
+                if (ImGui::DragFloat("Size", &type.scale, 0.001f,
+                                     0.001f, 100.0f, "%.3f")) {
                     changed = true;
                 }
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip(
                         "Multiplier of the model's native size. Dropped models "
-                        "start at 1.0.");
+                        "start at 0.010.");
                 }
+
+                // Each authored tree species owns its own texture row. Leave
+                // the Landscape material texture row above untouched; this
+                // override is only used when at least one slot is assigned.
+                if (ImGui::TreeNodeEx("Tree Textures",
+                                      ImGuiTreeNodeFlags_DefaultOpen)) {
+                    ImGui::TextDisabled(
+                        "Drag textures from the Content Browser. Empty slots "
+                        "use the tree model's imported materials.");
+                    if (type.material) {
+                        DrawTextureSlot("Albedo Map",
+                                        type.material->albedoMap, true);
+                        DrawTextureSlot("Normal Map",
+                                        type.material->normalMap, false);
+                        DrawTextureSlot("Metallic/Roughness",
+                                        type.material->metallicRoughnessMap,
+                                        false);
+                        DrawTextureSlot("Metallic Map",
+                                        type.material->metallicMap, false);
+                        DrawTextureSlot("Roughness Map",
+                                        type.material->roughnessMap, false);
+                        DrawTextureSlot("Emissive Map",
+                                        type.material->emissiveMap, true);
+                        DrawTextureSlot("Occlusion Map",
+                                        type.material->occlusionMap, false);
+                        DrawTextureSlot("Opacity Map",
+                                        type.material->opacityMap, false);
+                        DrawTextureSlot("Specular Map",
+                                        type.material->specularMap, false);
+                    }
+                    ImGui::TreePop();
+                }
+
                 ImGui::TextDisabled("Painted: %zu",
                                     type.paintedInstances.size());
                 ImGui::PopID();
@@ -9363,8 +9397,10 @@ void DrawDetails() {
             if (ImGui::Button("+ Add Tree Type")) {
                 PushHistory();
                 veg.treeTypes.push_back(Galeshi::VegetationTreeType{});
-                m_paintTreeType =
+                const int newIndex =
                     static_cast<int>(veg.treeTypes.size()) - 1;
+                EnsureTreeTypeMaterial(veg.treeTypes.back(), newIndex);
+                m_paintTreeType = newIndex;
                 changed = true;
             }
             if (veg.treeTypes.empty()) {
@@ -10128,6 +10164,16 @@ void DrawDetails() {
                           { ".fbx", ".gltf", ".glb", ".obj", ".dae" });
     }
 
+    void EnsureTreeTypeMaterial(Galeshi::VegetationTreeType& type,
+                                int typeIndex) {
+        if (type.material) return;
+        type.material = std::make_shared<Galeshi::Material>();
+        type.material->name = "Tree Type " + std::to_string(typeIndex + 1) +
+                              " Textures";
+        type.material->twoSided = true;
+        type.material->castsShadow = true;
+    }
+
     // Assign a static tree model to a Landscape's instanced vegetation.
     // The model is validated before the component/path is changed so a
     // broken FBX cannot silently replace a working tree mesh.
@@ -10168,17 +10214,22 @@ void DrawDetails() {
             typeIndex < static_cast<int>(vegetation.treeTypes.size())) {
             auto& type = vegetation.treeTypes[static_cast<size_t>(typeIndex)];
             type.meshPath = path;
-            // Use the imported model's native dimensions on drop. The Size
-            // slider can then scale this species from its real-world size.
-            type.scale = 1.0f;
+            // Imported source trees are commonly authored in centimeter-like
+            // units. Use 0.010 as the default multiplier instead of making
+            // the first drop gigantic.
+            type.scale = 0.010f;
             if (type.density <= 0.0f) type.density = 1.0f;
+            EnsureTreeTypeMaterial(type, typeIndex);
         } else {
             Galeshi::VegetationTreeType type;
             type.meshPath = path;
-            type.scale = 1.0f;
+            type.scale = 0.010f;
             type.density = 1.0f;
             vegetation.treeTypes.push_back(std::move(type));
-            m_paintTreeType = static_cast<int>(vegetation.treeTypes.size()) - 1;
+            const int newIndex =
+                static_cast<int>(vegetation.treeTypes.size()) - 1;
+            EnsureTreeTypeMaterial(vegetation.treeTypes.back(), newIndex);
+            m_paintTreeType = newIndex;
         }
         vegetation.treeMeshPath.clear();
         vegetation.enabled = true;
