@@ -38,6 +38,8 @@
 #include <imgui_internal.h>
 #include <imgui_impl_sdl3.h>
 #include <spdlog/spdlog.h>
+#include <spdlog/sinks/base_sink.h>
+#include <spdlog/pattern_formatter.h>
 #include <ImGuizmo.h>
 #include <bgfx/bgfx.h>
 #include <glm/glm.hpp>
@@ -54,6 +56,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
+#include <deque>
 #include <filesystem>
 #include <limits>
 #include <memory>
@@ -215,6 +218,55 @@ static const EnvironmentPalettePreset kEnvironmentPalettePresets[] = {
                       {0.10f, 0.90f, 0.95f}, 0.85f},
 };
 
+// Captures the editor's spdlog stream so startup diagnostics remain visible
+// in the Output Log dock tab after the console has scrolled past them.
+class EditorLogSink final : public spdlog::sinks::base_sink<std::mutex> {
+public:
+    struct Entry {
+        std::string text;
+        spdlog::level::level_enum level = spdlog::level::info;
+    };
+
+    EditorLogSink() {
+        set_formatter(std::make_unique<spdlog::pattern_formatter>(
+            "%H:%M:%S [%l] %v"));
+    }
+
+    std::vector<Entry> Snapshot() const {
+        std::lock_guard<std::mutex> lock(m_snapshotMutex);
+        return {m_entries.begin(), m_entries.end()};
+    }
+
+    void Clear() {
+        std::lock_guard<std::mutex> lock(m_snapshotMutex);
+        m_entries.clear();
+    }
+
+protected:
+    void sink_it_(const spdlog::details::log_msg& msg) override {
+        spdlog::memory_buf_t formatted;
+        formatter_->format(msg, formatted);
+        Entry entry;
+        entry.text.assign(formatted.data(), formatted.size());
+        entry.level = msg.level;
+
+        std::lock_guard<std::mutex> lock(m_snapshotMutex);
+        m_entries.push_back(std::move(entry));
+        if (m_entries.size() > kMaxEntries) {
+            m_entries.pop_front();
+        }
+    }
+
+    void flush_() override {}
+
+private:
+    static constexpr size_t kMaxEntries = 5000;
+    mutable std::mutex m_snapshotMutex;
+    std::deque<Entry> m_entries;
+};
+
+static std::shared_ptr<EditorLogSink> g_editorLogSink;
+
 class GaleshiEditorApp final : public Galeshi::Application {
     Galeshi::AudioSystem m_audio;
     Galeshi::ScriptEngine m_scripts;
@@ -259,6 +311,11 @@ class GaleshiEditorApp final : public Galeshi::Application {
     bool m_showAudioMixer = false;
     bool m_showEnvironmentPalette = false;
     bool m_showStateMachineEditor = false;
+    bool m_showOutputLog = true;
+    bool m_logAutoScroll = true;
+    int m_logLevelFilter = 0;
+    std::string m_outputLogBuffer;
+    std::string m_outputLogSelection;
     entt::entity m_stateMachineEditorEntity = entt::null;
     int m_selectedAxis = 0;
     int m_rebindAxis = -1;
@@ -1475,6 +1532,7 @@ protected:
         DrawLuaConsole();
         DrawScriptComponents();
         DrawUIDesigner();
+        DrawOutputLog();
         DrawAudioMixer();
         DrawEnvironmentPaletteWindow();
         DrawStateMachineEditor();
@@ -3107,6 +3165,7 @@ if (ImGui::BeginMenu("File")) {
         }
         
         if (ImGui::BeginMenu("Stats")) {
+            ImGui::MenuItem("Output Log", nullptr, &m_showOutputLog);
             ImGui::MenuItem("Profiler", "F8", &m_showProfiler);
             ImGui::MenuItem("AI Perception Debug", nullptr, &m_showAIDebug);
             ImGui::EndMenu();
@@ -4808,6 +4867,7 @@ if (ImGui::BeginMenu("File")) {
             
             // Right side of bottom panel (tabs)
             ImGui::DockBuilderDockWindow("UI Designer",       bottom);
+            ImGui::DockBuilderDockWindow("Output Log",        bottom);
             ImGui::DockBuilderDockWindow("Lua Editor",        bottom);
             ImGui::DockBuilderDockWindow("Lua Console",       bottom);
             ImGui::DockBuilderDockWindow("Script Components", bottom);
@@ -10181,6 +10241,163 @@ void DrawDetails() {
         ImGui::End();
     }
 
+    void DrawOutputLog() {
+        if (!m_showOutputLog) return;
+
+        // Keep the new tab next to UI Designer on first use, while still
+        // allowing the user to detach or move it afterwards.
+        if (ImGuiWindow* designer = ImGui::FindWindowByName("UI Designer")) {
+            if (designer->DockId != 0) {
+                ImGui::SetNextWindowDockID(designer->DockId,
+                                           ImGuiCond_FirstUseEver);
+            }
+        }
+        if (!ImGui::Begin("Output Log", &m_showOutputLog)) {
+            ImGui::End();
+            return;
+        }
+
+        const std::vector<EditorLogSink::Entry> entries =
+            g_editorLogSink ? g_editorLogSink->Snapshot()
+                            : std::vector<EditorLogSink::Entry>{};
+
+        if (ImGui::Button("Clear")) {
+            if (g_editorLogSink) g_editorLogSink->Clear();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Copy All") && g_editorLogSink) {
+            std::string all;
+            all.reserve(entries.size() * 96);
+            for (const auto& entry : entries) {
+                all += entry.text;
+                all += '\n';
+            }
+            ImGui::SetClipboardText(all.c_str());
+        }
+        ImGui::SameLine();
+        ImGui::Checkbox("Auto-scroll", &m_logAutoScroll);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(130.0f);
+        const char* filters[] = {"All", "Info+", "Warnings+", "Errors"};
+        ImGui::Combo("Level", &m_logLevelFilter, filters,
+                     static_cast<int>(sizeof(filters) / sizeof(filters[0])));
+        ImGui::SameLine();
+        ImGui::TextDisabled("%zu messages", entries.size());
+        ImGui::SameLine();
+        ImGui::TextDisabled("| Select text and Ctrl+C to copy | PgUp/PgDn to scroll");
+        ImGui::Separator();
+
+        int threshold = static_cast<int>(spdlog::level::trace);
+        switch (m_logLevelFilter) {
+            case 1: threshold = static_cast<int>(spdlog::level::info); break;
+            case 2: threshold = static_cast<int>(spdlog::level::warn); break;
+            case 3: threshold = static_cast<int>(spdlog::level::err); break;
+            default: break;
+        }
+
+        // A read-only InputTextMultiline gives native text selection and
+        // Ctrl+C support. Build the visible text from the filtered snapshot.
+        std::string visibleText;
+        visibleText.reserve(entries.size() * 96);
+        size_t visibleLines = 0;
+        for (const auto& entry : entries) {
+            if (static_cast<int>(entry.level) < threshold) continue;
+            visibleText += entry.text;
+            visibleText += '\n';
+            ++visibleLines;
+        }
+        m_outputLogBuffer.resize(visibleText.size() + 1);
+        std::copy(visibleText.begin(), visibleText.end(),
+                  m_outputLogBuffer.begin());
+        m_outputLogBuffer[visibleText.size()] = '\0';
+
+        ImGui::BeginChild("OutputLogScroll", ImVec2(0, 0), false,
+                          ImGuiWindowFlags_HorizontalScrollbar);
+        const bool wasAtBottom =
+            ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f;
+        const float lineHeight = ImGui::GetTextLineHeightWithSpacing();
+        // Make the read-only editor tall enough for all lines so the parent
+        // child owns the scrollbar. This avoids nested scroll areas and lets
+        // PageUp/PageDown move the whole log by a page.
+        const float textHeight =
+            lineHeight * static_cast<float>(std::max<size_t>(visibleLines, 1) + 3) +
+            ImGui::GetStyle().FramePadding.y * 2.0f;
+        ImGui::InputTextMultiline(
+            "##OutputLogText", m_outputLogBuffer.data(),
+            m_outputLogBuffer.size(),
+            ImVec2(-FLT_MIN, textHeight),
+            ImGuiInputTextFlags_ReadOnly);
+        const ImGuiID logInputId = ImGui::GetItemID();
+        ImGuiInputTextState* logInputState =
+            ImGui::GetInputTextState(logInputId);
+        if (logInputState) {
+            if (logInputState->HasSelection()) {
+                const int start = std::clamp(
+                    std::min(logInputState->GetSelectionStart(),
+                             logInputState->GetSelectionEnd()),
+                    0, static_cast<int>(visibleText.size()));
+                const int end = std::clamp(
+                    std::max(logInputState->GetSelectionStart(),
+                             logInputState->GetSelectionEnd()),
+                    start, static_cast<int>(visibleText.size()));
+                m_outputLogSelection.assign(visibleText.data() + start,
+                                            static_cast<size_t>(end - start));
+            } else if (!ImGui::IsMouseDown(ImGuiMouseButton_Right) &&
+                       !ImGui::IsPopupOpen("OutputLogContext")) {
+                m_outputLogSelection.clear();
+            }
+        }
+
+        // Use the parent log child for the context menu. Starting it from the
+        // InputText item can be blocked by the input's own child window.
+        if (ImGui::IsWindowHovered(
+                ImGuiHoveredFlags_ChildWindows |
+                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+            ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            ImGui::OpenPopup("OutputLogContext");
+        }
+        if (ImGui::BeginPopup("OutputLogContext")) {
+            const bool hasSelection = !m_outputLogSelection.empty();
+            if (ImGui::MenuItem("Copy Selected", "Ctrl+C", false,
+                                hasSelection)) {
+                ImGui::SetClipboardText(m_outputLogSelection.c_str());
+            }
+            if (ImGui::MenuItem("Select All", "Ctrl+A", false,
+                                logInputState != nullptr)) {
+                if (logInputState) logInputState->SelectAll();
+                m_outputLogSelection = visibleText;
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Copy All")) {
+                ImGui::SetClipboardText(visibleText.c_str());
+            }
+            ImGui::EndPopup();
+        }
+
+        bool manualScroll = false;
+        const bool canScroll =
+            ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) ||
+            ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+        if (canScroll) {
+            const float pageStep =
+                std::max(lineHeight, ImGui::GetWindowHeight() - lineHeight * 2.0f);
+            if (ImGui::IsKeyPressed(ImGuiKey_PageDown, true)) {
+                ImGui::SetScrollY(std::min(ImGui::GetScrollY() + pageStep,
+                                           ImGui::GetScrollMaxY()));
+                manualScroll = true;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_PageUp, true)) {
+                ImGui::SetScrollY(std::max(ImGui::GetScrollY() - pageStep, 0.0f));
+                manualScroll = true;
+            }
+        }
+        if (m_logAutoScroll && wasAtBottom && !manualScroll) {
+            ImGui::SetScrollHereY(1.0f);
+        }
+        ImGui::EndChild();
+        ImGui::End();
+    }
+
     void DrawLuaConsole() {
         ImGui::Begin("Lua Console");
         if (ImGui::Button("Clear")) m_scripts.ClearLogs();
@@ -10971,6 +11188,14 @@ int PackageProject(const std::string& projectPath) {
 }
 
 int main(int argc, char** argv) {
+    // Install the editor log capture before constructing the application so
+    // startup diagnostics are available in the Output Log tab.
+    auto editorLogSink = std::make_shared<EditorLogSink>();
+    g_editorLogSink = editorLogSink;
+    if (auto logger = spdlog::default_logger()) {
+        logger->sinks().push_back(editorLogSink);
+    }
+
     // Парсинг аргументов
     std::string packagePath = "";
     for (int i = 1; i < argc; ++i) {
