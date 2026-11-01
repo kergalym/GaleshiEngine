@@ -50,7 +50,7 @@ end
 -- Assign this file in Edit -> Scripts, or use it as the main script.
 local playerName = "Player"
 local moveSpeed = 8.0
-local jumpImpulse = 1000.0
+local jumpImpulse = 8.0
 local player = nil
 
 local function acquirePlayer()
@@ -68,7 +68,9 @@ function RunAlways(dt)
     end
 
     local velocity = Galeshi.physics.get_velocity(player)
-    local moveX = Galeshi.input.axis("Horizontal") * moveSpeed
+    -- A is -1 and D is +1 on the Horizontal axis. Invert the axis for
+    -- screen-space movement so A moves left and D moves right.
+    local moveX = -Galeshi.input.axis("Horizontal") * moveSpeed
     local moveZ = Galeshi.input.axis("Vertical") * moveSpeed
     Galeshi.physics.set_velocity(player, moveX, velocity.y, moveZ)
 

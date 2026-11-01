@@ -139,6 +139,8 @@ private:
     struct FallbackVelocity {
         glm::vec3 value{0.0f};
         uint64_t frame = 0;
+        float groundY = 0.0f;
+        bool hasGroundY = false;
     };
     std::unordered_map<uint32_t, FallbackVelocity> m_fallbackVelocities;
 

@@ -902,7 +902,31 @@ void ScriptEngine::BuildApi() {
         const entt::entity entity = resolve(value);
         glm::vec3 impulse{0.0f};
         if (entity == entt::null || !readVec3Args(args, impulse)) return false;
-        if (m_applyImpulse) m_applyImpulse(static_cast<uint32_t>(entity), impulse);
+        const uint32_t id = static_cast<uint32_t>(entity);
+        if (m_applyImpulse && HasPhysicsBody(id)) {
+            m_applyImpulse(id, impulse);
+            return true;
+        }
+
+        // A body-less character root (for example a skeleton/visual root
+        // without a ColliderComponent) moves through the script fallback
+        // controller. Apply the impulse there as a velocity change so Jump
+        // works for those characters as well.
+        if (!m_scene) return false;
+        auto& registry = m_scene->Registry();
+        if (!registry.valid(entity) ||
+            !registry.all_of<RigidBodyComponent, TransformComponent>(entity)) {
+            return false;
+        }
+        const auto& rb = registry.get<RigidBodyComponent>(entity);
+        auto& fallback = m_fallbackVelocities[id];
+        if (!fallback.hasGroundY) {
+            fallback.groundY =
+                registry.get<TransformComponent>(entity).position.y;
+            fallback.hasGroundY = true;
+        }
+        fallback.value += impulse / std::max(rb.mass, 0.01f);
+        fallback.frame = m_frame;
         return true;
     };
     const auto getVelocity = [this, resolve, makeVec3](sol::object value) {
@@ -927,7 +951,18 @@ void ScriptEngine::BuildApi() {
             m_setVelocity(id, velocity);
             m_fallbackVelocities.erase(id);
         } else {
-            m_fallbackVelocities[id] = FallbackVelocity{velocity, m_frame};
+            auto& fallback = m_fallbackVelocities[id];
+            if (!fallback.hasGroundY && m_scene) {
+                auto& registry = m_scene->Registry();
+                if (registry.valid(entity) &&
+                    registry.all_of<TransformComponent>(entity)) {
+                    fallback.groundY =
+                        registry.get<TransformComponent>(entity).position.y;
+                    fallback.hasGroundY = true;
+                }
+            }
+            fallback.value = velocity;
+            fallback.frame = m_frame;
         }
         return true;
     };
@@ -2104,8 +2139,30 @@ void ScriptEngine::Update(float dt) {
         }
         if (it->second.frame == m_frame &&
             registry.all_of<TransformComponent>(entity)) {
-            registry.get<TransformComponent>(entity).position +=
-                it->second.value * dt;
+            auto& tf = registry.get<TransformComponent>(entity);
+            auto* rb = registry.try_get<RigidBodyComponent>(entity);
+            if (rb && rb->useGravity) {
+                if (!it->second.hasGroundY) {
+                    it->second.groundY = tf.position.y;
+                    it->second.hasGroundY = true;
+                }
+                // Body-less character roots have no Jolt gravity. Keep the
+                // fallback controller grounded at its initial height so a
+                // jump rises, slows down and returns instead of flying away.
+                if (tf.position.y > it->second.groundY + 1e-4f ||
+                    it->second.value.y > 0.0f) {
+                    it->second.value.y -= 9.81f * dt;
+                }
+                tf.position += it->second.value * dt;
+                if (tf.position.y <= it->second.groundY) {
+                    tf.position.y = it->second.groundY;
+                    if (it->second.value.y < 0.0f) {
+                        it->second.value.y = 0.0f;
+                    }
+                }
+            } else {
+                tf.position += it->second.value * dt;
+            }
         }
         ++it;
     }

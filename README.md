@@ -127,7 +127,8 @@ Squad coordination and shared blackboards are not implemented.
 - Entity creation and destruction.
 - Transform access: `set_position`, `get_position`, `translate`.
 - Input axes and mouse helpers. `get_axis(name)` and `get_axis_raw(name)` read the configured axes; `get_mouse_position()`, `get_mouse_delta()`, `get_mouse_wheel()`, and `is_mouse_button_down(button)` expose raw mouse state.
-- The default axes are `Horizontal`, `Vertical`, `Jump`, `Mouse X`, `Mouse Y`, and `Mouse ScrollWheel`. Axes can be tuned in Edit -> Preferences (sensitivity, dead zone, inversion).
+- Character roots without a live Jolt body use the script fallback controller; it supports script velocities, gravity and impulses, so `add_impulse`-based Jump works for those roots too.
+- The default axes are `Horizontal` (`A = -1`, `D = +1`), `Vertical` (`W = +1`, `S = -1`), `Jump` (`Space`), `Mouse X`, `Mouse Y`, and `Mouse ScrollWheel`. Keyboard bindings can be rebound per axis in Edit -> Preferences; changes are stored in the project's `input.json`. The same page has `Reset Keys to Defaults`.
 - Impulse and velocity control.
 - Sound playback.
 - Navigation commands for AI agents.
@@ -318,6 +319,7 @@ Packaging is experimental:
 | Mouse wheel | Zoom |
 | Arrow keys | Pan the editor camera only |
 | W / A / S / D | Move the player (when the scene is playing) |
+| Esc | Stop the running scene |
 | Left click | Select an entity |
 | Left drag on center marker | Move the selected entity |
 | W / E / R | Switch gizmo mode (translate / rotate / scale) |

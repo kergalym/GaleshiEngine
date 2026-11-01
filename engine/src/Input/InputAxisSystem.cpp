@@ -42,8 +42,10 @@ void InputAxisSystem::ResetDefaults() {
     InputAxis horizontal;
     horizontal.name = "Horizontal";
     horizontal.bindings = {
-        {InputBindingType::Key, "D", 1.0f},
+        // Keep the conventional axis signs: A = -1, D = +1. Movement code
+        // maps this axis to the camera/world direction explicitly.
         {InputBindingType::Key, "A", -1.0f},
+        {InputBindingType::Key, "D", 1.0f},
     };
     m_axes.push_back(std::move(horizontal));
 
@@ -86,6 +88,38 @@ void InputAxisSystem::ResetDefaults() {
     mouseWheel.deadZone = 0.0f;
     mouseWheel.clampValue = false;
     m_axes.push_back(std::move(mouseWheel));
+}
+
+void InputAxisSystem::ResetBindingsToDefaults() {
+    InputAxisSystem defaults;
+    for (InputAxis& axis : m_axes) {
+        if (const InputAxis* defaultAxis = defaults.FindAxis(axis.name)) {
+            axis.bindings = defaultAxis->bindings;
+        }
+    }
+}
+
+void InputAxisSystem::BeginKeyCapture() {
+    m_captureSnapshot.assign(SDL_SCANCODE_COUNT, 0);
+    const bool* state = SDL_GetKeyboardState(nullptr);
+    if (!state) return;
+    for (int i = 0; i < SDL_SCANCODE_COUNT; ++i) {
+        m_captureSnapshot[static_cast<size_t>(i)] = state[i] ? 1 : 0;
+    }
+}
+
+std::string InputAxisSystem::PollCapturedKey() const {
+    const bool* state = SDL_GetKeyboardState(nullptr);
+    if (!state) return {};
+    const size_t count = std::min(
+        static_cast<size_t>(SDL_SCANCODE_COUNT), m_captureSnapshot.size());
+    for (size_t i = 0; i < count; ++i) {
+        if (state[i] && !m_captureSnapshot[i]) {
+            const char* name = SDL_GetScancodeName(static_cast<SDL_Scancode>(i));
+            if (name && name[0] != '\0') return name;
+        }
+    }
+    return {};
 }
 
 void InputAxisSystem::Update(float dt) {

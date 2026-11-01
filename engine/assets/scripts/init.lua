@@ -35,14 +35,17 @@ function RunAlways(dt)
     end
 
     local speed = 10.0
-    local jump_force = 1000.0
+    local jump_force = 8.0
 
     local vel = Galeshi.physics.get_velocity(player)
     local vy = vel.y -- preserve gravity while moving horizontally
 
     local horizontal = Galeshi.input.axis("Horizontal")
     local vertical = Galeshi.input.axis("Vertical")
-    local vx = horizontal * speed
+    -- Horizontal follows the conventional A=-1 / D=+1 axis signs. Negate it
+    -- here so A moves screen-left and D moves screen-right with the default
+    -- character camera.
+    local vx = -horizontal * speed
     local vz = vertical * speed
 
     -- Always write the horizontal velocity so the player stops when no key is

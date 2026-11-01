@@ -261,6 +261,8 @@ class GaleshiEditorApp final : public Galeshi::Application {
     bool m_showStateMachineEditor = false;
     entt::entity m_stateMachineEditorEntity = entt::null;
     int m_selectedAxis = 0;
+    int m_rebindAxis = -1;
+    int m_rebindBinding = -1;
     std::vector<std::string> m_recentProjects;
     std::vector<std::string> m_recentScenes;
     bool m_pickingScene = false;
@@ -675,6 +677,125 @@ protected:
         return scenePath.filename().string();
     }
 
+    // -------------------------------------------------------------------
+    // Input bindings
+    // -------------------------------------------------------------------
+    std::filesystem::path InputBindingsPath() const {
+        const std::string projectPath =
+            Galeshi::ProjectManager::GetProjectPath();
+        if (!projectPath.empty()) {
+            return std::filesystem::path(projectPath) / "input.json";
+        }
+        return FindProjectRoot() / "input.json";
+    }
+
+    void LoadInputBindings() {
+        const std::filesystem::path path = InputBindingsPath();
+        if (path.empty()) return;
+        std::ifstream in(path);
+        if (!in.is_open()) return;
+
+        try {
+            nlohmann::json root;
+            in >> root;
+            const nlohmann::json* axesJson = nullptr;
+            if (root.is_array()) {
+                axesJson = &root;
+            } else if (root.contains("axes") && root["axes"].is_array()) {
+                axesJson = &root["axes"];
+            }
+            if (!axesJson) return;
+
+            int restoredAxes = 0;
+            for (const auto& ja : *axesJson) {
+                if (!ja.is_object()) continue;
+                const std::string name = ja.value("name", std::string{});
+                auto* axis = GetInput().FindAxis(name);
+                if (!axis || !ja.contains("bindings") ||
+                    !ja["bindings"].is_array()) {
+                    continue;
+                }
+
+                std::vector<Galeshi::InputAxisBinding> bindings;
+                for (const auto& jb : ja["bindings"]) {
+                    if (!jb.is_object()) continue;
+                    const std::string code = jb.value("code", std::string{});
+                    if (code.empty()) continue;
+                    Galeshi::InputAxisBinding binding;
+                    binding.type = jb.value("type", std::string("key")) == "mouse"
+                        ? Galeshi::InputBindingType::MouseButton
+                        : Galeshi::InputBindingType::Key;
+                    binding.code = code;
+                    binding.direction = jb.value("direction", 1.0f);
+                    bindings.push_back(std::move(binding));
+                }
+                axis->bindings = std::move(bindings);
+                ++restoredAxes;
+            }
+            spdlog::info("[Input] Loaded {} axis binding(s) from {}",
+                         restoredAxes, path.string());
+        } catch (const std::exception& e) {
+            spdlog::warn("[Input] Could not read {}: {}", path.string(),
+                         e.what());
+        }
+    }
+
+    void SaveInputBindings() {
+        const std::filesystem::path path = InputBindingsPath();
+        if (path.empty()) return;
+
+        nlohmann::json root;
+        root["version"] = 1;
+        root["axes"] = nlohmann::json::array();
+        for (const Galeshi::InputAxis& axis : GetInput().Axes()) {
+            nlohmann::json bindings = nlohmann::json::array();
+            for (const Galeshi::InputAxisBinding& binding : axis.bindings) {
+                bindings.push_back({
+                    {"type", binding.type == Galeshi::InputBindingType::MouseButton
+                                 ? "mouse" : "key"},
+                    {"code", binding.code},
+                    {"direction", binding.direction}
+                });
+            }
+            root["axes"].push_back({
+                {"name", axis.name},
+                {"bindings", std::move(bindings)}
+            });
+        }
+
+        std::ofstream out(path, std::ios::trunc);
+        if (!out.is_open()) {
+            spdlog::warn("[Input] Could not write {}", path.string());
+            return;
+        }
+        out << root.dump(4);
+        spdlog::info("[Input] Saved axis bindings to {}", path.string());
+    }
+
+    void UpdateInputRebind() {
+        if (m_rebindAxis < 0) return;
+        auto& axes = GetInput().Axes();
+        if (m_rebindAxis >= static_cast<int>(axes.size()) ||
+            m_rebindBinding < 0 ||
+            m_rebindBinding >= static_cast<int>(
+                axes[static_cast<size_t>(m_rebindAxis)].bindings.size())) {
+            m_rebindAxis = -1;
+            m_rebindBinding = -1;
+            return;
+        }
+
+        const std::string key = GetInput().PollCapturedKey();
+        if (key.empty()) return;
+
+        auto& binding = axes[static_cast<size_t>(m_rebindAxis)]
+                             .bindings[static_cast<size_t>(m_rebindBinding)];
+        binding.type = Galeshi::InputBindingType::Key;
+        binding.code = key;
+        m_rebindAxis = -1;
+        m_rebindBinding = -1;
+        SaveInputBindings();
+    }
+
     static std::filesystem::path PreferencesPath() {
         const char* home = std::getenv("HOME");
         if (!home) return {};
@@ -979,6 +1100,9 @@ protected:
         };
         m_scripts.BindPhysics(scriptPhysics);
         m_scripts.BindEngine([this]() { RequestExit(); });
+        // Project-local key bindings override the built-in axis defaults
+        // before scripts start reading input.
+        LoadInputBindings();
         spdlog::info("[Subsystem] m_scripts.RunScript(init.lua) begin");
         if (!m_scripts.RunScript("assets/scripts/init.lua"))
             spdlog::error("[Subsystem] m_scripts.RunScript(init.lua) failed");
@@ -1273,6 +1397,22 @@ protected:
         if (m_loadingState.isLoading) {
             DrawLoadingModal();
             return;
+        }
+
+        // Escape is the runtime stop shortcut. It takes priority over an
+        // active key-rebind capture so pressing it while playing always
+        // returns to the editor instead of binding Escape.
+        if (!m_showPreferences) {
+            m_rebindAxis = -1;
+            m_rebindBinding = -1;
+        }
+        if (!m_isGameMode && m_editor.isPlaying &&
+            ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            m_rebindAxis = -1;
+            m_rebindBinding = -1;
+            StopPlay();
+        } else {
+            UpdateInputRebind();
         }
 
         const auto imguiStart = ProfileClock::now();
@@ -1797,6 +1937,9 @@ private:
                 m_preferences = EditorPreferences{};
                 GetInput().ResetDefaults();
                 m_selectedAxis = 0;
+                m_rebindAxis = -1;
+                m_rebindBinding = -1;
+                SaveInputBindings();
             }
 
             ImGui::Spacing();
@@ -1854,9 +1997,22 @@ private:
             if (ImGui::Button("Reset Input Axes", ImVec2(150.0f, 0.0f))) {
                 GetInput().ResetDefaults();
                 m_selectedAxis = 0;
+                m_rebindAxis = -1;
+                m_rebindBinding = -1;
+                SaveInputBindings();
             }
             ImGui::SameLine();
             ImGui::TextDisabled("Defaults: Horizontal, Vertical, Jump, Mouse X/Y, Wheel");
+
+            if (ImGui::Button("Reset Keys to Defaults", ImVec2(190.0f, 0.0f))) {
+                GetInput().ResetBindingsToDefaults();
+                m_rebindAxis = -1;
+                m_rebindBinding = -1;
+                SaveInputBindings();
+            }
+            ImGui::SameLine();
+            const std::filesystem::path inputPath = InputBindingsPath();
+            ImGui::TextDisabled("Saved to: %s", inputPath.string().c_str());
 
             auto& axes = GetInput().Axes();
             if (axes.empty()) {
@@ -1890,6 +2046,10 @@ private:
                                           m_selectedAxis == i,
                                           ImGuiSelectableFlags_None,
                                           ImVec2(0.0f, 22.0f))) {
+                        if (m_selectedAxis != i) {
+                            m_rebindAxis = -1;
+                            m_rebindBinding = -1;
+                        }
                         m_selectedAxis = i;
                     }
 
@@ -1937,6 +2097,59 @@ private:
 
             ImGui::Text("Positive: %s", positive.empty() ? "None" : positive.c_str());
             ImGui::Text("Negative: %s", negative.empty() ? "None" : negative.c_str());
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Text("Key bindings for %s", selected.name.c_str());
+            ImGui::TextDisabled(
+                "Select Horizontal for A/D or Vertical for W/S, then click a "
+                "key to rebind it.");
+            for (size_t bindingIndex = 0;
+                 bindingIndex < selected.bindings.size(); ++bindingIndex) {
+                auto& binding = selected.bindings[bindingIndex];
+                ImGui::PushID(static_cast<int>(bindingIndex));
+                ImGui::TextUnformatted(binding.direction >= 0.0f ? "+" : "-");
+                ImGui::SameLine();
+                const bool waiting =
+                    m_rebindAxis == m_selectedAxis &&
+                    m_rebindBinding == static_cast<int>(bindingIndex);
+                const std::string bindingLabel =
+                    waiting ? "Press a key..."
+                            : Galeshi::InputAxisSystem::BindingLabel(binding);
+                if (ImGui::Button(bindingLabel.c_str(), ImVec2(170.0f, 0.0f))) {
+                    m_rebindAxis = m_selectedAxis;
+                    m_rebindBinding = static_cast<int>(bindingIndex);
+                    GetInput().BeginKeyCapture();
+                }
+                ImGui::SameLine();
+                if (waiting) {
+                    if (ImGui::SmallButton("Cancel")) {
+                        m_rebindAxis = -1;
+                        m_rebindBinding = -1;
+                    }
+                } else if (ImGui::SmallButton("Remove")) {
+                    selected.bindings.erase(
+                        selected.bindings.begin() +
+                        static_cast<std::ptrdiff_t>(bindingIndex));
+                    m_rebindAxis = -1;
+                    m_rebindBinding = -1;
+                    SaveInputBindings();
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::PopID();
+            }
+
+            if (ImGui::Button("+ Add Key Binding")) {
+                Galeshi::InputAxisBinding binding;
+                binding.type = Galeshi::InputBindingType::Key;
+                binding.code.clear();
+                binding.direction = 1.0f;
+                selected.bindings.push_back(std::move(binding));
+                m_rebindAxis = m_selectedAxis;
+                m_rebindBinding = static_cast<int>(selected.bindings.size()) - 1;
+                GetInput().BeginKeyCapture();
+            }
 
             const glm::vec2 mouse = GetInput().MousePosition();
             const glm::vec2 mouseDelta = GetInput().MouseDelta();
@@ -2357,12 +2570,7 @@ private:
                 EnsurePhysicsBodies();
                 ActivateGameplayCamera();
             } else {
-                m_editor.isPlaying = false;
-                m_audio.StopAll();
-                m_physics->Reset();
-                if (m_particles) m_particles->Reset();
-                if (m_historyIndex >= 0) m_serializer->LoadFromString(m_history[m_historyIndex]);
-                DeactivateGameplayCamera();
+                StopPlay();
             }
         }
         ImGui::SameLine();
@@ -2967,6 +3175,20 @@ if (ImGui::BeginMenu("File")) {
     void LoadScene() {
         // Load Scene -> модальный диалог для .json файлов
         m_scenePicker.Open(SceneStartDirectory(), "Load Scene", { ".json" });
+    }
+
+    void StopPlay() {
+        if (!m_editor.isPlaying) return;
+        m_lastViewportTexture = BGFX_INVALID_HANDLE;
+        m_editor.isPlaying = false;
+        m_audio.StopAll();
+        if (m_physics) m_physics->Reset();
+        if (m_particles) m_particles->Reset();
+        if (m_serializer && m_historyIndex >= 0 &&
+            m_historyIndex < static_cast<int>(m_history.size())) {
+            m_serializer->LoadFromString(m_history[m_historyIndex]);
+        }
+        DeactivateGameplayCamera();
     }
 
     void StopPlayForSceneChange() {

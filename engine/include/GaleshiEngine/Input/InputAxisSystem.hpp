@@ -50,8 +50,16 @@ public:
     InputAxisSystem();
 
     void ResetDefaults();
+    // Restore only the default keyboard/mouse bindings, leaving sensitivity,
+    // dead-zone and inversion settings untouched.
+    void ResetBindingsToDefaults();
     void Update(float dt);
     void ProcessEvent(const SDL_Event& event);
+
+    // Key rebinding support. BeginKeyCapture snapshots currently held keys;
+    // PollCapturedKey then returns the first newly pressed key name.
+    void BeginKeyCapture();
+    std::string PollCapturedKey() const;
 
     float GetAxis(const std::string& name) const;
     float GetAxisRaw(const std::string& name) const;
@@ -91,6 +99,7 @@ private:
     float m_mouseWheel = 0.0f;
     float m_pendingWheel = 0.0f;
     bool m_hasMousePosition = false;
+    std::vector<uint8_t> m_captureSnapshot;
 };
 
 } // namespace Galeshi
