@@ -74,6 +74,11 @@ struct AnimationState {
     int clip = 0;
     bool loop = true;
     float speed = 1.0f;
+
+    // Empty = use clips embedded in the character/skeleton model. A path
+    // points to a separate animation FBX whose clips are retargeted by bone
+    // name onto this character's skeleton.
+    std::string animationPath;
 };
 
 struct AnimationTransition {

@@ -33,6 +33,9 @@ public:
         std::shared_ptr<aiScene>               rawScene;
         
         std::unordered_map<std::string, int>   boneMap;
+        // Inverse bind matrices by bone name, used to retarget animation
+        // clips loaded from a separate FBX onto this model's skeleton.
+        std::unordered_map<std::string, glm::mat4> boneOffsetMatrices;
         int                                    totalBones = 0;
         bool hasAnimation = false;
         std::vector<std::string>                animationNames;
@@ -49,6 +52,13 @@ public:
     // Samples an explicit animation clip.
     void UpdateAnimationClip(const LoadedModel& model, int clip, float time,
                              std::vector<glm::mat4>& outBoneMatrices);
+
+    // Samples a clip from a separate animation FBX and maps its animated
+    // node poses onto the target model's bones by name.
+    void UpdateAnimationClipRetargeted(const LoadedModel& animationModel,
+                                       int clip, float time,
+                                       const LoadedModel& targetModel,
+                                       std::vector<glm::mat4>& outBoneMatrices);
 
     // Samples two clips and blends their bone transforms.  blend is clamped
     // to [0, 1], where 0 is fully clipA and 1 is fully clipB.

@@ -382,6 +382,112 @@ void ReadNodeHeirarchy(const aiScene* scene, const aiAnimation* anim, float time
                           boneMatrices, boneMap, depth + 1);
     }
 }
+
+// Collapses the animated node hierarchy into a name -> world-transform map.
+// Separate animation FBX files often contain no skinned mesh (and therefore
+// no aiBone list), so their poses cannot be sampled through boneMap alone.
+void SampleNodeTransforms(const aiScene* scene, const aiAnimation* anim,
+                          float time, const aiNode* node,
+                          const glm::mat4& parentTransform,
+                          std::unordered_map<std::string, glm::mat4>& out,
+                          int depth = 0) {
+    if (!node || depth > 128) return;
+
+    const std::string nodeName(node->mName.data);
+    glm::mat4 nodeTransform = aiToGlm(node->mTransformation);
+
+    if (anim) {
+        const float ticksPerSecond =
+            anim->mTicksPerSecond != 0.0 ? anim->mTicksPerSecond : 25.0f;
+        const double duration = anim->mDuration;
+        float timeInTicks = time * ticksPerSecond;
+        if (duration > 0.0) {
+            const double wrapped = std::fmod(static_cast<double>(timeInTicks), duration);
+            timeInTicks = static_cast<float>(wrapped < 0.0 ? wrapped + duration : wrapped);
+        }
+
+        const aiNodeAnim* nodeAnim = nullptr;
+        for (unsigned int i = 0; i < anim->mNumChannels; ++i) {
+            if (anim->mChannels[i] && nodeName == anim->mChannels[i]->mNodeName.data) {
+                nodeAnim = anim->mChannels[i];
+                break;
+            }
+        }
+
+        if (nodeAnim) {
+            glm::vec3 pos(0.0f);
+            if (nodeAnim->mNumPositionKeys > 0) {
+                pos = aiToVec3(nodeAnim->mPositionKeys[0].mValue);
+                for (unsigned int i = 0; i + 1 < nodeAnim->mNumPositionKeys; ++i) {
+                    const auto& k0 = nodeAnim->mPositionKeys[i];
+                    const auto& k1 = nodeAnim->mPositionKeys[i + 1];
+                    if (timeInTicks < static_cast<float>(k1.mTime)) {
+                        const float span = static_cast<float>(k1.mTime - k0.mTime);
+                        const float factor = span > 1e-6f
+                            ? std::clamp((timeInTicks - static_cast<float>(k0.mTime)) / span, 0.0f, 1.0f)
+                            : 0.0f;
+                        pos = glm::mix(aiToVec3(k0.mValue), aiToVec3(k1.mValue), factor);
+                        break;
+                    }
+                    pos = aiToVec3(k1.mValue);
+                }
+            }
+
+            glm::quat rot(1.0f, 0.0f, 0.0f, 0.0f);
+            if (nodeAnim->mNumRotationKeys > 0) {
+                const auto& q0 = nodeAnim->mRotationKeys[0].mValue;
+                rot = glm::normalize(glm::quat(q0.w, q0.x, q0.y, q0.z));
+                for (unsigned int i = 0; i + 1 < nodeAnim->mNumRotationKeys; ++i) {
+                    const auto& k0 = nodeAnim->mRotationKeys[i];
+                    const auto& k1 = nodeAnim->mRotationKeys[i + 1];
+                    if (timeInTicks < static_cast<float>(k1.mTime)) {
+                        const float span = static_cast<float>(k1.mTime - k0.mTime);
+                        const float factor = span > 1e-6f
+                            ? std::clamp((timeInTicks - static_cast<float>(k0.mTime)) / span, 0.0f, 1.0f)
+                            : 0.0f;
+                        const glm::quat start(k0.mValue.w, k0.mValue.x,
+                                              k0.mValue.y, k0.mValue.z);
+                        const glm::quat end(k1.mValue.w, k1.mValue.x,
+                                            k1.mValue.y, k1.mValue.z);
+                        rot = glm::normalize(glm::slerp(start, end, factor));
+                        break;
+                    }
+                    rot = glm::normalize(glm::quat(k1.mValue.w, k1.mValue.x,
+                                                   k1.mValue.y, k1.mValue.z));
+                }
+            }
+
+            glm::vec3 scale(1.0f);
+            if (nodeAnim->mNumScalingKeys > 0) {
+                scale = aiToVec3(nodeAnim->mScalingKeys[0].mValue);
+                for (unsigned int i = 0; i + 1 < nodeAnim->mNumScalingKeys; ++i) {
+                    const auto& k0 = nodeAnim->mScalingKeys[i];
+                    const auto& k1 = nodeAnim->mScalingKeys[i + 1];
+                    if (timeInTicks < static_cast<float>(k1.mTime)) {
+                        const float span = static_cast<float>(k1.mTime - k0.mTime);
+                        const float factor = span > 1e-6f
+                            ? std::clamp((timeInTicks - static_cast<float>(k0.mTime)) / span, 0.0f, 1.0f)
+                            : 0.0f;
+                        scale = glm::mix(aiToVec3(k0.mValue), aiToVec3(k1.mValue), factor);
+                        break;
+                    }
+                    scale = aiToVec3(k1.mValue);
+                }
+            }
+
+            nodeTransform = glm::translate(glm::mat4(1.0f), pos) *
+                            glm::mat4_cast(rot) *
+                            glm::scale(glm::mat4(1.0f), scale);
+        }
+    }
+
+    const glm::mat4 globalTransform = parentTransform * nodeTransform;
+    out[nodeName] = globalTransform;
+    for (unsigned int i = 0; i < node->mNumChildren; ++i) {
+        SampleNodeTransforms(scene, anim, time, node->mChildren[i],
+                             globalTransform, out, depth + 1);
+    }
+}
 } // namespace
 
 AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPath) {
@@ -928,8 +1034,12 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         const aiMesh* am = scene->mMeshes[m];
         for (unsigned b = 0; b < am->mNumBones; ++b) {
             std::string bname = am->mBones[b]->mName.data;
-            if (globalBoneMap.find(bname) == globalBoneMap.end() && nextBoneIndex < 254)
+            if (globalBoneMap.find(bname) == globalBoneMap.end() &&
+                nextBoneIndex < 254) {
                 globalBoneMap[bname] = nextBoneIndex++;
+            }
+            out.boneOffsetMatrices.emplace(
+                bname, aiToGlm(am->mBones[b]->mOffsetMatrix));
         }
     }
     out.boneMap = globalBoneMap;
@@ -1020,6 +1130,45 @@ void AssetManager::UpdateAnimationClip(const LoadedModel& model, int clip, float
     }
     ReadNodeHeirarchy(model.rawScene.get(), anim, time, model.rawScene->mRootNode,
                       glm::mat4(1.0f), outBoneMatrices, model.boneMap);
+}
+
+void AssetManager::UpdateAnimationClipRetargeted(
+    const LoadedModel& animationModel, int clip, float time,
+    const LoadedModel& targetModel, std::vector<glm::mat4>& outBoneMatrices) {
+    if (outBoneMatrices.size() != 256) {
+        outBoneMatrices.assign(256, glm::mat4(1.0f));
+    } else {
+        for (auto& matrix : outBoneMatrices) matrix = glm::mat4(1.0f);
+    }
+    outBoneMatrices[255] = glm::mat4(1.0f);
+
+    if (!animationModel.rawScene || !animationModel.rawScene->mRootNode ||
+        !targetModel.rawScene || targetModel.boneMap.empty()) {
+        return;
+    }
+    if (clip < 0 ||
+        clip >= static_cast<int>(animationModel.rawScene->mNumAnimations)) {
+        return;
+    }
+
+    std::unordered_map<std::string, glm::mat4> animatedNodes;
+    animatedNodes.reserve(256);
+    SampleNodeTransforms(
+        animationModel.rawScene.get(),
+        animationModel.rawScene->mAnimations[clip], time,
+        animationModel.rawScene->mRootNode, glm::mat4(1.0f), animatedNodes);
+
+    for (const auto& [boneName, targetIndex] : targetModel.boneMap) {
+        if (targetIndex < 0 || targetIndex >= 255) continue;
+        const auto animated = animatedNodes.find(boneName);
+        const auto offset = targetModel.boneOffsetMatrices.find(boneName);
+        if (animated == animatedNodes.end() ||
+            offset == targetModel.boneOffsetMatrices.end()) {
+            continue;
+        }
+        outBoneMatrices[static_cast<size_t>(targetIndex)] =
+            animated->second * offset->second;
+    }
 }
 
 void AssetManager::UpdateAnimationBlended(const LoadedModel& model,

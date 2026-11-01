@@ -3,6 +3,7 @@
 #include "GaleshiEngine/Scene/Scene.hpp"
 
 #include <glm/glm.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
 #include <algorithm>
 #include <cmath>
 
@@ -60,6 +61,41 @@ float ClipDuration(const AssetManager::LoadedModel& model, int clip) {
         return std::max(0.0f, model.animationDurations[static_cast<size_t>(clip)]);
     }
     return 0.0f;
+}
+
+void BlendBonePalettes(const std::vector<glm::mat4>& a,
+                       const std::vector<glm::mat4>& b,
+                       float blend,
+                       std::vector<glm::mat4>& out) {
+    if (out.size() != 256) out.assign(256, glm::mat4(1.0f));
+    for (int i = 0; i < 255; ++i) {
+        glm::vec3 scaleA, translationA, skewA;
+        glm::vec4 perspectiveA;
+        glm::quat rotationA;
+        glm::vec3 scaleB, translationB, skewB;
+        glm::vec4 perspectiveB;
+        glm::quat rotationB;
+
+        const bool okA = glm::decompose(a[i], scaleA, rotationA,
+                                        translationA, skewA, perspectiveA);
+        const bool okB = glm::decompose(b[i], scaleB, rotationB,
+                                        translationB, skewB, perspectiveB);
+        if (okA && okB) {
+            const glm::vec3 translation =
+                glm::mix(translationA, translationB, blend);
+            const glm::quat rotation =
+                glm::normalize(glm::slerp(rotationA, rotationB, blend));
+            const glm::vec3 scale = glm::mix(scaleA, scaleB, blend);
+            out[i] = glm::translate(glm::mat4(1.0f), translation) *
+                     glm::mat4_cast(rotation) *
+                     glm::scale(glm::mat4(1.0f), scale);
+        } else {
+            for (int c = 0; c < 4; ++c) {
+                out[i][c] = glm::mix(a[i][c], b[i][c], blend);
+            }
+        }
+    }
+    out[255] = glm::mat4(1.0f);
 }
 
 void AdvanceTime(float& time, float duration, float step, bool loop) {
@@ -144,20 +180,40 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
     auto view = scene.Registry().view<SkeletalComponent>();
     for (auto handle : view) {
         auto& skel = view.get<SkeletalComponent>(handle);
-        if (!skel.isAnimated || skel.sourcePath.empty()) continue;
+        if (skel.sourcePath.empty()) continue;
 
-        auto model = assets.LoadModel(skel.sourcePath);
-        if (!model.hasAnimation || model.animationNames.empty()) continue;
+        auto targetModel = assets.LoadModel(skel.sourcePath);
+        auto* machine =
+            scene.Registry().try_get<AnimationStateMachineComponent>(handle);
+
+        bool hasSeparateClip = false;
+        if (machine) {
+            for (const auto& state : machine->states) {
+                if (!state.animationPath.empty()) {
+                    hasSeparateClip = true;
+                    break;
+                }
+            }
+        }
+        if (!skel.isAnimated && !hasSeparateClip) continue;
+        if (hasSeparateClip) {
+            // A skeleton without embedded clips still needs its bone palette
+            // uploaded for clips coming from a separate animation FBX.
+            skel.isAnimated = true;
+        }
 
         if (skel.boneMatrices.size() != 256) {
             skel.boneMatrices.assign(256, glm::mat4(1.0f));
         }
 
-        auto* machine = scene.Registry().try_get<AnimationStateMachineComponent>(handle);
         if (!machine || !machine->enabled) {
-            const int clip = std::clamp(skel.activeAnimation, 0,
-                                        static_cast<int>(model.animationNames.size()) - 1);
-            const float duration = ClipDuration(model, clip);
+            if (!targetModel.hasAnimation || targetModel.animationNames.empty()) {
+                continue;
+            }
+            const int clip = std::clamp(
+                skel.activeAnimation, 0,
+                static_cast<int>(targetModel.animationNames.size()) - 1);
+            const float duration = ClipDuration(targetModel, clip);
             skel.activeAnimation = clip;
             if (duration > 0.0f) {
                 skel.currentTime += dt * skel.animationSpeed;
@@ -167,12 +223,16 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
                 skel.currentTime += dt * skel.animationSpeed;
                 if (skel.currentTime > 10.0f) skel.currentTime = 0.0f;
             }
-            assets.UpdateAnimationClip(model, clip, skel.currentTime, skel.boneMatrices);
+            assets.UpdateAnimationClip(targetModel, clip, skel.currentTime,
+                                       skel.boneMatrices);
             continue;
         }
 
         if (machine->states.empty()) {
-            *machine = CreateDefaultStateMachine(model.animationNames);
+            if (!targetModel.hasAnimation || targetModel.animationNames.empty()) {
+                continue;
+            }
+            *machine = CreateDefaultStateMachine(targetModel.animationNames);
         }
         if (machine->currentState < 0 ||
             machine->currentState >= static_cast<int>(machine->states.size())) {
@@ -184,6 +244,31 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
             machine->blendElapsed = machine->blendDuration;
             machine->initialized = true;
         }
+
+        auto animationPathForState = [&](const AnimationState& state) {
+            return state.animationPath.empty()
+                ? skel.sourcePath
+                : state.animationPath;
+        };
+        auto sampleState = [&](const AnimationState& state, float time,
+                               std::vector<glm::mat4>& out) {
+            const std::string path = animationPathForState(state);
+            auto animationModel = assets.LoadModel(path);
+            if (!animationModel.hasAnimation ||
+                animationModel.animationNames.empty()) {
+                out.assign(256, glm::mat4(1.0f));
+                return;
+            }
+            const int clip = std::clamp(
+                state.clip, 0,
+                static_cast<int>(animationModel.animationNames.size()) - 1);
+            if (state.animationPath.empty()) {
+                assets.UpdateAnimationClip(animationModel, clip, time, out);
+            } else {
+                assets.UpdateAnimationClipRetargeted(
+                    animationModel, clip, time, targetModel, out);
+            }
+        };
 
         // Pick the first matching transition. Triggers are consumed so they
         // fire exactly once.
@@ -215,41 +300,55 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
         }
 
         AnimationState& state = machine->states[machine->currentState];
-        const int clip = std::clamp(state.clip, 0,
-                                    static_cast<int>(model.animationNames.size()) - 1);
-        const float duration = ClipDuration(model, clip);
+        const std::string currentPath = animationPathForState(state);
+        auto currentModel = assets.LoadModel(currentPath);
+        const int clip = std::clamp(
+            state.clip, 0,
+            std::max(0, static_cast<int>(currentModel.animationNames.size()) - 1));
+        const float duration = ClipDuration(currentModel, clip);
         machine->currentClipDuration = duration;
-        const float speed = state.speed * machine->playbackSpeed * std::max(0.0f, skel.animationSpeed);
+        const float speed = state.speed * machine->playbackSpeed *
+                            std::max(0.0f, skel.animationSpeed);
         AdvanceTime(machine->stateTime, duration, dt * speed, state.loop);
 
         if (machine->blendElapsed < machine->blendDuration &&
             machine->previousState >= 0 &&
             machine->previousState < static_cast<int>(machine->states.size())) {
-            machine->blendElapsed = std::min(machine->blendElapsed + std::max(dt, 0.0f),
-                                             machine->blendDuration);
-            AnimationState& previous = machine->states[machine->previousState];
-            const int previousClip = std::clamp(previous.clip, 0,
-                                                static_cast<int>(model.animationNames.size()) - 1);
-            const float previousDuration = ClipDuration(model, previousClip);
+            machine->blendElapsed = std::min(
+                machine->blendElapsed + std::max(dt, 0.0f),
+                machine->blendDuration);
+            AnimationState& previous =
+                machine->states[machine->previousState];
+            const std::string previousPath = animationPathForState(previous);
+            auto previousModel = assets.LoadModel(previousPath);
+            const int previousClip = std::clamp(
+                previous.clip, 0,
+                std::max(0, static_cast<int>(previousModel.animationNames.size()) - 1));
+            const float previousDuration = ClipDuration(previousModel,
+                                                        previousClip);
             AdvanceTime(machine->previousTime, previousDuration,
                         dt * previous.speed * machine->playbackSpeed *
                             std::max(0.0f, skel.animationSpeed),
                         previous.loop);
 
             float blend = machine->blendDuration > 1e-5f
-                ? std::clamp(machine->blendElapsed / machine->blendDuration, 0.0f, 1.0f)
+                ? std::clamp(machine->blendElapsed / machine->blendDuration,
+                             0.0f, 1.0f)
                 : 1.0f;
             blend = blend * blend * (3.0f - 2.0f * blend);
-            assets.UpdateAnimationBlended(model,
-                                          previousClip, machine->previousTime,
-                                          clip, machine->stateTime,
-                                          blend, skel.boneMatrices);
+
+            std::vector<glm::mat4> previousPalette;
+            std::vector<glm::mat4> currentPalette;
+            sampleState(previous, machine->previousTime, previousPalette);
+            sampleState(state, machine->stateTime, currentPalette);
+            BlendBonePalettes(previousPalette, currentPalette, blend,
+                              skel.boneMatrices);
             if (machine->blendElapsed >= machine->blendDuration) {
                 machine->previousState = -1;
             }
         } else {
             machine->previousState = -1;
-            assets.UpdateAnimationClip(model, clip, machine->stateTime, skel.boneMatrices);
+            sampleState(state, machine->stateTime, skel.boneMatrices);
         }
 
         skel.activeAnimation = clip;

@@ -8367,11 +8367,74 @@ if (ImGui::BeginMenu("File")) {
                     state.name = stateName;
                 }
                 ImGui::SameLine();
+
+                char animationPath[512];
+                std::snprintf(animationPath, sizeof(animationPath), "%s",
+                              state.animationPath.c_str());
+                ImGui::SetNextItemWidth(260.0f);
+                if (ImGui::InputText("Animation FBX", animationPath,
+                                     sizeof(animationPath))) {
+                    state.animationPath = animationPath;
+                    state.clip = 0;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Empty = clips embedded in the character model.\n"
+                        "Drag a separate animation FBX here to retarget its "
+                        "clips by bone name.");
+                }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload =
+                            ImGui::AcceptDragDropPayload(
+                                "GALESHI_ASSET_PATH")) {
+                        const char* path =
+                            static_cast<const char*>(payload->Data);
+                        const std::string candidate = path ? path : "";
+                        if (IsModelAssetPath(candidate)) {
+                            state.animationPath =
+                                m_assets->MakeRelativePath(candidate);
+                            state.clip = 0;
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                if (!state.animationPath.empty()) {
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Use Embedded")) {
+                        state.animationPath.clear();
+                        state.clip = 0;
+                    }
+                }
+
+                std::vector<std::string> stateClipNames = clipNames;
+                if (!state.animationPath.empty() && m_assets) {
+                    auto animationModel =
+                        m_assets->LoadModel(state.animationPath);
+                    stateClipNames = animationModel.animationNames;
+                }
+                std::vector<std::string> stateClipLabels;
+                stateClipLabels.reserve(stateClipNames.size());
+                for (size_t clipIndex = 0;
+                     clipIndex < stateClipNames.size(); ++clipIndex) {
+                    stateClipLabels.push_back(
+                        stateClipNames[clipIndex].empty()
+                            ? "Clip " + std::to_string(clipIndex)
+                            : stateClipNames[clipIndex]);
+                }
+                if (stateClipLabels.empty()) {
+                    stateClipLabels.push_back("No animation clips");
+                }
+                std::vector<const char*> stateClipItems;
+                stateClipItems.reserve(stateClipLabels.size());
+                for (const std::string& label : stateClipLabels) {
+                    stateClipItems.push_back(label.c_str());
+                }
                 int clip = std::clamp(
-                    state.clip, 0, static_cast<int>(clipItems.size()) - 1);
+                    state.clip, 0,
+                    static_cast<int>(stateClipItems.size()) - 1);
                 ImGui::SetNextItemWidth(160.0f);
-                if (ImGui::Combo("Clip", &clip, clipItems.data(),
-                                 static_cast<int>(clipItems.size()))) {
+                if (ImGui::Combo("Clip", &clip, stateClipItems.data(),
+                                 static_cast<int>(stateClipItems.size()))) {
                     state.clip = clip;
                 }
                 ImGui::SameLine();

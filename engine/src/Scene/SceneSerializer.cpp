@@ -671,7 +671,9 @@ std::string SceneSerializer::SaveToString() const {
                     {"name", state.name},
                     {"clip", state.clip},
                     {"loop", state.loop},
-                    {"speed", state.speed}
+                    {"speed", state.speed},
+                    {"animationPath",
+                     m_assets.MakeRelativePath(state.animationPath)}
                 });
             }
             json transitions = json::array();
@@ -1434,6 +1436,8 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                     state.clip = js.value("clip", 0);
                     state.loop = js.value("loop", true);
                     state.speed = js.value("speed", 1.0f);
+                    state.animationPath =
+                        js.value("animationPath", std::string{});
                     machine.states.push_back(std::move(state));
                 }
             }
