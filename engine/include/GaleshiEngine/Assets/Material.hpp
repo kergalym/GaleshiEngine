@@ -72,6 +72,13 @@ public:
     std::shared_ptr<Texture> opacityMap;
     std::shared_ptr<Texture> specularMap;
 
+    // Set when one or more imported maps came from a UDIM tile set. The UVs
+    // of meshes using this material are remapped into the generated atlas at
+    // import time; these values are kept for diagnostics and future tools.
+    bool usesUdim = false;
+    glm::vec2 udimUvScale{1.0f, 1.0f};
+    glm::vec2 udimUvOffset{0.0f, 0.0f};
+
     std::string name = "Material";
     std::string sourcePath;
 

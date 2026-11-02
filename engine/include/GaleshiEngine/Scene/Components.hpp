@@ -42,9 +42,19 @@ struct MeshComponent {
     std::string           primitiveType;
     int                   meshIndex = 0;
 
+    // Imported model assets default to authored LOD 0 because their generated
+    // cluster LODs are not a good match for characters. Procedural meshes can
+    // opt into automatic LOD, and every mesh can force a specific level for
+    // inspection.
+    bool                  lodEnabled = true;
+    int                   forcedLod = -1; // -1 = auto
+    float                 lodBias = 1.0f;
+
     MeshComponent() = default;
     MeshComponent(std::shared_ptr<Mesh> m, std::string path = {}, std::string prim = {}, int mi = 0)
-        : mesh(std::move(m)), sourceAssetPath(std::move(path)), primitiveType(std::move(prim)), meshIndex(mi) {}
+        : mesh(std::move(m)), sourceAssetPath(std::move(path)),
+          primitiveType(std::move(prim)), meshIndex(mi),
+          lodEnabled(sourceAssetPath.empty()) {}
 };
 
 struct SkeletalComponent {

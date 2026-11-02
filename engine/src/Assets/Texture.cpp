@@ -8,9 +8,12 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -609,7 +612,200 @@ Texture* LoadEncodedBytes(const uint8_t* data, size_t size,
     return tex;
 }
 
+namespace {
+struct UdimName {
+    bool valid = false;
+    std::string prefix;
+    std::string suffix;
+    std::string extension;
+    int tile = 0;
+};
+
+UdimName ParseUdimName(const std::filesystem::path& path) {
+    UdimName result;
+    const std::string stem = path.stem().string();
+    result.extension = path.extension().string();
+    std::string extensionLower = result.extension;
+    for (char& c : extensionLower)
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    result.extension = extensionLower;
+    if (stem.size() < 5) return result;
+
+    // Substance Painter commonly writes <name>.1001.png, but some pipelines
+    // use <name>_1001.png or <name>-1001.png. Accept all three separators.
+    for (int start = static_cast<int>(stem.size()) - 4; start >= 0; --start) {
+        bool digits = true;
+        for (int i = 0; i < 4; ++i) {
+            digits &= std::isdigit(
+                static_cast<unsigned char>(stem[static_cast<size_t>(start + i)])) != 0;
+        }
+        if (!digits) continue;
+        const int tile = std::stoi(
+            stem.substr(static_cast<size_t>(start), 4));
+        if (tile < 1001 || tile > 1099) continue;
+        if (start > 0) {
+            const char separator = stem[static_cast<size_t>(start - 1)];
+            if (separator != '.' && separator != '_' && separator != '-')
+                continue;
+        }
+        result.valid = true;
+        result.tile = tile;
+        result.prefix = stem.substr(
+            0, start > 0 ? static_cast<size_t>(start - 1) : 0);
+        result.suffix = stem.substr(static_cast<size_t>(start + 4));
+        return result;
+    }
+    return result;
+}
 } // namespace
+} // namespace
+
+bool Texture::IsUdimPath(const std::string& path) {
+    if (path.empty()) return false;
+    return ParseUdimName(std::filesystem::path(path)).valid;
+}
+
+Texture* Texture::LoadUdimFromFile(const std::string& path, bool srgb,
+                                   UdimInfo* outInfo) {
+    namespace fs = std::filesystem;
+    if (outInfo) *outInfo = UdimInfo{};
+
+    const fs::path requested(path);
+    const UdimName requestedName = ParseUdimName(requested);
+    if (!requestedName.valid) return nullptr;
+
+    std::error_code ec;
+    const fs::path directory = requested.parent_path().empty()
+        ? fs::current_path(ec)
+        : requested.parent_path();
+    if (ec) return nullptr;
+
+    struct TileFile {
+        int tile = 0;
+        fs::path path;
+    };
+    std::vector<TileFile> tiles;
+    for (const auto& entry : fs::directory_iterator(directory, ec)) {
+        if (ec || !entry.is_regular_file()) continue;
+        const UdimName candidate = ParseUdimName(entry.path());
+        if (!candidate.valid) continue;
+        if (candidate.prefix != requestedName.prefix) continue;
+        if (candidate.suffix != requestedName.suffix) continue;
+        if (candidate.extension != requestedName.extension) continue;
+        tiles.push_back({candidate.tile, entry.path()});
+    }
+    if (ec || tiles.size() < 2) return nullptr;
+
+    std::sort(tiles.begin(), tiles.end(),
+              [](const TileFile& a, const TileFile& b) {
+                  return a.tile < b.tile;
+              });
+
+    int minTileU = 10;
+    int minTileV = 10;
+    int maxTileU = -1;
+    int maxTileV = -1;
+    for (const auto& tile : tiles) {
+        const int u = (tile.tile - 1001) % 10;
+        const int v = (tile.tile - 1001) / 10;
+        minTileU = std::min(minTileU, u);
+        minTileV = std::min(minTileV, v);
+        maxTileU = std::max(maxTileU, u);
+        maxTileV = std::max(maxTileV, v);
+    }
+    const int tilesX = maxTileU - minTileU + 1;
+    const int tilesY = maxTileV - minTileV + 1;
+
+    stbi_set_flip_vertically_on_load(true);
+    int tileWidth = 0;
+    int tileHeight = 0;
+    int channels = 0;
+    unsigned char* firstPixels = stbi_load(
+        requested.string().c_str(), &tileWidth, &tileHeight, &channels, 4);
+    if (!firstPixels || tileWidth <= 0 || tileHeight <= 0) {
+        if (firstPixels) stbi_image_free(firstPixels);
+        spdlog::warn("[Texture] UDIM set '{}' could not read its first tile",
+                     path);
+        return nullptr;
+    }
+    stbi_image_free(firstPixels);
+
+    const int atlasWidth = tileWidth * tilesX;
+    const int atlasHeight = tileHeight * tilesY;
+    constexpr int kMaxTextureSize = 16384;
+    if (atlasWidth > kMaxTextureSize || atlasHeight > kMaxTextureSize) {
+        spdlog::warn(
+            "[Texture] UDIM set '{}' requires {}x{} atlas, exceeding the "
+            "{} px limit",
+            path, atlasWidth, atlasHeight, kMaxTextureSize);
+        return nullptr;
+    }
+
+    std::vector<unsigned char> atlas(
+        static_cast<size_t>(atlasWidth) * atlasHeight * 4, 0);
+    int loadedTiles = 0;
+    for (const auto& tile : tiles) {
+        int width = 0;
+        int height = 0;
+        int sourceChannels = 0;
+        unsigned char* pixels = stbi_load(
+            tile.path.string().c_str(), &width, &height, &sourceChannels, 4);
+        if (!pixels || width <= 0 || height <= 0) {
+            if (pixels) stbi_image_free(pixels);
+            spdlog::warn("[Texture] UDIM tile '{}' could not be decoded",
+                         tile.path.string());
+            continue;
+        }
+        const int tileU = (tile.tile - 1001) % 10;
+        const int tileV = (tile.tile - 1001) / 10;
+        const int destX = (tileU - minTileU) * tileWidth;
+        const int destY = (tileV - minTileV) * tileHeight;
+        for (int y = 0; y < tileHeight; ++y) {
+            const int sourceY = (height == tileHeight)
+                ? y
+                : std::min(height - 1, y * height / tileHeight);
+            for (int x = 0; x < tileWidth; ++x) {
+                const int sourceX = (width == tileWidth)
+                    ? x
+                    : std::min(width - 1, x * width / tileWidth);
+                const unsigned char* source =
+                    pixels + (static_cast<size_t>(sourceY) * width + sourceX) * 4;
+                unsigned char* dest =
+                    atlas.data() +
+                    (static_cast<size_t>(destY + y) * atlasWidth +
+                     destX + x) * 4;
+                std::memcpy(dest, source, 4);
+            }
+        }
+        stbi_image_free(pixels);
+        ++loadedTiles;
+    }
+    if (loadedTiles == 0) return nullptr;
+
+    Texture* texture = CreateFromRgba8Source(
+        atlas.data(), static_cast<uint32_t>(atlasWidth),
+        static_cast<uint32_t>(atlasHeight), path, srgb, false);
+    if (!texture) return nullptr;
+
+    if (outInfo) {
+        outInfo->valid = true;
+        outInfo->minU = minTileU;
+        outInfo->minV = minTileV;
+        outInfo->tilesX = tilesX;
+        outInfo->tilesY = tilesY;
+        outInfo->uvScale = {
+            1.0f / static_cast<float>(tilesX),
+            1.0f / static_cast<float>(tilesY)
+        };
+        outInfo->uvOffset = {
+            -static_cast<float>(minTileU) / static_cast<float>(tilesX),
+            -static_cast<float>(minTileV) / static_cast<float>(tilesY)
+        };
+    }
+    spdlog::info("[Texture] UDIM '{}' -> {}x{} atlas, tilesX={} tilesY={}",
+                 path, atlasWidth, atlasHeight, tilesX, tilesY);
+    return texture;
+}
 
 Texture::~Texture() { Destroy(); }
 

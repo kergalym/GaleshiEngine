@@ -7,6 +7,8 @@
 #include <vector>
 #include <glm/glm.hpp>
 
+#include "GaleshiEngine/Assets/Texture.hpp"
+
 struct aiScene;
 namespace Assimp { class Importer; }
 
@@ -22,12 +24,19 @@ public:
     ~AssetManager();
 
     // srgb = true for colour maps (base colour/emissive), false for data maps.
-    std::shared_ptr<Texture> LoadTexture(const std::string& path, bool srgb = false);
+    // If the path belongs to a Substance Painter/UDIM tile set, all tiles are
+    // packed into one atlas and udim receives the UV remap information.
+    std::shared_ptr<Texture> LoadTexture(
+        const std::string& path, bool srgb = false,
+        Texture::UdimInfo* udim = nullptr);
 
     struct LoadedModel {
         std::vector<std::shared_ptr<Mesh>>     meshes;
         std::vector<std::shared_ptr<Material>> materials;
         std::vector<int>                       meshMaterialIndex;
+        // Original exporter node/mesh names, used as the display fallback for
+        // legitimately unnamed materials.
+        std::vector<std::string>               meshNames;
         
         std::shared_ptr<Assimp::Importer>      importer; // Храним importer
         std::shared_ptr<aiScene>               rawScene;
@@ -117,6 +126,8 @@ public:
 
 private:
     std::unordered_map<std::string, std::shared_ptr<Texture>> m_textures;
+    // Cached UV layouts for packed UDIM atlases, keyed like m_textures.
+    std::unordered_map<std::string, Texture::UdimInfo>        m_udimInfo;
     // Embedded FBX/glTF textures indexed by normalized lowercase path and basename.
     std::unordered_map<std::string, std::shared_ptr<Texture>> m_embeddedTextures;
     std::unordered_map<std::string, LoadedModel>              m_models;

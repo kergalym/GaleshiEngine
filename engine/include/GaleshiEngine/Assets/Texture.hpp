@@ -1,6 +1,7 @@
 #pragma once
 
 #include <bgfx/bgfx.h>
+#include <glm/glm.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -9,6 +10,16 @@ namespace Galeshi {
 
 class Texture {
 public:
+    struct UdimInfo {
+        bool valid = false;
+        int minU = 0;
+        int minV = 0;
+        int tilesX = 1;
+        int tilesY = 1;
+        glm::vec2 uvScale{1.0f, 1.0f};
+        glm::vec2 uvOffset{0.0f, 0.0f};
+    };
+
     Texture() = default;
     ~Texture();
 
@@ -20,6 +31,12 @@ public:
     // передаются на GPU вместе с полной цепочкой mip-уровней.
     // srgb=true включает аппаратное sRGB->linear преобразование при выборке.
     static Texture* LoadFromFile(const std::string& path, bool srgb = false);
+    // Loads a Substance Painter/UDIM tile set (1001, 1002, ...) into a single
+    // bottom-left-origin atlas. The returned texture keeps the requested path
+    // so scene serialization still references a real source file.
+    static Texture* LoadUdimFromFile(const std::string& path, bool srgb,
+                                    UdimInfo* outInfo = nullptr);
+    static bool IsUdimPath(const std::string& path);
     static Texture* LoadFromMemory(const unsigned char* data, size_t size,
                                   const std::string& displayPath = "<embedded>",
                                   bool srgb = false);

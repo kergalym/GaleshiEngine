@@ -885,12 +885,28 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         }
 
         uint32_t lod = 0;
-        if (m_lodEnabled && !hasSkeleton && !modelMoved &&
-            !scene.Registry().all_of<SoftBodyComponent>(h)) {
+        // Imported model assets default to authored LOD 0 (their split
+        // sub-meshes otherwise decimate separately and lose character
+        // detail), but Details exposes per-mesh enable/bias/force controls.
+        const bool autoLodRequested =
+            mc.forcedLod < 0 && m_lodEnabled && mc.lodEnabled &&
+            !modelMoved && !scene.Registry().all_of<SoftBodyComponent>(h);
+        const bool forcedLodRequested = mc.forcedLod >= 0;
+        if (!hasSkeleton && (autoLodRequested || forcedLodRequested)) {
             mc.mesh->EnsureLods();
-            const float projectedRadius = ProjectedSphereRadius(
-                worldCenter, worldRadius, camera.Position(), camera.Projection());
-            lod = static_cast<uint32_t>(SelectLod(*mc.mesh, projectedRadius, m_lodBias));
+            if (forcedLodRequested) {
+                const uint32_t maxLod =
+                    mc.mesh->LodCount() > 0 ? mc.mesh->LodCount() - 1 : 0;
+                lod = std::min<uint32_t>(
+                    static_cast<uint32_t>(std::max(mc.forcedLod, 0)), maxLod);
+            } else {
+                const float projectedRadius = ProjectedSphereRadius(
+                    worldCenter, worldRadius, camera.Position(),
+                    camera.Projection());
+                lod = static_cast<uint32_t>(SelectLod(
+                    *mc.mesh, projectedRadius,
+                    m_lodBias * std::max(mc.lodBias, 0.01f)));
+            }
         }
 
         // Static meshes sharing geometry, LOD and material state are

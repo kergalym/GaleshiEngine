@@ -169,6 +169,7 @@ void AssetManager::Clear() {
     // remain alive.
     m_models.clear();
     m_textures.clear();
+    m_udimInfo.clear();
     m_embeddedTextures.clear();
     m_cubeMesh.reset();
     m_sphereMesh.reset();
@@ -204,13 +205,60 @@ std::string TextureCacheKey(const std::string& path, bool srgb) {
 }
 } // namespace
 
-std::shared_ptr<Texture> AssetManager::LoadTexture(const std::string& originalPath, bool srgb) {
+std::shared_ptr<Texture> AssetManager::LoadTexture(
+    const std::string& originalPath, bool srgb, Texture::UdimInfo* udimInfo) {
     if (originalPath.empty()) return m_white;
     const std::string path = MakeRelativePath(originalPath);
 
     const std::string normalized = NormalizeAssetPath(path);
     const std::string key       = TextureCacheKey(path, srgb);
     const std::string normKey   = TextureCacheKey(normalized, srgb);
+
+    // Substance Painter exports one file per UDIM tile. Probe the tile set
+    // before the ordinary one-file cache so a file path from a material always
+    // resolves to the complete atlas.
+    if (Texture::IsUdimPath(path)) {
+        const std::string udimKey = "udim:" + key;
+        auto cached = m_textures.find(udimKey);
+        if (cached != m_textures.end()) {
+            if (udimInfo) {
+                auto info = m_udimInfo.find(udimKey);
+                if (info != m_udimInfo.end()) *udimInfo = info->second;
+            }
+            return cached->second;
+        }
+
+        std::error_code udimEc;
+        const std::string resolvedUdim = ResolvePath(path);
+        std::string resolvedUdimFallback;
+        bool udimExists = std::filesystem::exists(resolvedUdim, udimEc);
+        if (!udimExists && normalized != path) {
+            udimEc.clear();
+            resolvedUdimFallback = ResolvePath(normalized);
+            udimExists = std::filesystem::exists(resolvedUdimFallback, udimEc);
+        }
+        if (udimExists) {
+            Texture::UdimInfo info;
+            Texture* rawUdim = Texture::LoadUdimFromFile(
+                resolvedUdim, srgb, &info);
+            if (!rawUdim && !resolvedUdimFallback.empty()) {
+                rawUdim = Texture::LoadUdimFromFile(
+                    resolvedUdimFallback, srgb, &info);
+            }
+            if (rawUdim) {
+                std::shared_ptr<Texture> tex(rawUdim);
+                m_textures[udimKey] = tex;
+                m_udimInfo[udimKey] = info;
+                m_textures[key] = tex;
+                m_textures[normKey] = tex;
+                if (udimInfo) *udimInfo = info;
+                spdlog::info(
+                    "[AssetManager] UDIM atlas '{}' tiles={}x{}",
+                    path, info.tilesX, info.tilesY);
+                return tex;
+            }
+        }
+    }
 
     auto it = m_textures.find(key);
     if (it != m_textures.end()) return it->second;
@@ -644,6 +692,13 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
     unsigned int postProcess = kSkinnedImportFlags;
     if (extension == ".gltf" || extension == ".glb") {
         postProcess |= aiProcess_FlipUVs;
+        // glTF's front-face winding is opposite to the engine's FBX import
+        // path after Assimp's coordinate conversion. Without this flip,
+        // single-sided glTF materials cull the visible exterior and the
+        // character appears to have missing faces. Flip the indices once at
+        // import time so Two Sided remains a genuine material option rather
+        // than a required workaround.
+        postProcess |= aiProcess_FlipWindingOrder;
     }
     spdlog::info(
         "[AssetManager] Assimp flags=Triangulate|GenSmoothNormals|"
@@ -767,7 +822,9 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
     };
 
     auto resolveExternalTexture = [&](const std::string& reference,
-                                      bool srgb) -> std::shared_ptr<Texture> {
+                                      bool srgb,
+                                      Texture::UdimInfo* udimInfo)
+        -> std::shared_ptr<Texture> {
         const std::filesystem::path relative(NormalizeAssetPath(reference));
         std::filesystem::path resolved;
         std::error_code ec;
@@ -784,7 +841,7 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         }
         if (resolved.empty()) return nullptr;
 
-        auto tex = LoadTexture(resolved.string(), srgb);
+        auto tex = LoadTexture(resolved.string(), srgb, udimInfo);
         if (tex && tex != m_white) {
             spdlog::info("  -> EXTERNAL '{}': OK{}", resolved.string(),
                          srgb ? " [sRGB]" : "");
@@ -794,12 +851,14 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
     };
 
     auto loadTextureReference = [&](const std::string& reference,
-                                    bool srgb) -> std::shared_ptr<Texture> {
+                                    bool srgb,
+                                    Texture::UdimInfo* udimInfo = nullptr)
+        -> std::shared_ptr<Texture> {
         if (reference.empty()) return nullptr;
         int embeddedIndex = -1;
         if (findEmbeddedTexture(reference, embeddedIndex))
             return loadEmbeddedTexture(embeddedIndex, reference, srgb);
-        return resolveExternalTexture(reference, srgb);
+        return resolveExternalTexture(reference, srgb, udimInfo);
     };
 
     // Assimp sometimes stores only the "*N" index in material texture slots.
@@ -898,6 +957,10 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
 
         aiString name;
         aiMat->Get(AI_MATKEY_NAME, name);
+        // Preserve the material name exactly as written by the exporter.
+        // Blender/glTF/FBX names are the source of truth; do not invent a
+        // fallback name here, because that would make the Details material
+        // list diverge from the source asset.
         mat->name = name.C_Str();
 
         // Assimp exposes AI_MATKEY_TWOSIDED for formats that carry it. If the
@@ -1069,8 +1132,27 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         auto assign = [&](std::shared_ptr<Texture>& slot, const std::string& ref,
                           bool srgb) {
             if (slot || ref.empty()) return;
-            auto tex = loadTextureReference(ref, srgb);
-            if (tex && tex != m_white) slot = tex;
+            Texture::UdimInfo udim;
+            auto tex = loadTextureReference(ref, srgb, &udim);
+            if (tex && tex != m_white) {
+                slot = tex;
+                if (udim.valid) {
+                    if (!mat->usesUdim) {
+                        mat->usesUdim = true;
+                        mat->udimUvScale = udim.uvScale;
+                        mat->udimUvOffset = udim.uvOffset;
+                    } else if (
+                        mat->udimUvScale.x != udim.uvScale.x ||
+                        mat->udimUvScale.y != udim.uvScale.y ||
+                        mat->udimUvOffset.x != udim.uvOffset.x ||
+                        mat->udimUvOffset.y != udim.uvOffset.y) {
+                        spdlog::warn(
+                            "[AssetManager] Material '{}' has UDIM maps with "
+                            "different tile layouts; using the first layout",
+                            mat->name);
+                    }
+                }
+            }
         };
 
         // Base-colour and emissive textures carry sRGB-encoded colour. All
@@ -1121,7 +1203,9 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
                      mat->specularMap != nullptr);
 
         if (!mat->albedoMap) {
-            spdlog::warn("  No albedo texture found for material '{}'", mat->name);
+            spdlog::warn(
+                "  No albedo texture found for material slot {} '{}'",
+                i, mat->name.empty() ? "(unnamed)" : mat->name);
         }
 
         out.materials.push_back(mat);
@@ -1162,6 +1246,12 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         spdlog::info("[AssetManager] Mesh[{}]: {} verts, {} bones, material index {}",
                      i, am->mNumVertices, am->mNumBones, am->mMaterialIndex);
 
+        const Material* meshMaterial =
+            am->mMaterialIndex < out.materials.size()
+                ? out.materials[static_cast<size_t>(am->mMaterialIndex)].get()
+                : nullptr;
+        const bool remapUdimUvs = meshMaterial && meshMaterial->usesUdim;
+
         std::vector<Vertex> verts;
         verts.reserve(am->mNumVertices);
         for (unsigned v = 0; v < am->mNumVertices; ++v) {
@@ -1171,7 +1261,13 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
                 vert.normal = glm::normalize(glm::vec3(normalTransform * glm::vec4(aiToVec3(am->mNormals[v]), 0.0f)));
             }
             if (am->HasTangentsAndBitangents()) vert.tangent = aiToVec3(am->mTangents[v]);
-            if (am->HasTextureCoords(0)) vert.uv = aiToVec2(am->mTextureCoords[0][v]);
+            if (am->HasTextureCoords(0)) {
+                vert.uv = aiToVec2(am->mTextureCoords[0][v]);
+                if (remapUdimUvs) {
+                    vert.uv = vert.uv * meshMaterial->udimUvScale +
+                              meshMaterial->udimUvOffset;
+                }
+            }
             vert.boneWeights = glm::vec4(0.0f);
             vert.boneIDs = glm::vec4(0.0f);
             verts.push_back(vert);
@@ -1188,6 +1284,7 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         mesh->Upload(verts, indices);
         out.meshes.push_back(mesh);
         out.meshMaterialIndex.push_back(am->mMaterialIndex);
+        out.meshNames.emplace_back(am->mName.C_Str());
     }
 
     // === BONES (из первого меша) ===

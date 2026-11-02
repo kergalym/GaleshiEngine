@@ -714,13 +714,14 @@ std::string ContentBrowser::Draw() {
     ImGui::TextDisabled("| Drop files here to import");
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
-            "Drag FBX/glTF/GLB/OBJ/DAE models, textures or audio from any\n"
-            "file manager and drop them into this folder.");
+            "Drag glTF/GLB/OBJ/DAE models, textures or audio from any\n"
+            "file manager and drop them into this folder. FBX drag & drop\n"
+            "is disabled; export FBX assets to glTF/GLB first.");
     }
     ImGui::SameLine();
     if (ImGui::Button("Import Asset")) {
         m_importPicker.Open(m_current.string(), "Import Asset",
-                            { ".fbx", ".gltf", ".glb", ".obj", ".dae",
+                            { ".gltf", ".glb", ".obj", ".dae",
                               ".png", ".jpg", ".wav", ".mp3" });
     }
     ImGui::Separator();
@@ -754,7 +755,10 @@ std::string ContentBrowser::Draw() {
             auto tex = m_assets->LoadTexture(path);
             if (tex && bgfx::isValid(tex->Handle())) {
                 ImTextureID texId = static_cast<ImTextureID>(tex->Handle().idx);
-                ImGui::Image(texId, ImVec2(32, 32));
+                // Texture uploads use the bottom-left V origin; ImGui uses
+                // top-left, so flip the thumbnail UVs to match Blender.
+                ImGui::Image(texId, ImVec2(32, 32),
+                             ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
                 ImGui::SameLine();
             }
         }

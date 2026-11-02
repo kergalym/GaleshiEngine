@@ -639,7 +639,14 @@ std::string SceneSerializer::SaveToString() const {
 
         if (reg.all_of<MeshComponent>(handle)) {
             const auto& mc = reg.get<MeshComponent>(handle);
-            je["mesh"] = { {"sourceAssetPath", m_assets.MakeRelativePath(mc.sourceAssetPath)}, {"primitiveType", mc.primitiveType}, {"meshIndex", mc.meshIndex} };
+            je["mesh"] = {
+                {"sourceAssetPath", m_assets.MakeRelativePath(mc.sourceAssetPath)},
+                {"primitiveType", mc.primitiveType},
+                {"meshIndex", mc.meshIndex},
+                {"lodEnabled", mc.lodEnabled},
+                {"forcedLod", mc.forcedLod},
+                {"lodBias", mc.lodBias}
+            };
         }
         if (reg.all_of<MaterialComponent>(handle)) {
             const auto& matc = reg.get<MaterialComponent>(handle);
@@ -1349,6 +1356,8 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             softBody.softBodyId = 0xFFFFFFFFu;
         }
 
+        bool hasRenderableMesh = false;
+        std::shared_ptr<Material> meshFallbackMaterial;
         if (je.contains("mesh")) {
             const auto& jm = je["mesh"];
             const std::string primitive = jm.value("primitiveType", std::string{});
@@ -1377,10 +1386,25 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                 auto model = m_assets.LoadModel(m_assets.MakeRelativePath(source));
                 if (meshIndex >= 0 && meshIndex < static_cast<int>(model.meshes.size())) {
                     mesh = model.meshes[static_cast<size_t>(meshIndex)];
+                    if (meshIndex < static_cast<int>(model.meshMaterialIndex.size())) {
+                        const int materialIndex =
+                            model.meshMaterialIndex[static_cast<size_t>(meshIndex)];
+                        if (materialIndex >= 0 &&
+                            materialIndex < static_cast<int>(model.materials.size())) {
+                            meshFallbackMaterial =
+                                model.materials[static_cast<size_t>(materialIndex)];
+                        }
+                    }
                 }
             }
             if (mesh && mesh->Valid()) {
-                e.AddComponent<MeshComponent>(MeshComponent{ mesh, source, primitive, meshIndex });
+                auto& meshComponent = e.AddComponent<MeshComponent>(
+                    MeshComponent{ mesh, source, primitive, meshIndex });
+                meshComponent.lodEnabled =
+                    jm.value("lodEnabled", source.empty());
+                meshComponent.forcedLod = jm.value("forcedLod", -1);
+                meshComponent.lodBias = jm.value("lodBias", 1.0f);
+                hasRenderableMesh = true;
             }
         }
 
@@ -1400,6 +1424,17 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                 meshSource = je["mesh"].value("sourceAssetPath", std::string{});
             }
             material = MaterialFromJson(je["material"], m_assets, meshSource);
+        }
+
+        // A renderable mesh must always own a material slot. Some imported
+        // glTF primitives reference an unnamed/empty material (or a scene file
+        // lost its material table entry); keep the slot instead of dropping it
+        // from the entity/details list.
+        if (!material && hasRenderableMesh) {
+            material = meshFallbackMaterial;
+            if (!material) material = std::make_shared<Material>();
+            // Keep the exported material name, including a legitimately empty
+            // one. Details falls back to the entity/object label for display.
         }
 
         if (material) {

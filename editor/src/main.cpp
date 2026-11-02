@@ -69,6 +69,7 @@
 #include <chrono>
 #include <mutex>
 #include <random>
+#include <unordered_map>
 #include <unordered_set>
 
 struct LoadingState {
@@ -129,6 +130,21 @@ static bool IsModelAssetPath(const std::string& path) {
     return extension == ".fbx" || extension == ".gltf" ||
            extension == ".glb" || extension == ".obj" ||
            extension == ".dae";
+}
+
+static bool IsGltfModelAssetPath(const std::string& path) {
+    const std::string extension = AssetExtensionLower(path);
+    return extension == ".gltf" || extension == ".glb";
+}
+
+// FBX remains loadable for existing scenes, but asset drag & drop fields now
+// accept the runtime-oriented glTF/GLB path (plus OBJ/DAE for static props).
+// Keeping this separate from IsModelAssetPath lets legacy file pickers and
+// scene loading continue to work while Drop Model fields stay FBX-free.
+static bool IsDragDropModelAssetPath(const std::string& path) {
+    const std::string extension = AssetExtensionLower(path);
+    return extension == ".gltf" || extension == ".glb" ||
+           extension == ".obj" || extension == ".dae";
 }
 
 static bool IsImageAssetPath(const std::string& path) {
@@ -501,7 +517,14 @@ protected:
         if (!m_projectLoaded || !m_assets) return;
         namespace fs = std::filesystem;
         const std::string ext = AssetExtensionLower(filepath);
-        if (!IsModelAssetPath(filepath) && !IsImageAssetPath(filepath) &&
+        if (ext == ".fbx") {
+            spdlog::warn(
+                "[Editor] FBX drag & drop is no longer supported. "
+                "Export the model as glTF/GLB first: {}",
+                filepath);
+            return;
+        }
+        if (!IsDragDropModelAssetPath(filepath) && !IsImageAssetPath(filepath) &&
             ext != ".wav" && ext != ".mp3") {
             return;
         }
@@ -1571,6 +1594,14 @@ protected:
         std::string chosenLoad = m_scenePicker.Draw();
         if (!chosenLoad.empty()) {
             LoadSceneFromPath(chosenLoad);
+        }
+
+        // Character model replacement picker (glTF/GLB only).
+        std::string chosenCharacterModel = m_characterModelPicker.Draw();
+        if (!chosenCharacterModel.empty() &&
+            m_characterModelTarget != entt::null) {
+            ReplaceCharacterModel(m_characterModelTarget, chosenCharacterModel);
+            m_characterModelTarget = entt::null;
         }
 
         // Static tree-mesh picker for the selected landscape vegetation.
@@ -4934,6 +4965,36 @@ if (ImGui::BeginMenu("File")) {
                 : glm::vec3(0.0f, 1.0f, 0.0f);
         }
 
+        // Mouse-look overrides the game camera without changing the scene
+        // entity. This keeps gameplay scripts free to move/rotate the
+        // character while the player can still look around by holding RMB.
+        const bool gameLookInput =
+            (m_editor.isPlaying || m_isGameMode) &&
+            (m_viewportHovered || m_isGameMode) &&
+            !ImGui::GetIO().WantTextInput &&
+            ImGui::IsMouseDown(ImGuiMouseButton_Right);
+        if (gameLookInput) {
+            const ImVec2 delta = ImGui::GetIO().MouseDelta;
+            const float sensitivity = m_preferences.cameraOrbitSensitivity;
+            m_gameCameraYawOffset -= delta.x * sensitivity;
+            m_gameCameraPitchOffset -= delta.y * sensitivity;
+            m_gameCameraPitchOffset = glm::clamp(
+                m_gameCameraPitchOffset, -1.50f, 1.50f);
+        }
+
+        if (std::abs(m_gameCameraYawOffset) > 1e-6f ||
+            std::abs(m_gameCameraPitchOffset) > 1e-6f) {
+            const float baseYaw = std::atan2(forward.x, forward.z);
+            const float basePitch = std::asin(glm::clamp(forward.y, -1.0f, 1.0f));
+            const float yaw = baseYaw + m_gameCameraYawOffset;
+            const float pitch = glm::clamp(
+                basePitch + m_gameCameraPitchOffset, -1.52f, 1.52f);
+            const float horizontal = std::cos(pitch);
+            forward = {std::sin(yaw) * horizontal, std::sin(pitch),
+                       std::cos(yaw) * horizontal};
+            up = glm::vec3(0.0f, 1.0f, 0.0f);
+        }
+
         const float aspect = m_viewportH
             ? static_cast<float>(m_viewportW) / static_cast<float>(m_viewportH)
             : 16.0f / 9.0f;
@@ -4961,6 +5022,8 @@ if (ImGui::BeginMenu("File")) {
 
     bool ActivateGameplayCamera() {
         m_usingGameCamera = true;
+        m_gameCameraYawOffset = 0.0f;
+        m_gameCameraPitchOffset = 0.0f;
         UpdateGameplayCamera();
         if (!m_usingGameCamera) {
             RestoreEditorCamera();
@@ -7339,13 +7402,22 @@ if (ImGui::BeginMenu("File")) {
                 Galeshi::Entity dropSelection = m_editor.Selected(&m_scene);
                 if (const ImGuiPayload* active = ImGui::GetDragDropPayload();
                     active && active->IsDataType("GALESHI_ASSET_PATH") &&
-                    IsModelAssetPath(static_cast<const char*>(active->Data)) &&
+                    IsDragDropModelAssetPath(static_cast<const char*>(active->Data)) &&
                     dropSelection &&
-                    dropSelection.HasComponent<Galeshi::LandscapeComponent>() &&
                     ImGui::IsItemHovered(
                         ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
-                    ImGui::SetTooltip(
-                        "Drop to assign this model as the Landscape tree mesh.");
+                    if (dropSelection.HasComponent<Galeshi::LandscapeComponent>()) {
+                        ImGui::SetTooltip(
+                            "Drop to assign this model as the Landscape tree mesh.");
+                    } else if (IsGltfModelAssetPath(
+                                   static_cast<const char*>(active->Data)) &&
+                               FindSkeletalRootForReplacement(
+                                   dropSelection.Handle())) {
+                        ImGui::SetTooltip(
+                            "Drop to replace the selected character's model "
+                            "with this glTF/GLB.\n"
+                            "Customized material properties are preserved.");
+                    }
                 }
             }
             if (!m_isGameMode && ImGui::BeginDragDropTarget()) {
@@ -7893,7 +7965,11 @@ if (ImGui::BeginMenu("File")) {
 
         if (slot && bgfx::isValid(slot->Handle())) {
             ImTextureID texId = static_cast<ImTextureID>(slot->Handle().idx);
-            ImGui::Image(texId, ImVec2(64, 64));
+            // Engine textures are uploaded with a bottom-left V origin (the
+            // Blender/UV convention); ImGui displays top-left, so flip only
+            // the preview quad.
+            ImGui::Image(texId, ImVec2(64, 64),
+                         ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
             ImGui::SameLine();
             ImGui::BeginGroup();
             std::string path = slot->Path();
@@ -8098,7 +8174,15 @@ if (ImGui::BeginMenu("File")) {
             // Snapshot children before drawing (avoids iterator invalidation during drag&drop)
             std::vector<entt::entity> children;
             reg.view<Galeshi::ParentComponent>().each([&](auto child, auto& pc) {
-                if (pc.parent == e) children.push_back(child);
+                if (pc.parent != e) return;
+                // Material-only placeholders are Details slots, not model
+                // hierarchy nodes; keep them out of the Outliner.
+                if (reg.all_of<Galeshi::NameComponent>(child)) {
+                    const auto& childName =
+                        reg.get<Galeshi::NameComponent>(child).name;
+                    if (childName.rfind("__material_slot__", 0) == 0) return;
+                }
+                children.push_back(child);
             });
             if (IsModelRoot(e, children)) {
                 // Imported model roots collapse their own mesh submeshes, but
@@ -8160,26 +8244,45 @@ if (ImGui::BeginMenu("File")) {
             }
             if (ImGui::BeginDragDropTarget()) {
                 // A model dropped on a Landscape node becomes its instanced
-                // static tree mesh. Other entities keep accepting only
-                // Outliner reparenting drops.
-                if (reg.all_of<Galeshi::LandscapeComponent>(e)) {
-                    if (const ImGuiPayload* active =
-                            ImGui::GetDragDropPayload();
-                        active && active->IsDataType("GALESHI_ASSET_PATH") &&
-                        ImGui::IsItemHovered(
-                            ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+                // static tree mesh. A glTF/GLB dropped on a character or on
+                // its capsule swaps the model while preserving the hierarchy
+                // and authored material values. Other entities keep accepting
+                // only Outliner reparenting drops.
+                if (const ImGuiPayload* active = ImGui::GetDragDropPayload();
+                    active && active->IsDataType("GALESHI_ASSET_PATH") &&
+                    ImGui::IsItemHovered(
+                        ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+                    const char* activePath =
+                        static_cast<const char*>(active->Data);
+                    if (reg.all_of<Galeshi::LandscapeComponent>(e)) {
                         ImGui::SetTooltip(
                             "Drop a model to use it as this Landscape's "
                             "instanced tree mesh.");
+                    } else if (activePath &&
+                               IsGltfModelAssetPath(activePath) &&
+                               FindSkeletalRootForReplacement(e)) {
+                        ImGui::SetTooltip(
+                            "Drop to replace this character's model with the "
+                            "glTF/GLB.\nCustomized material properties are "
+                            "preserved.");
+                    } else if (activePath &&
+                               AssetExtensionLower(activePath) == ".fbx") {
+                        ImGui::SetTooltip(
+                            "FBX drag & drop is disabled. Use glTF/GLB.");
                     }
-                    if (const ImGuiPayload* payload =
-                            ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
-                        const char* path =
-                            static_cast<const char*>(payload->Data);
-                        if (path && IsModelAssetPath(path)) {
+                }
+                if (const ImGuiPayload* payload =
+                        ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
+                    const char* path =
+                        static_cast<const char*>(payload->Data);
+                    if (path && reg.all_of<Galeshi::LandscapeComponent>(e)) {
+                        if (IsDragDropModelAssetPath(path)) {
                             AssignLandscapeTreeModel(
                                 Galeshi::Entity(e, &m_scene), path);
                         }
+                    } else if (path && IsGltfModelAssetPath(path) &&
+                               FindSkeletalRootForReplacement(e)) {
+                        ReplaceCharacterModel(e, path);
                     }
                 }
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ENTITY")) {
@@ -8923,6 +9026,79 @@ void DrawDetails() {
         auto selected = m_editor.SelectedAll(&m_scene);
         if (selected.empty()) { ImGui::TextDisabled("No selection"); ImGui::End(); return; }
 
+        auto lowerAscii = [](std::string value) {
+            for (char& c : value) {
+                c = static_cast<char>(
+                    std::tolower(static_cast<unsigned char>(c)));
+            }
+            return value;
+        };
+        const bool searchActive = !m_detailsSearch.empty();
+        const std::string searchLower = lowerAscii(m_detailsSearch);
+        bool detailsAnyMatch = false;
+
+        // Floating sticky search bar inside Details. It has its own rounded
+        // background, is right-aligned, and stays visible while the component
+        // list scrolls in the child below. This is not a separate window.
+        {
+            const float availableWidth = ImGui::GetContentRegionAvail().x;
+            const float searchWidth = std::min(360.0f, availableWidth);
+            const float clearWidth = 52.0f;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + availableWidth -
+                                 searchWidth);
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 7.0f);
+            ImGui::PushStyleColor(ImGuiCol_ChildBg,
+                                  ImVec4(0.075f, 0.095f, 0.12f, 0.94f));
+            ImGui::BeginChild("##DetailsSearchFloat",
+                              ImVec2(searchWidth,
+                                     ImGui::GetFrameHeight() + 10.0f),
+                              true, ImGuiWindowFlags_NoScrollbar |
+                                        ImGuiWindowFlags_NoScrollWithMouse);
+            ImGui::SetCursorPos(ImVec2(6.0f, 5.0f));
+            ImGui::SetNextItemWidth(searchWidth - clearWidth - 16.0f);
+            if (ImGui::InputTextWithHint(
+                    "##DetailsSearch", "Search properties or materials...",
+                    m_detailsSearchBuffer, sizeof(m_detailsSearchBuffer))) {
+                m_detailsSearch = m_detailsSearchBuffer;
+                m_detailsSearchScrollPending = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Clear##DetailsSearch")) {
+                m_detailsSearch.clear();
+                m_detailsSearchBuffer[0] = '\0';
+                m_detailsSearchScrollPending = true;
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar();
+        }
+        ImGui::BeginChild("##DetailsScroll", ImVec2(0.0f, 0.0f), false);
+
+        auto searchContains = [&](const char* text) {
+            if (!searchActive) return true;
+            const std::string value = text ? text : "";
+            return lowerAscii(value).find(searchLower) != std::string::npos;
+        };
+        auto beginDetailsSection = [&](const char* title,
+                                       ImGuiTreeNodeFlags flags,
+                                       const char* keywords) -> bool {
+            if (searchActive) {
+                const std::string haystack =
+                    lowerAscii(std::string(title ? title : "") + " " +
+                               (keywords ? keywords : ""));
+                if (haystack.find(searchLower) == std::string::npos)
+                    return false;
+                detailsAnyMatch = true;
+                ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+            }
+            const bool open = ImGui::CollapsingHeader(title, flags);
+            if (open && searchActive && m_detailsSearchScrollPending) {
+                ImGui::SetScrollHereY(0.0f);
+                m_detailsSearchScrollPending = false;
+            }
+            return open;
+        };
+
         // Collision-shape entities are physics-only: their details page should
         // not expose rendering materials or audio source controls.
         const bool selectedIsCollisionShape =
@@ -8942,6 +9118,7 @@ void DrawDetails() {
         const entt::entity selectedHandle = selected[0].Handle();
         bool selectionHasMesh = false;
         bool selectionHasTextures = false;
+        bool selectionHasMaterials = false;
         for (auto entity : m_scene.AllEntities()) {
             entt::entity cur = entity.Handle();
             bool belongsToSelection = false;
@@ -8964,20 +9141,192 @@ void DrawDetails() {
                 reg.all_of<Galeshi::SkeletalComponent>(handle)) {
                 selectionHasMesh = true;
             }
-            if (reg.all_of<Galeshi::MaterialComponent>(handle) &&
-                materialHasTextures(reg.get<Galeshi::MaterialComponent>(handle))) {
-                selectionHasTextures = true;
+            if (reg.all_of<Galeshi::MaterialComponent>(handle)) {
+                selectionHasMaterials = true;
+                if (materialHasTextures(
+                        reg.get<Galeshi::MaterialComponent>(handle))) {
+                    selectionHasTextures = true;
+                }
             }
         }
 
         if (!selected.empty() && selected[0].HasComponent<Galeshi::NameComponent>()) {
             auto& nc = selected[0].GetComponent<Galeshi::NameComponent>();
+            if (searchContains(nc.name.c_str())) detailsAnyMatch = true;
             char buf[256]; std::snprintf(buf, sizeof(buf), "%s", nc.name.c_str());
             if (ImGui::InputText("Name", buf, sizeof(buf))) nc.name = buf;
         }
 
+        // Character asset field. Existing FBX scenes can migrate to glTF by
+        // dropping a GLB/glTF here (or on the character/capsule in the
+        // viewport or Outliner). The hierarchy and authored material values
+        // are preserved; only the imported model nodes are swapped.
+        if (Galeshi::Entity replacementRoot =
+                FindSkeletalRootForReplacement(selectedHandle)) {
+            auto& replacementSkeleton =
+                reg.get<Galeshi::SkeletalComponent>(replacementRoot.Handle());
+            if (beginDetailsSection(
+                    "Character Model", ImGuiTreeNodeFlags_DefaultOpen,
+                    "model asset gltf glb fbx swap replace character capsule "
+                    "materials preserve migrate")) {
+                ImGui::TextDisabled(
+                    "Current: %s",
+                    replacementSkeleton.sourcePath.empty()
+                        ? "(none)"
+                        : replacementSkeleton.sourcePath.c_str());
+                if (replacementSkeleton.sourcePath.size() >= 4 &&
+                    AssetExtensionLower(replacementSkeleton.sourcePath) == ".fbx") {
+                    ImGui::TextColored(
+                        ImVec4(1.0f, 0.72f, 0.30f, 1.0f),
+                        "FBX source (legacy). Drop a glTF/GLB to migrate it.");
+                }
+                auto openCharacterModelPicker = [&]() {
+                    m_characterModelTarget = replacementRoot.Handle();
+                    std::string start = "assets";
+                    const std::string projectPath =
+                        Galeshi::ProjectManager::GetProjectPath();
+                    if (!projectPath.empty()) {
+                        start = (std::filesystem::path(projectPath) /
+                                 "assets").string();
+                    }
+                    m_characterModelPicker.Open(
+                        start, "Replace Character Model",
+                        {".gltf", ".glb"});
+                };
+                const float browseWidth = 78.0f;
+                if (ImGui::Button(
+                        "Drop glTF/GLB model here",
+                        ImVec2(std::max(120.0f,
+                                        ImGui::GetContentRegionAvail().x -
+                                            browseWidth -
+                                            ImGui::GetStyle().ItemSpacing.x),
+                               34.0f))) {
+                    openCharacterModelPicker();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Replaces the model attached to this character/capsule.\n"
+                        "The hierarchy, skeleton and customized material "
+                        "property values are preserved.\nFBX drag & drop is "
+                        "disabled.");
+                }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload =
+                            ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
+                        const char* path =
+                            static_cast<const char*>(payload->Data);
+                        if (path && IsGltfModelAssetPath(path)) {
+                            ReplaceCharacterModel(replacementRoot.Handle(), path);
+                        } else if (path) {
+                            spdlog::warn(
+                                "[ModelSwap] Only glTF/GLB can replace a "
+                                "character model: {}",
+                                path);
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Browse...")) {
+                    openCharacterModelPicker();
+                }
+            }
+        }
+
+        // Mesh LOD controls apply to the selected mesh and all mesh children.
+        // This is especially useful for imported static models, which default
+        // to LOD0; users can opt into generated LODs per model/sub-mesh.
+        {
+            std::vector<Galeshi::Entity> lodMeshes;
+            for (auto entity : m_scene.AllEntities()) {
+                if (!entity.HasComponent<Galeshi::MeshComponent>()) continue;
+                bool belongsToSelection =
+                    entity.Handle() == selectedHandle;
+                entt::entity cursor = entity.Handle();
+                for (int depth = 0;
+                     !belongsToSelection && depth < 128; ++depth) {
+                    if (!reg.all_of<Galeshi::ParentComponent>(cursor)) break;
+                    cursor = reg.get<Galeshi::ParentComponent>(cursor).parent;
+                    if (!reg.valid(cursor)) break;
+                    if (cursor == selectedHandle) belongsToSelection = true;
+                }
+                if (belongsToSelection) lodMeshes.push_back(entity);
+            }
+            if (!lodMeshes.empty()) {
+                if (beginDetailsSection(
+                        "Mesh LOD", ImGuiTreeNodeFlags_DefaultOpen,
+                        "lod level level of detail mesh detail generated "
+                        "bias force auto")) {
+                    auto& first =
+                        lodMeshes.front().GetComponent<Galeshi::MeshComponent>();
+                    bool enabled = first.lodEnabled;
+                    bool mixedEnabled = false;
+                    int forced = first.forcedLod;
+                    bool mixedForced = false;
+                    float bias = first.lodBias;
+                    bool mixedBias = false;
+                    for (size_t i = 1; i < lodMeshes.size(); ++i) {
+                        const auto& mc =
+                            lodMeshes[i].GetComponent<Galeshi::MeshComponent>();
+                        mixedEnabled |= mc.lodEnabled != enabled;
+                        mixedForced |= mc.forcedLod != forced;
+                        mixedBias |= std::abs(mc.lodBias - bias) > 1e-4f;
+                    }
+                    if (mixedEnabled) ImGui::TextDisabled("Mixed values");
+                    if (ImGui::Checkbox("Enable Generated LOD", &enabled)) {
+                        for (auto& entity : lodMeshes)
+                            entity.GetComponent<Galeshi::MeshComponent>()
+                                .lodEnabled = enabled;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "Imported models default to authored LOD 0.\n"
+                            "Enable to let the renderer generate cluster LODs.");
+                    }
+
+                    const char* lodItems[] = {
+                        "Auto", "Force LOD 0", "Force LOD 1",
+                        "Force LOD 2", "Force LOD 3"
+                    };
+                    int lodSelection = forced + 1;
+                    if (lodSelection < 0) lodSelection = 0;
+                    if (lodSelection > 4) lodSelection = 4;
+                    if (mixedForced) {
+                        ImGui::TextDisabled("Force LOD: mixed");
+                    }
+                    if (ImGui::Combo("LOD Override", &lodSelection,
+                                     lodItems, IM_ARRAYSIZE(lodItems))) {
+                        const int newForced = lodSelection - 1;
+                        for (auto& entity : lodMeshes)
+                            entity.GetComponent<Galeshi::MeshComponent>()
+                                .forcedLod = newForced;
+                    }
+
+                    if (mixedBias) ImGui::TextDisabled("LOD Bias: mixed");
+                    ImGui::SetNextItemWidth(160.0f);
+                    if (ImGui::SliderFloat("LOD Bias", &bias, 0.25f,
+                                           4.0f, "%.2f")) {
+                        for (auto& entity : lodMeshes)
+                            entity.GetComponent<Galeshi::MeshComponent>()
+                                .lodBias = bias;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "Multiplier for automatic LOD selection.\n"
+                            "Lower = more detail, higher = more aggressive LOD.");
+                    }
+                    ImGui::TextDisabled(
+                        "%zu mesh(es), generated levels: %u",
+                        lodMeshes.size(),
+                        first.mesh ? first.mesh->LodCount() : 1u);
+                }
+            }
+        }
+
         if (selectionHasMesh && selectionHasTextures) {
-            if (ImGui::CollapsingHeader("Texture Settings")) {
+            if (beginDetailsSection(
+                    "Texture Settings", 0,
+                    "texture compression compress bc7 loading vram")) {
                 bool compress = Galeshi::Texture::CompressionEnabled();
                 if (ImGui::Checkbox("Compress textures on load (BC7)", &compress)) {
                     Galeshi::Texture::SetCompressionEnabled(compress);
@@ -8993,7 +9342,10 @@ void DrawDetails() {
             ImGui::Separator();
         }
 
-        if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (beginDetailsSection(
+                "Transform", ImGuiTreeNodeFlags_DefaultOpen,
+                "position rotation scale uniform transform location orientation "
+                "detach collision shape")) {
             glm::vec3 pos = selected[0].HasComponent<Galeshi::TransformComponent>() ? selected[0].GetComponent<Galeshi::TransformComponent>().position : glm::vec3(0.0f);
             glm::vec3 scl = selected[0].HasComponent<Galeshi::TransformComponent>() ? selected[0].GetComponent<Galeshi::TransformComponent>().scale : glm::vec3(1.0f);
             glm::vec3 rot = selected[0].HasComponent<Galeshi::TransformComponent>() ? glm::degrees(glm::eulerAngles(selected[0].GetComponent<Galeshi::TransformComponent>().rotation)) : glm::vec3(0.0f);
@@ -9054,8 +9406,10 @@ void DrawDetails() {
         if (selected[0].HasComponent<Galeshi::CameraComponent>()) {
             auto& camera =
                 selected[0].GetComponent<Galeshi::CameraComponent>();
-            if (ImGui::CollapsingHeader("Camera",
-                                        ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (beginDetailsSection(
+                    "Camera", ImGuiTreeNodeFlags_DefaultOpen,
+                    "primary game camera priority fov field of view near far "
+                    "clip local offset attached parent distance")) {
                 ImGui::Checkbox("Primary (Game Camera)", &camera.primary);
                 ImGui::DragInt("Priority", &camera.priority, 1.0f, -100, 100);
                 ImGui::DragFloat("FOV (vertical)", &camera.fovY,
@@ -9105,8 +9459,11 @@ void DrawDetails() {
             sel.HasComponent<Galeshi::PostProcessVolumeComponent>()) {
             auto& volume =
                 sel.GetComponent<Galeshi::PostProcessVolumeComponent>();
-            if (ImGui::CollapsingHeader("Post-Process Volume",
-                                        ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (beginDetailsSection(
+                    "Post-Process Volume", ImGuiTreeNodeFlags_DefaultOpen,
+                    "post process bloom ssao ssr ssgi fxaa smaa taa motion blur "
+                    "atmosphere fog god rays exposure contrast saturation "
+                    "vignette chromatic aberration")) {
                 DrawPostProcessVolumeSettings(volume);
             }
         }
@@ -9115,7 +9472,9 @@ void DrawDetails() {
         if (auto sel = m_editor.Selected(&m_scene); sel &&
             sel.HasComponent<Galeshi::WaterComponent>()) {
             auto& water = sel.GetComponent<Galeshi::WaterComponent>();
-            if (ImGui::CollapsingHeader("Water", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (beginDetailsSection(
+                    "Water", ImGuiTreeNodeFlags_DefaultOpen,
+                    "water waves color depth foam reflection flow speed")) {
                 DrawWaterSettings(water);
             }
         }
@@ -9128,8 +9487,10 @@ void DrawDetails() {
             if (IsSkeletalCharacter(sel)) {
                 if (sel.HasComponent<Galeshi::GroomComponent>()) {
                     auto& groom = sel.GetComponent<Galeshi::GroomComponent>();
-                    if (ImGui::CollapsingHeader(
-                            "Groom Hair", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    if (beginDetailsSection(
+                            "Groom Hair", ImGuiTreeNodeFlags_DefaultOpen,
+                            "groom hair strands guides density length width "
+                            "gravity stiffness color")) {
                         DrawGroomSettings(groom);
                     }
                 } else if (ImGui::Button("+ Add Groom Hair")) {
@@ -9143,8 +9504,10 @@ void DrawDetails() {
         if (auto sel = m_editor.Selected(&m_scene); sel &&
             sel.HasComponent<Galeshi::ColliderComponent>()) {
             auto& collider = sel.GetComponent<Galeshi::ColliderComponent>();
-            if (ImGui::CollapsingHeader("Collision Shape",
-                                        ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (beginDetailsSection(
+                    "Collision Shape", ImGuiTreeNodeFlags_DefaultOpen,
+                    "collision shape box sphere capsule half extents radius "
+                    "height offset friction restitution trigger visible")) {
                 const char* shapeNames[] = {"Box", "Sphere", "Capsule"};
                 int shapeType = static_cast<int>(collider.shapeType);
                 if (ImGui::Combo("Shape", &shapeType, shapeNames, 3)) {
@@ -9211,7 +9574,10 @@ void DrawDetails() {
         if (auto sel = m_editor.Selected(&m_scene); sel &&
             sel.HasComponent<Galeshi::RigidBodyComponent>()) {
             auto& rb = sel.GetComponent<Galeshi::RigidBodyComponent>();
-            if (ImGui::CollapsingHeader("Rigid Body")) {
+            if (beginDetailsSection(
+                    "Rigid Body", 0,
+                    "rigid body motion type static dynamic kinematic mass "
+                    "gravity lock rotation rebuild physics")) {
                 const char* motionNames[] = {"Static", "Dynamic", "Kinematic"};
                 int motionType = static_cast<int>(rb.motionType);
                 if (ImGui::Combo("Motion Type", &motionType, motionNames, 3)) {
@@ -9254,7 +9620,10 @@ void DrawDetails() {
                     }
                 } else {
                     auto& audio = sel.GetComponent<Galeshi::AudioSourceComponent>();
-                    if (ImGui::CollapsingHeader("Audio Source")) {
+                    if (beginDetailsSection(
+                            "Audio Source", 0,
+                            "audio sound path bus autoplay loop spatial volume "
+                            "pitch attenuation distance rolloff doppler offset")) {
                         char buf[512];
                         snprintf(buf, sizeof buf, "%s", audio.soundPath.c_str());
                         if (ImGui::InputText("Sound Path", buf, sizeof buf)) {
@@ -9336,7 +9705,9 @@ void DrawDetails() {
                 if (sel.HasComponent<Galeshi::AudioListenerComponent>()) {
                     auto& listener =
                         sel.GetComponent<Galeshi::AudioListenerComponent>();
-                    if (ImGui::CollapsingHeader("Audio Listener")) {
+                    if (beginDetailsSection(
+                            "Audio Listener", 0,
+                            "audio listener primary position orientation")) {
                         ImGui::Checkbox("Primary Listener", &listener.primary);
                         ImGui::TextDisabled(
                             "Uses this entity's world position and orientation.");
@@ -9352,7 +9723,10 @@ void DrawDetails() {
         }
 
         if (selected[0].HasComponent<Galeshi::LandscapeComponent>() &&
-            ImGui::CollapsingHeader("Landscape (Sculpting)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            beginDetailsSection(
+                "Landscape (Sculpting)", ImGuiTreeNodeFlags_DefaultOpen,
+                "landscape sculpt brush raise lower smooth flatten noise trees "
+                "grass radius strength falloff height terrain")) {
             auto& landscape = selected[0].GetComponent<Galeshi::LandscapeComponent>();
             const char* toolNames[] = {
                 "Select", "Raise", "Lower", "Smooth", "Flatten", "Noise",
@@ -9416,7 +9790,10 @@ void DrawDetails() {
         }
 
         if (selected[0].HasComponent<Galeshi::VegetationComponent>() &&
-            ImGui::CollapsingHeader("Vegetation (Instanced)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            beginDetailsSection(
+                "Vegetation (Instanced)", ImGuiTreeNodeFlags_DefaultOpen,
+                "vegetation trees grass instanced density scale slope seed "
+                "colors models painting shadows")) {
             auto& veg = selected[0].GetComponent<Galeshi::VegetationComponent>();
             bool changed = false;
             changed |= ImGui::Checkbox("Enabled", &veg.enabled);
@@ -9499,7 +9876,7 @@ void DrawDetails() {
                     drawList->AddText(
                         ImVec2(dropMin.x + 10.0f, dropMin.y + 25.0f),
                         IM_COL32(130, 135, 145, 255),
-                        "FBX / glTF / GLB / OBJ / DAE");
+                        "glTF / GLB / OBJ / DAE");
                 } else {
                     const ImVec4 clipRect(dropMin.x, dropMin.y, dropMax.x,
                                           dropMax.y);
@@ -9526,7 +9903,7 @@ void DrawDetails() {
                     }
                     m_vegetationMeshPicker.Open(
                         start, "Select Tree Model",
-                        {".fbx", ".gltf", ".glb", ".obj", ".dae"});
+                        {".gltf", ".glb", ".obj", ".dae"});
                 }
                 if (ImGui::BeginDragDropTarget()) {
                     if (const ImGuiPayload* payload =
@@ -9535,7 +9912,7 @@ void DrawDetails() {
                         const char* path =
                             static_cast<const char*>(payload->Data);
                         const std::string candidate = path ? path : "";
-                        if (IsModelAssetPath(candidate)) {
+                        if (IsDragDropModelAssetPath(candidate)) {
                             AssignLandscapeTreeModel(
                                 selected[0], candidate, typeIndex);
                         }
@@ -9708,13 +10085,89 @@ void DrawDetails() {
             return count;
         };
 
-        // Helper lambda to draw material UI safely
+        // Every renderable mesh owns a material slot, even when the imported
+        // asset provided an unnamed material without textures. Create a
+        // placeholder slot on demand so Details never silently drops it.
+        auto ensureMaterialSlot =
+            [&](Galeshi::Entity entity) -> Galeshi::MaterialComponent* {
+                if (!entity) return nullptr;
+                auto& registry = m_scene.Registry();
+                Galeshi::MaterialComponent* slot = nullptr;
+                if (registry.all_of<Galeshi::MaterialComponent>(entity.Handle())) {
+                    slot = &registry.get<Galeshi::MaterialComponent>(entity.Handle());
+                } else {
+                    if (!registry.all_of<Galeshi::MeshComponent>(entity.Handle()))
+                        return nullptr;
+                    slot = &registry.emplace<Galeshi::MaterialComponent>(
+                        entity.Handle());
+                }
+                if (!slot->material) {
+                    slot->material = std::make_shared<Galeshi::Material>();
+                }
+                // Do not synthesize Material::name here. The displayed label
+                // falls back to the entity/object name, while the serialized
+                // material name remains exactly the exported one.
+                return slot;
+            };
+
+        // Helper lambda to draw material UI safely. During a Details search
+        // the header stays visible when the material name or any material
+        // property matches; inside, only matching parameter groups remain.
         auto DrawMaterialUI = [&](const char* label, Galeshi::MaterialComponent& matc, uint32_t eid) {
             if (!matc.material) return;
             auto& m = *matc.material;
             ImGui::PushID(eid);
-            if (ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_DefaultOpen)) {
+            const std::string materialKeywords =
+                std::string("material instance base used preset metal plastic "
+                            "rubber gold skin leaf albedo factor metallic factor "
+                            "roughness factor normal strength occlusion strength "
+                            "alpha cutoff glass transparent opacity two sided "
+                            "emissive color subsurface scattering sss enable "
+                            "subsurface subsurface color subsurface strength "
+                            "subsurface radius translucency enable translucency "
+                            "translucency color translucency opacity "
+                            "translucency strength translucency thickness "
+                            "translucency distortion shadows cast shadows shadow "
+                            "sharpness shadow depth offset texture maps albedo "
+                            "map normal map metallic roughness map metallic map "
+                            "roughness map emissive map occlusion map opacity map "
+                            "specular map material name") +
+                " " + (label ? label : "") + " " + m.name +
+                (m.base ? " " + m.base->name : std::string{});
+            if (beginDetailsSection(label, ImGuiTreeNodeFlags_DefaultOpen,
+                                    materialKeywords.c_str())) {
+                const bool showAllMaterialFields =
+                    !searchActive || searchContains(label) ||
+                    searchContains(m.name.c_str()) ||
+                    searchContains("material");
+                auto showMaterialField = [&](const char* field,
+                                             const char* aliases = "") {
+                    if (showAllMaterialFields) return true;
+                    return lowerAscii(std::string(field ? field : "") + " " +
+                                      (aliases ? aliases : ""))
+                               .find(searchLower) != std::string::npos;
+                };
+                auto showMaterialGroup = [&](const char* title,
+                                             const char* members) {
+                    return showAllMaterialFields || showMaterialField(title, members);
+                };
+
+                // Two Sided is a per-material render state and must be
+                // available for every material slot. Keep it outside the
+                // searchable parameter groups so slots never appear to be
+                // missing this control.
+                ImGui::Checkbox("Two Sided", &m.twoSided);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Render both faces and flip normals on back-facing "
+                        "fragments.\nWhen disabled, backfaces are culled.");
+                }
+                ImGui::Separator();
+
                 const size_t userCount = materialUserCount(&m);
+                if (showMaterialGroup(
+                        "Material Identity",
+                        "name instance base used reset create instance")) {
                 if (m.base) {
                     ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.0f, 1.0f),
                         "Instance of: %s", m.base->name.c_str());
@@ -9759,7 +10212,11 @@ void DrawDetails() {
                 if (ImGui::InputText("Material Name", nameBuffer, sizeof(nameBuffer))) {
                     m.name = nameBuffer;
                 }
+                }
 
+                if (showMaterialGroup(
+                        "Presets",
+                        "preset metal plastic rubber gold skin leaf")) {
                 ImGui::Separator();
 
                 // --- Пресеты ---
@@ -9801,27 +10258,40 @@ void DrawDetails() {
                     m.translucencyDistortion = 0.3f;
                     m.castsShadow = true;
                 }
+                }
 
+                if (showMaterialGroup(
+                        "Main Parameters",
+                        "albedo color metallic roughness normal occlusion alpha "
+                        "cutoff glass transparent opacity two sided emissive")) {
                 ImGui::Separator();
 
                 // --- Основные параметры ---
+                if (showMaterialField("Albedo Factor", "albedo color base"))
                 ImGui::ColorEdit4("Albedo Factor", glm::value_ptr(m.albedoFactor));
+                if (showMaterialField("Metallic Factor", "metal metallic"))
                 ImGui::SliderFloat("Metallic Factor",  &m.metallicFactor,  0.0f, 1.0f);
+                if (showMaterialField("Roughness Factor", "rough"))
                 ImGui::SliderFloat("Roughness Factor", &m.roughnessFactor, 0.04f, 1.0f);
+                if (showMaterialField("Normal Strength", "normal bump"))
                 ImGui::SliderFloat("Normal Strength",  &m.normalStrength,  0.0f, 2.0f);
+                if (showMaterialField("Occlusion Strength", "occlusion ao"))
                 ImGui::SliderFloat("Occlusion Strength", &m.occlusionStrength, 0.0f, 1.0f);
+                if (showMaterialField("Alpha Cutoff", "alpha cutoff mask"))
                 ImGui::SliderFloat("Alpha Cutoff",     &m.alphaCutoff,     0.0f, 1.0f);
+                if (showMaterialField("Glass (Transparent)", "glass transparent"))
                 ImGui::Checkbox("Glass (Transparent)", &m.isGlass);
-                if (m.isGlass) {
+                if (showMaterialField("Glass Opacity", "glass opacity transparent") && m.isGlass) {
                     ImGui::SliderFloat("Glass Opacity", &m.glassOpacity, 0.0f, 1.0f);
                 }
-                ImGui::Checkbox("Two Sided", &m.twoSided);
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Render both faces and flip normals on back-facing fragments.\n"
-                                      "When disabled, backfaces are culled.");
-                }
+                if (showMaterialField("Emissive Color", "emissive emission"))
                 ImGui::ColorEdit3("Emissive Color", glm::value_ptr(m.emissiveFactor));
+                }
 
+                if (showMaterialGroup(
+                        "Subsurface Scattering",
+                        "subsurface scattering sss skin wax leaves enable color "
+                        "strength radius")) {
                 ImGui::Separator();
                 ImGui::Text("Subsurface Scattering");
                 ImGui::Checkbox("Enable Subsurface", &m.subsurfaceEnabled);
@@ -9837,7 +10307,12 @@ void DrawDetails() {
                         ImGui::SetTooltip("Scattering radius in world units.");
                     }
                 }
+                }
 
+                if (showMaterialGroup(
+                        "Translucency",
+                        "translucency translucent transmission enable color opacity "
+                        "strength thickness distortion shadow depth")) {
                 ImGui::Separator();
                 ImGui::Text("Translucency");
                 ImGui::Checkbox("Enable Translucency", &m.translucencyEnabled);
@@ -9856,7 +10331,11 @@ void DrawDetails() {
                         ImGui::SetTooltip("How strongly shadow-map depth attenuates transmitted light.");
                     }
                 }
+                }
 
+                if (showMaterialGroup(
+                        "Shadows",
+                        "shadows shadow cast sharpness pssm depth offset bias")) {
                 ImGui::Separator();
                 ImGui::Text("Shadows");
                 ImGui::Checkbox("Cast Shadows", &m.castsShadow);
@@ -9875,59 +10354,105 @@ void DrawDetails() {
                     ImGui::SetTooltip("Offsets the caster along its normal in the shadow-depth pass.\n"
                                       "This changes self-shadow bias, not edge sharpness.");
                 }
+                }
 
+                if (showMaterialGroup(
+                        "Texture Maps",
+                        "texture map maps albedo normal metallic roughness emissive "
+                        "occlusion opacity specular")) {
                 ImGui::Separator();
                 ImGui::Text("Texture Maps (drag from Content Browser):");
 
                 // --- Текстурные слоты ---
+                if (showMaterialField("Albedo Map", "texture map color"))
                 DrawTextureSlot("Albedo Map",           m.albedoMap,           true);
+                if (showMaterialField("Normal Map", "texture map normal bump"))
                 DrawTextureSlot("Normal Map",           m.normalMap,           false);
+                if (showMaterialField("Metallic/Roughness", "texture map mr metallic roughness"))
                 DrawTextureSlot("Metallic/Roughness",   m.metallicRoughnessMap, false);
+                if (showMaterialField("Metallic Map", "texture map metal"))
                 DrawTextureSlot("Metallic Map",         m.metallicMap,         false);
+                if (showMaterialField("Roughness Map", "texture map rough"))
                 DrawTextureSlot("Roughness Map",        m.roughnessMap,        false);
+                if (showMaterialField("Emissive Map", "texture map emission"))
                 DrawTextureSlot("Emissive Map",         m.emissiveMap,         true);
+                if (showMaterialField("Occlusion Map", "texture map ao"))
                 DrawTextureSlot("Occlusion Map",        m.occlusionMap,        false);
+                if (showMaterialField("Opacity Map", "texture map alpha"))
                 DrawTextureSlot("Opacity Map",          m.opacityMap,          false);
+                if (showMaterialField("Specular Map", "texture map specular"))
                 DrawTextureSlot("Specular Map",         m.specularMap,         false);
+                }
             }
             ImGui::PopID();
         };
 
-        // 1. Draw material for the selected entity itself (if any)
-        if (!selectedIsCollisionShape &&
-            selected[0].HasComponent<Galeshi::MaterialComponent>()) {
-            auto& matc = selected[0].GetComponent<Galeshi::MaterialComponent>();
-            std::string label = (matc.material && !matc.material->name.empty())
-                ? matc.material->name : std::string("Material");
-            DrawMaterialUI(label.c_str(), matc, (uint32_t)selected[0].Handle());
-        }
-
-        // 2. Draw materials for all children (e.g., skeletal mesh sub-meshes)
-        if (!selectedIsCollisionShape) {
-            for (auto e : m_scene.AllEntities()) {
-                if (e.HasComponent<Galeshi::ParentComponent>() && e.GetComponent<Galeshi::ParentComponent>().parent == selected[0].Handle()) {
-                    if (e.HasComponent<Galeshi::MaterialComponent>()) {
-                        auto& matc = e.GetComponent<Galeshi::MaterialComponent>();
-                        std::string label = "Material Slot [" + std::to_string((uint32_t)e.Handle()) + "]";
-                        if (matc.material && !matc.material->name.empty()) {
-                            label = matc.material->name;
-                        } else if (e.HasComponent<Galeshi::NameComponent>()) {
-                            label = e.GetComponent<Galeshi::NameComponent>().name;
-                        }
-                        DrawMaterialUI(label.c_str(), matc, (uint32_t)e.Handle());
-                    }
-                }
+        // 1. Draw material for the selected entity itself (if any). A
+        // collision capsule can own a character subtree; in that case its
+        // child material slots are still valid Details content.
+        if ((!selectedIsCollisionShape || selectionHasMaterials) &&
+            (selected[0].HasComponent<Galeshi::MaterialComponent>() ||
+             selected[0].HasComponent<Galeshi::MeshComponent>())) {
+            if (auto* matc = ensureMaterialSlot(selected[0])) {
+                std::string label =
+                    (matc->material && !matc->material->name.empty())
+                        ? matc->material->name
+                        : (selected[0].HasComponent<Galeshi::NameComponent>()
+                               ? selected[0]
+                                     .GetComponent<Galeshi::NameComponent>()
+                                     .name
+                               : std::string("Material"));
+                DrawMaterialUI(label.c_str(), *matc,
+                               (uint32_t)selected[0].Handle());
             }
         }
 
-        if (selected[0].HasComponent<Galeshi::NavAgentComponent>() && ImGui::CollapsingHeader("AI Agent", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // 2. Draw materials for all descendants (skeletal model wrappers can
+        // sit below a capsule, and their sub-meshes below another model root).
+        if (!selectedIsCollisionShape || selectionHasMaterials) {
+            for (auto e : m_scene.AllEntities()) {
+                if (e.Handle() == selectedHandle) continue;
+                entt::entity cursor = e.Handle();
+                bool belongsToSelection = false;
+                for (int depth = 0; depth < 128; ++depth) {
+                    if (!reg.all_of<Galeshi::ParentComponent>(cursor)) break;
+                    cursor = reg.get<Galeshi::ParentComponent>(cursor).parent;
+                    if (!reg.valid(cursor)) break;
+                    if (cursor == selectedHandle) {
+                        belongsToSelection = true;
+                        break;
+                    }
+                }
+                if (!belongsToSelection ||
+                    (!e.HasComponent<Galeshi::MaterialComponent>() &&
+                     !e.HasComponent<Galeshi::MeshComponent>())) {
+                    continue;
+                }
+                auto* matc = ensureMaterialSlot(e);
+                if (!matc) continue;
+                std::string label = "Material Slot [" +
+                    std::to_string((uint32_t)e.Handle()) + "]";
+                if (matc->material && !matc->material->name.empty()) {
+                    label = matc->material->name;
+                } else if (e.HasComponent<Galeshi::NameComponent>()) {
+                    label = e.GetComponent<Galeshi::NameComponent>().name;
+                }
+                DrawMaterialUI(label.c_str(), *matc, (uint32_t)e.Handle());
+            }
+        }
+
+        if (selected[0].HasComponent<Galeshi::NavAgentComponent>() && beginDetailsSection(
+                "AI Agent", ImGuiTreeNodeFlags_DefaultOpen,
+                "ai agent navigation nav speed path waypoints target")) {
             auto& agent = selected[0].GetComponent<Galeshi::NavAgentComponent>();
             ImGui::DragFloat("Speed", &agent.speed, 0.1f, 0.1f, 20.0f);
             ImGui::Text("Path Waypoints: %zu", agent.path.size());
             ImGui::Text("Target: (%.1f, %.1f, %.1f)", agent.targetPosition.x, agent.targetPosition.y, agent.targetPosition.z);
         }
 
-        if (selected[0].HasComponent<Galeshi::AIControllerComponent>() && ImGui::CollapsingHeader("AI Controller", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (selected[0].HasComponent<Galeshi::AIControllerComponent>() && beginDetailsSection(
+                "AI Controller", ImGuiTreeNodeFlags_DefaultOpen,
+                "ai controller script path lua behavior")) {
             auto& ctrl = selected[0].GetComponent<Galeshi::AIControllerComponent>();
             char buf[256]; std::snprintf(buf, sizeof(buf), "%s", ctrl.scriptPath.c_str());
             if (ImGui::InputText("Script Path", buf, sizeof(buf))) ctrl.scriptPath = buf;
@@ -9951,7 +10476,9 @@ void DrawDetails() {
             selected[0].HasComponent<Galeshi::NavAgentComponent>() ||
             selected[0].HasComponent<Galeshi::AIControllerComponent>();
 
-        if (isAiAgent && ImGui::CollapsingHeader("AI & Gameplay")) {
+        if (isAiAgent && beginDetailsSection(
+                "AI & Gameplay", 0,
+                "ai gameplay perception behavior tree player tag add")) {
             if (!selected[0].HasComponent<Galeshi::PerceptionComponent>()) {
                 if (ImGui::Button("+ Add Perception")) {
                     PushHistory();
@@ -9980,7 +10507,10 @@ void DrawDetails() {
         }
 
         if (selected[0].HasComponent<Galeshi::PerceptionComponent>() &&
-            ImGui::CollapsingHeader("Perception", ImGuiTreeNodeFlags_DefaultOpen)) {
+            beginDetailsSection(
+                "Perception", ImGuiTreeNodeFlags_DefaultOpen,
+                "perception sight field of view hearing eye height detection "
+                "interval memory line of sight player target")) {
             auto& perception = selected[0].GetComponent<Galeshi::PerceptionComponent>();
             ImGui::SliderFloat("Sight Radius", &perception.sightRadius, 0.0f, 200.0f);
             ImGui::SliderFloat("Field of View", &perception.fieldOfViewDegrees, 1.0f, 360.0f);
@@ -10007,7 +10537,10 @@ void DrawDetails() {
         }
 
         if (selected[0].HasComponent<Galeshi::BehaviorTreeComponent>() &&
-            ImGui::CollapsingHeader("Behavior Tree", ImGuiTreeNodeFlags_DefaultOpen)) {
+            beginDetailsSection(
+                "Behavior Tree", ImGuiTreeNodeFlags_DefaultOpen,
+                "behavior tree node selector sequence condition action tick "
+                "status reset load default")) {
             auto& tree = selected[0].GetComponent<Galeshi::BehaviorTreeComponent>();
             ImGui::Checkbox("Enabled", &tree.enabled);
             ImGui::SameLine();
@@ -10137,7 +10670,10 @@ void DrawDetails() {
             }
         }
 
-        if (selected[0].HasComponent<Galeshi::SkeletalComponent>() && ImGui::CollapsingHeader("Skeletal Animation", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (selected[0].HasComponent<Galeshi::SkeletalComponent>() && beginDetailsSection(
+                "Skeletal Animation", ImGuiTreeNodeFlags_DefaultOpen,
+                "skeletal animation playing speed source active clip time "
+                "bone skeleton")) {
             auto& skel = selected[0].GetComponent<Galeshi::SkeletalComponent>();
             ImGui::Checkbox("Playing", &skel.isAnimated);
             ImGui::DragFloat("Speed", &skel.animationSpeed, 0.1f, 0.0f, 10.0f);
@@ -10147,20 +10683,26 @@ void DrawDetails() {
 
         if (selected[0].HasComponent<Galeshi::SkeletalComponent>() ||
             selected[0].HasComponent<Galeshi::AnimationStateMachineComponent>()) {
-            if (ImGui::CollapsingHeader("Animation State Machine",
-                                        ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (beginDetailsSection(
+                    "Animation State Machine", ImGuiTreeNodeFlags_DefaultOpen,
+                    "animation state machine states transitions parameters "
+                    "clip loop speed blend playback animation scale")) {
                 DrawAnimationStateMachineContents(selected[0]);
             }
         }
 
-        if (selected[0].HasComponent<Galeshi::DirectionalLightComponent>() && ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (selected[0].HasComponent<Galeshi::DirectionalLightComponent>() && beginDetailsSection(
+                "Light", ImGuiTreeNodeFlags_DefaultOpen,
+                "directional light sun direction color intensity shadow")) {
             auto& dl = selected[0].GetComponent<Galeshi::DirectionalLightComponent>();
             ImGui::DragFloat3("Direction", glm::value_ptr(dl.direction), 0.05f, -1.0f, 1.0f);
             ImGui::ColorEdit3("Color", glm::value_ptr(dl.color));
             ImGui::SliderFloat("Intensity", &dl.intensity, 0.0f, 10.0f);
         }
 
-        if (selected[0].HasComponent<Galeshi::PointLightComponent>() && ImGui::CollapsingHeader("Point Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (selected[0].HasComponent<Galeshi::PointLightComponent>() && beginDetailsSection(
+                "Point Light", ImGuiTreeNodeFlags_DefaultOpen,
+                "point light color intensity radius shadow")) {
             auto& pl = m_scene.Registry().get<Galeshi::PointLightComponent>(selected[0].Handle());
             ImGui::ColorEdit3("Point Color", glm::value_ptr(pl.color));
             {
@@ -10171,7 +10713,9 @@ void DrawDetails() {
             ImGui::DragFloat("Point Radius", &pl.radius, 0.1f, 0.1f, 100.0f);
         }
 
-        if (selected[0].HasComponent<Galeshi::SpotLightComponent>() && ImGui::CollapsingHeader("Spot Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (selected[0].HasComponent<Galeshi::SpotLightComponent>() && beginDetailsSection(
+                "Spot Light", ImGuiTreeNodeFlags_DefaultOpen,
+                "spot light direction color intensity radius inner outer cone")) {
             auto& sl = m_scene.Registry().get<Galeshi::SpotLightComponent>(selected[0].Handle());
             ImGui::DragFloat3("Spot Direction", glm::value_ptr(sl.direction), 0.05f, -1.0f, 1.0f);
             ImGui::ColorEdit3("Spot Color", glm::value_ptr(sl.color));
@@ -10182,7 +10726,10 @@ void DrawDetails() {
         }
 
         if (selected[0].HasComponent<Galeshi::ParticleEmitterComponent>() &&
-            ImGui::CollapsingHeader("Particle Emitter", ImGuiTreeNodeFlags_DefaultOpen)) {
+            beginDetailsSection(
+                "Particle Emitter", ImGuiTreeNodeFlags_DefaultOpen,
+                "particle emitter enabled emit rate lifetime start end size "
+                "color velocity gravity drag max particles texture")) {
             auto& pe = m_scene.Registry().get<Galeshi::ParticleEmitterComponent>(selected[0].Handle());
             ImGui::Checkbox("Enabled", &pe.enabled);
             ImGui::DragFloat("Emit Rate", &pe.emitRate, 0.5f, 0.0f, 500.0f);
@@ -10232,6 +10779,13 @@ void DrawDetails() {
             }
         }
 
+        if (searchActive && !detailsAnyMatch) {
+            ImGui::TextDisabled(
+                "No properties or materials match \"%s\".",
+                m_detailsSearch.c_str());
+        }
+
+        ImGui::EndChild();
         ImGui::End();
     }
 
@@ -10526,7 +11080,7 @@ void DrawDetails() {
         const char* home = std::getenv("HOME");
         std::string start = home ? home : "/";
         m_filePicker.Open(start, "Load Model",
-                          { ".fbx", ".gltf", ".glb", ".obj", ".dae" });
+                          { ".gltf", ".glb", ".obj", ".dae" });
     }
 
     void EnsureTreeTypeMaterial(Galeshi::VegetationTreeType& type,
@@ -10551,8 +11105,9 @@ void DrawDetails() {
                          originalPath);
             return;
         }
-        if (!IsModelAssetPath(originalPath)) {
-            spdlog::warn("[Editor] Unsupported tree model format: {}",
+        if (!IsDragDropModelAssetPath(originalPath)) {
+            spdlog::warn("[Editor] Unsupported tree model format: {} "
+                         "(FBX drag & drop is disabled)",
                          originalPath);
             return;
         }
@@ -10604,6 +11159,558 @@ void DrawDetails() {
 
         spdlog::info("[Editor] Landscape tree model: {} ({} meshes, {} materials)",
                      path, model.meshes.size(), model.materials.size());
+    }
+
+    // -------------------------------------------------------------------
+    // Character model replacement
+    // -------------------------------------------------------------------
+    static std::string MaterialNameKey(const std::string& name) {
+        std::string key;
+        key.reserve(name.size());
+        for (unsigned char c : name) {
+            if (std::isalnum(c)) {
+                key.push_back(
+                    static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+            }
+        }
+        return key;
+    }
+
+    // Move authored parameters from the old FBX material onto the freshly
+    // imported glTF material. The glTF import remains the base: its name and
+    // texture maps win when present. Old maps are kept only as a fallback for
+    // slots the replacement asset does not provide, which preserves custom
+    // maps on materials that have no glTF equivalent while avoiding stale FBX
+    // textures winning over the new asset's intended look.
+    static void MergeMaterialValues(Galeshi::Material& destination,
+                                    const Galeshi::Material& source) {
+        const auto newAlbedo = destination.albedoMap;
+        const auto newMr = destination.metallicRoughnessMap;
+        const auto newMetallic = destination.metallicMap;
+        const auto newRoughness = destination.roughnessMap;
+        const auto newNormal = destination.normalMap;
+        const auto newEmissive = destination.emissiveMap;
+        const auto newOcclusion = destination.occlusionMap;
+        const auto newOpacity = destination.opacityMap;
+        const auto newSpecular = destination.specularMap;
+        const std::string newName = destination.name;
+        const std::string newSourcePath = destination.sourcePath;
+        const auto newBase = destination.base;
+
+        destination = source;
+        destination.name = newName;
+        destination.sourcePath = newSourcePath;
+        destination.base = newBase;
+        destination.albedoMap = newAlbedo ? newAlbedo : source.albedoMap;
+        destination.metallicRoughnessMap =
+            newMr ? newMr : source.metallicRoughnessMap;
+        destination.metallicMap = newMetallic ? newMetallic : source.metallicMap;
+        destination.roughnessMap =
+            newRoughness ? newRoughness : source.roughnessMap;
+        destination.normalMap = newNormal ? newNormal : source.normalMap;
+        destination.emissiveMap = newEmissive ? newEmissive : source.emissiveMap;
+        destination.occlusionMap =
+            newOcclusion ? newOcclusion : source.occlusionMap;
+        destination.opacityMap = newOpacity ? newOpacity : source.opacityMap;
+        destination.specularMap = newSpecular ? newSpecular : source.specularMap;
+    }
+
+    static float ModelMeshHeight(const std::vector<std::shared_ptr<Galeshi::Mesh>>& meshes) {
+        float minY = std::numeric_limits<float>::max();
+        float maxY = std::numeric_limits<float>::lowest();
+        for (const auto& mesh : meshes) {
+            if (!mesh) continue;
+            for (const auto& vertex : mesh->Vertices()) {
+                minY = std::min(minY, vertex.position.y);
+                maxY = std::max(maxY, vertex.position.y);
+            }
+        }
+        return maxY > minY ? maxY - minY : 0.0f;
+    }
+
+    // Height of the already-authored model in world space. This must be
+    // measured per mesh entity rather than through the wrapper's local scale:
+    // the wrapper can be the skeleton root, a capsule child, or omitted
+    // entirely for older scenes.
+    float ModelEntityWorldHeight(
+        const std::vector<entt::entity>& meshEntities) {
+        float minY = std::numeric_limits<float>::max();
+        float maxY = std::numeric_limits<float>::lowest();
+        auto& reg = m_scene.Registry();
+        for (entt::entity entity : meshEntities) {
+            if (!reg.valid(entity) ||
+                !reg.all_of<Galeshi::MeshComponent>(entity)) {
+                continue;
+            }
+            const auto& mesh = reg.get<Galeshi::MeshComponent>(entity).mesh;
+            if (!mesh) continue;
+            const glm::mat4 world = EntityWorldMatrix(entity);
+            for (const auto& vertex : mesh->Vertices()) {
+                const float y =
+                    (world * glm::vec4(vertex.position, 1.0f)).y;
+                minY = std::min(minY, y);
+                maxY = std::max(maxY, y);
+            }
+        }
+        return maxY > minY ? maxY - minY : 0.0f;
+    }
+
+    Galeshi::Entity CreateMaterialSlotEntity(
+        entt::entity parent, const std::string& name,
+        const std::shared_ptr<Galeshi::Material>& sourceMaterial) {
+        if (!m_scene.Registry().valid(parent) || !sourceMaterial) return {};
+        auto placed = std::make_shared<Galeshi::Material>(*sourceMaterial);
+        if (placed->name.empty()) placed->name = name;
+        auto slot = m_scene.CreateEntity("__material_slot__" + name);
+        slot.AddComponent<Galeshi::ParentComponent>(
+            Galeshi::ParentComponent{parent});
+        auto& matc = slot.AddComponent<Galeshi::MaterialComponent>(
+            Galeshi::MaterialComponent{placed});
+        matc.isGlass = placed->isGlass;
+        return slot;
+    }
+
+    Galeshi::Entity FindSkeletalRootForReplacement(entt::entity target) {
+        auto& reg = m_scene.Registry();
+        if (!reg.valid(target)) return {};
+        if (reg.all_of<Galeshi::SkeletalComponent>(target))
+            return Galeshi::Entity(target, &m_scene);
+
+        // A capsule/model attachment may be selected instead of the character
+        // root. Search both directions so the drop target is forgiving.
+        std::vector<entt::entity> queue{target};
+        for (size_t head = 0; head < queue.size(); ++head) {
+            const entt::entity current = queue[head];
+            auto children = reg.view<Galeshi::ParentComponent>();
+            for (auto child : children) {
+                if (children.get<Galeshi::ParentComponent>(child).parent ==
+                    current) {
+                    if (reg.all_of<Galeshi::SkeletalComponent>(child))
+                        return Galeshi::Entity(child, &m_scene);
+                    queue.push_back(child);
+                }
+            }
+        }
+
+        entt::entity current = target;
+        for (int depth = 0; depth < 128; ++depth) {
+            if (!reg.all_of<Galeshi::ParentComponent>(current)) break;
+            current = reg.get<Galeshi::ParentComponent>(current).parent;
+            if (!reg.valid(current)) break;
+            if (reg.all_of<Galeshi::SkeletalComponent>(current))
+                return Galeshi::Entity(current, &m_scene);
+        }
+        return {};
+    }
+
+    bool PathsReferToSameAsset(const std::string& a, const std::string& b) {
+        if (a.empty() || b.empty() || !m_assets) return false;
+        const std::string ra = m_assets->MakeRelativePath(a);
+        const std::string rb = m_assets->MakeRelativePath(b);
+        if (ra == rb) return true;
+        std::error_code ecA, ecB;
+        const auto ca = std::filesystem::weakly_canonical(ra, ecA);
+        const auto cb = std::filesystem::weakly_canonical(rb, ecB);
+        return !ecA && !ecB && ca == cb;
+    }
+
+    Galeshi::Entity FindModelContainer(entt::entity skeletonRoot,
+                                       const std::string& sourcePath,
+                                       std::vector<entt::entity>& outMeshes) {
+        auto& reg = m_scene.Registry();
+        outMeshes.clear();
+        if (!reg.valid(skeletonRoot)) return {};
+
+        std::vector<entt::entity> descendants{skeletonRoot};
+        for (size_t head = 0; head < descendants.size(); ++head) {
+            const entt::entity current = descendants[head];
+            auto children = reg.view<Galeshi::ParentComponent>();
+            for (auto child : children) {
+                if (children.get<Galeshi::ParentComponent>(child).parent ==
+                    current) {
+                    descendants.push_back(child);
+                }
+            }
+        }
+
+        for (entt::entity entity : descendants) {
+            if (!reg.all_of<Galeshi::MeshComponent>(entity)) continue;
+            const auto& mesh = reg.get<Galeshi::MeshComponent>(entity);
+            if (!mesh.mesh || mesh.sourceAssetPath.empty()) continue;
+            if (!sourcePath.empty() &&
+                !PathsReferToSameAsset(mesh.sourceAssetPath, sourcePath)) {
+                continue;
+            }
+            outMeshes.push_back(entity);
+        }
+        if (outMeshes.empty()) return Galeshi::Entity(skeletonRoot, &m_scene);
+
+        // Climb from a sub-mesh to the outermost imported-model wrapper. Stop
+        // at gameplay attachment nodes such as a CollisionCapsule, so the
+        // capsule and its parenting are never removed during a swap.
+        entt::entity container = skeletonRoot;
+        bool containerChosen = false;
+        for (entt::entity meshEntity : outMeshes) {
+            entt::entity candidate = meshEntity;
+            entt::entity parent = entt::null;
+            if (reg.all_of<Galeshi::ParentComponent>(meshEntity))
+                parent = reg.get<Galeshi::ParentComponent>(meshEntity).parent;
+
+            for (int depth = 0; depth < 128; ++depth) {
+                if (!reg.valid(parent) || parent == skeletonRoot) {
+                    candidate = skeletonRoot;
+                    break;
+                }
+                if (reg.all_of<Galeshi::ColliderComponent>(parent) ||
+                    reg.all_of<Galeshi::RigidBodyComponent>(parent) ||
+                    reg.all_of<Galeshi::SkeletalComponent>(parent)) {
+                    break;
+                }
+                candidate = parent;
+                if (!reg.all_of<Galeshi::ParentComponent>(parent)) break;
+                parent = reg.get<Galeshi::ParentComponent>(parent).parent;
+            }
+
+            if (!containerChosen) {
+                container = candidate;
+                containerChosen = true;
+            }
+        }
+        return reg.valid(container)
+            ? Galeshi::Entity(container, &m_scene)
+            : Galeshi::Entity(skeletonRoot, &m_scene);
+    }
+
+    // Replace the skinned/static model below a character root (or the model
+    // attached to its capsule) with a glTF/GLB asset. This is intentionally
+    // separate from SpawnFromModel: the character root, capsule physics and
+    // all hierarchy links stay intact.
+    bool ReplaceCharacterModel(entt::entity target,
+                               const std::string& originalPath) {
+        if (!m_assets) return false;
+        if (!IsGltfModelAssetPath(originalPath)) {
+            spdlog::warn(
+                "[ModelSwap] '{}' is not a glTF/GLB asset. FBX drag & drop "
+                "replacement is disabled; export the new character as glTF.",
+                originalPath);
+            return false;
+        }
+        Galeshi::Entity skeletonEntity = FindSkeletalRootForReplacement(target);
+        if (!skeletonEntity) {
+            spdlog::warn(
+                "[ModelSwap] No skeletal character found around the drop "
+                "target. Drop the glTF on the character or its capsule.");
+            return false;
+        }
+
+        auto& reg = m_scene.Registry();
+        auto& skeleton =
+            reg.get<Galeshi::SkeletalComponent>(skeletonEntity.Handle());
+        const std::string oldPath = skeleton.sourcePath;
+
+        std::vector<entt::entity> oldMeshEntities;
+        Galeshi::Entity modelContainer =
+            FindModelContainer(skeletonEntity.Handle(), oldPath,
+                               oldMeshEntities);
+        if (!modelContainer) modelContainer = skeletonEntity;
+
+        // If the old model has no source path on the skeleton, gather every
+        // descendant imported mesh (not primitives) as a fallback.
+        if (oldMeshEntities.empty()) {
+            modelContainer = FindModelContainer(skeletonEntity.Handle(), {},
+                                                oldMeshEntities);
+        }
+
+        const std::string newPath = m_assets->MakeRelativePath(originalPath);
+        auto newModel = m_assets->LoadModel(newPath);
+        if (newModel.meshes.empty()) {
+            spdlog::error("[ModelSwap] glTF '{}' contains no meshes", newPath);
+            return false;
+        }
+
+        // Capture old material values before the old mesh entities disappear.
+        struct MaterialSlot {
+            std::string key;
+            std::string label;
+            int meshIndex = -1;
+            std::shared_ptr<Galeshi::Material> material;
+            bool used = false;
+        };
+        std::vector<MaterialSlot> oldSlots;
+        oldSlots.reserve(oldMeshEntities.size());
+        for (entt::entity entity : oldMeshEntities) {
+            if (!reg.all_of<Galeshi::MaterialComponent>(entity)) continue;
+            const auto& matc = reg.get<Galeshi::MaterialComponent>(entity);
+            if (!matc.material) continue;
+            MaterialSlot slot;
+            slot.key = MaterialNameKey(matc.material->name);
+            slot.label = matc.material->name;
+            if (slot.label.empty() &&
+                reg.all_of<Galeshi::NameComponent>(entity)) {
+                // Empty material names keep the Blender object/slot name as a
+                // non-persisted display label.
+                slot.label =
+                    reg.get<Galeshi::NameComponent>(entity).name;
+            }
+            if (reg.all_of<Galeshi::MeshComponent>(entity))
+                slot.meshIndex = reg.get<Galeshi::MeshComponent>(entity).meshIndex;
+            slot.material = matc.material;
+            oldSlots.push_back(std::move(slot));
+        }
+        std::sort(oldSlots.begin(), oldSlots.end(),
+                  [](const MaterialSlot& a, const MaterialSlot& b) {
+                      if (a.meshIndex != b.meshIndex)
+                          return a.meshIndex < b.meshIndex;
+                      return a.material.get() < b.material.get();
+                  });
+
+        float oldHeight = 0.0f;
+        {
+            std::vector<std::shared_ptr<Galeshi::Mesh>> oldMeshes;
+            for (entt::entity entity : oldMeshEntities) {
+                if (reg.all_of<Galeshi::MeshComponent>(entity)) {
+                    const auto& mesh =
+                        reg.get<Galeshi::MeshComponent>(entity);
+                    if (mesh.mesh) oldMeshes.push_back(mesh.mesh);
+                }
+            }
+            oldHeight = ModelMeshHeight(oldMeshes);
+        }
+        const float newHeight = ModelMeshHeight(newModel.meshes);
+
+        const bool containerWasMesh =
+            std::find(oldMeshEntities.begin(), oldMeshEntities.end(),
+                      modelContainer.Handle()) != oldMeshEntities.end();
+        if (containerWasMesh) modelContainer = skeletonEntity;
+
+        glm::vec3 oldContainerScale(1.0f);
+        if (modelContainer.HasComponent<Galeshi::TransformComponent>()) {
+            oldContainerScale =
+                modelContainer.GetComponent<Galeshi::TransformComponent>().scale;
+        }
+
+        // Measure the old model in world units. The model wrapper may be
+        // parented below the character root and/or a capsule, so its local
+        // scale alone is not enough: the old FBX wrapper in the sample scene
+        // is 0.01 while its parent chain has another 2x character scale.
+        // Using the actual mesh entity world matrices avoids double-counting
+        // the wrapper and keeps the new model the same world size even if the
+        // wrapper was selected as the skeleton root.
+        const float oldWorldHeight =
+            ModelEntityWorldHeight(oldMeshEntities);
+
+        entt::entity modelParent = entt::null;
+        if (reg.all_of<Galeshi::ParentComponent>(modelContainer.Handle())) {
+            modelParent =
+                reg.get<Galeshi::ParentComponent>(modelContainer.Handle()).parent;
+        }
+        float parentWorldScaleY = 1.0f;
+        if (reg.valid(modelParent)) {
+            const glm::mat4 parentWorld = EntityWorldMatrix(modelParent);
+            const float measured = glm::length(glm::vec3(parentWorld[1]));
+            if (measured > 1e-6f) parentWorldScaleY = measured;
+        }
+
+        PushHistory();
+
+        // Remove only old imported mesh nodes. Capsules, cameras and other
+        // gameplay attachments are deliberately left in place.
+        for (entt::entity entity : oldMeshEntities) {
+            if (reg.valid(entity)) {
+                if (m_editor.IsSelected(Galeshi::Entity(entity, &m_scene)))
+                    m_editor.RemoveFromSelection(
+                        Galeshi::Entity(entity, &m_scene));
+                m_scene.DestroyEntity(Galeshi::Entity(entity, &m_scene));
+            }
+        }
+
+        // Preserve the character's visible world-space size. The local mesh
+        // height and the wrapper's world scale are separate quantities:
+        // multiplying the old wrapper scale by oldHeight/newHeight
+        // double-counts parent/capsule scales and made swaps either gigantic
+        // or invisible. Solve for the new local scale from the world-space
+        // bind-pose height instead.
+        if (modelContainer.HasComponent<Galeshi::TransformComponent>() &&
+            oldWorldHeight > 1e-4f && newHeight > 1e-4f &&
+            parentWorldScaleY > 1e-6f) {
+            const float targetLocalScaleY =
+                oldWorldHeight / (newHeight * parentWorldScaleY);
+            if (std::isfinite(targetLocalScaleY) &&
+                targetLocalScaleY > 1e-5f && targetLocalScaleY < 1e5f) {
+                auto& transform =
+                    modelContainer.GetComponent<Galeshi::TransformComponent>();
+                transform.scale = glm::vec3(targetLocalScaleY);
+                spdlog::info(
+                    "[ModelSwap] Preserving world height: oldWorld={:.3f} "
+                    "newLocal={:.3f} parentScaleY={:.3f} targetScale={:.4f} "
+                    "(oldLocal={:.4f})",
+                    oldWorldHeight, newHeight, parentWorldScaleY,
+                    targetLocalScaleY, oldContainerScale.y);
+            } else {
+                spdlog::warn(
+                    "[ModelSwap] Invalid scale correction "
+                    "(oldWorld={}, newLocal={}, parentScaleY={}); "
+                    "keeping wrapper transform",
+                    oldWorldHeight, newHeight, parentWorldScaleY);
+            }
+        } else if (modelContainer.HasComponent<Galeshi::TransformComponent>()) {
+            // No usable old geometry (or no new geometry): keep the wrapper
+            // transform untouched rather than writing a zero/NaN scale.
+            auto& transform =
+                modelContainer.GetComponent<Galeshi::TransformComponent>();
+            if (!std::isfinite(transform.scale.y) ||
+                std::abs(transform.scale.y) < 1e-5f) {
+                transform.scale = oldContainerScale;
+            }
+            spdlog::warn(
+                "[ModelSwap] Could not measure bind-pose height "
+                "(oldLocal={}, newLocal={}); scale left at {:.4f}",
+                oldHeight, newHeight, transform.scale.y);
+        }
+
+        const std::string stem =
+            std::filesystem::path(newPath).stem().string();
+        size_t preservedMaterials = 0;
+        std::vector<entt::entity> newMeshEntities;
+        newMeshEntities.reserve(newModel.meshes.size());
+        for (size_t i = 0; i < newModel.meshes.size(); ++i) {
+            std::shared_ptr<Galeshi::Material> newMaterial;
+            if (i < newModel.meshMaterialIndex.size()) {
+                const int materialIndex = newModel.meshMaterialIndex[i];
+                if (materialIndex >= 0 &&
+                    materialIndex < static_cast<int>(newModel.materials.size())) {
+                    newMaterial = newModel.materials[static_cast<size_t>(materialIndex)];
+                }
+            }
+            if (!newMaterial && !newModel.materials.empty())
+                newMaterial = newModel.materials.front();
+            if (!newMaterial)
+                newMaterial = std::make_shared<Galeshi::Material>();
+
+            const std::string newKey = MaterialNameKey(newMaterial->name);
+            int matchedOld = -1;
+            if (!newKey.empty()) {
+                for (size_t s = 0; s < oldSlots.size(); ++s) {
+                    if (!oldSlots[s].used && oldSlots[s].key == newKey) {
+                        matchedOld = static_cast<int>(s);
+                        break;
+                    }
+                }
+            }
+            if (matchedOld < 0) {
+                for (size_t s = 0; s < oldSlots.size(); ++s) {
+                    if (!oldSlots[s].used &&
+                        oldSlots[s].meshIndex == static_cast<int>(i)) {
+                        matchedOld = static_cast<int>(s);
+                        break;
+                    }
+                }
+            }
+
+            if (matchedOld >= 0) {
+                auto merged =
+                    std::make_shared<Galeshi::Material>(*newMaterial);
+                MergeMaterialValues(*merged, *oldSlots[static_cast<size_t>(matchedOld)].material);
+                newMaterial = std::move(merged);
+                oldSlots[static_cast<size_t>(matchedOld)].used = true;
+                ++preservedMaterials;
+            }
+
+            const std::string meshName =
+                (i < newModel.meshNames.size() && !newModel.meshNames[i].empty())
+                    ? newModel.meshNames[i]
+                    : stem + "_" + std::to_string(i);
+            auto meshEntity = m_scene.CreateEntity(meshName);
+            meshEntity.AddComponent<Galeshi::ParentComponent>(
+                Galeshi::ParentComponent{modelContainer.Handle()});
+            meshEntity.AddComponent<Galeshi::MeshComponent>(
+                Galeshi::MeshComponent{newModel.meshes[i], newPath, "",
+                                       static_cast<int>(i)});
+            auto& matc =
+                meshEntity.AddComponent<Galeshi::MaterialComponent>(
+                    Galeshi::MaterialComponent{newMaterial});
+            matc.isGlass = newMaterial->isGlass;
+            newMeshEntities.push_back(meshEntity.Handle());
+        }
+
+        // Preserve old material slots that have no corresponding new mesh.
+        // This keeps custom material slots (for example an extra boot or
+        // accessory slot) visible in Details even when the replacement asset
+        // has fewer primitives.
+        size_t retainedMaterialSlots = 0;
+        for (auto& slot : oldSlots) {
+            if (slot.used || !slot.material) continue;
+            const std::string slotName = slot.label.empty()
+                ? "Retained Material"
+                : slot.label;
+            if (CreateMaterialSlotEntity(modelContainer.Handle(), slotName,
+                                         slot.material)) {
+                slot.used = true;
+                ++retainedMaterialSlots;
+            }
+        }
+
+        spdlog::info("[ModelSwap] New world height after swap: {:.3f}",
+                     ModelEntityWorldHeight(newMeshEntities));
+
+        skeleton.sourcePath = newPath;
+        skeleton.currentTime = 0.0f;
+        skeleton.activeAnimation = 0;
+        skeleton.isAnimated = newModel.hasAnimation;
+        skeleton.boneMatrices.assign(256, glm::mat4(1.0f));
+
+        if (auto* machine =
+                reg.try_get<Galeshi::AnimationStateMachineComponent>(
+                    skeletonEntity.Handle())) {
+            auto findClip = [&](const std::string& wanted) {
+                if (wanted.empty()) return -1;
+                const std::string wantedKey = MaterialNameKey(wanted);
+                for (size_t i = 0; i < newModel.animationNames.size(); ++i) {
+                    if (newModel.animationNames[i] == wanted) {
+                        return static_cast<int>(i);
+                    }
+                }
+                for (size_t i = 0; i < newModel.animationNames.size(); ++i) {
+                    if (MaterialNameKey(newModel.animationNames[i]) == wantedKey) {
+                        return static_cast<int>(i);
+                    }
+                }
+                return -1;
+            };
+            if (!newModel.animationNames.empty()) {
+                for (auto& state : machine->states) {
+                    if (!state.animationPath.empty()) continue;
+                    int clip = findClip(state.animationName);
+                    if (clip < 0) clip = findClip(state.name);
+                    if (clip < 0 && state.clip >= 0 &&
+                        state.clip < static_cast<int>(newModel.animationNames.size())) {
+                        clip = state.clip;
+                    }
+                    if (clip < 0) clip = 0;
+                    state.clip = clip;
+                    state.animationName =
+                        newModel.animationNames[static_cast<size_t>(clip)];
+                }
+                machine->currentState = glm::clamp(
+                    machine->currentState, 0,
+                    std::max(0, static_cast<int>(machine->states.size()) - 1));
+                machine->previousState = -1;
+                machine->stateTime = 0.0f;
+                machine->previousTime = 0.0f;
+                machine->blendElapsed = 0.0f;
+                machine->initialized = false;
+            }
+        }
+
+        m_editor.Select(skeletonEntity);
+        m_editor.camTarget =
+            glm::vec3(EntityWorldMatrix(skeletonEntity.Handle())[3]);
+        spdlog::info(
+            "[ModelSwap] Replaced '{}' with '{}' ({} meshes, {} matched "
+            "material slots, {} retained old slots)",
+            oldPath, newPath, newModel.meshes.size(), preservedMaterials,
+            retainedMaterialSlots);
+        return true;
     }
 
     void OnAssetDoubleClicked(const std::string& path) {
@@ -10679,13 +11786,24 @@ void DrawDetails() {
             return;
         }
         if (IsModelAssetPath(path)) {
+            if (!IsDragDropModelAssetPath(path)) {
+                spdlog::warn(
+                    "[Editor] FBX cannot be dropped as an asset. "
+                    "Use glTF/GLB, OBJ or DAE: {}",
+                    path);
+                return;
+            }
             // Dropping a model onto the selected Landscape assigns it as
-            // the instanced tree mesh. Deselect the Landscape to spawn a
-            // regular model entity instead.
+            // the instanced tree mesh. A glTF dropped while a character or
+            // its capsule is selected replaces the character model in place;
+            // otherwise spawn a regular model entity.
             Galeshi::Entity selected = m_editor.Selected(&m_scene);
             if (selected &&
                 selected.HasComponent<Galeshi::LandscapeComponent>()) {
                 AssignLandscapeTreeModel(selected, path);
+            } else if (IsGltfModelAssetPath(path) && selected &&
+                       FindSkeletalRootForReplacement(selected.Handle())) {
+                ReplaceCharacterModel(selected.Handle(), path);
             } else {
                 SpawnFromModel(path, pos, true);
             }
@@ -10741,8 +11859,13 @@ void DrawDetails() {
             };
         }
 
+        std::unordered_set<int> usedMaterialSlots;
         for (size_t i = 0; i < model.meshes.size(); ++i) {
-            auto e = m_scene.CreateEntity(stem + "_" + std::to_string(i));
+            const std::string meshName =
+                (i < model.meshNames.size() && !model.meshNames[i].empty())
+                    ? model.meshNames[i]
+                    : stem + "_" + std::to_string(i);
+            auto e = m_scene.CreateEntity(meshName);
             
             // NOTE: We do NOT reset child transforms here. Assimp gives them local offsets.
             
@@ -10752,15 +11875,32 @@ void DrawDetails() {
             std::shared_ptr<Galeshi::Material> mat;
             if (i < model.meshMaterialIndex.size()) {
                 int matIdx = model.meshMaterialIndex[i];
-                if (matIdx >= 0 && matIdx < static_cast<int>(model.materials.size()))
+                if (matIdx >= 0 && matIdx < static_cast<int>(model.materials.size())) {
                     mat = model.materials[static_cast<size_t>(matIdx)];
+                    usedMaterialSlots.insert(matIdx);
+                }
             }
             if (!mat && !model.materials.empty())
                 mat = model.materials[0];
             if (!mat)
                 mat = std::make_shared<Galeshi::Material>();
+            // Leave the exported material name untouched. Empty names are
+            // valid and must not be replaced with a fabricated one.
             e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
         }
+
+        // Some exporters write named materials that are not referenced by a
+        // visible primitive. Keep only named slots; a synthetic unnamed
+        // material is not a Blender material and must not create a fake entry.
+        for (size_t i = 0; i < model.materials.size(); ++i) {
+            if (usedMaterialSlots.count(static_cast<int>(i)) != 0 ||
+                !model.materials[i] || model.materials[i]->name.empty()) {
+                continue;
+            }
+            CreateMaterialSlotEntity(root.Handle(), model.materials[i]->name,
+                                     model.materials[i]);
+        }
+
         m_editor.Select(root);
         m_editor.camTarget = pos;
         m_editor.camRadius = 5.0f;
@@ -11075,6 +12215,8 @@ void DrawDetails() {
     Galeshi::EditorState    m_editor;
     bool                    m_usingGameCamera = false;
     entt::entity            m_activeGameCamera = entt::null;
+    float                   m_gameCameraYawOffset = 0.0f;
+    float                   m_gameCameraPitchOffset = 0.0f;
     float                   m_time = 0.0f;
     float                   m_frameDelta = 1.0f / 60.0f;
     int                     m_renderFrameCounter = 0;
@@ -11109,7 +12251,16 @@ void DrawDetails() {
     Galeshi::FilePickerDialog m_vegetationMeshPicker;
     entt::entity m_vegetationMeshTarget = entt::null;
     int m_vegetationMeshTypeIndex = -1;
+    Galeshi::FilePickerDialog m_characterModelPicker;
+    entt::entity m_characterModelTarget = entt::null;
     int m_paintTreeType = -1;
+
+    // Details search. The scroll flag makes the first matching section jump
+    // into view only when the query changes, so the user can still scroll
+    // through results after that.
+    std::string m_detailsSearch;
+    char m_detailsSearchBuffer[256] = {};
+    bool m_detailsSearchScrollPending = false;
     TextEditor m_luaEditor;
     std::string m_currentLuaFile;
     bool m_luaEditorInitialized = false;
