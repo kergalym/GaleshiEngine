@@ -4,6 +4,7 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
+#include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
 
@@ -187,18 +188,28 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
             scene.Registry().try_get<AnimationStateMachineComponent>(handle);
 
         bool hasSeparateClip = false;
+        bool hasEmbeddedClip = false;
         if (machine) {
             for (const auto& state : machine->states) {
-                if (!state.animationPath.empty()) {
+                if (state.animationPath.empty()) {
+                    hasEmbeddedClip = true;
+                } else {
                     hasSeparateClip = true;
-                    break;
                 }
             }
         }
-        if (!skel.isAnimated && !hasSeparateClip) continue;
-        if (hasSeparateClip) {
-            // A skeleton without embedded clips still needs its bone palette
-            // uploaded for clips coming from a separate animation FBX.
+        if (!skel.isAnimated && !hasSeparateClip && !hasEmbeddedClip) continue;
+        if (hasSeparateClip ||
+            (hasEmbeddedClip && machine && machine->enabled)) {
+            // A state machine can drive clips even when the skeleton's
+            // standalone playback checkbox was turned off. This is essential
+            // for embedded clips authored with the character FBX.
+            if (hasEmbeddedClip && machine && machine->enabled &&
+                !skel.isAnimated) {
+                spdlog::info(
+                    "[Animation] Enabling embedded clips for '{}'",
+                    skel.sourcePath);
+            }
             skel.isAnimated = true;
         }
 

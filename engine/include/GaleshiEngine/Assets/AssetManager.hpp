@@ -40,11 +40,23 @@ public:
         // can use a different axis/unit convention from the character; this
         // map lets retargeting remove that difference.
         std::unordered_map<std::string, glm::mat4> nodeRestGlobals;
+        // Rest-pose local transforms and parent links. Retargeting works in
+        // local bone space (like UE4) so root/axis differences between the
+        // animation FBX and the character FBX cannot leak into the pose.
+        std::unordered_map<std::string, glm::mat4> nodeRestLocals;
+        std::unordered_map<std::string, std::string> nodeParents;
         // Root-most skinned bone and its namespace prefix, for example
         // "Korlan:Hips" -> "Korlan:". Used to remap animation namespaces
         // (mixamorig:, Armature|, etc.) onto the selected character.
         std::string                            rootBoneName;
         std::string                            boneNamespacePrefix;
+        // Top-level armature node, e.g. "Korlan" or "Armature", used in
+        // retarget diagnostics.
+        std::string                            armatureRootName;
+        float                                  unitScaleFactor = 1.0f;
+        // Global conversion from FBX units to engine meters. Blender writes
+        // UnitScaleFactor=1 for a centimeter FBX, so this is normally 0.01.
+        float                                  importScale = 0.01f;
         int                                    totalBones = 0;
         bool hasAnimation = false;
         std::vector<std::string>                animationNames;

@@ -8757,12 +8757,31 @@ if (ImGui::BeginMenu("File")) {
         for (entt::entity handle : meshView) {
             const auto& mesh = meshView.get<Galeshi::MeshComponent>(handle);
             if (!isSkeletalModel(mesh.sourceAssetPath)) continue;
+            // Prefer the nearest ancestor that owns a skeleton. Walking all
+            // the way to the scene root can select a shared parent: editing
+            // its state machine would then animate every character below it.
             entt::entity root = handle;
+            entt::entity skeletalRoot = entt::null;
             for (int depth = 0; depth < 128 &&
-                                registry.valid(root) &&
-                                registry.all_of<Galeshi::ParentComponent>(root);
+                                registry.valid(root);
                  ++depth) {
+                if (registry.all_of<Galeshi::SkeletalComponent>(root) ||
+                    registry.all_of<Galeshi::AnimationStateMachineComponent>(
+                        root)) {
+                    skeletalRoot = root;
+                    break;
+                }
+                if (!registry.all_of<Galeshi::ParentComponent>(root)) break;
                 root = registry.get<Galeshi::ParentComponent>(root).parent;
+            }
+            if (skeletalRoot != entt::null) {
+                root = skeletalRoot;
+            } else if (registry.all_of<Galeshi::ParentComponent>(handle)) {
+                // Imported model meshes normally live under their own root;
+                // keep that root instead of the common scene parent.
+                root = registry.get<Galeshi::ParentComponent>(handle).parent;
+            } else {
+                root = handle;
             }
             addCharacter(root, mesh.sourceAssetPath);
         }
