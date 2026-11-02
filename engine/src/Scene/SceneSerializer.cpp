@@ -371,6 +371,13 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
         // Register embedded model textures before resolving material maps.
         assets.LoadModel(modelSource);
     }
+    std::string modelExtension =
+        std::filesystem::path(modelSource).extension().string();
+    std::transform(modelExtension.begin(), modelExtension.end(),
+                   modelExtension.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const bool flipTextureVertically =
+        modelExtension != ".gltf" && modelExtension != ".glb";
 
     auto loadMap = [&](const char* key, bool srgb) -> std::shared_ptr<Texture> {
         const std::string path = jm.value(key, std::string{});
@@ -378,7 +385,8 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
 
         auto load = [&](const std::string& candidate) -> std::shared_ptr<Texture> {
             if (candidate.empty()) return nullptr;
-            auto texture = assets.LoadTexture(candidate, srgb);
+            auto texture = assets.LoadTexture(
+                candidate, srgb, nullptr, flipTextureVertically);
             return (texture && texture != assets.WhiteTexture()) ? texture : nullptr;
         };
 

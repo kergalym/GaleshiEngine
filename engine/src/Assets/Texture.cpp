@@ -567,7 +567,8 @@ Texture* LoadContainer(const bimg::ImageContainer& image, const uint8_t* bytes,
 }
 
 Texture* LoadEncodedBytes(const uint8_t* data, size_t size,
-                          const std::string& displayPath, bool srgb) {
+                          const std::string& displayPath, bool srgb,
+                          bool flipVertically) {
     if (!data || size == 0 || size > UINT32_MAX) return nullptr;
 
     // Container formats (DDS/KTX/PVR/GNF/TEX) are parsed by bimg. Other image
@@ -590,7 +591,7 @@ Texture* LoadEncodedBytes(const uint8_t* data, size_t size,
 
     // UV в bgfx идут сверху-вниз (как в DDS), но stb по умолчанию
     // грузит снизу-вверх. Разворачиваем.
-    stbi_set_flip_vertically_on_load(true);
+    stbi_set_flip_vertically_on_load(flipVertically);
     unsigned char* pixels = stbi_load_from_memory(
         data, static_cast<int>(size), &width, &height, &channels, 4);
     if (!pixels) {
@@ -666,7 +667,7 @@ bool Texture::IsUdimPath(const std::string& path) {
 }
 
 Texture* Texture::LoadUdimFromFile(const std::string& path, bool srgb,
-                                   UdimInfo* outInfo) {
+                                   UdimInfo* outInfo, bool flipVertically) {
     namespace fs = std::filesystem;
     if (outInfo) *outInfo = UdimInfo{};
 
@@ -716,7 +717,7 @@ Texture* Texture::LoadUdimFromFile(const std::string& path, bool srgb,
     const int tilesX = maxTileU - minTileU + 1;
     const int tilesY = maxTileV - minTileV + 1;
 
-    stbi_set_flip_vertically_on_load(true);
+    stbi_set_flip_vertically_on_load(flipVertically);
     int tileWidth = 0;
     int tileHeight = 0;
     int channels = 0;
@@ -819,7 +820,8 @@ void Texture::Destroy() {
 void Texture::SetCompressionEnabled(bool enabled) { CompressionFlag() = enabled; }
 bool Texture::CompressionEnabled() { return CompressionFlag(); }
 
-Texture* Texture::LoadFromFile(const std::string& path, bool srgb) {
+Texture* Texture::LoadFromFile(const std::string& path, bool srgb,
+                               bool flipVertically) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) {
         spdlog::error("[Texture] Cannot open: {}", path);
@@ -839,16 +841,19 @@ Texture* Texture::LoadFromFile(const std::string& path, bool srgb) {
         return nullptr;
     }
 
-    return LoadEncodedBytes(bytes.data(), bytes.size(), path, srgb);
+    return LoadEncodedBytes(bytes.data(), bytes.size(), path, srgb,
+                            flipVertically);
 }
 
-Texture* Texture::LoadFromMemory(const unsigned char* data, size_t size,
-                                 const std::string& displayPath, bool srgb) {
-    return LoadEncodedBytes(data, size, displayPath, srgb);
+Texture* Texture::LoadFromMemory(
+    const unsigned char* data, size_t size,
+    const std::string& displayPath, bool srgb, bool flipVertically) {
+    return LoadEncodedBytes(data, size, displayPath, srgb, flipVertically);
 }
 
-Texture* Texture::CreateFromBgra8(const unsigned char* data, int width, int height,
-                                  const std::string& displayPath, bool srgb) {
+Texture* Texture::CreateFromBgra8(
+    const unsigned char* data, int width, int height,
+    const std::string& displayPath, bool srgb, bool flipVertically) {
     if (!data || width <= 0 || height <= 0) return nullptr;
 
     const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
@@ -860,6 +865,7 @@ Texture* Texture::CreateFromBgra8(const unsigned char* data, int width, int heig
         rgba[i * 4 + 3] = data[i * 4 + 3];
     }
 
+    (void)flipVertically;
     Texture* tex = CreateFromRgba8Source(
         rgba.data(), static_cast<uint32_t>(width), static_cast<uint32_t>(height),
         displayPath, srgb, true);

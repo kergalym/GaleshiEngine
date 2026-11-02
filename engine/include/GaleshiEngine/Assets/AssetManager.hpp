@@ -28,7 +28,7 @@ public:
     // packed into one atlas and udim receives the UV remap information.
     std::shared_ptr<Texture> LoadTexture(
         const std::string& path, bool srgb = false,
-        Texture::UdimInfo* udim = nullptr);
+        Texture::UdimInfo* udim = nullptr, bool flipVertically = true);
 
     struct LoadedModel {
         std::vector<std::shared_ptr<Mesh>>     meshes;

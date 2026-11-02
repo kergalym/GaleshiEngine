@@ -30,20 +30,27 @@ public:
     // Сжатые форматы (BC*, ETC*, ASTC, ...) загружаются без распаковки и
     // передаются на GPU вместе с полной цепочкой mip-уровней.
     // srgb=true включает аппаратное sRGB->linear преобразование при выборке.
-    static Texture* LoadFromFile(const std::string& path, bool srgb = false);
+    // Most engine formats use a bottom-left V origin (and therefore flip
+    // source images on upload). glTF follows Godot/WebGL's top-left origin and
+    // must be loaded with flipVertically=false so its UVs and images match.
+    static Texture* LoadFromFile(const std::string& path, bool srgb = false,
+                                 bool flipVertically = true);
     // Loads a Substance Painter/UDIM tile set (1001, 1002, ...) into a single
-    // bottom-left-origin atlas. The returned texture keeps the requested path
-    // so scene serialization still references a real source file.
+    // atlas. The returned texture keeps the requested path so scene
+    // serialization still references a real source file.
     static Texture* LoadUdimFromFile(const std::string& path, bool srgb,
-                                    UdimInfo* outInfo = nullptr);
+                                    UdimInfo* outInfo = nullptr,
+                                    bool flipVertically = true);
     static bool IsUdimPath(const std::string& path);
-    static Texture* LoadFromMemory(const unsigned char* data, size_t size,
-                                  const std::string& displayPath = "<embedded>",
-                                  bool srgb = false);
+    static Texture* LoadFromMemory(
+        const unsigned char* data, size_t size,
+        const std::string& displayPath = "<embedded>", bool srgb = false,
+        bool flipVertically = true);
     // Assimp raw embedded texture: BGRA8, mWidth x mHeight pixels.
-    static Texture* CreateFromBgra8(const unsigned char* data, int width, int height,
-                                    const std::string& displayPath = "<embedded-raw>",
-                                    bool srgb = false);
+    static Texture* CreateFromBgra8(
+        const unsigned char* data, int width, int height,
+        const std::string& displayPath = "<embedded-raw>", bool srgb = false,
+        bool flipVertically = true);
 
     // 1x1 белая / плоская normal / чёрная
     static Texture* CreateWhite();

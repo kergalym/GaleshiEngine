@@ -200,19 +200,24 @@ std::string AssetBaseName(const std::string& path) {
 
 // Colour and data textures must not share a cache entry: the same bitmap can
 // be requested as sRGB for albedo and as linear data elsewhere.
-std::string TextureCacheKey(const std::string& path, bool srgb) {
-    return srgb ? "srgb:" + path : path;
+std::string TextureCacheKey(const std::string& path, bool srgb,
+                            bool flipVertically = true) {
+    std::string key = srgb ? "srgb:" + path : path;
+    if (!flipVertically) key = "top-left:" + key;
+    return key;
 }
 } // namespace
 
 std::shared_ptr<Texture> AssetManager::LoadTexture(
-    const std::string& originalPath, bool srgb, Texture::UdimInfo* udimInfo) {
+    const std::string& originalPath, bool srgb, Texture::UdimInfo* udimInfo,
+    bool flipVertically) {
     if (originalPath.empty()) return m_white;
     const std::string path = MakeRelativePath(originalPath);
 
     const std::string normalized = NormalizeAssetPath(path);
-    const std::string key       = TextureCacheKey(path, srgb);
-    const std::string normKey   = TextureCacheKey(normalized, srgb);
+    const std::string key       = TextureCacheKey(path, srgb, flipVertically);
+    const std::string normKey   =
+        TextureCacheKey(normalized, srgb, flipVertically);
 
     // Substance Painter exports one file per UDIM tile. Probe the tile set
     // before the ordinary one-file cache so a file path from a material always
@@ -240,10 +245,10 @@ std::shared_ptr<Texture> AssetManager::LoadTexture(
         if (udimExists) {
             Texture::UdimInfo info;
             Texture* rawUdim = Texture::LoadUdimFromFile(
-                resolvedUdim, srgb, &info);
+                resolvedUdim, srgb, &info, flipVertically);
             if (!rawUdim && !resolvedUdimFallback.empty()) {
                 rawUdim = Texture::LoadUdimFromFile(
-                    resolvedUdimFallback, srgb, &info);
+                    resolvedUdimFallback, srgb, &info, flipVertically);
             }
             if (rawUdim) {
                 std::shared_ptr<Texture> tex(rawUdim);
@@ -268,10 +273,12 @@ std::shared_ptr<Texture> AssetManager::LoadTexture(
     }
 
     const std::string lower = LowerAssetPath(normalized);
-    auto embedded = m_embeddedTextures.find(TextureCacheKey(lower, srgb));
+    auto embedded = m_embeddedTextures.find(
+        TextureCacheKey(lower, srgb, flipVertically));
     if (embedded != m_embeddedTextures.end()) return embedded->second;
     embedded = m_embeddedTextures.find(
-        TextureCacheKey(LowerAssetPath(AssetBaseName(normalized)), srgb));
+        TextureCacheKey(LowerAssetPath(AssetBaseName(normalized)), srgb,
+                        flipVertically));
     if (embedded != m_embeddedTextures.end()) return embedded->second;
 
     // Resolve against the project root, not the process working directory.
@@ -289,9 +296,9 @@ std::shared_ptr<Texture> AssetManager::LoadTexture(
     }
     if (!exists) return m_white;
 
-    Texture* raw = Texture::LoadFromFile(resolved, srgb);
+    Texture* raw = Texture::LoadFromFile(resolved, srgb, flipVertically);
     if (!raw && !resolvedFallback.empty()) {
-        raw = Texture::LoadFromFile(resolvedFallback, srgb);
+        raw = Texture::LoadFromFile(resolvedFallback, srgb, flipVertically);
     }
     if (!raw) return m_white;
 
@@ -691,11 +698,14 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
                   "Skinned FBX import must not pre-transform vertices");
     unsigned int postProcess = kSkinnedImportFlags;
     if (extension == ".gltf" || extension == ".glb") {
+        // Assimp's glTF2 importer already flips V once internally. Godot
+        // imports the glTF UVs exactly as authored, so undo that internal flip
+        // here. The image loader also keeps glTF images in their original
+        // top-left origin (flipVertically=false below), making the complete
+        // UV/image mapping match Godot.
         postProcess |= aiProcess_FlipUVs;
         // glTF's front-face winding is opposite to the engine's FBX import
-        // path after Assimp's coordinate conversion. Without this flip,
-        // single-sided glTF materials cull the visible exterior and the
-        // character appears to have missing faces. Flip the indices once at
+        // path after Assimp's coordinate conversion. Flip the indices once at
         // import time so Two Sided remains a genuine material option rather
         // than a required workaround.
         postProcess |= aiProcess_FlipWindingOrder;
@@ -781,7 +791,8 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
     };
 
     auto loadEmbeddedTexture = [&](int index, const std::string& reference,
-                                   bool srgb) -> std::shared_ptr<Texture> {
+                                   bool srgb,
+                                   bool flipVertically) -> std::shared_ptr<Texture> {
         if (index < 0 || index >= static_cast<int>(scene->mNumTextures)) return nullptr;
         const aiTexture* embedded = scene->mTextures[index];
         const std::string embeddedName = NormalizeAssetPath(embedded->mFilename.C_Str());
@@ -789,7 +800,9 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         if (displayPath.empty() || displayPath[0] == '*') displayPath = embeddedName;
 
         const std::string cacheKey = "embedded:" + std::to_string(index) + ":" +
-                                     (srgb ? "srgb:" : "linear:") + embeddedName;
+                                     (srgb ? "srgb:" : "linear:") +
+                                     (flipVertically ? "flip:" : "top-left:") +
+                                     embeddedName;
         auto cached = m_textures.find(cacheKey);
         if (cached != m_textures.end()) return cached->second;
 
@@ -797,24 +810,33 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         if (embedded->mHeight == 0) {
             raw = Texture::LoadFromMemory(
                 reinterpret_cast<const unsigned char*>(embedded->pcData),
-                static_cast<size_t>(embedded->mWidth), displayPath, srgb);
+                static_cast<size_t>(embedded->mWidth), displayPath, srgb,
+                flipVertically);
         } else {
             raw = Texture::CreateFromBgra8(
                 reinterpret_cast<const unsigned char*>(embedded->pcData),
                 static_cast<int>(embedded->mWidth),
-                static_cast<int>(embedded->mHeight), displayPath, srgb);
+                static_cast<int>(embedded->mHeight), displayPath, srgb,
+                flipVertically);
         }
         if (!raw) return nullptr;
 
         auto tex = std::shared_ptr<Texture>(raw);
         m_textures[cacheKey] = tex;
-        m_textures[TextureCacheKey(displayPath, srgb)] = tex;
-        m_textures[TextureCacheKey(LowerAssetPath(displayPath), srgb)] = tex;
-        m_embeddedTextures[TextureCacheKey(LowerAssetPath(displayPath), srgb)] = tex;
-        m_embeddedTextures[TextureCacheKey(LowerAssetPath(AssetBaseName(displayPath)), srgb)] = tex;
+        m_textures[TextureCacheKey(displayPath, srgb, flipVertically)] = tex;
+        m_textures[TextureCacheKey(LowerAssetPath(displayPath), srgb,
+                                   flipVertically)] = tex;
+        m_embeddedTextures[TextureCacheKey(LowerAssetPath(displayPath), srgb,
+                                           flipVertically)] = tex;
+        m_embeddedTextures[TextureCacheKey(
+            LowerAssetPath(AssetBaseName(displayPath)), srgb,
+            flipVertically)] = tex;
         if (!embeddedName.empty()) {
-            m_embeddedTextures[TextureCacheKey(LowerAssetPath(embeddedName), srgb)] = tex;
-            m_embeddedTextures[TextureCacheKey(LowerAssetPath(AssetBaseName(embeddedName)), srgb)] = tex;
+            m_embeddedTextures[TextureCacheKey(
+                LowerAssetPath(embeddedName), srgb, flipVertically)] = tex;
+            m_embeddedTextures[TextureCacheKey(
+                LowerAssetPath(AssetBaseName(embeddedName)), srgb,
+                flipVertically)] = tex;
         }
         spdlog::info("  -> EMBEDDED[{}] '{}': OK{}", index, displayPath,
                      srgb ? " [sRGB]" : "");
@@ -823,7 +845,8 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
 
     auto resolveExternalTexture = [&](const std::string& reference,
                                       bool srgb,
-                                      Texture::UdimInfo* udimInfo)
+                                      Texture::UdimInfo* udimInfo,
+                                      bool flipVertically)
         -> std::shared_ptr<Texture> {
         const std::filesystem::path relative(NormalizeAssetPath(reference));
         std::filesystem::path resolved;
@@ -841,7 +864,8 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         }
         if (resolved.empty()) return nullptr;
 
-        auto tex = LoadTexture(resolved.string(), srgb, udimInfo);
+        auto tex = LoadTexture(resolved.string(), srgb, udimInfo,
+                               flipVertically);
         if (tex && tex != m_white) {
             spdlog::info("  -> EXTERNAL '{}': OK{}", resolved.string(),
                          srgb ? " [sRGB]" : "");
@@ -852,13 +876,16 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
 
     auto loadTextureReference = [&](const std::string& reference,
                                     bool srgb,
-                                    Texture::UdimInfo* udimInfo = nullptr)
+                                    Texture::UdimInfo* udimInfo = nullptr,
+                                    bool flipVertically = true)
         -> std::shared_ptr<Texture> {
         if (reference.empty()) return nullptr;
         int embeddedIndex = -1;
         if (findEmbeddedTexture(reference, embeddedIndex))
-            return loadEmbeddedTexture(embeddedIndex, reference, srgb);
-        return resolveExternalTexture(reference, srgb, udimInfo);
+            return loadEmbeddedTexture(embeddedIndex, reference, srgb,
+                                       flipVertically);
+        return resolveExternalTexture(reference, srgb, udimInfo,
+                                      flipVertically);
     };
 
     // Assimp sometimes stores only the "*N" index in material texture slots.
@@ -1129,11 +1156,13 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
             }
         }
 
+        const bool textureFlipVertically = !out.isGltf;
         auto assign = [&](std::shared_ptr<Texture>& slot, const std::string& ref,
                           bool srgb) {
             if (slot || ref.empty()) return;
             Texture::UdimInfo udim;
-            auto tex = loadTextureReference(ref, srgb, &udim);
+            auto tex = loadTextureReference(ref, srgb, &udim,
+                                            textureFlipVertically);
             if (tex && tex != m_white) {
                 slot = tex;
                 if (udim.valid) {
