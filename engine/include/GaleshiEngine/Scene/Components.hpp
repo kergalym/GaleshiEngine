@@ -72,6 +72,10 @@ enum class AnimationCondition {
 struct AnimationState {
     std::string name = "State";
     int clip = 0;
+    // Optional stable clip identity. Blender FBX action order is not guaranteed
+    // to survive a re-export, so the clip name is preferred over the index
+    // when it still exists in the loaded animation list.
+    std::string animationName;
     bool loop = true;
     float speed = 1.0f;
 

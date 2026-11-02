@@ -494,156 +494,26 @@ void SampleNodeTransforms(const aiScene* scene, const aiAnimation* anim,
     }
 }
 
-// Stores the local rest transform and parent link of every node. Local-space
-// retargeting needs these independently of the skeleton's world orientation.
-void CollectNodeRestLocals(
-    const aiNode* node,
-    std::unordered_map<std::string, glm::mat4>& restLocals,
-    std::unordered_map<std::string, std::string>& parents,
-    const std::string& parentName = {}, int depth = 0) {
-    if (!node || depth > 128) return;
-    const std::string nodeName(node->mName.data);
-    restLocals[nodeName] = aiToGlm(node->mTransformation);
-    parents[nodeName] = parentName;
-    for (unsigned int i = 0; i < node->mNumChildren; ++i) {
-        CollectNodeRestLocals(node->mChildren[i], restLocals, parents,
-                              nodeName, depth + 1);
-    }
-}
-
-glm::vec3 SampleVectorKeys(const aiVectorKey* keys, unsigned int count,
-                           float timeInTicks, const glm::vec3& fallback) {
-    if (!keys || count == 0) return fallback;
-    glm::vec3 result = aiToVec3(keys[0].mValue);
-    for (unsigned int i = 0; i + 1 < count; ++i) {
-        const aiVectorKey& k0 = keys[i];
-        const aiVectorKey& k1 = keys[i + 1];
-        if (timeInTicks < static_cast<float>(k1.mTime)) {
-            const float span = static_cast<float>(k1.mTime - k0.mTime);
-            const float factor = span > 1e-6f
-                ? std::clamp((timeInTicks - static_cast<float>(k0.mTime)) / span,
-                             0.0f, 1.0f)
-                : 0.0f;
-            result = glm::mix(aiToVec3(k0.mValue), aiToVec3(k1.mValue), factor);
-            return result;
-        }
-        result = aiToVec3(k1.mValue);
-    }
-    return result;
-}
-
-glm::quat SampleQuaternionKeys(const aiQuatKey* keys, unsigned int count,
-                               float timeInTicks, const glm::quat& fallback) {
-    if (!keys || count == 0) return fallback;
-    glm::quat result = glm::normalize(
-        glm::quat(keys[0].mValue.w, keys[0].mValue.x,
-                  keys[0].mValue.y, keys[0].mValue.z));
-    for (unsigned int i = 0; i + 1 < count; ++i) {
-        const aiQuatKey& k0 = keys[i];
-        const aiQuatKey& k1 = keys[i + 1];
-        if (timeInTicks < static_cast<float>(k1.mTime)) {
-            const float span = static_cast<float>(k1.mTime - k0.mTime);
-            const float factor = span > 1e-6f
-                ? std::clamp((timeInTicks - static_cast<float>(k0.mTime)) / span,
-                             0.0f, 1.0f)
-                : 0.0f;
-            const glm::quat start(k0.mValue.w, k0.mValue.x,
-                                  k0.mValue.y, k0.mValue.z);
-            const glm::quat end(k1.mValue.w, k1.mValue.x,
-                                k1.mValue.y, k1.mValue.z);
-            return glm::normalize(glm::slerp(start, end, factor));
-        }
-        result = glm::normalize(
-            glm::quat(k1.mValue.w, k1.mValue.x, k1.mValue.y, k1.mValue.z));
-    }
-    return result;
-}
-
-// Samples a node's local transform. Unlike SampleNodeTransforms this keeps
-// translation/rotation/scale authored in local bone space and fills channels
-// that only animate a subset of the components from the node's rest pose.
-glm::mat4 SampleNodeLocalTransform(const aiNode* node,
-                                   const aiAnimation* anim, float time) {
-    const glm::mat4 rest = aiToGlm(node->mTransformation);
-    if (!anim) return rest;
-
-    const aiNodeAnim* nodeAnim = nullptr;
-    for (unsigned int i = 0; i < anim->mNumChannels; ++i) {
-        if (anim->mChannels[i] &&
-            std::strcmp(node->mName.C_Str(),
-                        anim->mChannels[i]->mNodeName.C_Str()) == 0) {
-            nodeAnim = anim->mChannels[i];
-            break;
-        }
-    }
-    if (!nodeAnim) return rest;
-
-    glm::vec3 restTranslation(rest[3]);
-    glm::quat restRotation(1.0f, 0.0f, 0.0f, 0.0f);
-    glm::vec3 restScale(1.0f);
-    glm::vec3 skew(0.0f);
-    glm::vec4 perspective(0.0f);
-    if (glm::decompose(rest, restScale, restRotation, restTranslation,
-                       skew, perspective)) {
-        restRotation = glm::normalize(restRotation);
-    } else {
-        restTranslation = glm::vec3(rest[3]);
-        restRotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-        restScale = glm::vec3(1.0f);
-    }
-
-    float timeInTicks = time *
-        (anim->mTicksPerSecond != 0.0 ? static_cast<float>(anim->mTicksPerSecond)
-                                      : 25.0f);
-    if (anim->mDuration > 0.0) {
-        const double wrapped = std::fmod(static_cast<double>(timeInTicks),
-                                         anim->mDuration);
-        timeInTicks = static_cast<float>(wrapped < 0.0 ? wrapped + anim->mDuration
-                                                       : wrapped);
-    }
-
-    const glm::vec3 translation = SampleVectorKeys(
-        nodeAnim->mPositionKeys, nodeAnim->mNumPositionKeys, timeInTicks,
-        restTranslation);
-    const glm::quat rotation = SampleQuaternionKeys(
-        nodeAnim->mRotationKeys, nodeAnim->mNumRotationKeys, timeInTicks,
-        restRotation);
-    const glm::vec3 scale = SampleVectorKeys(
-        nodeAnim->mScalingKeys, nodeAnim->mNumScalingKeys, timeInTicks,
-        restScale);
-    return glm::translate(glm::mat4(1.0f), translation) *
-           glm::mat4_cast(rotation) *
-           glm::scale(glm::mat4(1.0f), scale);
-}
-
-void SampleNodeLocalTransforms(
-    const aiAnimation* anim, float time, const aiNode* node,
-    std::unordered_map<std::string, glm::mat4>& out, int depth = 0) {
-    if (!node || depth > 128) return;
-    out[node->mName.C_Str()] = SampleNodeLocalTransform(node, anim, time);
-    for (unsigned int i = 0; i < node->mNumChildren; ++i) {
-        SampleNodeLocalTransforms(anim, time, node->mChildren[i], out,
-                                  depth + 1);
-    }
-}
-
-// Rebuilds every node's world transform from the retargeted local pose while
-// preserving the target scene's complete hierarchy. This also gives rest-pose
-// matrices to bones that the source clip does not animate.
-void BuildNodeGlobals(
+// Rebuilds target node globals from target rest locals. Matched bones use
+// their desired global pose; unanimated/child bones keep their local rest and
+// therefore inherit animation from their parents instead of being frozen at
+// world-space identity.
+void BuildRetargetedGlobals(
     const aiNode* node, const glm::mat4& parentTransform,
-    const std::unordered_map<std::string, glm::mat4>& localTransforms,
-    std::unordered_map<std::string, glm::mat4>& out, int depth = 0) {
+    const std::unordered_map<std::string, glm::mat4>& desiredGlobals,
+    std::unordered_map<std::string, glm::mat4>& outGlobals, int depth = 0) {
     if (!node || depth > 128) return;
     const std::string nodeName(node->mName.data);
-    const auto local = localTransforms.find(nodeName);
-    const glm::mat4 localTransform = local != localTransforms.end()
-        ? local->second : aiToGlm(node->mTransformation);
+    glm::mat4 localTransform = aiToGlm(node->mTransformation);
+    const auto desired = desiredGlobals.find(nodeName);
+    if (desired != desiredGlobals.end()) {
+        localTransform = glm::inverse(parentTransform) * desired->second;
+    }
     const glm::mat4 globalTransform = parentTransform * localTransform;
-    out[nodeName] = globalTransform;
+    outGlobals[nodeName] = globalTransform;
     for (unsigned int i = 0; i < node->mNumChildren; ++i) {
-        BuildNodeGlobals(node->mChildren[i], globalTransform,
-                         localTransforms, out, depth + 1);
+        BuildRetargetedGlobals(node->mChildren[i], globalTransform,
+                               desiredGlobals, outGlobals, depth + 1);
     }
 }
 
@@ -679,54 +549,6 @@ std::string NormalizeBoneName(std::string name) {
         normalized.push_back(c);
     }
     return normalized;
-}
-
-enum class TranslationRetargetMode {
-    Animation,
-    Skeleton,
-    AnimationScaled
-};
-
-TranslationRetargetMode TranslationModeForBone(const std::string& boneName) {
-    const std::string normalized = NormalizeBoneName(boneName);
-    // UE4's default biped setup keeps pelvis motion (scaled to skeleton
-    // proportions) and drops translation from the remaining bones. Root and
-    // IK/weapon helper bones keep the authored animation translation.
-    if (normalized == "hips" || normalized == "hip" ||
-        normalized == "pelvis" || normalized == "bip01_pelvis") {
-        return TranslationRetargetMode::AnimationScaled;
-    }
-    if (normalized.find("root") != std::string::npos ||
-        normalized.find("ik") != std::string::npos ||
-        normalized.find("weapon") != std::string::npos ||
-        normalized.find("socket") != std::string::npos) {
-        return TranslationRetargetMode::Animation;
-    }
-    return TranslationRetargetMode::Skeleton;
-}
-
-float RestBoneLength(const AssetManager::LoadedModel& model,
-                     const std::string& boneName) {
-    const auto bone = model.nodeRestGlobals.find(boneName);
-    if (bone == model.nodeRestGlobals.end()) return 0.0f;
-    const auto parent = model.nodeParents.find(boneName);
-    if (parent == model.nodeParents.end()) return 0.0f;
-    const auto parentRest = model.nodeRestGlobals.find(parent->second);
-    if (parentRest == model.nodeRestGlobals.end()) return 0.0f;
-    return glm::length(glm::vec3(bone->second[3]) -
-                       glm::vec3(parentRest->second[3]));
-}
-
-float BoneLengthRatio(const AssetManager::LoadedModel& targetModel,
-                      const std::string& targetBone,
-                      const AssetManager::LoadedModel& sourceModel,
-                      const std::string& sourceBone) {
-    const float targetLength = RestBoneLength(targetModel, targetBone);
-    const float sourceLength = RestBoneLength(sourceModel, sourceBone);
-    if (targetLength > 1e-5f && sourceLength > 1e-5f) {
-        return targetLength / sourceLength;
-    }
-    return 1.0f;
 }
 
 std::string FindRootBoneName(const aiNode* node,
@@ -769,6 +591,12 @@ std::string FindArmatureRootName(const aiNode* sceneRoot,
         ? sceneRoot->mChildren[0]->mName.C_Str() : std::string{};
 }
 
+void ScaleMatrixTranslation(glm::mat4& matrix, float scale) {
+    matrix[3][0] *= scale;
+    matrix[3][1] *= scale;
+    matrix[3][2] *= scale;
+}
+
 // Conjugate a bone palette by a uniform import scale. Vertices are imported
 // as p * importScale, so skinning matrices must be S * P * S^-1.
 void ScaleBonePalette(std::vector<glm::mat4>& palettes, float scale) {
@@ -797,12 +625,31 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
     // top-left, so it still needs Assimp's flip to use the same convention.
     std::string extension = LowerAssetPath(
         std::filesystem::path(path).extension().string());
-    unsigned int postProcess =
-        aiProcess_Triangulate | aiProcess_GenSmoothNormals |
-        aiProcess_CalcTangentSpace;
+    out.isGltf = extension == ".gltf" || extension == ".glb";
+
+    // Keep the node/bone hierarchy alive. In particular NEVER add
+    // aiProcess_PreTransformVertices here: that step bakes node transforms
+    // into vertices, removes animations and destroys the skeleton/bone links.
+    // aiProcess_OptimizeGraph / OptimizeMeshes / JoinIdenticalVertices can
+    // also rename or collapse nodes that animation channels address, so they
+    // are intentionally absent for skinned FBX assets.
+    constexpr unsigned int kSkinnedImportFlags =
+        aiProcess_Triangulate |
+        aiProcess_GenSmoothNormals |
+        aiProcess_CalcTangentSpace |
+        aiProcess_LimitBoneWeights |
+        aiProcess_PopulateArmatureData;
+    static_assert((kSkinnedImportFlags & aiProcess_PreTransformVertices) == 0,
+                  "Skinned FBX import must not pre-transform vertices");
+    unsigned int postProcess = kSkinnedImportFlags;
     if (extension == ".gltf" || extension == ".glb") {
         postProcess |= aiProcess_FlipUVs;
     }
+    spdlog::info(
+        "[AssetManager] Assimp flags=Triangulate|GenSmoothNormals|"
+        "CalcTangentSpace|LimitBoneWeights|PopulateArmatureData "
+        "PreTransformVertices=off ({})",
+        path);
 
     const aiScene* scene = importer->ReadFile(ResolvePath(path), postProcess);
 
@@ -825,8 +672,6 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
                  out.unitScaleFactor, out.importScale, path);
     SampleNodeTransforms(scene, nullptr, 0.0f, scene->mRootNode,
                          glm::mat4(1.0f), out.nodeRestGlobals);
-    CollectNodeRestLocals(scene->mRootNode, out.nodeRestLocals,
-                          out.nodeParents);
 
     // === ДИАГНОСТИКА ===
     spdlog::info("[AssetManager] Scene stats:");
@@ -1302,7 +1147,18 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         const glm::mat4 meshTransform = meshToNodeTransform[i];
         const glm::mat4 importTransform =
             glm::scale(glm::mat4(1.0f), glm::vec3(out.importScale));
-        const glm::mat4 vertexTransform = importTransform * meshTransform;
+        // glTF explicitly ignores the transform of a skinned mesh node: the
+        // joint matrices already contain the skeleton/common-root transform.
+        // Keeping vertices in mesh space and using inverseBindMatrices is the
+        // spec-compliant path. Non-skinned glTF meshes still bake their node
+        // transform like ordinary meshes.
+        const bool gltfSkinnedMesh = out.isGltf && am->mNumBones > 0;
+        const glm::mat4 vertexTransform = gltfSkinnedMesh
+            ? importTransform
+            : importTransform * meshTransform;
+        const glm::mat4 normalTransform = gltfSkinnedMesh
+            ? glm::mat4(1.0f)
+            : meshTransform;
         spdlog::info("[AssetManager] Mesh[{}]: {} verts, {} bones, material index {}",
                      i, am->mNumVertices, am->mNumBones, am->mMaterialIndex);
 
@@ -1312,7 +1168,7 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
             Vertex vert{};
             vert.position = glm::vec3(vertexTransform * glm::vec4(aiToVec3(am->mVertices[v]), 1.0f));
             if (am->HasNormals()) {
-                vert.normal = glm::normalize(glm::vec3(meshTransform * glm::vec4(aiToVec3(am->mNormals[v]), 0.0f)));
+                vert.normal = glm::normalize(glm::vec3(normalTransform * glm::vec4(aiToVec3(am->mNormals[v]), 0.0f)));
             }
             if (am->HasTangentsAndBitangents()) vert.tangent = aiToVec3(am->mTangents[v]);
             if (am->HasTextureCoords(0)) vert.uv = aiToVec2(am->mTextureCoords[0][v]);
@@ -1358,6 +1214,33 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
     out.boneNamespacePrefix = BoneNamespacePrefix(out.rootBoneName);
     out.armatureRootName =
         FindArmatureRootName(scene->mRootNode, out.boneNamespacePrefix);
+
+    // Panda3D's Assimp loader builds the bind pose from the node hierarchy and
+    // ignores aiBone::mOffsetMatrix for skinning. Assimp's FBX offset matrix
+    // contains the mesh-node transform (often scale 100 for Blender/UE4 FBX)
+    // in addition to the inverse bind transform. Our vertices are already
+    // baked into mesh-node space, so applying that offset would transform the
+    // mesh transform twice and produce the long skinned spikes.
+    //
+    // glTF is different: its inverseBindMatrices are authoritative and are
+    // allowed to differ from inverse(node rest). Keep the glTF offset intact.
+    if (out.isGltf) {
+        spdlog::info("[Skinning] '{}' glTF inverse-bind from "
+                     "inverseBindMatrices: {}",
+                     path, out.boneOffsetMatrices.size());
+    } else {
+        int restBindCount = 0;
+        for (auto& [boneName, bindMatrix] : out.boneOffsetMatrices) {
+            const auto rest = out.nodeRestGlobals.find(boneName);
+            if (rest != out.nodeRestGlobals.end()) {
+                bindMatrix = glm::inverse(rest->second);
+                ++restBindCount;
+            }
+        }
+        spdlog::info("[Skinning] '{}' FBX inverse-bind from node rest: {}/{}",
+                     path, restBindCount, out.boneOffsetMatrices.size());
+    }
+
     if (!out.boneMap.empty()) {
         std::vector<std::string> names;
         names.reserve(out.boneMap.size());
@@ -1391,6 +1274,15 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
             out.animationDurations.push_back(
                 static_cast<float>(anim->mDuration > 0.0 ? anim->mDuration / ticks : 0.0));
         }
+        if (!out.animationNames.empty()) {
+            spdlog::info("[Animations] '{}' embedded clips={}",
+                         path, out.animationNames.size());
+            for (size_t i = 0; i < out.animationNames.size(); ++i) {
+                spdlog::info("[Animations]   [{}] '{}' duration={:.4f}s",
+                             i, out.animationNames[i],
+                             out.animationDurations[i]);
+            }
+        }
     }
 
     // Заполняем bone weights для каждого меша
@@ -1400,31 +1292,44 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
 
         std::vector<Vertex> verts = out.meshes[i]->Vertices();
         std::vector<uint32_t> idx = out.meshes[i]->Indices();
+        std::vector<std::vector<std::pair<int, float>>> influences(verts.size());
 
         for (unsigned b = 0; b < am->mNumBones; ++b) {
             aiBone* bone = am->mBones[b];
-            int globalIdx = globalBoneMap[bone->mName.data];
+            const auto globalIndex = globalBoneMap.find(bone->mName.data);
+            if (globalIndex == globalBoneMap.end()) continue;
             for (unsigned w = 0; w < bone->mNumWeights; ++w) {
-                unsigned vId = bone->mWeights[w].mVertexId;
-                float weight = bone->mWeights[w].mWeight;
-                for (int k = 0; k < 4; ++k) {
-                    if (verts[vId].boneWeights[k] == 0.0f) {
-                        verts[vId].boneIDs[k] = static_cast<float>(globalIdx);
-                        verts[vId].boneWeights[k] = weight;
-                        break;
-                    }
-                }
+                const unsigned vertexId = bone->mWeights[w].mVertexId;
+                if (vertexId >= influences.size()) continue;
+                const float weight = bone->mWeights[w].mWeight;
+                if (weight <= 0.0f) continue;
+                influences[vertexId].push_back({globalIndex->second, weight});
             }
         }
-        for (auto& v : verts) {
-            float totalWeight = v.boneWeights.x + v.boneWeights.y + v.boneWeights.z + v.boneWeights.w;
+        for (size_t vertexId = 0; vertexId < verts.size(); ++vertexId) {
+            Vertex& vertex = verts[vertexId];
+            auto& weights = influences[vertexId];
+            std::sort(weights.begin(), weights.end(),
+                      [](const auto& a, const auto& b) {
+                          return a.second > b.second;
+                      });
+            vertex.boneIDs = glm::vec4(0.0f);
+            vertex.boneWeights = glm::vec4(0.0f);
+            float totalWeight = 0.0f;
+            for (int k = 0; k < 4 && k < static_cast<int>(weights.size()); ++k) {
+                vertex.boneIDs[k] = static_cast<float>(weights[k].first);
+                vertex.boneWeights[k] = weights[k].second;
+                totalWeight += weights[k].second;
+            }
             if (totalWeight > 0.001f) {
-                // Normalize weights to prevent vertex shrinking
-                v.boneWeights /= totalWeight;
+                // glTF and FBX may contain more than four influences. Keep
+                // the four strongest and normalize them, matching Godot's
+                // 4-influence skinning path.
+                vertex.boneWeights /= totalWeight;
             } else {
-                // Вершины без весов привязываем к dummy bone 255 (Identity)
-                v.boneIDs[0] = 255.0f;
-                v.boneWeights[0] = 1.0f;
+                // Vertices without valid weights stay at bind pose.
+                vertex.boneIDs[0] = 255.0f;
+                vertex.boneWeights[0] = 1.0f;
             }
         }
         out.meshes[i]->Upload(verts, idx);
@@ -1499,12 +1404,36 @@ void AssetManager::UpdateAnimationClipRetargeted(
     }
     animationScale = std::max(animationScale, 0.0f);
 
+    // Map source armature space to target armature space. The two FBX files
+    // can use different root orientations (for example Blender's animation
+    // export swaps Y/Z relative to the character FBX), even when every bone's
+    // local rest transform matches.
+    glm::mat4 spaceCorrection(1.0f);
+    {
+        const auto sourceRoot = animationModel.nodeRestGlobals.find(
+            animationModel.armatureRootName);
+        const auto targetRoot = targetModel.nodeRestGlobals.find(
+            targetModel.armatureRootName);
+        if (sourceRoot != animationModel.nodeRestGlobals.end() &&
+            targetRoot != targetModel.nodeRestGlobals.end()) {
+            spaceCorrection =
+                targetRoot->second * glm::inverse(sourceRoot->second);
+        }
+    }
+
     const aiAnimation* animation =
         animationModel.rawScene->mAnimations[clip];
-    std::unordered_map<std::string, glm::mat4> sourceLocalPose;
-    sourceLocalPose.reserve(256);
-    SampleNodeLocalTransforms(
-        animation, time, animationModel.rawScene->mRootNode, sourceLocalPose);
+    const float unitBridge = targetModel.importScale > 1e-6f
+        ? animationModel.importScale / targetModel.importScale : 1.0f;
+
+    // Global-space retargeting: sample the complete source pose in world
+    // space, then apply each bone's rest-to-animated delta to the target bind.
+    std::unordered_map<std::string, glm::mat4> sourceGlobalPose;
+    sourceGlobalPose.reserve(256);
+    SampleNodeTransforms(
+        animationModel.rawScene.get(), animation, time,
+        animationModel.rawScene->mRootNode, glm::mat4(1.0f),
+        sourceGlobalPose);
 
     std::unordered_set<std::string> sourceChannelNodes;
     if (animation) {
@@ -1530,8 +1459,9 @@ void AssetManager::UpdateAnimationClipRetargeted(
 
     // Animation exporters disagree about namespace prefixes. Blender may
     // produce "Korlan:Hips", while UE4 animations use "Hips" or
-    // "mixamorig:Hips". Build aliases from animated source channels to the
-    // selected character's root-bone prefix without renaming any assets.
+    // "mixamorig:Hips". Build aliases from all source nodes to the selected
+    // character's root-bone prefix without renaming any assets. Non-animated
+    // nodes still carry their animated parent's global pose.
     // A normalized fallback also handles separators such as "Head.001"
     // versus "Head_001" and "Breast.L" versus "Breast_L".
     std::unordered_map<std::string, std::string> sourceByBase;
@@ -1541,7 +1471,8 @@ void AssetManager::UpdateAnimationClipRetargeted(
     std::unordered_set<std::string> ambiguousTarget;
     std::unordered_set<std::string> ambiguousNormalized;
     const std::string& targetPrefix = targetModel.boneNamespacePrefix;
-    for (const auto& nodeName : sourceChannelNodes) {
+    for (const auto& [nodeName, matrix] : sourceGlobalPose) {
+        (void)matrix;
         const std::string base = StripBoneNamespace(nodeName);
         const auto baseInsert = sourceByBase.emplace(base, nodeName);
         if (!baseInsert.second && baseInsert.first->second != nodeName) {
@@ -1572,148 +1503,86 @@ void AssetManager::UpdateAnimationClipRetargeted(
         sourceByNormalized.erase(normalized);
     }
 
-    auto decomposeLocal = [](const glm::mat4& matrix, glm::vec3& translation,
-                             glm::quat& rotation, glm::vec3& scale) {
-        glm::vec3 skew(0.0f);
-        glm::vec4 perspective(0.0f);
-        if (!glm::decompose(matrix, scale, rotation, translation, skew,
-                            perspective)) {
-            translation = glm::vec3(matrix[3]);
-            rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-            scale = glm::vec3(1.0f);
-        }
-        rotation = glm::normalize(rotation);
-    };
-    auto scalePart = [](float animated, float rest) {
-        return std::abs(rest) > 1e-6f ? animated / rest : 1.0f;
-    };
-
     int matchedBones = 0;
     int aliasBones = 0;
     int retargetedBones = 0;
-    int animationModeBones = 0;
-    int skeletonModeBones = 0;
-    int scaledModeBones = 0;
     std::unordered_set<std::string> matchedChannelNodes;
-    std::unordered_map<std::string, glm::mat4> targetLocalPose =
-        targetModel.nodeRestLocals;
-    const float unitBridge = targetModel.importScale > 1e-6f
-        ? animationModel.importScale / targetModel.importScale : 1.0f;
+    std::unordered_map<std::string, glm::mat4> desiredGlobals;
+    desiredGlobals.reserve(256);
 
     for (const auto& [boneName, targetIndex] : targetModel.boneMap) {
         if (targetIndex < 0 || targetIndex >= 255) continue;
 
-        auto animated = sourceLocalPose.find(boneName);
-        if (animated != sourceLocalPose.end() &&
-            !sourceChannelNodes.count(boneName)) {
-            animated = sourceLocalPose.end();
-        }
-        if (animated == sourceLocalPose.end() && !targetPrefix.empty()) {
+        // Match every source node, not only animated channels. A source node
+        // without a channel still inherits its animated parent's global pose,
+        // which is essential for the 102 bones that K_Walking does not key.
+        auto animated = sourceGlobalPose.find(boneName);
+        if (animated == sourceGlobalPose.end() && !targetPrefix.empty()) {
             const auto targetAlias = sourceByTargetName.find(boneName);
             if (targetAlias != sourceByTargetName.end()) {
-                animated = sourceLocalPose.find(targetAlias->second);
-                if (animated != sourceLocalPose.end()) ++aliasBones;
+                animated = sourceGlobalPose.find(targetAlias->second);
+                if (animated != sourceGlobalPose.end()) ++aliasBones;
             }
         }
-        if (animated == sourceLocalPose.end()) {
+        if (animated == sourceGlobalPose.end()) {
             const auto baseAlias = sourceByBase.find(
                 StripBoneNamespace(boneName));
             if (baseAlias != sourceByBase.end()) {
-                animated = sourceLocalPose.find(baseAlias->second);
-                if (animated != sourceLocalPose.end()) ++aliasBones;
+                animated = sourceGlobalPose.find(baseAlias->second);
+                if (animated != sourceGlobalPose.end()) ++aliasBones;
             }
         }
-        if (animated == sourceLocalPose.end()) {
+        if (animated == sourceGlobalPose.end()) {
             const auto normalizedAlias = sourceByNormalized.find(
                 NormalizeBoneName(boneName));
             if (normalizedAlias != sourceByNormalized.end()) {
-                animated = sourceLocalPose.find(normalizedAlias->second);
-                if (animated != sourceLocalPose.end()) ++aliasBones;
+                animated = sourceGlobalPose.find(normalizedAlias->second);
+                if (animated != sourceGlobalPose.end()) ++aliasBones;
             }
         }
 
         const auto offset = targetModel.boneOffsetMatrices.find(boneName);
-        const auto targetRestLocal = targetModel.nodeRestLocals.find(boneName);
-        if (animated == sourceLocalPose.end() ||
-            offset == targetModel.boneOffsetMatrices.end() ||
-            targetRestLocal == targetModel.nodeRestLocals.end()) {
+        if (animated == sourceGlobalPose.end() ||
+            offset == targetModel.boneOffsetMatrices.end()) {
             continue;
         }
 
-        auto sourceRestLocal = animationModel.nodeRestLocals.find(
-            animated->first);
-        if (sourceRestLocal == animationModel.nodeRestLocals.end()) {
-            sourceRestLocal = animationModel.nodeRestLocals.find(
+        auto sourceRest = animationModel.nodeRestGlobals.find(animated->first);
+        if (sourceRest == animationModel.nodeRestGlobals.end()) {
+            sourceRest = animationModel.nodeRestGlobals.find(
                 StripBoneNamespace(animated->first));
         }
-        if (sourceRestLocal == animationModel.nodeRestLocals.end()) {
+        if (sourceRest == animationModel.nodeRestGlobals.end()) {
             continue;
         }
         ++matchedBones;
-        matchedChannelNodes.insert(animated->first);
-
-        glm::vec3 sourceRestTranslation, sourceRestScale;
-        glm::quat sourceRestRotation;
-        glm::vec3 sourceAnimationTranslation, sourceAnimationScale;
-        glm::quat sourceAnimationRotation;
-        glm::vec3 targetRestTranslation, targetRestScale;
-        glm::quat targetRestRotation;
-        decomposeLocal(sourceRestLocal->second, sourceRestTranslation,
-                       sourceRestRotation, sourceRestScale);
-        decomposeLocal(animated->second, sourceAnimationTranslation,
-                       sourceAnimationRotation, sourceAnimationScale);
-        decomposeLocal(targetRestLocal->second, targetRestTranslation,
-                       targetRestRotation, targetRestScale);
-
-        // Rotation is always taken from the source animation, relative to
-        // its own rest rotation, then applied to the target rest orientation.
-        const glm::quat rotationDelta =
-            glm::inverse(sourceRestRotation) * sourceAnimationRotation;
-        const glm::quat targetRotation = glm::normalize(
-            targetRestRotation * rotationDelta);
-
-        // Translation follows UE4's retarget modes. Unanimated target bones
-        // keep their rest translation instead of becoming identity matrices.
-        const TranslationRetargetMode mode = TranslationModeForBone(boneName);
-        const glm::vec3 translationDelta =
-            sourceAnimationTranslation - sourceRestTranslation;
-        glm::vec3 targetTranslation = targetRestTranslation;
-        float translationScale = unitBridge * animationScale;
-        if (mode == TranslationRetargetMode::Animation) {
-            ++animationModeBones;
-            targetTranslation += translationDelta * translationScale;
-        } else if (mode == TranslationRetargetMode::AnimationScaled) {
-            ++scaledModeBones;
-            translationScale *= BoneLengthRatio(
-                targetModel, boneName, animationModel, animated->first);
-            targetTranslation += translationDelta * translationScale;
-        } else {
-            ++skeletonModeBones;
+        if (sourceChannelNodes.count(animated->first)) {
+            matchedChannelNodes.insert(animated->first);
         }
 
-        glm::vec3 targetScale = targetRestScale;
-        if (mode != TranslationRetargetMode::Skeleton) {
-            targetScale *= glm::vec3(
-                scalePart(sourceAnimationScale.x, sourceRestScale.x),
-                scalePart(sourceAnimationScale.y, sourceRestScale.y),
-                scalePart(sourceAnimationScale.z, sourceRestScale.z));
+        // Global-space retarget: source global rest -> source global animated
+        // delta, mapped as a whole armature pose into target space.
+        glm::mat4 delta =
+            glm::inverse(sourceRest->second) * animated->second;
+        const float translationScale = unitBridge * animationScale;
+        if (std::abs(translationScale - 1.0f) > 1e-6f) {
+            ScaleMatrixTranslation(delta, translationScale);
         }
-        targetLocalPose[boneName] =
-            glm::translate(glm::mat4(1.0f), targetTranslation) *
-            glm::mat4_cast(targetRotation) *
-            glm::scale(glm::mat4(1.0f), targetScale);
+        const glm::mat4 sourceAnimatedGlobal = sourceRest->second * delta;
+        desiredGlobals[boneName] =
+            spaceCorrection * sourceAnimatedGlobal;
         ++retargetedBones;
     }
 
-    // Rebuild the full target hierarchy in local space. Every skinned bone is
-    // given a matrix, including the 102 K_Walking bones without channels.
+    // Rebuild target globals hierarchically. Matched bones use desired global
+    // poses; unmatched children inherit their animated parent instead of being
+    // frozen at bind-space identity. This is what prevents the stretched
+    // triangles when a clip animates only part of the target skeleton.
     std::unordered_map<std::string, glm::mat4> targetGlobals;
-    targetGlobals.reserve(targetModel.nodeRestLocals.size());
-    BuildNodeGlobals(targetModel.rawScene->mRootNode, glm::mat4(1.0f),
-                     targetLocalPose, targetGlobals);
+    targetGlobals.reserve(targetModel.nodeRestGlobals.size());
+    BuildRetargetedGlobals(targetModel.rawScene->mRootNode,
+                           glm::mat4(1.0f), desiredGlobals, targetGlobals);
 
-    const int restFilledBones = std::max(
-        0, static_cast<int>(targetModel.boneMap.size()) - retargetedBones);
     int paletteBones = 0;
     for (const auto& [boneName, targetIndex] : targetModel.boneMap) {
         if (targetIndex < 0 || targetIndex >= 255) continue;
@@ -1735,16 +1604,17 @@ void AssetManager::UpdateAnimationClipRetargeted(
         ++paletteBones;
     }
 
+    const int restFilledBones = std::max(0, paletteBones - retargetedBones);
+
     ScaleBonePalette(outBoneMatrices, targetModel.importScale);
 
     static std::unordered_set<const void*> loggedRetargets;
     if (loggedRetargets.insert(animationModel.rawScene.get()).second) {
         spdlog::info(
-            "[Retarget] local-space root bone='{}' prefix='{}' "
+            "[Retarget] global-space root bone='{}' prefix='{}' "
             "armature='{}'<-'{}' target-bones={}/{} "
             "animated-channels={}/{} alias={} "
             "retargeted={} rest-filled={} palette={} "
-            "modes[Animation={},Skeleton={},AnimationScaled={}] "
             "scale={:.4f} import-scale={:.4f}/{:.4f}",
             targetModel.rootBoneName, targetModel.boneNamespacePrefix,
             targetModel.armatureRootName, animationModel.armatureRootName,
@@ -1752,7 +1622,6 @@ void AssetManager::UpdateAnimationClipRetargeted(
             matchedChannelNodes.size(),
             animation ? animation->mNumChannels : 0u,
             aliasBones, retargetedBones, restFilledBones, paletteBones,
-            animationModeBones, skeletonModeBones, scaledModeBones,
             animationScale, animationModel.importScale,
             targetModel.importScale);
     }

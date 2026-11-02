@@ -7,6 +7,7 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace Galeshi {
 namespace {
@@ -62,6 +63,22 @@ float ClipDuration(const AssetManager::LoadedModel& model, int clip) {
         return std::max(0.0f, model.animationDurations[static_cast<size_t>(clip)]);
     }
     return 0.0f;
+}
+
+int ResolveClipIndex(const AssetManager::LoadedModel& model,
+                     const AnimationState& state) {
+    if (!state.animationName.empty()) {
+        const auto namedClip = std::find(
+            model.animationNames.begin(), model.animationNames.end(),
+            state.animationName);
+        if (namedClip != model.animationNames.end()) {
+            return static_cast<int>(
+                std::distance(model.animationNames.begin(), namedClip));
+        }
+    }
+    return std::clamp(
+        state.clip, 0,
+        std::max(0, static_cast<int>(model.animationNames.size()) - 1));
 }
 
 void BlendBonePalettes(const std::vector<glm::mat4>& a,
@@ -128,6 +145,7 @@ AnimationStateMachineComponent AnimationSystem::CreateDefaultStateMachine(
         AnimationState state;
         state.name = clipNames[i].empty() ? ("Clip " + std::to_string(i)) : clipNames[i];
         state.clip = static_cast<int>(i);
+        state.animationName = clipNames[i];
         state.loop = true;
         state.speed = 1.0f;
         machine.states.push_back(state);
@@ -198,9 +216,12 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
                 }
             }
         }
+        const bool embeddedClipsAvailable =
+            targetModel.hasAnimation && !targetModel.animationNames.empty();
         if (!skel.isAnimated && !hasSeparateClip && !hasEmbeddedClip) continue;
         if (hasSeparateClip ||
-            (hasEmbeddedClip && machine && machine->enabled)) {
+            (hasEmbeddedClip && machine && machine->enabled &&
+             embeddedClipsAvailable)) {
             // A state machine can drive clips even when the skeleton's
             // standalone playback checkbox was turned off. This is essential
             // for embedded clips authored with the character FBX.
@@ -217,7 +238,23 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
             skel.boneMatrices.assign(256, glm::mat4(1.0f));
         }
 
-        if (!machine || !machine->enabled) {
+        if (machine && !machine->enabled) {
+            // A disabled State Machine means "stop driving this skeleton",
+            // not "fall back to some other standalone clip". Reset the
+            // palette to bind/rest pose so disabling the machine in the
+            // editor visually returns the character to its T/bind pose.
+            skel.isAnimated = false;
+            skel.currentTime = 0.0f;
+            skel.activeAnimation = 0;
+            skel.boneMatrices.assign(256, glm::mat4(1.0f));
+            machine->previousState = -1;
+            machine->previousTime = 0.0f;
+            machine->stateTime = 0.0f;
+            machine->blendElapsed = machine->blendDuration;
+            continue;
+        }
+
+        if (!machine) {
             if (!targetModel.hasAnimation || targetModel.animationNames.empty()) {
                 continue;
             }
@@ -267,12 +304,26 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
             auto animationModel = assets.LoadModel(path);
             if (!animationModel.hasAnimation ||
                 animationModel.animationNames.empty()) {
+                static std::unordered_set<std::string> warnedSources;
+                if (warnedSources.insert(path).second) {
+                    if (state.animationPath.empty()) {
+                        spdlog::warn(
+                            "[Animation] '{}' has no embedded AnimStacks. "
+                            "In Blender 3.0.1 enable \"All Actions\" (or set "
+                            "an active Action) before FBX export, or use a "
+                            "separate animation FBX.",
+                            path);
+                    } else {
+                        spdlog::warn(
+                            "[Animation] separate animation FBX '{}' has no "
+                            "AnimStacks; retargeting cannot play it.",
+                            path);
+                    }
+                }
                 out.assign(256, glm::mat4(1.0f));
                 return;
             }
-            const int clip = std::clamp(
-                state.clip, 0,
-                static_cast<int>(animationModel.animationNames.size()) - 1);
+            const int clip = ResolveClipIndex(animationModel, state);
             if (state.animationPath.empty()) {
                 assets.UpdateAnimationClip(animationModel, clip, time, out);
             } else {
@@ -314,9 +365,7 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
         AnimationState& state = machine->states[machine->currentState];
         const std::string currentPath = animationPathForState(state);
         auto currentModel = assets.LoadModel(currentPath);
-        const int clip = std::clamp(
-            state.clip, 0,
-            std::max(0, static_cast<int>(currentModel.animationNames.size()) - 1));
+        const int clip = ResolveClipIndex(currentModel, state);
         const float duration = ClipDuration(currentModel, clip);
         machine->currentClipDuration = duration;
         const float speed = state.speed * machine->playbackSpeed *
@@ -333,9 +382,7 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
                 machine->states[machine->previousState];
             const std::string previousPath = animationPathForState(previous);
             auto previousModel = assets.LoadModel(previousPath);
-            const int previousClip = std::clamp(
-                previous.clip, 0,
-                std::max(0, static_cast<int>(previousModel.animationNames.size()) - 1));
+            const int previousClip = ResolveClipIndex(previousModel, previous);
             const float previousDuration = ClipDuration(previousModel,
                                                         previousClip);
             AdvanceTime(machine->previousTime, previousDuration,

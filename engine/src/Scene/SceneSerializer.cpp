@@ -670,6 +670,7 @@ std::string SceneSerializer::SaveToString() const {
                 states.push_back({
                     {"name", state.name},
                     {"clip", state.clip},
+                    {"animationName", state.animationName},
                     {"loop", state.loop},
                     {"speed", state.speed},
                     {"animationPath",
@@ -1436,6 +1437,8 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                     AnimationState state;
                     state.name = js.value("name", std::string("State"));
                     state.clip = js.value("clip", 0);
+                    state.animationName =
+                        js.value("animationName", std::string{});
                     state.loop = js.value("loop", true);
                     state.speed = js.value("speed", 1.0f);
                     state.animationPath =

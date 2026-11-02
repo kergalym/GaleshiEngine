@@ -916,10 +916,14 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
                 if (skel.boneMatrices.size() != kMaxBones) {
                     skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
                 }
-                // Animation updated in OnUpdate (Parallel)
+                // Animation updated in OnUpdate (Parallel). The shader
+                // reconstructs a column-major matrix from four texture
+                // rows, so upload the transpose of the GLM matrix. Without
+                // this a non-identity bone pose is applied as its transpose
+                // and skinned meshes stretch into spikes.
                 std::vector<glm::vec4> boneData(kMaxBones * 4);
                 for (int i = 0; i < kMaxBones; ++i) {
-                    for (int j = 0; j < 4; ++j) boneData[i * 4 + j] = skel.boneMatrices[i][j];
+                    for (int j = 0; j < 4; ++j) boneData[i * 4 + j] = glm::transpose(skel.boneMatrices[i])[j];
                 }
                 bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
                     bgfx::copy(boneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
@@ -1393,7 +1397,7 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
                     }
                     for (int i = 0; i < kMaxBones; ++i) {
                         for (int j = 0; j < 4; ++j) {
-                            shadowBoneData[i * 4 + j] = skel.boneMatrices[i][j];
+                            shadowBoneData[i * 4 + j] = glm::transpose(skel.boneMatrices[i])[j];
                         }
                     }
                     bones = &shadowBoneData;
@@ -1531,7 +1535,7 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
                 // Animation updated in OnUpdate (Parallel)
                 std::vector<glm::vec4> boneData(kMaxBones * 4);
                 for (int i = 0; i < kMaxBones; ++i) {
-                    for (int j = 0; j < 4; ++j) boneData[i * 4 + j] = skel.boneMatrices[i][j];
+                    for (int j = 0; j < 4; ++j) boneData[i * 4 + j] = glm::transpose(skel.boneMatrices[i])[j];
                 }
                 bgfx::updateTexture2D(m_boneTexture, 0, 0, 0, 0, 4, kMaxBones,
                     bgfx::copy(boneData.data(), kMaxBones * 4 * sizeof(glm::vec4)));
@@ -1851,7 +1855,7 @@ bool RenderSystem::RenderPlanarReflection(Scene& scene, const Camera& camera,
                 }
                 for (int i = 0; i < kMaxBones; ++i) {
                     for (int j = 0; j < 4; ++j) {
-                        boneData[i * 4 + j] = skeleton.boneMatrices[i][j];
+                        boneData[i * 4 + j] = glm::transpose(skeleton.boneMatrices[i])[j];
                     }
                 }
             } else {
@@ -2239,7 +2243,7 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
                 if (skel.boneMatrices.size() != kMaxBones)
                     skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
                 for (int i = 0; i < kMaxBones; ++i) {
-                    for (int j = 0; j < 4; ++j) boneData[i * 4 + j] = skel.boneMatrices[i][j];
+                    for (int j = 0; j < 4; ++j) boneData[i * 4 + j] = glm::transpose(skel.boneMatrices[i])[j];
                 }
                 bones = &boneData;
             }
@@ -2478,7 +2482,7 @@ void RenderSystem::RenderTranslucency(Scene& scene, const Camera& camera,
                 }
                 for (int i = 0; i < kMaxBones; ++i) {
                     for (int j = 0; j < 4; ++j) {
-                        boneData[i * 4 + j] = skel.boneMatrices[i][j];
+                        boneData[i * 4 + j] = glm::transpose(skel.boneMatrices[i])[j];
                     }
                 }
                 bones = &boneData;

@@ -8346,6 +8346,21 @@ if (ImGui::BeginMenu("File")) {
                                      : clipNames[i]);
         }
         if (clipLabels.empty()) clipLabels.push_back("No animation clips");
+
+        if (!modelPath.empty()) {
+            if (clipNames.empty()) {
+                ImGui::TextColored(
+                    ImVec4(1.0f, 0.65f, 0.25f, 1.0f),
+                    "No embedded animation clips in character FBX.");
+                ImGui::TextWrapped(
+                    "Blender 3.0.1 FBX export needs "
+                    "\"All Actions\" or a non-empty active Action to embed "
+                    "clips. Otherwise use a separate animation FBX (attempting "
+                    "retargeting).");
+            } else {
+                ImGui::TextDisabled("Embedded clips: %zu", clipNames.size());
+            }
+        }
         std::vector<const char*> clipItems;
         clipItems.reserve(clipLabels.size());
         for (const std::string& label : clipLabels) {
@@ -8445,6 +8460,7 @@ if (ImGui::BeginMenu("File")) {
                                      sizeof(animationPath))) {
                     state.animationPath = animationPath;
                     state.clip = 0;
+                    state.animationName.clear();
                 }
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip(
@@ -8463,15 +8479,27 @@ if (ImGui::BeginMenu("File")) {
                             state.animationPath =
                                 m_assets->MakeRelativePath(candidate);
                             state.clip = 0;
+                            state.animationName.clear();
                         }
                     }
                     ImGui::EndDragDropTarget();
                 }
                 if (!state.animationPath.empty()) {
                     ImGui::SameLine();
-                    if (ImGui::SmallButton("Use Embedded")) {
+                    if (clipNames.empty()) {
+                        ImGui::BeginDisabled();
+                        ImGui::SmallButton("Use Embedded");
+                        ImGui::EndDisabled();
+                        if (ImGui::IsItemHovered(
+                                ImGuiHoveredFlags_AllowWhenDisabled)) {
+                            ImGui::SetTooltip(
+                                "The character FBX contains no embedded "
+                                "animation clips.");
+                        }
+                    } else if (ImGui::SmallButton("Use Embedded")) {
                         state.animationPath.clear();
                         state.clip = 0;
+                        state.animationName.clear();
                     }
                 }
 
@@ -8480,6 +8508,11 @@ if (ImGui::BeginMenu("File")) {
                     auto animationModel =
                         m_assets->LoadModel(state.animationPath);
                     stateClipNames = animationModel.animationNames;
+                }
+                if (state.animationName.empty() &&
+                    state.clip >= 0 &&
+                    state.clip < static_cast<int>(stateClipNames.size())) {
+                    state.animationName = stateClipNames[state.clip];
                 }
                 std::vector<std::string> stateClipLabels;
                 stateClipLabels.reserve(stateClipNames.size());
@@ -8505,6 +8538,23 @@ if (ImGui::BeginMenu("File")) {
                 if (ImGui::Combo("Clip", &clip, stateClipItems.data(),
                                  static_cast<int>(stateClipItems.size()))) {
                     state.clip = clip;
+                    if (clip >= 0 &&
+                        clip < static_cast<int>(stateClipNames.size())) {
+                        state.animationName = stateClipNames[clip];
+                    } else {
+                        state.animationName.clear();
+                    }
+                    // Preview the selected state immediately. Previously a
+                    // clip change only edited the state data; the animation
+                    // kept sampling machine->currentState, so selecting a
+                    // different embedded clip appeared to do nothing until
+                    // the separate "Set" button was pressed.
+                    machine->enabled = true;
+                    machine->currentState = i;
+                    machine->previousState = -1;
+                    machine->stateTime = 0.0f;
+                    machine->blendElapsed = machine->blendDuration;
+                    if (skeleton) skeleton->isAnimated = true;
                 }
                 ImGui::SameLine();
                 ImGui::Checkbox("Loop", &state.loop);
@@ -8513,10 +8563,12 @@ if (ImGui::BeginMenu("File")) {
                 ImGui::DragFloat("Speed", &state.speed, 0.01f, 0.0f, 4.0f);
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Set")) {
+                    machine->enabled = true;
                     machine->currentState = i;
                     machine->previousState = -1;
                     machine->stateTime = 0.0f;
                     machine->blendElapsed = machine->blendDuration;
+                    if (skeleton) skeleton->isAnimated = true;
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Remove")) removeState = i;
@@ -8547,7 +8599,11 @@ if (ImGui::BeginMenu("File")) {
                              std::to_string(machine->states.size());
                 state.clip = std::clamp(
                     machine->currentState, 0,
-                    std::max(0, static_cast<int>(clipItems.size()) - 1));
+                    std::max(0, static_cast<int>(clipNames.size()) - 1));
+                if (state.clip >= 0 &&
+                    state.clip < static_cast<int>(clipNames.size())) {
+                    state.animationName = clipNames[state.clip];
+                }
                 machine->states.push_back(state);
             }
             if (!clipNames.empty()) {
@@ -8569,6 +8625,7 @@ if (ImGui::BeginMenu("File")) {
                             ? "Clip " + std::to_string(clipIndex)
                             : clipNames[clipIndex];
                         state.clip = static_cast<int>(clipIndex);
+                        state.animationName = clipNames[clipIndex];
                         machine->states.push_back(state);
                     }
                 }

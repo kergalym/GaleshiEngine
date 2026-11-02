@@ -33,18 +33,15 @@ public:
         std::shared_ptr<aiScene>               rawScene;
         
         std::unordered_map<std::string, int>   boneMap;
-        // Inverse bind matrices by bone name, used to retarget animation
-        // clips loaded from a separate FBX onto this model's skeleton.
+        // Inverse bind matrices by bone name. FBX uses the node rest pose
+        // (Panda3D-style) because this engine bakes mesh-node transforms into
+        // vertex positions. glTF keeps its explicit inverseBindMatrices.
         std::unordered_map<std::string, glm::mat4> boneOffsetMatrices;
+        bool                                   isGltf = false;
         // Rest-pose world transform of every node. Animation-only FBX files
         // can use a different axis/unit convention from the character; this
         // map lets retargeting remove that difference.
         std::unordered_map<std::string, glm::mat4> nodeRestGlobals;
-        // Rest-pose local transforms and parent links. Retargeting works in
-        // local bone space (like UE4) so root/axis differences between the
-        // animation FBX and the character FBX cannot leak into the pose.
-        std::unordered_map<std::string, glm::mat4> nodeRestLocals;
-        std::unordered_map<std::string, std::string> nodeParents;
         // Root-most skinned bone and its namespace prefix, for example
         // "Korlan:Hips" -> "Korlan:". Used to remap animation namespaces
         // (mixamorig:, Armature|, etc.) onto the selected character.
