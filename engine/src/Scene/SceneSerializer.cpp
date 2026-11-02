@@ -292,6 +292,7 @@ json MaterialToJson(const Material& m, const AssetManager& assets) {
         {"name", m.name},
         {"sourcePath", relStr(m.sourcePath)},
         {"albedoFactor", Vec4ToJson(m.albedoFactor)},
+        {"albedoSrgb", m.albedoSrgb},
         {"metallicFactor", m.metallicFactor},
         {"roughnessFactor", m.roughnessFactor},
         {"emissiveFactor", Vec3ToJson(m.emissiveFactor)},
@@ -334,6 +335,7 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     material->sourcePath = jm.value("sourcePath", std::string{});
     material->albedoFactor = jm.contains("albedoFactor")
         ? Vec4FromJson(jm.at("albedoFactor")) : glm::vec4(1.0f);
+    material->albedoSrgb = jm.value("albedoSrgb", true);
     material->metallicFactor = jm.value("metallicFactor", 0.0f);
     material->roughnessFactor = jm.value("roughnessFactor", 0.5f);
     material->emissiveFactor = jm.contains("emissiveFactor")
@@ -391,7 +393,7 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
         return texture;
     };
 
-    material->albedoMap = loadMap("albedoMapPath", true);
+    material->albedoMap = loadMap("albedoMapPath", material->albedoSrgb);
     material->normalMap = loadMap("normalMapPath", false);
     material->metallicRoughnessMap = loadMap("mrMapPath", false);
     material->metallicMap = loadMap("metallicMapPath", false);

@@ -19,6 +19,11 @@ public:
     ~Material() = default;
 
     glm::vec4 albedoFactor     {1.0f, 1.0f, 1.0f, 1.0f};
+    // Color textures are normally sRGB. Data textures (normal, roughness,
+    // masks) are linear. This flag is editable for albedo maps so exports from
+    // tools that write linear color by mistake can be corrected without
+    // changing the texture file.
+    bool      albedoSrgb       = true;
     float     metallicFactor   = 0.0f;
     float     roughnessFactor  = 0.5f;
     float     normalStrength   = 1.0f;

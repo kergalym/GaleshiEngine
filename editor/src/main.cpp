@@ -1604,6 +1604,32 @@ protected:
             m_characterModelTarget = entt::null;
         }
 
+        // Separate animation picker for the state-machine state field.
+        std::string chosenAnimationAsset = m_animationClipPicker.Draw();
+        if (!chosenAnimationAsset.empty() &&
+            m_animationClipTarget != entt::null &&
+            m_animationClipState >= 0) {
+            auto& animRegistry = m_scene.Registry();
+            if (animRegistry.valid(m_animationClipTarget) &&
+                animRegistry.all_of<Galeshi::AnimationStateMachineComponent>(
+                    m_animationClipTarget)) {
+                auto& animMachine =
+                    animRegistry.get<Galeshi::AnimationStateMachineComponent>(
+                        m_animationClipTarget);
+                if (m_animationClipState <
+                    static_cast<int>(animMachine.states.size())) {
+                    auto& animState =
+                        animMachine.states[static_cast<size_t>(m_animationClipState)];
+                    animState.animationPath =
+                        m_assets->MakeRelativePath(chosenAnimationAsset);
+                    animState.clip = 0;
+                    animState.animationName.clear();
+                }
+            }
+            m_animationClipTarget = entt::null;
+            m_animationClipState = -1;
+        }
+
         // Static tree-mesh picker for the selected landscape vegetation.
         std::string chosenTreeMesh = m_vegetationMeshPicker.Draw();
         if (!chosenTreeMesh.empty()) {
@@ -7959,7 +7985,7 @@ if (ImGui::BeginMenu("File")) {
     // Details
     // -------------------------------------------------------------------
     void DrawTextureSlot(const char* label, std::shared_ptr<Galeshi::Texture>& slot,
-                         bool srgb) {
+                         bool srgb, bool* srgbFlag = nullptr) {
         ImGui::PushID(label);
         ImGui::Text("%s", label);
 
@@ -7984,6 +8010,26 @@ if (ImGui::BeginMenu("File")) {
             ImGui::Button("Empty (drop texture here)", ImVec2(200, 64));
         }
 
+        if (srgbFlag) {
+            bool value = *srgbFlag;
+            if (ImGui::Checkbox("sRGB", &value)) {
+                *srgbFlag = value;
+                if (slot) {
+                    const std::string texturePath = slot->Path();
+                    if (!texturePath.empty()) {
+                        auto reloaded =
+                            m_assets->LoadTexture(texturePath, value);
+                        if (reloaded) slot = reloaded;
+                    }
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Decode this albedo texture as sRGB.\n"
+                    "Disable only for linear color textures.");
+            }
+        }
+
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
                 const char* path = static_cast<const char*>(payload->Data);
@@ -7994,7 +8040,8 @@ if (ImGui::BeginMenu("File")) {
                 if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
                     ext == ".bmp" || ext == ".tga" ||
                     ext == ".dds" || ext == ".ktx") {
-                    slot = m_assets->LoadTexture(p, srgb);
+                    slot = m_assets->LoadTexture(
+                        p, srgbFlag ? *srgbFlag : srgb);
                 }
             }
             ImGui::EndDragDropTarget();
@@ -8454,12 +8501,11 @@ if (ImGui::BeginMenu("File")) {
             if (clipNames.empty()) {
                 ImGui::TextColored(
                     ImVec4(1.0f, 0.65f, 0.25f, 1.0f),
-                    "No embedded animation clips in character FBX.");
+                    "No embedded animation clips in the character model.");
                 ImGui::TextWrapped(
-                    "Blender 3.0.1 FBX export needs "
-                    "\"All Actions\" or a non-empty active Action to embed "
-                    "clips. Otherwise use a separate animation FBX (attempting "
-                    "retargeting).");
+                    "FBX export needs \"All Actions\" (or an active Action) "
+                    "to embed clips. glTF/GLB can embed animation clips or "
+                    "be used as a separate animation asset.");
             } else {
                 ImGui::TextDisabled("Embedded clips: %zu", clipNames.size());
             }
@@ -8559,7 +8605,7 @@ if (ImGui::BeginMenu("File")) {
                 std::snprintf(animationPath, sizeof(animationPath), "%s",
                               state.animationPath.c_str());
                 ImGui::SetNextItemWidth(260.0f);
-                if (ImGui::InputText("Animation FBX", animationPath,
+                if (ImGui::InputText("Animation Asset", animationPath,
                                      sizeof(animationPath))) {
                     state.animationPath = animationPath;
                     state.clip = 0;
@@ -8568,8 +8614,8 @@ if (ImGui::BeginMenu("File")) {
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip(
                         "Empty = clips embedded in the character model.\n"
-                        "Drag a separate animation FBX here to retarget its "
-                        "clips by bone name.");
+                        "Drag a separate FBX, glTF or GLB animation here to "
+                        "retarget its clips by bone name.");
                 }
                 if (ImGui::BeginDragDropTarget()) {
                     if (const ImGuiPayload* payload =
@@ -8587,6 +8633,21 @@ if (ImGui::BeginMenu("File")) {
                     }
                     ImGui::EndDragDropTarget();
                 }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Browse##animation_asset")) {
+                    m_animationClipTarget = handle;
+                    m_animationClipState = i;
+                    std::string start = "assets";
+                    const std::string projectPath =
+                        Galeshi::ProjectManager::GetProjectPath();
+                    if (!projectPath.empty()) {
+                        start = (std::filesystem::path(projectPath) /
+                                 "assets").string();
+                    }
+                    m_animationClipPicker.Open(
+                        start, "Select Animation Asset",
+                        {".fbx", ".gltf", ".glb", ".obj", ".dae"});
+                }
                 if (!state.animationPath.empty()) {
                     ImGui::SameLine();
                     if (clipNames.empty()) {
@@ -8596,7 +8657,7 @@ if (ImGui::BeginMenu("File")) {
                         if (ImGui::IsItemHovered(
                                 ImGuiHoveredFlags_AllowWhenDisabled)) {
                             ImGui::SetTooltip(
-                                "The character FBX contains no embedded "
+                                "The character model contains no embedded "
                                 "animation clips.");
                         }
                     } else if (ImGui::SmallButton("Use Embedded")) {
@@ -9952,7 +10013,8 @@ void DrawDetails() {
                         "use the tree model's imported materials.");
                     if (type.material) {
                         DrawTextureSlot("Albedo Map",
-                                        type.material->albedoMap, true);
+                                        type.material->albedoMap, true,
+                                        &type.material->albedoSrgb);
                         DrawTextureSlot("Normal Map",
                                         type.material->normalMap, false);
                         DrawTextureSlot("Metallic/Roughness",
@@ -10119,8 +10181,9 @@ void DrawDetails() {
             ImGui::PushID(eid);
             const std::string materialKeywords =
                 std::string("material instance base used preset metal plastic "
-                            "rubber gold skin leaf albedo factor metallic factor "
-                            "roughness factor normal strength occlusion strength "
+                            "rubber gold skin leaf albedo factor albedo sRGB color "
+                            "space metallic factor roughness factor normal "
+                            "strength occlusion strength "
                             "alpha cutoff glass transparent opacity two sided "
                             "emissive color subsurface scattering sss enable "
                             "subsurface subsurface color subsurface strength "
@@ -10364,8 +10427,9 @@ void DrawDetails() {
                 ImGui::Text("Texture Maps (drag from Content Browser):");
 
                 // --- Текстурные слоты ---
-                if (showMaterialField("Albedo Map", "texture map color"))
-                DrawTextureSlot("Albedo Map",           m.albedoMap,           true);
+                if (showMaterialField("Albedo Map", "texture map color srgb"))
+                DrawTextureSlot("Albedo Map",           m.albedoMap,           true,
+                                &m.albedoSrgb);
                 if (showMaterialField("Normal Map", "texture map normal bump"))
                 DrawTextureSlot("Normal Map",           m.normalMap,           false);
                 if (showMaterialField("Metallic/Roughness", "texture map mr metallic roughness"))
@@ -11611,6 +11675,15 @@ void DrawDetails() {
                 auto merged =
                     std::make_shared<Galeshi::Material>(*newMaterial);
                 MergeMaterialValues(*merged, *oldSlots[static_cast<size_t>(matchedOld)].material);
+                if (merged->albedoMap &&
+                    merged->albedoMap->IsSrgb() != merged->albedoSrgb) {
+                    const std::string albedoPath = merged->albedoMap->Path();
+                    if (!albedoPath.empty()) {
+                        auto reloaded = m_assets->LoadTexture(
+                            albedoPath, merged->albedoSrgb);
+                        if (reloaded) merged->albedoMap = reloaded;
+                    }
+                }
                 newMaterial = std::move(merged);
                 oldSlots[static_cast<size_t>(matchedOld)].used = true;
                 ++preservedMaterials;
@@ -12253,6 +12326,9 @@ void DrawDetails() {
     int m_vegetationMeshTypeIndex = -1;
     Galeshi::FilePickerDialog m_characterModelPicker;
     entt::entity m_characterModelTarget = entt::null;
+    Galeshi::FilePickerDialog m_animationClipPicker;
+    entt::entity m_animationClipTarget = entt::null;
+    int m_animationClipState = -1;
     int m_paintTreeType = -1;
 
     // Details search. The scroll flag makes the first matching section jump

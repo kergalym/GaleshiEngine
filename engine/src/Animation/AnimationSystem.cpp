@@ -308,15 +308,15 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
                 if (warnedSources.insert(path).second) {
                     if (state.animationPath.empty()) {
                         spdlog::warn(
-                            "[Animation] '{}' has no embedded AnimStacks. "
-                            "In Blender 3.0.1 enable \"All Actions\" (or set "
-                            "an active Action) before FBX export, or use a "
-                            "separate animation FBX.",
+                            "[Animation] '{}' has no embedded animation "
+                            "clips. For Blender FBX enable \"All Actions\" "
+                            "(or set an active Action), or use a separate "
+                            "FBX/glTF/GLB animation asset.",
                             path);
                     } else {
                         spdlog::warn(
-                            "[Animation] separate animation FBX '{}' has no "
-                            "AnimStacks; retargeting cannot play it.",
+                            "[Animation] separate animation asset '{}' has "
+                            "no animation clips; retargeting cannot play it.",
                             path);
                     }
                 }
