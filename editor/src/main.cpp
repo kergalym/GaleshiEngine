@@ -10895,8 +10895,22 @@ void DrawDetails() {
                                 &m.albedoSrgb);
                 if (showMaterialField("Normal Map", "texture map normal bump"))
                 DrawTextureSlot("Normal Map",           m.normalMap,           false);
-                if (showMaterialField("Metallic/Roughness", "texture map mr metallic roughness"))
-                DrawTextureSlot("Metallic/Roughness",   m.metallicRoughnessMap, false);
+                if (showMaterialField("Metallic/Roughness/Occlusion",
+                                      "texture map orm mr metallic roughness occlusion ao")) {
+                    auto* previousOrm = m.metallicRoughnessMap.get();
+                    DrawTextureSlot("Metallic/Roughness/Occlusion (ORM)",
+                                    m.metallicRoughnessMap, false);
+                    if (m.metallicRoughnessMap.get() != previousOrm) {
+                        // ORM layout: R = occlusion, G = roughness,
+                        // B = metallic. Keep the dedicated AO slot in sync
+                        // unless the artist had assigned a separate map.
+                        if (m.metallicRoughnessMap) {
+                            m.occlusionMap = m.metallicRoughnessMap;
+                        } else if (m.occlusionMap.get() == previousOrm) {
+                            m.occlusionMap.reset();
+                        }
+                    }
+                }
                 if (showMaterialField("Metallic Map", "texture map metal"))
                 DrawTextureSlot("Metallic Map",         m.metallicMap,         false);
                 if (showMaterialField("Roughness Map", "texture map rough"))

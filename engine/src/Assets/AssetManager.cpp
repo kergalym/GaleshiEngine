@@ -1262,10 +1262,13 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
             }
         }
 
-        // Reuse the R channel of packed ORM maps as ambient occlusion when the
-        // material does not have a dedicated AO texture.
+        // glTF's metallicRoughness texture is usually a packed ORM map:
+        // R = occlusion, G = roughness, B = metallic. Use it for ambient
+        // occlusion whenever the file has no separate occlusion texture.
         if (!mat->occlusionMap && mat->metallicRoughnessMap &&
-            isOcclusionRoughnessMetallic(referenceDisplayName(metallicRoughnessRef))) {
+            (out.isGltf ||
+             isOcclusionRoughnessMetallic(
+                 referenceDisplayName(metallicRoughnessRef)))) {
             mat->occlusionMap = mat->metallicRoughnessMap;
         }
 
