@@ -818,6 +818,7 @@ Texture* Texture::LoadUdimFromFile(const std::string& path, bool srgb,
         atlas.data(), static_cast<uint32_t>(atlasWidth),
         static_cast<uint32_t>(atlasHeight), path, srgb, false);
     if (!texture) return nullptr;
+    texture->m_flipVertically = flipVertically;
 
     if (outInfo) {
         outInfo->valid = true;
@@ -872,14 +873,19 @@ Texture* Texture::LoadFromFile(const std::string& path, bool srgb,
         return nullptr;
     }
 
-    return LoadEncodedBytes(bytes.data(), bytes.size(), path, srgb,
-                            flipVertically);
+    Texture* texture = LoadEncodedBytes(bytes.data(), bytes.size(), path, srgb,
+                                        flipVertically);
+    if (texture) texture->m_flipVertically = flipVertically;
+    return texture;
 }
 
 Texture* Texture::LoadFromMemory(
     const unsigned char* data, size_t size,
     const std::string& displayPath, bool srgb, bool flipVertically) {
-    return LoadEncodedBytes(data, size, displayPath, srgb, flipVertically);
+    Texture* texture = LoadEncodedBytes(data, size, displayPath, srgb,
+                                        flipVertically);
+    if (texture) texture->m_flipVertically = flipVertically;
+    return texture;
 }
 
 Texture* Texture::CreateFromBgra8(
@@ -896,10 +902,10 @@ Texture* Texture::CreateFromBgra8(
         rgba[i * 4 + 3] = data[i * 4 + 3];
     }
 
-    (void)flipVertically;
     Texture* tex = CreateFromRgba8Source(
         rgba.data(), static_cast<uint32_t>(width), static_cast<uint32_t>(height),
         displayPath, srgb, true);
+    if (tex) tex->m_flipVertically = flipVertically;
     if (!tex) {
         spdlog::error("[Texture] Cannot upload raw embedded texture '{}' ({}x{})",
                       displayPath, width, height);

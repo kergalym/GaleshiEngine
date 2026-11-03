@@ -67,6 +67,7 @@ public:
     bgfx::TextureHandle Handle() const { return m_handle; }
     const std::string& Path() const { return m_path; }
     bool IsSrgb() const { return m_srgb; }
+    bool FlippedVertically() const { return m_flipVertically; }
     bool Valid() const { return bgfx::isValid(m_handle); }
 
     uint16_t Width() const { return m_width; }
@@ -90,6 +91,7 @@ private:
     bgfx::TextureHandle m_handle = BGFX_INVALID_HANDLE;
     std::string         m_path;
     bool                m_srgb = false;
+    bool                m_flipVertically = true;
     bool                m_compressed = false;
     bool                m_hasAlpha = false;
     float               m_alphaCoverage = 1.0f;

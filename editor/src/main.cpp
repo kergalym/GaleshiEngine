@@ -7941,48 +7941,49 @@ if (ImGui::BeginMenu("File")) {
                         continue;
                     }
                     auto& tc = view.get<Galeshi::TransformComponent>(e);
-                    
-                    glm::vec3 worldPos = tc.position;
                     entt::entity curr = e;
-                    int __depth = 0; while (__depth++ < 128 && m_scene.Registry().all_of<Galeshi::ParentComponent>(curr)) {
+                    int __depth = 0;
+                    while (__depth++ < 128 &&
+                           m_scene.Registry().all_of<Galeshi::ParentComponent>(curr)) {
                         curr = m_scene.Registry().get<Galeshi::ParentComponent>(curr).parent;
-                        if (m_scene.Registry().all_of<Galeshi::TransformComponent>(curr)) {
-                            worldPos += m_scene.Registry().get<Galeshi::TransformComponent>(curr).position;
+                    }
+
+                    glm::vec3 boundsCenter, boundsExtents;
+                    if (!MeshEntityWorldBounds(e, boundsCenter, boundsExtents)) {
+                        // Standalone colliders have their own precise test below.
+                        if (m_scene.Registry().all_of<Galeshi::ColliderComponent>(e))
+                            continue;
+                        boundsCenter = glm::vec3(EntityWorldMatrix(e)[3]);
+                        boundsExtents = glm::vec3(0.5f);
+                    }
+
+                    const glm::vec3 minB = boundsCenter - boundsExtents;
+                    const glm::vec3 maxB = boundsCenter + boundsExtents;
+                    float tmin = -std::numeric_limits<float>::infinity();
+                    float tmax = std::numeric_limits<float>::infinity();
+                    bool miss = false;
+                    for (int axis = 0; axis < 3 && !miss; ++axis) {
+                        if (std::abs(rayDir[axis]) < 1e-8f) {
+                            if (rayOrigin[axis] < minB[axis] ||
+                                rayOrigin[axis] > maxB[axis]) {
+                                miss = true;
+                            }
+                        } else {
+                            float t1 = (minB[axis] - rayOrigin[axis]) /
+                                       rayDir[axis];
+                            float t2 = (maxB[axis] - rayOrigin[axis]) /
+                                       rayDir[axis];
+                            if (t1 > t2) std::swap(t1, t2);
+                            tmin = std::max(tmin, t1);
+                            tmax = std::min(tmax, t2);
+                            if (tmin > tmax) miss = true;
                         }
                     }
+                    if (miss || tmax < 0.0f) continue;
 
-                    float size = 0.5f;
-                    if (m_scene.Registry().all_of<Galeshi::SkeletalComponent>(curr)) {
-                        size = 1.5f; // Larger pick box for skeletal characters.
-                    }
-
-                    glm::vec3 minB = worldPos - glm::vec3(size);
-                    glm::vec3 maxB = worldPos + glm::vec3(size);
-                    
-                    float tmin = (minB.x - rayOrigin.x) / rayDir.x;
-                    float tmax = (maxB.x - rayOrigin.x) / rayDir.x;
-                    if (tmin > tmax) std::swap(tmin, tmax);
-                    
-                    float tymin = (minB.y - rayOrigin.y) / rayDir.y;
-                    float tymax = (maxB.y - rayOrigin.y) / rayDir.y;
-                    if (tymin > tymax) std::swap(tymin, tymax);
-                    
-                    if ((tmin > tymax) || (tymin > tmax)) continue;
-                    if (tymin > tmin) tmin = tymin;
-                    if (tymax < tmax) tmax = tymax;
-                    
-                    float tzmin = (minB.z - rayOrigin.z) / rayDir.z;
-                    float tzmax = (maxB.z - rayOrigin.z) / rayDir.z;
-                    if (tzmin > tzmax) std::swap(tzmin, tzmax);
-                    
-                    if ((tmin > tzmax) || (tzmin > tmax)) continue;
-                    if (tzmin > tmin) tmin = tzmin;
-                    if (tzmax < tmax) tmax = tzmax;
-
-                    if (tmax < 0) continue;
-                    
-                    if (tmin < bestDist) {
-                        bestDist = tmin;
+                    const float hitDistance = tmin > 0.0f ? tmin : tmax;
+                    if (hitDistance < bestDist) {
+                        bestDist = hitDistance;
                         bestHit = Galeshi::Entity(curr, &m_scene); // Select the root, not the bone.
                     }
                 }
@@ -8099,8 +8100,11 @@ if (ImGui::BeginMenu("File")) {
                 if (slot) {
                     const std::string texturePath = slot->Path();
                     if (!texturePath.empty()) {
-                        auto reloaded =
-                            m_assets->LoadTexture(texturePath, value);
+                        auto reloaded = m_assets->LoadTexture(
+                            texturePath, value, nullptr,
+                            slot->FlippedVertically());
+                        // Embedded glTF textures have no standalone file path;
+                        // keep the existing upload instead of clearing the slot.
                         if (reloaded) slot = reloaded;
                     }
                 }
@@ -8315,6 +8319,108 @@ if (ImGui::BeginMenu("File")) {
         m_editor.Select(child);
     }
 
+    bool MeshEntityWorldBounds(entt::entity handle, glm::vec3& outCenter,
+                               glm::vec3& outExtents) {
+        auto& reg = m_scene.Registry();
+        if (!reg.valid(handle)) return false;
+        const auto* meshComponent =
+            reg.try_get<Galeshi::MeshComponent>(handle);
+        if (!meshComponent || !meshComponent->mesh) return false;
+
+        glm::vec3 localMin, localMax;
+        meshComponent->mesh->LocalAABB(localMin, localMax);
+        const glm::mat4 world = EntityWorldMatrix(handle);
+        glm::vec3 worldMin(std::numeric_limits<float>::max());
+        glm::vec3 worldMax(std::numeric_limits<float>::lowest());
+        for (int corner = 0; corner < 8; ++corner) {
+            const glm::vec3 local{
+                (corner & 1) ? localMax.x : localMin.x,
+                (corner & 2) ? localMax.y : localMin.y,
+                (corner & 4) ? localMax.z : localMin.z};
+            const glm::vec3 point = glm::vec3(world * glm::vec4(local, 1.0f));
+            worldMin = glm::min(worldMin, point);
+            worldMax = glm::max(worldMax, point);
+        }
+        outCenter = (worldMin + worldMax) * 0.5f;
+        outExtents = (worldMax - worldMin) * 0.5f;
+        return true;
+    }
+
+    void AccumulateEntityWorldBounds(entt::entity handle, glm::vec3& outMin,
+                                     glm::vec3& outMax, int depth) {
+        auto& reg = m_scene.Registry();
+        if (!reg.valid(handle) || depth > 128) return;
+
+        glm::vec3 center, extents;
+        if (MeshEntityWorldBounds(handle, center, extents)) {
+            outMin = glm::min(outMin, center - extents);
+            outMax = glm::max(outMax, center + extents);
+        } else if (const auto* collider =
+                       reg.try_get<Galeshi::ColliderComponent>(handle)) {
+            glm::vec3 half;
+            switch (collider->shapeType) {
+                case Galeshi::ColliderShapeType::Sphere:
+                    half = glm::vec3(collider->radius);
+                    break;
+                case Galeshi::ColliderShapeType::Capsule:
+                    half = glm::vec3(collider->radius,
+                                     collider->halfHeight + collider->radius,
+                                     collider->radius);
+                    break;
+                case Galeshi::ColliderShapeType::Box:
+                default:
+                    half = collider->halfExtents;
+                    break;
+            }
+            const glm::mat4 world = EntityWorldMatrix(handle);
+            const glm::vec3 centerWorld =
+                glm::vec3(world * glm::vec4(collider->offset, 1.0f));
+            const glm::vec3 scale{
+                glm::length(glm::vec3(world[0])),
+                glm::length(glm::vec3(world[1])),
+                glm::length(glm::vec3(world[2]))};
+            const glm::vec3 worldHalf = half * scale;
+            outMin = glm::min(outMin, centerWorld - worldHalf);
+            outMax = glm::max(outMax, centerWorld + worldHalf);
+        }
+
+        auto childView = reg.view<Galeshi::ParentComponent>();
+        for (entt::entity child : childView) {
+            if (childView.get<Galeshi::ParentComponent>(child).parent == handle) {
+                AccumulateEntityWorldBounds(child, outMin, outMax, depth + 1);
+            }
+        }
+    }
+
+    bool EntityWorldBounds(entt::entity handle, glm::vec3& outCenter,
+                           glm::vec3& outExtents) {
+        glm::vec3 min(std::numeric_limits<float>::max());
+        glm::vec3 max(std::numeric_limits<float>::lowest());
+        AccumulateEntityWorldBounds(handle, min, max, 0);
+        if (min.x > max.x || min.y > max.y || min.z > max.z) {
+            auto& reg = m_scene.Registry();
+            if (!reg.valid(handle) ||
+                !reg.all_of<Galeshi::TransformComponent>(handle)) {
+                return false;
+            }
+            outCenter = glm::vec3(EntityWorldMatrix(handle)[3]);
+            outExtents = glm::vec3(0.5f);
+            return true;
+        }
+        outCenter = (min + max) * 0.5f;
+        outExtents = (max - min) * 0.5f;
+        return true;
+    }
+
+    void FocusCameraOnEntity(entt::entity handle) {
+        glm::vec3 center, extents;
+        if (!EntityWorldBounds(handle, center, extents)) return;
+        m_editor.camTarget = center;
+        m_editor.camRadius =
+            glm::clamp(glm::length(extents) * 2.5f, 1.0f, 200.0f);
+        m_editor.Select(Galeshi::Entity(handle, &m_scene));
+    }
+
     void AttachCollisionShape(entt::entity parent,
                               Galeshi::ColliderShapeType type) {
         if (!m_scene.Registry().valid(parent)) return;
@@ -8455,6 +8561,10 @@ if (ImGui::BeginMenu("File")) {
 
             if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
                 m_editor.Select(Galeshi::Entity(e, &m_scene));
+            if (ImGui::IsItemHovered() &&
+                ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                FocusCameraOnEntity(e);
+            }
 
             // Hierarchy actions for meshes, collision shapes and the other
             // attachment nodes artists use to assemble a character.
@@ -10551,15 +10661,19 @@ void DrawDetails() {
                     return showAllMaterialFields || showMaterialField(title, members);
                 };
 
-                // Two Sided is a per-material render state and must be
+                // Backface culling is a per-material render state and must be
                 // available for every material slot. Keep it outside the
                 // searchable parameter groups so slots never appear to be
                 // missing this control.
-                ImGui::Checkbox("Two Sided", &m.twoSided);
+                bool backfaceCulling = !m.twoSided;
+                if (ImGui::Checkbox("Backface Culling", &backfaceCulling)) {
+                    m.twoSided = !backfaceCulling;
+                }
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip(
-                        "Render both faces and flip normals on back-facing "
-                        "fragments.\nWhen disabled, backfaces are culled.");
+                        "Cull faces pointing away from the camera.\n"
+                        "Off (default) renders both sides and flips the "
+                        "normal on back-facing fragments.");
                 }
                 ImGui::Separator();
 
@@ -12086,6 +12200,8 @@ void DrawDetails() {
         }
 
         m_editor.Select(skeletonEntity);
+        m_stateMachineEditorEntity = skeletonEntity.Handle();
+        m_showStateMachineEditor = true;
         m_editor.camTarget =
             glm::vec3(EntityWorldMatrix(skeletonEntity.Handle())[3]);
         spdlog::info(
@@ -12290,6 +12406,10 @@ void DrawDetails() {
         m_editor.Select(root);
         m_editor.camTarget = pos;
         m_editor.camRadius = 5.0f;
+        if (root.HasComponent<Galeshi::SkeletalComponent>()) {
+            m_stateMachineEditorEntity = root.Handle();
+            m_showStateMachineEditor = true;
+        }
     }
 
     // -------------------------------------------------------------------

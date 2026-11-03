@@ -108,6 +108,69 @@ void Mesh::Upload(const std::vector<Vertex>& vertices, const std::vector<uint32_
         uploadVertices = &weightedVertices;
     }
 
+    // Some glTF exporters omit TANGENT. Assimp normally generates it, but if
+    // it is still missing the normal map is ignored by the shader. Build a
+    // tangent basis from positions/UVs only for vertices that need it.
+    std::vector<Vertex> tangentVertices;
+    const bool needsTangents = std::any_of(
+        uploadVertices->begin(), uploadVertices->end(),
+        [](const Vertex& vertex) {
+            return glm::dot(vertex.tangent, vertex.tangent) < 1e-8f;
+        });
+    if (needsTangents) {
+        tangentVertices = *uploadVertices;
+        std::vector<glm::vec3> tangentSum(tangentVertices.size(), glm::vec3(0.0f));
+        std::vector<glm::vec3> bitangentSum(tangentVertices.size(), glm::vec3(0.0f));
+        for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+            const uint32_t i0 = indices[i];
+            const uint32_t i1 = indices[i + 1];
+            const uint32_t i2 = indices[i + 2];
+            if (i0 >= tangentVertices.size() || i1 >= tangentVertices.size() ||
+                i2 >= tangentVertices.size()) {
+                continue;
+            }
+            const Vertex& v0 = tangentVertices[i0];
+            const Vertex& v1 = tangentVertices[i1];
+            const Vertex& v2 = tangentVertices[i2];
+            const glm::vec3 e1 = v1.position - v0.position;
+            const glm::vec3 e2 = v2.position - v0.position;
+            const glm::vec2 d1 = v1.uv - v0.uv;
+            const glm::vec2 d2 = v2.uv - v0.uv;
+            const float denominator = d1.x * d2.y - d1.y * d2.x;
+            if (std::abs(denominator) < 1e-8f) continue;
+            const glm::vec3 tangent =
+                (e1 * d2.y - e2 * d1.y) / denominator;
+            const glm::vec3 bitangent =
+                (e2 * d1.x - e1 * d2.x) / denominator;
+            for (uint32_t index : {i0, i1, i2}) {
+                tangentSum[index] += tangent;
+                bitangentSum[index] += bitangent;
+            }
+        }
+        for (size_t i = 0; i < tangentVertices.size(); ++i) {
+            if (glm::dot(tangentVertices[i].tangent,
+                         tangentVertices[i].tangent) >= 1e-8f) {
+                continue;
+            }
+            glm::vec3 normal = tangentVertices[i].normal;
+            if (glm::dot(normal, normal) < 1e-8f) normal = glm::vec3(0, 1, 0);
+            normal = glm::normalize(normal);
+            glm::vec3 tangent = tangentSum[i] -
+                normal * glm::dot(normal, tangentSum[i]);
+            if (glm::dot(tangent, tangent) < 1e-8f) {
+                tangent = std::abs(normal.y) < 0.99f
+                    ? glm::cross(normal, glm::vec3(0, 1, 0))
+                    : glm::cross(normal, glm::vec3(1, 0, 0));
+            }
+            tangent = glm::normalize(tangent);
+            if (glm::dot(glm::cross(normal, tangent), bitangentSum[i]) < 0.0f) {
+                tangent = -tangent;
+            }
+            tangentVertices[i].tangent = tangent;
+        }
+        uploadVertices = &tangentVertices;
+    }
+
     const bgfx::VertexLayout layout = MakeVertexLayout();
     m_vb = bgfx::createDynamicVertexBuffer(
         bgfx::copy(uploadVertices->data(),

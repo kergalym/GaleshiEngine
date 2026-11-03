@@ -848,16 +848,24 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         const std::filesystem::path relative(NormalizeAssetPath(reference));
         std::filesystem::path resolved;
         std::error_code ec;
+
+        auto resolveCandidate = [&](const std::filesystem::path& candidate) {
+            if (candidate.empty()) return false;
+            const std::filesystem::path resolvedCandidate =
+                candidate.is_absolute()
+                    ? candidate
+                    : std::filesystem::path(ResolvePath(candidate.string()));
+            if (!std::filesystem::exists(resolvedCandidate, ec)) return false;
+            resolved = resolvedCandidate;
+            return true;
+        };
+
         if (relative.is_absolute()) {
-            if (std::filesystem::exists(relative, ec)) resolved = relative;
+            resolveCandidate(relative);
+        } else if (resolveCandidate(std::filesystem::path(dir) / relative)) {
+            // Resolved above.
         } else {
-            const std::filesystem::path nearModel = std::filesystem::path(dir) / relative;
-            if (std::filesystem::exists(nearModel, ec)) resolved = nearModel;
-        }
-        if (resolved.empty()) {
-            const std::filesystem::path nearModel = std::filesystem::path(dir) / relative.filename();
-            ec.clear();
-            if (std::filesystem::exists(nearModel, ec)) resolved = nearModel;
+            resolveCandidate(std::filesystem::path(dir) / relative.filename());
         }
         if (resolved.empty()) return nullptr;
 
@@ -986,16 +994,15 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         // list diverge from the source asset.
         mat->name = name.C_Str();
 
-        // Assimp exposes AI_MATKEY_TWOSIDED for formats that carry it. Missing
-        // keys use the material editor default (single-sided); artists can
-        // still enable two-sided rendering explicitly.
-        int twoSided = 0;
-        if (aiMat->Get(AI_MATKEY_TWOSIDED, twoSided) == AI_SUCCESS) {
+        // Backface culling is off by default. Assimp's glTF importer always
+        // writes doubleSided=false when the flag is absent, so for glTF keep
+        // the editor default until the artist enables culling explicitly.
+        int twoSided = 1;
+        if (!out.isGltf &&
+            aiMat->Get(AI_MATKEY_TWOSIDED, twoSided) == AI_SUCCESS) {
             mat->twoSided = twoSided != 0;
         } else {
-            // Match the material editor default: cull backfaces unless the
-            // file explicitly enables double-sided rendering.
-            mat->twoSided = false;
+            mat->twoSided = true;
         }
 
         spdlog::info("[AssetManager] Material[{}] '{}':", i, mat->name);
@@ -1027,7 +1034,10 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         std::string metallicRef = firstOf({aiTextureType_METALNESS});
         std::string roughnessRef = firstOf({aiTextureType_DIFFUSE_ROUGHNESS});
         std::string emissiveRef = firstOf({aiTextureType_EMISSION_COLOR, aiTextureType_EMISSIVE});
-        std::string occlusionRef = firstOf({aiTextureType_AMBIENT_OCCLUSION});
+        // glTF stores occlusion in LIGHTMAP; FBX commonly uses
+        // AMBIENT_OCCLUSION. Accept both formats.
+        std::string occlusionRef =
+            firstOf({aiTextureType_AMBIENT_OCCLUSION, aiTextureType_LIGHTMAP});
         std::string opacityRef = firstOf({aiTextureType_OPACITY});
         std::string specularRef = firstOf({aiTextureType_SPECULAR});
         std::string firstUnknownRef;

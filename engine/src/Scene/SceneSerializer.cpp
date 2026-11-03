@@ -343,9 +343,9 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     material->emissiveFactor = jm.contains("emissiveFactor")
         ? Vec3FromJson(jm.at("emissiveFactor")) : glm::vec3(0.0f);
     material->isGlass = jm.value("isGlass", false);
-    // Backface culling is the engine default. Only materials explicitly
-    // marked two-sided in the file keep double-sided rendering.
-    material->twoSided = jm.value("twoSided", false);
+    // Backface culling is off by default; render both faces unless the
+    // material explicitly enables culling.
+    material->twoSided = jm.value("twoSided", true);
     material->glassOpacity = jm.value("glassOpacity", 0.35f);
     material->normalStrength = jm.value("normalStrength", 1.0f);
     material->occlusionStrength = jm.value("occlusionStrength", 1.0f);
@@ -2030,8 +2030,12 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                 !model.materials[static_cast<size_t>(materialIndex)]) {
                 continue;
             }
+            const bool savedTwoSided = matc.material->twoSided;
             *matc.material =
                 *model.materials[static_cast<size_t>(materialIndex)];
+            // The Backface Culling checkbox is a scene override. Keep it
+            // across reloads while the remaining values come from the file.
+            matc.material->twoSided = savedTwoSided;
             matc.isGlass = matc.material->isGlass;
         }
     }

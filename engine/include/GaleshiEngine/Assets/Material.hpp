@@ -13,7 +13,8 @@ class Material {
 public:
     bool isGlass = false;
     // Render both faces and flip normals on back-facing fragments.
-    bool twoSided = false;
+    // Backface culling is disabled by default (twoSided = true).
+    bool twoSided = true;
 public:
     Material() = default;
     ~Material() = default;
