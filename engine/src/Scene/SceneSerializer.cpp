@@ -343,10 +343,9 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     material->emissiveFactor = jm.contains("emissiveFactor")
         ? Vec3FromJson(jm.at("emissiveFactor")) : glm::vec3(0.0f);
     material->isGlass = jm.value("isGlass", false);
-    // Older scenes had no two-sided switch and the renderer mirrored
-    // backface normals unconditionally. Default missing values to true so
-    // loaded scenes keep their previous appearance.
-    material->twoSided = jm.value("twoSided", true);
+    // Backface culling is the engine default. Only materials explicitly
+    // marked two-sided in the file keep double-sided rendering.
+    material->twoSided = jm.value("twoSided", false);
     material->glassOpacity = jm.value("glassOpacity", 0.35f);
     material->normalStrength = jm.value("normalStrength", 1.0f);
     material->occlusionStrength = jm.value("occlusionStrength", 1.0f);
@@ -1978,6 +1977,62 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
         if (invalid) {
             reg.remove<ParentComponent>(entry.entity.Handle());
             spdlog::warn("[Scene] Removed invalid parent from '{}'", entry.name);
+        }
+    }
+
+    // Legacy scenes contain material values copied from the old FBX import
+    // (for example metallic=1 and twoSided=true). For imported glTF meshes,
+    // refresh the material from the source file so Details shows the values
+    // that Blender actually exported. Explicit material instances are left
+    // alone because their overrides are intentional.
+    {
+        auto view = m_scene.Registry()
+            .view<MeshComponent, MaterialComponent>();
+        for (auto handle : view) {
+            const auto& mesh = view.get<MeshComponent>(handle);
+            auto& matc = view.get<MaterialComponent>(handle);
+            if (mesh.sourceAssetPath.empty() || !matc.material ||
+                matc.material->base) {
+                continue;
+            }
+            const std::string extension = [&] {
+                std::string ext =
+                    std::filesystem::path(mesh.sourceAssetPath)
+                        .extension()
+                        .string();
+                std::transform(ext.begin(), ext.end(), ext.begin(),
+                               [](unsigned char c) {
+                                   return static_cast<char>(std::tolower(c));
+                               });
+                return ext;
+            }();
+            if (extension != ".gltf" && extension != ".glb") continue;
+
+            auto model = m_assets.LoadModel(mesh.sourceAssetPath);
+            int materialIndex = -1;
+            if (mesh.meshIndex >= 0 &&
+                mesh.meshIndex < static_cast<int>(model.meshMaterialIndex.size())) {
+                materialIndex = model.meshMaterialIndex[
+                    static_cast<size_t>(mesh.meshIndex)];
+            }
+            if (materialIndex < 0 ||
+                materialIndex >= static_cast<int>(model.materials.size())) {
+                for (size_t i = 0; i < model.materials.size(); ++i) {
+                    if (model.materials[i] &&
+                        model.materials[i]->name == matc.material->name) {
+                        materialIndex = static_cast<int>(i);
+                        break;
+                    }
+                }
+            }
+            if (materialIndex < 0 ||
+                materialIndex >= static_cast<int>(model.materials.size()) ||
+                !model.materials[static_cast<size_t>(materialIndex)]) {
+                continue;
+            }
+            *matc.material =
+                *model.materials[static_cast<size_t>(materialIndex)];
+            matc.isGlass = matc.material->isGlass;
         }
     }
 

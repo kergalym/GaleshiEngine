@@ -55,6 +55,8 @@ public:
     void ResetBindingsToDefaults();
     void Update(float dt);
     void ProcessEvent(const SDL_Event& event);
+    // SDL relative mode reports motion through the relative mouse state.
+    void SetRelativeMouseMode(bool enabled);
 
     // Key rebinding support. BeginKeyCapture snapshots currently held keys;
     // PollCapturedKey then returns the first newly pressed key name.
@@ -99,6 +101,7 @@ private:
     float m_mouseWheel = 0.0f;
     float m_pendingWheel = 0.0f;
     bool m_hasMousePosition = false;
+    bool m_relativeMouseMode = false;
     std::vector<uint8_t> m_captureSnapshot;
 };
 

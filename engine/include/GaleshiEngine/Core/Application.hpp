@@ -31,6 +31,8 @@ public:
 
     Renderer* GetRenderer() const;
     InputAxisSystem& GetInput();
+    // Keeps the OS cursor inside the window while the editor is mouse-looking.
+    void SetMouseCapture(bool enabled);
 
 protected:
     virtual void OnStart()          {}

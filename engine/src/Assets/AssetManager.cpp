@@ -986,15 +986,16 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         // list diverge from the source asset.
         mat->name = name.C_Str();
 
-        // Assimp exposes AI_MATKEY_TWOSIDED for formats that carry it. If the
-        // key is missing (classic FBX often omits it) keep the old renderer
-        // behaviour of drawing imported meshes from both sides; the material
-        // checkbox lets artists opt into backface culling explicitly.
-        int twoSided = 1;
+        // Assimp exposes AI_MATKEY_TWOSIDED for formats that carry it. Missing
+        // keys use the material editor default (single-sided); artists can
+        // still enable two-sided rendering explicitly.
+        int twoSided = 0;
         if (aiMat->Get(AI_MATKEY_TWOSIDED, twoSided) == AI_SUCCESS) {
             mat->twoSided = twoSided != 0;
         } else {
-            mat->twoSided = true;
+            // Match the material editor default: cull backfaces unless the
+            // file explicitly enables double-sided rendering.
+            mat->twoSided = false;
         }
 
         spdlog::info("[AssetManager] Material[{}] '{}':", i, mat->name);
@@ -1154,8 +1155,25 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
             mat->emissiveFactor *= glm::max(emissiveIntensity, 0.0f);
 
         float bumpScale = 1.0f;
-        if (aiMat->Get(AI_MATKEY_BUMPSCALING, bumpScale) == AI_SUCCESS)
+        if (out.isGltf) {
+            // Blender's normal-map strength is glTF normalTexture.scale.
+            if (aiMat->Get(AI_MATKEY_GLTF_TEXTURE_SCALE(
+                               aiTextureType_NORMALS, 0),
+                           bumpScale) == AI_SUCCESS) {
+                mat->normalStrength = glm::max(bumpScale, 0.0f);
+            }
+        } else if (aiMat->Get(AI_MATKEY_BUMPSCALING, bumpScale) == AI_SUCCESS) {
             mat->normalStrength = glm::max(bumpScale, 0.0f);
+        }
+        if (out.isGltf) {
+            float occlusionStrength = 1.0f;
+            if (aiMat->Get(AI_MATKEY_GLTF_TEXTURE_STRENGTH(
+                               aiTextureType_AMBIENT_OCCLUSION, 0),
+                           occlusionStrength) == AI_SUCCESS) {
+                mat->occlusionStrength =
+                    glm::clamp(occlusionStrength, 0.0f, 1.0f);
+            }
+        }
 
         float transmission = 0.0f;
         if (aiMat->Get(AI_MATKEY_TRANSMISSION_FACTOR, transmission) == AI_SUCCESS &&
@@ -1244,16 +1262,19 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         // FBX materials usually keep the viewport diffuse colour next to a
         // BaseColor texture. Multiplying both makes textured characters almost
         // black (the Korlan armour is a good example), so the texture replaces
-        // the RGB tint. Alpha is preserved for opacity/glass handling.
-        if (mat->albedoMap) {
+        // the RGB tint. glTF baseColorFactor is authored data and must stay.
+        if (mat->albedoMap && !out.isGltf) {
             mat->albedoFactor.r = 1.0f;
             mat->albedoFactor.g = 1.0f;
             mat->albedoFactor.b = 1.0f;
         }
-        // Texture-driven material factors default to 1.0. Assimp leaves the
-        // metallic factor at 0 for FBX files that only provide a packed map.
-        if (!hasMetallicFactor && (mat->metallicRoughnessMap || mat->metallicMap))
+        // Default non-metal for textured materials. FBX packs often rely on
+        // the old implicit 1.0, while glTF/Blender materials keep metalness 0
+        // unless the file explicitly authors a metallic factor.
+        if (!hasMetallicFactor && !out.isGltf &&
+            (mat->metallicRoughnessMap || mat->metallicMap)) {
             mat->metallicFactor = 1.0f;
+        }
         if (!hasRoughnessFactor && (mat->metallicRoughnessMap || mat->roughnessMap))
             mat->roughnessFactor = 1.0f;
 

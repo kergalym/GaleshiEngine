@@ -1389,6 +1389,7 @@ protected:
         if (m_usingGameCamera) {
             // Play is driven by the primary gameplay camera. The editor orbit
             // state remains untouched so Stop can immediately restore it.
+            EndEditorMouseLook();
             UpdateGameplayCamera();
         } else {
             // The viewport camera must remain free to navigate through the
@@ -1396,8 +1397,9 @@ protected:
             // transform gizmos. Only an actively manipulated gizmo may block
             // camera input; merely hovering it must not.
             const bool cameraControllable =
-                m_viewportHovered && !m_editor.GizmoLocked() &&
-                !ImGuizmo::IsUsing();
+                (m_viewportHovered || m_editorLookDragging) &&
+                (!m_uiOverlayHovered || m_editorLookDragging) &&
+                !m_editor.GizmoLocked() && !ImGuizmo::IsUsing();
             
             // Mouse wheel dollies the viewport camera forward/back along its
             // view direction. Moving the orbit target as well keeps the
@@ -1416,11 +1418,46 @@ protected:
                 }
             }
 
-            if (cameraControllable && ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-                auto d = ImGui::GetIO().MouseDelta;
-                m_editor.camYaw   -= d.x * m_preferences.cameraOrbitSensitivity;
-                m_editor.camPitch -= d.y * m_preferences.cameraOrbitSensitivity;
-                m_editor.camPitch  = glm::clamp(m_editor.camPitch, -1.5f, 1.5f);
+            // Godot-style RMB look: only start rotating after the mouse
+            // actually moves, then capture the pointer and rotate in place.
+            const bool lookInput =
+                cameraControllable &&
+                !ImGui::GetIO().WantTextInput &&
+                !ImGui::GetIO().AppFocusLost &&
+                ImGui::IsMouseDown(ImGuiMouseButton_Right);
+            if (lookInput) {
+                if (!m_editorLooking) {
+                    // Capture on press, but skip the synthetic relative
+                    // motion caused by switching modes. A plain RMB click
+                    // therefore does not rotate the camera.
+                    m_editorLooking = true;
+                    m_editorLookDragging = true;
+                    SetMouseCapture(true);
+                    m_editorLookSkipFrames = 2;
+                }
+
+                if (m_editorLookSkipFrames > 0) {
+                    --m_editorLookSkipFrames;
+                } else {
+                    const glm::vec2 d = GetInput().MouseDelta();
+                    const glm::vec3 eye = m_camera.Position();
+                    m_editor.camYaw -=
+                        d.x * m_preferences.cameraOrbitSensitivity;
+                    m_editor.camPitch +=
+                        d.y * m_preferences.cameraOrbitSensitivity;
+                    m_editor.camPitch =
+                        glm::clamp(m_editor.camPitch, -1.5f, 1.5f);
+
+                    const float cp = std::cos(m_editor.camPitch);
+                    const float sp = std::sin(m_editor.camPitch);
+                    const glm::vec3 offset{
+                        m_editor.camRadius * cp * std::sin(m_editor.camYaw),
+                        m_editor.camRadius * sp,
+                        m_editor.camRadius * cp * std::cos(m_editor.camYaw)};
+                    m_editor.camTarget = eye - offset;
+                }
+            } else {
+                EndEditorMouseLook();
             }
 
             const float aspect = m_viewportH
@@ -1602,12 +1639,9 @@ protected:
                         m_animationClipTarget);
                 if (m_animationClipState <
                     static_cast<int>(animMachine.states.size())) {
-                    auto& animState =
-                        animMachine.states[static_cast<size_t>(m_animationClipState)];
-                    animState.animationPath =
-                        m_assets->MakeRelativePath(chosenAnimationAsset);
-                    animState.clip = 0;
-                    animState.animationName.clear();
+                    AssignStateAnimationAsset(
+                        Galeshi::Entity(m_animationClipTarget, &m_scene),
+                        m_animationClipState, chosenAnimationAsset);
                 }
             }
             m_animationClipTarget = entt::null;
@@ -1631,6 +1665,31 @@ protected:
             m_vegetationMeshTypeIndex = -1;
         }
 
+        // Capture property edits that do not have explicit PushHistory calls.
+        // The active item is observed after the change; the pre-edit state is
+        // already the latest snapshot, so Undo still returns one full step.
+        if (!m_isGameMode && !m_editor.isPlaying) {
+            if (ImGui::IsAnyItemActive()) {
+                m_uiItemWasActive = true;
+            } else if (m_uiItemWasActive) {
+                m_uiItemWasActive = false;
+                if (m_suppressHistory) {
+                    m_suppressHistory = false;
+                } else {
+                    PushHistory();
+                }
+            } else if (m_suppressHistory) {
+                // Undo/Redo via a keyboard shortcut has no item to release.
+                m_suppressHistory = false;
+            }
+        }
+
+        if (m_editorLookDragging) {
+            // SDL relative mode captures the pointer; hide the visible cursor
+            // while the user is actively looking around.
+            ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+        }
+
         m_cpuProfile.imguiMs = ProfileElapsedMs(imguiStart, ProfileClock::now());
         if (m_showProfiler) {
             UpdateGpuProfilerStats();
@@ -1643,6 +1702,9 @@ protected:
 
     void OnShutdown() override {
         spdlog::info("[Editor] OnShutdown: begin");
+
+        // Never leave the OS cursor captured when the process exits.
+        EndEditorMouseLook();
 
         // Never let the loader touch bgfx/SDL after they have been shut down.
         if (m_loadingState.loaderThread.joinable()) {
@@ -1791,6 +1853,11 @@ private:
             ReleaseUnusedSceneAssets();
             if (s.sceneLoaded.exchange(false, std::memory_order_acquire)) {
                 ApplySceneViewState();
+                // A loaded scene is a new history root; snapshots from the
+                // previous document must never be reachable through Undo.
+                m_history.clear();
+                m_historyIndex = -1;
+                PushHistory();
                 AddRecentScene(m_currentScenePath);
             }
         }
@@ -2079,7 +2146,8 @@ private:
                 m_preferences = EditorPreferences{};
             }
             ImGui::TextDisabled(
-                "Right mouse drag orbits; mouse wheel moves forward/back.");
+                "Hold right mouse to look from the viewport center; "
+                "mouse wheel moves forward/back.");
             break;
         }
 
@@ -2921,7 +2989,14 @@ if (ImGui::BeginMenu("File")) {
         }
 
         if (ImGui::BeginMenu("Create")) {
-            if (ImGui::MenuItem("Empty Entity"))
+            // Every create action records the pre-action scene so Undo steps
+            // through construction operations, not only gizmo edits.
+            auto createItem = [&](const char* label) {
+                if (!ImGui::MenuItem(label)) return false;
+                PushHistory();
+                return true;
+            };
+            if (createItem("Empty Entity"))
                 m_editor.Select(m_scene.CreateEntity("New Entity"));
 
             if (ImGui::BeginMenu("UI")) {
@@ -2937,7 +3012,7 @@ if (ImGui::BeginMenu("File")) {
                 ImGui::EndMenu();
             }
             
-            if (ImGui::MenuItem("Landscape")) {
+            if (createItem("Landscape")) {
                 // Only one landscape is allowed per scene. If one already
                 // exists, select it instead of creating a duplicate.
                 auto landscapeView =
@@ -2970,11 +3045,11 @@ if (ImGui::BeginMenu("File")) {
                     m_editor.Select(e);
                 }
             }
-            if (ImGui::MenuItem("Cube")) {
+            if (createItem("Cube")) {
                 auto e = MakeCube("Cube", {0, 0, 0});
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("Camera")) {
+            if (createItem("Camera")) {
                 auto e = m_scene.CreateEntity("Camera");
                 auto& camera = e.AddComponent<Galeshi::CameraComponent>();
                 auto& tf = e.GetComponent<Galeshi::TransformComponent>();
@@ -2992,21 +3067,21 @@ if (ImGui::BeginMenu("File")) {
                 }
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("Physics Sphere")) {
+            if (createItem("Physics Sphere")) {
                 auto e = SpawnPhysicsSphere("PhysicsSphere", {0, 5, 0}, 0.5f);
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("Physics Capsule")) {
+            if (createItem("Physics Capsule")) {
                 auto e = SpawnPhysicsCapsule("PhysicsCapsule", {0, 5, 0}, 0.5f, 0.5f);
                 m_editor.Select(e);
             }
             if (ImGui::BeginMenu("Collision Shapes")) {
-                if (ImGui::MenuItem("Box"))    SpawnCollisionShape("CollisionBox", Galeshi::ColliderShapeType::Box);
-                if (ImGui::MenuItem("Sphere")) SpawnCollisionShape("CollisionSphere", Galeshi::ColliderShapeType::Sphere);
-                if (ImGui::MenuItem("Capsule"))SpawnCollisionShape("CollisionCapsule", Galeshi::ColliderShapeType::Capsule);
+                if (createItem("Box"))    SpawnCollisionShape("CollisionBox", Galeshi::ColliderShapeType::Box);
+                if (createItem("Sphere")) SpawnCollisionShape("CollisionSphere", Galeshi::ColliderShapeType::Sphere);
+                if (createItem("Capsule"))SpawnCollisionShape("CollisionCapsule", Galeshi::ColliderShapeType::Capsule);
                 ImGui::EndMenu();
             }
-            if (ImGui::MenuItem("Cloth (SoftBody)")) {
+            if (createItem("Cloth (SoftBody)")) {
                 auto e = m_scene.CreateEntity("Cloth");
                 auto& sb = e.AddComponent<Galeshi::SoftBodyComponent>();
                 sb.gridX = 10; sb.gridY = 10;
@@ -3043,11 +3118,11 @@ if (ImGui::BeginMenu("File")) {
 
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("Physics Cube")) {
+            if (createItem("Physics Cube")) {
                 auto e = SpawnPhysicsCube("PhysicsCube", {0, 5, 0});
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("AI Agent (Behavior Tree)")) {
+            if (createItem("AI Agent (Behavior Tree)")) {
                 auto e = m_scene.CreateEntity("AI_Agent_BT");
                 auto& tc = e.GetComponent<Galeshi::TransformComponent>();
                 tc.position = {0, 1.15f, 0};
@@ -3068,7 +3143,7 @@ if (ImGui::BeginMenu("File")) {
                 tree = Galeshi::BehaviorTreeSystem::MakeDefaultBehaviorTree();
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("AI Agent (Lua Patrol)")) {
+            if (createItem("AI Agent (Lua Patrol)")) {
                 auto e = m_scene.CreateEntity("AI_Agent");
                 auto& tc = e.GetComponent<Galeshi::TransformComponent>();
                 tc.position = {0, 0, 0};
@@ -3092,7 +3167,7 @@ if (ImGui::BeginMenu("File")) {
                     }
                     spdlog::info("[Editor] Build NavMesh menu done");
                 }
-                if (ImGui::MenuItem("Directional Light")) {
+                if (createItem("Directional Light")) {
                 auto e = m_scene.CreateEntity("DirectionalLight");
                 auto& dl = e.HasComponent<Galeshi::DirectionalLightComponent>()
                            ? e.GetComponent<Galeshi::DirectionalLightComponent>()
@@ -3101,7 +3176,7 @@ if (ImGui::BeginMenu("File")) {
                 dl.intensity = 3.0f;
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("Point Light")) {
+            if (createItem("Point Light")) {
                 auto e = m_scene.CreateEntity("PointLight");
                 auto& pl = e.HasComponent<Galeshi::PointLightComponent>()
                            ? e.GetComponent<Galeshi::PointLightComponent>()
@@ -3110,7 +3185,7 @@ if (ImGui::BeginMenu("File")) {
                 tc.position = {0, 2, 0};
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("Spot Light")) {
+            if (createItem("Spot Light")) {
                 auto e = m_scene.CreateEntity("SpotLight");
                 auto& sl = e.HasComponent<Galeshi::SpotLightComponent>()
                            ? e.GetComponent<Galeshi::SpotLightComponent>()
@@ -3119,14 +3194,14 @@ if (ImGui::BeginMenu("File")) {
                 tc.position = {0, 3, 0};
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("Particle Emitter")) {
+            if (createItem("Particle Emitter")) {
                 auto e = m_scene.CreateEntity("ParticleEmitter");
                 e.AddComponent<Galeshi::ParticleEmitterComponent>();
                 auto& tc = e.GetComponent<Galeshi::TransformComponent>();
                 tc.position = {0, 2, 0};
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("Water Surface")) {
+            if (createItem("Water Surface")) {
                 auto e = m_scene.CreateEntity("Water");
                 e.AddComponent<Galeshi::WaterComponent>();
                 auto& tc = e.GetComponent<Galeshi::TransformComponent>();
@@ -3149,21 +3224,21 @@ if (ImGui::BeginMenu("File")) {
                         "Select a skeletal character or one of its skinned meshes.");
                 }
             }
-            if (ImGui::MenuItem("Audio Source")) {
+            if (createItem("Audio Source")) {
                 auto e = m_scene.CreateEntity("AudioSource");
                 e.AddComponent<Galeshi::AudioSourceComponent>();
                 e.GetComponent<Galeshi::TransformComponent>().position =
                     m_editor.camTarget;
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("Audio Listener")) {
+            if (createItem("Audio Listener")) {
                 auto e = m_scene.CreateEntity("AudioListener");
                 e.AddComponent<Galeshi::AudioListenerComponent>();
                 e.GetComponent<Galeshi::TransformComponent>().position =
                     m_editor.camTarget;
                 m_editor.Select(e);
             }
-            if (ImGui::MenuItem("Post-Process Volume")) {
+            if (createItem("Post-Process Volume")) {
                 auto e = m_scene.CreateEntity("PostProcessVolume");
                 auto& volume =
                     e.AddComponent<Galeshi::PostProcessVolumeComponent>();
@@ -3239,22 +3314,34 @@ if (ImGui::BeginMenu("File")) {
     }
 
     void Undo() {
+        // Some actions (delete, replace, create) snapshot the pre-action
+        // state; make the current post-action state the redo point first so
+        // one Undo returns to that pre-action state instead of skipping it.
+        PushHistory();
         if (m_historyIndex <= 0) return;
         m_historyIndex--;
         m_isRestoringHistory = true;
+        m_suppressHistory = true;
         m_editor.ClearSelection();
         m_serializer->LoadFromString(m_history[m_historyIndex]);
+        // Normalize the restored snapshot so the next comparison does not
+        // mistake serialization order for a new user edit.
+        m_history[m_historyIndex] = m_serializer->SaveToString();
         if (m_particles) m_particles->Reset();
         ReleaseUnusedSceneAssets();
         m_isRestoringHistory = false;
     }
 
     void Redo() {
+        // A change made after Undo invalidates the redo tail.
+        PushHistory();
         if (m_historyIndex + 1 >= (int)m_history.size()) return;
         m_historyIndex++;
         m_isRestoringHistory = true;
+        m_suppressHistory = true;
         m_editor.ClearSelection();
         m_serializer->LoadFromString(m_history[m_historyIndex]);
+        m_history[m_historyIndex] = m_serializer->SaveToString();
         if (m_particles) m_particles->Reset();
         ReleaseUnusedSceneAssets();
         m_isRestoringHistory = false;
@@ -3277,6 +3364,7 @@ if (ImGui::BeginMenu("File")) {
 
     void StopPlay() {
         if (!m_editor.isPlaying) return;
+        EndEditorMouseLook();
         m_lastViewportTexture = BGFX_INVALID_HANDLE;
         m_editor.isPlaying = false;
         m_audio.StopAll();
@@ -3291,6 +3379,7 @@ if (ImGui::BeginMenu("File")) {
 
     void StopPlayForSceneChange() {
         if (!m_editor.isPlaying && !m_usingGameCamera) return;
+        EndEditorMouseLook();
         const bool wasPlaying = m_editor.isPlaying;
         m_editor.isPlaying = false;
         if (m_usingGameCamera) DeactivateGameplayCamera();
@@ -4653,6 +4742,7 @@ if (ImGui::BeginMenu("File")) {
             hovered && mouse.x >= origin.x - 6.0f &&
             mouse.x <= canvasMax.x + 6.0f && mouse.y >= origin.y - 6.0f &&
             mouse.y <= canvasMax.y + 6.0f;
+        m_uiOverlayHovered = mouseNearCanvas;
 
         auto widgetScreenBounds = [&](const Galeshi::UIWidget& widget,
                                       ImVec2& wmin, ImVec2& wmax) {
@@ -4862,7 +4952,7 @@ if (ImGui::BeginMenu("File")) {
             m_uiDragWidget = -1;
         }
 
-        return consumed;
+        return consumed || mouseNearCanvas;
     }
 
     void DrawDockspace() {
@@ -4907,6 +4997,8 @@ if (ImGui::BeginMenu("File")) {
             // Right side of bottom panel (tabs)
             ImGui::DockBuilderDockWindow("UI Designer",       bottom);
             ImGui::DockBuilderDockWindow("Output Log",        bottom);
+            ImGui::DockBuilderDockWindow("Animation State Machine Editor",
+                                         bottom);
             ImGui::DockBuilderDockWindow("Lua Editor",        bottom);
             ImGui::DockBuilderDockWindow("Lua Console",       bottom);
             ImGui::DockBuilderDockWindow("Script Components", bottom);
@@ -5012,6 +5104,13 @@ if (ImGui::BeginMenu("File")) {
         m_camera.SetView(eye, eye + forward, up);
         m_usingGameCamera = true;
         m_activeGameCamera = cameraEntity.Handle();
+    }
+
+    void EndEditorMouseLook() {
+        if (m_editorLookDragging) SetMouseCapture(false);
+        m_editorLooking = false;
+        m_editorLookDragging = false;
+        m_editorLookSkipFrames = 0;
     }
 
     void RestoreEditorCamera() {
@@ -6236,6 +6335,7 @@ if (ImGui::BeginMenu("File")) {
     // -------------------------------------------------------------------
     void DrawViewport() {
         spdlog::trace("[Main] DrawViewport");
+        m_uiOverlayHovered = false;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
         if (m_isGameMode) {
             ImGui::SetNextWindowPos(ImGui::GetMainViewport()->Pos);
@@ -7423,8 +7523,8 @@ if (ImGui::BeginMenu("File")) {
                                    dropSelection.Handle())) {
                         ImGui::SetTooltip(
                             "Drop to replace the selected character's model "
-                            "with this glTF/GLB.\n"
-                            "Customized material properties are preserved.");
+                            "with this glTF/GLB.\nMaterial values are reloaded "
+                            "from the file.");
                     }
                 }
             }
@@ -7475,7 +7575,8 @@ if (ImGui::BeginMenu("File")) {
             const bool landscapeSculptActive =
                 !m_isGameMode && selHasTf &&
                 sel.HasComponent<Galeshi::LandscapeComponent>() &&
-                m_editor.toolMode != Galeshi::EditorState::ToolMode::Select;
+                m_editor.toolMode != Galeshi::EditorState::ToolMode::Select &&
+                !uiOverlayConsumed;
 
             // Landscape sculpting uses the same camera ray as picking, then
             // raycasts the actual height field instead of entity AABBs.
@@ -7642,7 +7743,7 @@ if (ImGui::BeginMenu("File")) {
 
             // --- Gizmo: apply translation/rotation/scale to the ECS. ---
             if (selHasTf && !landscapeSculptActive && !selectedIsUICanvas &&
-                !m_editor.isPlaying) {
+                !uiOverlayConsumed && !m_editor.isPlaying) {
                 ImGuizmo::SetDrawlist();
                 ImGuizmo::SetRect(imgMin.x, imgMin.y, w, h);
                 ImGuizmo::SetGizmoSizeClipSpace(0.12f);
@@ -7744,6 +7845,7 @@ if (ImGui::BeginMenu("File")) {
                 ImGui::IsItemHovered() && !m_isDragging &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left) && overCenter &&
                 !ImGuizmo::IsOver() && !ImGuizmo::IsUsing()) {
+                PushHistory();
                 m_isDragging = true;
                 m_dragStartMouse = { mouse.x, mouse.y };
                 m_dragStartObjWorld = selWorldPos;
@@ -7828,6 +7930,9 @@ if (ImGui::BeginMenu("File")) {
 
                 auto view = m_scene.Registry().view<Galeshi::TransformComponent>();
                 for (auto e : view) {
+                    // UI canvases are viewport overlays, not 3D scene geometry.
+                    if (m_scene.Registry().all_of<Galeshi::UICanvasComponent>(e))
+                        continue;
                     // Invisible standalone collision shapes must not be
                     // selectable during Play.
                     if (m_editor.isPlaying &&
@@ -8114,6 +8219,118 @@ if (ImGui::BeginMenu("File")) {
                      children.size(), static_cast<uint32_t>(parent));
     }
 
+    bool IsDescendantOf(entt::entity node, entt::entity ancestor) {
+        auto& reg = m_scene.Registry();
+        for (int depth = 0; reg.valid(node) && depth < 128; ++depth) {
+            if (node == ancestor) return true;
+            if (!reg.all_of<Galeshi::ParentComponent>(node)) break;
+            node = reg.get<Galeshi::ParentComponent>(node).parent;
+        }
+        return false;
+    }
+
+    void DetachFromParent(entt::entity child) {
+        auto& reg = m_scene.Registry();
+        if (!reg.valid(child) ||
+            !reg.all_of<Galeshi::ParentComponent>(child) ||
+            HasSkeletalParent(child)) {
+            return;
+        }
+        PushHistory();
+        const glm::mat4 world = EntityWorldMatrix(child);
+        reg.remove<Galeshi::ParentComponent>(child);
+        SetLocalTransformFromWorld(child, world);
+        spdlog::info("[Outliner] Detached entity {} from its parent",
+                     static_cast<uint32_t>(child));
+    }
+
+    void DetachChildren(entt::entity parent) {
+        auto& reg = m_scene.Registry();
+        if (!reg.valid(parent) ||
+            reg.all_of<Galeshi::SkeletalComponent>(parent)) {
+            return;
+        }
+        std::vector<std::pair<entt::entity, glm::mat4>> children;
+        auto childView = reg.view<Galeshi::ParentComponent>();
+        for (auto child : childView) {
+            if (childView.get<Galeshi::ParentComponent>(child).parent != parent)
+                continue;
+            if (reg.all_of<Galeshi::NameComponent>(child)) {
+                const auto& name = reg.get<Galeshi::NameComponent>(child).name;
+                if (name.rfind("__material_slot__", 0) == 0) continue;
+            }
+            glm::mat4 world(1.0f);
+            if (reg.all_of<Galeshi::TransformComponent>(child))
+                world = EntityWorldMatrix(child);
+            children.emplace_back(child, world);
+        }
+        if (children.empty()) return;
+
+        PushHistory();
+        for (const auto& [child, world] : children) {
+            if (!reg.valid(child) || HasSkeletalParent(child)) continue;
+            reg.remove<Galeshi::ParentComponent>(child);
+            SetLocalTransformFromWorld(child, world);
+        }
+        spdlog::info("[Outliner] Detached {} children from entity {}",
+                     children.size(), static_cast<uint32_t>(parent));
+    }
+
+    void AttachSelectedTo(entt::entity parent) {
+        auto& reg = m_scene.Registry();
+        auto selected = m_editor.SelectedAll(&m_scene);
+        if (!reg.valid(parent) || selected.size() != 1) return;
+        const entt::entity child = selected.front().Handle();
+        if (!reg.valid(child) || child == parent ||
+            HasSkeletalParent(child) || IsDescendantOf(parent, child)) {
+            return;
+        }
+
+        PushHistory();
+        const glm::mat4 world = EntityWorldMatrix(child);
+        reg.emplace_or_replace<Galeshi::ParentComponent>(
+            child, Galeshi::ParentComponent{parent});
+        SetLocalTransformFromWorld(
+            child, glm::inverse(EntityWorldMatrix(parent)) * world);
+        spdlog::info("[Outliner] Attached entity {} to {}",
+                     static_cast<uint32_t>(child),
+                     static_cast<uint32_t>(parent));
+    }
+
+    void AttachPrimitiveMesh(entt::entity parent, bool sphere) {
+        if (!m_scene.Registry().valid(parent)) return;
+        PushHistory();
+        auto child = sphere
+            ? MakeSphere("MeshChild", glm::vec3(0.0f))
+            : MakeCube("MeshChild", glm::vec3(0.0f));
+        auto& reg = m_scene.Registry();
+        reg.emplace_or_replace<Galeshi::ParentComponent>(
+            child.Handle(), Galeshi::ParentComponent{parent});
+        if (reg.all_of<Galeshi::TransformComponent>(child.Handle())) {
+            auto& tf = reg.get<Galeshi::TransformComponent>(child.Handle());
+            tf.position = glm::vec3(0.0f);
+            tf.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+            tf.scale = glm::vec3(1.0f);
+        }
+        m_editor.Select(child);
+    }
+
+    void AttachCollisionShape(entt::entity parent,
+                              Galeshi::ColliderShapeType type) {
+        if (!m_scene.Registry().valid(parent)) return;
+        auto child = SpawnCollisionShape("CollisionShape", type);
+        auto& reg = m_scene.Registry();
+        reg.emplace_or_replace<Galeshi::ParentComponent>(
+            child.Handle(), Galeshi::ParentComponent{parent});
+        if (reg.all_of<Galeshi::TransformComponent>(child.Handle())) {
+            auto& tf = reg.get<Galeshi::TransformComponent>(child.Handle());
+            tf.position = glm::vec3(0.0f);
+            tf.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+            tf.scale = glm::vec3(1.0f);
+        }
+        m_editor.Select(child);
+    }
+
         void DrawOutliner() {
         ImGui::Begin("World Outliner");
         auto& reg = m_scene.Registry();
@@ -8239,24 +8456,55 @@ if (ImGui::BeginMenu("File")) {
             if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
                 m_editor.Select(Galeshi::Entity(e, &m_scene));
 
-            // Detach belongs to collision shapes. A skeletal mesh parent
-            // keeps its children locked; collision shapes may release their
-            // own children while preserving their world transforms.
-            const bool detachFromCollisionParent =
-                HasCollisionShapeParent(e);
-            const bool detachCollisionChildren =
-                reg.all_of<Galeshi::ColliderComponent>(e) &&
-                !reg.all_of<Galeshi::SkeletalComponent>(e) &&
-                !children.empty();
-            if ((detachFromCollisionParent || detachCollisionChildren) &&
-                ImGui::BeginPopupContextItem("##node_context")) {
-                if (detachFromCollisionParent &&
-                    ImGui::MenuItem("Detach from Collision Shape")) {
-                    DetachChildFromCollisionShape(e);
+            // Hierarchy actions for meshes, collision shapes and the other
+            // attachment nodes artists use to assemble a character.
+            if (ImGui::BeginPopupContextItem("##node_context")) {
+                auto selected = m_editor.SelectedAll(&m_scene);
+                const bool canAttachSelected =
+                    selected.size() == 1 &&
+                    selected.front().Handle() != e &&
+                    !HasSkeletalParent(selected.front().Handle()) &&
+                    !IsDescendantOf(e, selected.front().Handle());
+
+                if (ImGui::MenuItem("Attach Selected Here", nullptr, false,
+                                    canAttachSelected)) {
+                    AttachSelectedTo(e);
                 }
-                if (detachCollisionChildren &&
-                    ImGui::MenuItem("Detach Children")) {
-                    DetachCollisionShapeChildren(e);
+                if (ImGui::BeginMenu("Attach Mesh")) {
+                    if (ImGui::MenuItem("Cube")) AttachPrimitiveMesh(e, false);
+                    if (ImGui::MenuItem("Sphere")) AttachPrimitiveMesh(e, true);
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("Attach Collision Shape")) {
+                    if (ImGui::MenuItem("Box")) {
+                        AttachCollisionShape(
+                            e, Galeshi::ColliderShapeType::Box);
+                    }
+                    if (ImGui::MenuItem("Sphere")) {
+                        AttachCollisionShape(
+                            e, Galeshi::ColliderShapeType::Sphere);
+                    }
+                    if (ImGui::MenuItem("Capsule")) {
+                        AttachCollisionShape(
+                            e, Galeshi::ColliderShapeType::Capsule);
+                    }
+                    ImGui::EndMenu();
+                }
+
+                ImGui::Separator();
+                const bool canDetachParent =
+                    reg.all_of<Galeshi::ParentComponent>(e) &&
+                    !HasSkeletalParent(e);
+                const bool canDetachChildren =
+                    !children.empty() &&
+                    !reg.all_of<Galeshi::SkeletalComponent>(e);
+                if (ImGui::MenuItem("Detach from Parent", nullptr, false,
+                                    canDetachParent)) {
+                    DetachFromParent(e);
+                }
+                if (ImGui::MenuItem("Detach Children", nullptr, false,
+                                    canDetachChildren)) {
+                    DetachChildren(e);
                 }
                 ImGui::EndPopup();
             }
@@ -8269,9 +8517,9 @@ if (ImGui::BeginMenu("File")) {
             if (ImGui::BeginDragDropTarget()) {
                 // A model dropped on a Landscape node becomes its instanced
                 // static tree mesh. A glTF/GLB dropped on a character or on
-                // its capsule swaps the model while preserving the hierarchy
-                // and authored material values. Other entities keep accepting
-                // only Outliner reparenting drops.
+                // its capsule swaps the model while preserving the hierarchy;
+                // material values come from the new file. Other entities keep
+                // accepting only Outliner reparenting drops.
                 if (const ImGuiPayload* active = ImGui::GetDragDropPayload();
                     active && active->IsDataType("GALESHI_ASSET_PATH") &&
                     ImGui::IsItemHovered(
@@ -8287,8 +8535,8 @@ if (ImGui::BeginMenu("File")) {
                                FindSkeletalRootForReplacement(e)) {
                         ImGui::SetTooltip(
                             "Drop to replace this character's model with the "
-                            "glTF/GLB.\nCustomized material properties are "
-                            "preserved.");
+                            "glTF/GLB.\nMaterial values are reloaded from the "
+                            "file.");
                     } else if (activePath &&
                                AssetExtensionLower(activePath) == ".fbx") {
                         ImGui::SetTooltip(
@@ -8444,6 +8692,43 @@ if (ImGui::BeginMenu("File")) {
         return {};
     }
 
+    bool AssignStateAnimationAsset(Galeshi::Entity entity, int stateIndex,
+                                   const std::string& originalPath) {
+        if (!entity || !m_assets || stateIndex < 0) return false;
+        if (!IsModelAssetPath(originalPath)) return false;
+        auto& registry = m_scene.Registry();
+        auto* machine =
+            registry.try_get<Galeshi::AnimationStateMachineComponent>(
+                entity.Handle());
+        if (!machine || stateIndex >= static_cast<int>(machine->states.size())) {
+            return false;
+        }
+
+        PushHistory();
+        auto& state = machine->states[static_cast<size_t>(stateIndex)];
+        state.animationPath = m_assets->MakeRelativePath(originalPath);
+        state.clip = 0;
+        state.animationName.clear();
+        auto animationModel = m_assets->LoadModel(state.animationPath);
+        if (!animationModel.animationNames.empty()) {
+            state.animationName = animationModel.animationNames.front();
+        }
+
+        // Dropping a clip is an explicit request to preview it.
+        machine->enabled = true;
+        machine->currentState = stateIndex;
+        machine->previousState = -1;
+        machine->stateTime = 0.0f;
+        machine->previousTime = 0.0f;
+        machine->blendElapsed = machine->blendDuration;
+        machine->initialized = true;
+        if (auto* skeleton =
+                registry.try_get<Galeshi::SkeletalComponent>(entity.Handle())) {
+            skeleton->isAnimated = true;
+        }
+        return true;
+    }
+
     void DrawAnimationStateMachineContents(
         Galeshi::Entity entity,
         const std::string& fallbackModelPath = {}) {
@@ -8460,9 +8745,11 @@ if (ImGui::BeginMenu("File")) {
         if (modelPath.empty()) modelPath = FindCharacterModelPath(handle);
 
         std::vector<std::string> clipNames;
+        bool modelHasSkeleton = false;
         if (!modelPath.empty() && m_assets) {
             auto model = m_assets->LoadModel(modelPath);
             clipNames = model.animationNames;
+            modelHasSkeleton = model.totalBones > 0;
         }
 
         std::vector<std::string> clipLabels;
@@ -8485,6 +8772,12 @@ if (ImGui::BeginMenu("File")) {
                     "be used as a separate animation asset.");
             } else {
                 ImGui::TextDisabled("Embedded clips: %zu", clipNames.size());
+            }
+            if (!modelHasSkeleton) {
+                ImGui::TextColored(
+                    ImVec4(1.0f, 0.65f, 0.25f, 1.0f),
+                    "This model has no skin/armature. Separate animation clips "
+                    "cannot deform it; export the glTF with the character skin.");
             }
         }
         std::vector<const char*> clipItems;
@@ -8601,12 +8894,7 @@ if (ImGui::BeginMenu("File")) {
                         const char* path =
                             static_cast<const char*>(payload->Data);
                         const std::string candidate = path ? path : "";
-                        if (IsModelAssetPath(candidate)) {
-                            state.animationPath =
-                                m_assets->MakeRelativePath(candidate);
-                            state.clip = 0;
-                            state.animationName.clear();
-                        }
+                        AssignStateAnimationAsset(entity, i, candidate);
                     }
                     ImGui::EndDragDropTarget();
                 }
@@ -8894,6 +9182,21 @@ if (ImGui::BeginMenu("File")) {
 
     void DrawStateMachineEditor() {
         if (!m_showStateMachineEditor) return;
+
+        // Keep this editor in the bottom dock group even when an old
+        // imgui.ini remembers it as a floating window.
+        if (ImGuiWindow* host = ImGui::FindWindowByName("UI Designer");
+            host && host->DockId != 0) {
+            ImGui::SetNextWindowDockID(host->DockId, ImGuiCond_Always);
+        } else if (ImGuiWindow* output = ImGui::FindWindowByName("Output Log");
+                   output && output->DockId != 0) {
+            ImGui::SetNextWindowDockID(output->DockId, ImGuiCond_Always);
+        } else if (ImGuiWindow* browser =
+                       ImGui::FindWindowByName("Content Browser");
+                   browser && browser->DockId != 0) {
+            ImGui::SetNextWindowDockID(browser->DockId, ImGuiCond_Always);
+        }
+
         if (!ImGui::Begin("Animation State Machine Editor",
                           &m_showStateMachineEditor)) {
             ImGui::End();
@@ -9101,7 +9404,10 @@ if (ImGui::BeginMenu("File")) {
                             selectedSourcePath.empty()
                                 ? "(skeletal mesh not assigned)"
                                 : selectedSourcePath.c_str());
+        ImGui::TextDisabled(
+            "Drop an animation file on the Animation Asset field below.");
         ImGui::Separator();
+
         ImGui::BeginChild("##state_machine_scroll");
         DrawAnimationStateMachineContents(
             Galeshi::Entity(m_stateMachineEditorEntity, &m_scene),
@@ -9249,8 +9555,8 @@ void DrawDetails() {
 
         // Character asset field. Existing FBX scenes can migrate to glTF by
         // dropping a GLB/glTF here (or on the character/capsule in the
-        // viewport or Outliner). The hierarchy and authored material values
-        // are preserved; only the imported model nodes are swapped.
+        // viewport or Outliner). The hierarchy is preserved and all material
+        // values are reloaded from the replacement file.
         if (Galeshi::Entity replacementRoot =
                 FindSkeletalRootForReplacement(selectedHandle)) {
             auto& replacementSkeleton =
@@ -9296,9 +9602,9 @@ void DrawDetails() {
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip(
                         "Replaces the model attached to this character/capsule.\n"
-                        "The hierarchy, skeleton and customized material "
-                        "property values are preserved.\nFBX drag & drop is "
-                        "disabled.");
+                        "The hierarchy and skeleton are preserved.\n"
+                        "Material values are reloaded from the glTF.\n"
+                        "FBX drag & drop is disabled.");
                 }
                 if (ImGui::BeginDragDropTarget()) {
                     if (const ImGuiPayload* payload =
@@ -11283,49 +11589,6 @@ void DrawDetails() {
         return key;
     }
 
-    // Move authored parameters from the old FBX material onto the freshly
-    // imported glTF material. The glTF import remains the base: its name and
-    // texture maps win when present. Old maps are kept only as a fallback for
-    // slots the replacement asset does not provide, which preserves custom
-    // maps on materials that have no glTF equivalent while avoiding stale FBX
-    // textures winning over the new asset's intended look.
-    static void MergeMaterialValues(Galeshi::Material& destination,
-                                    const Galeshi::Material& source) {
-        const auto newAlbedo = destination.albedoMap;
-        const auto newMr = destination.metallicRoughnessMap;
-        const auto newMetallic = destination.metallicMap;
-        const auto newRoughness = destination.roughnessMap;
-        const auto newNormal = destination.normalMap;
-        const auto newEmissive = destination.emissiveMap;
-        const auto newOcclusion = destination.occlusionMap;
-        const auto newOpacity = destination.opacityMap;
-        const auto newSpecular = destination.specularMap;
-        const std::string newName = destination.name;
-        const std::string newSourcePath = destination.sourcePath;
-        const auto newBase = destination.base;
-        const bool newAlphaTest = destination.alphaTest;
-        const bool newAlphaBlend = destination.alphaBlend;
-
-        destination = source;
-        destination.name = newName;
-        destination.sourcePath = newSourcePath;
-        destination.base = newBase;
-        destination.alphaTest = newAlphaTest;
-        destination.alphaBlend = newAlphaBlend;
-        destination.albedoMap = newAlbedo ? newAlbedo : source.albedoMap;
-        destination.metallicRoughnessMap =
-            newMr ? newMr : source.metallicRoughnessMap;
-        destination.metallicMap = newMetallic ? newMetallic : source.metallicMap;
-        destination.roughnessMap =
-            newRoughness ? newRoughness : source.roughnessMap;
-        destination.normalMap = newNormal ? newNormal : source.normalMap;
-        destination.emissiveMap = newEmissive ? newEmissive : source.emissiveMap;
-        destination.occlusionMap =
-            newOcclusion ? newOcclusion : source.occlusionMap;
-        destination.opacityMap = newOpacity ? newOpacity : source.opacityMap;
-        destination.specularMap = newSpecular ? newSpecular : source.specularMap;
-    }
-
     static float ModelMeshHeight(const std::vector<std::shared_ptr<Galeshi::Mesh>>& meshes) {
         float minY = std::numeric_limits<float>::max();
         float maxY = std::numeric_limits<float>::lowest();
@@ -11538,6 +11801,16 @@ void DrawDetails() {
             spdlog::error("[ModelSwap] glTF '{}' contains no meshes", newPath);
             return false;
         }
+        if (newModel.totalBones == 0) {
+            // Replacing a skinned character with a static glTF destroys the
+            // skeleton that external clips retarget onto. Keep the working
+            // character instead of silently turning it into a T-pose prop.
+            spdlog::error(
+                "[ModelSwap] '{}' has no skin/armature; keeping the existing "
+                "character model. Export the glTF with the armature and skin.",
+                newPath);
+            return false;
+        }
 
         // Capture old material values before the old mesh entities disappear.
         struct MaterialSlot {
@@ -11719,19 +11992,9 @@ void DrawDetails() {
             }
 
             if (matchedOld >= 0) {
-                auto merged =
-                    std::make_shared<Galeshi::Material>(*newMaterial);
-                MergeMaterialValues(*merged, *oldSlots[static_cast<size_t>(matchedOld)].material);
-                if (merged->albedoMap &&
-                    merged->albedoMap->IsSrgb() != merged->albedoSrgb) {
-                    const std::string albedoPath = merged->albedoMap->Path();
-                    if (!albedoPath.empty()) {
-                        auto reloaded = m_assets->LoadTexture(
-                            albedoPath, merged->albedoSrgb);
-                        if (reloaded) merged->albedoMap = reloaded;
-                    }
-                }
-                newMaterial = std::move(merged);
+                // Use the material values authored in the replacement glTF.
+                // Only the material slot itself is retained; the old FBX
+                // factors and texture maps must not override the file.
                 oldSlots[static_cast<size_t>(matchedOld)].used = true;
                 ++preservedMaterials;
             }
@@ -11963,19 +12226,23 @@ void DrawDetails() {
         // 2. If the model imports flipped (Z-up), uncomment the next line:
         rootTf.rotation = glm::angleAxis(glm::radians(0.0f), glm::vec3(1.0f, 0.0f, 0.0f));
 
-        if (model.hasAnimation) {
+        if (model.hasAnimation || model.totalBones > 0) {
             auto& skel = root.AddComponent<Galeshi::SkeletalComponent>();
-            skel.isAnimated = true;
+            skel.isAnimated = model.hasAnimation;
             skel.sourcePath = path;
             skel.boneMatrices.resize(256, glm::mat4(1.0f));
 
-            auto& machine = root.AddComponent<Galeshi::AnimationStateMachineComponent>();
-            machine = Galeshi::AnimationSystem::CreateDefaultStateMachine(model.animationNames);
-            machine.parameters = {
-                {"Speed", 0.0f},
-                {"PlayerVisible", 0.0f},
-                {"TargetDistance", 100.0f}
-            };
+            if (model.hasAnimation) {
+                auto& machine =
+                    root.AddComponent<Galeshi::AnimationStateMachineComponent>();
+                machine = Galeshi::AnimationSystem::CreateDefaultStateMachine(
+                    model.animationNames);
+                machine.parameters = {
+                    {"Speed", 0.0f},
+                    {"PlayerVisible", 0.0f},
+                    {"TargetDistance", 100.0f}
+                };
+            }
         }
 
         std::unordered_set<int> usedMaterialSlots;
@@ -12361,6 +12628,11 @@ void DrawDetails() {
 
     uint16_t    m_viewportW = 0, m_viewportH = 0;
     bool        m_viewportHovered = false;
+    bool        m_editorLooking = false;
+    bool        m_editorLookDragging = false;
+    int         m_editorLookSkipFrames = 0;
+    bool        m_uiOverlayHovered = false;
+    bool        m_uiItemWasActive = false;
     ImVec2      m_viewportImagePos = {0.0f, 0.0f};
     ImVec2      m_viewportImageSize = {0.0f, 0.0f};
     std::string m_currentScenePath;
@@ -12390,6 +12662,7 @@ void DrawDetails() {
     std::vector<std::string> m_history;
     int  m_historyIndex = -1;
     bool m_isRestoringHistory = false;
+    bool m_suppressHistory = false;
     bool m_wasUsingGizmo = false;
     bool m_wasSculpting = false;
     float m_lastSculptHeight = 0.0f;

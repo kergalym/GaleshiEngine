@@ -250,7 +250,7 @@ Packaging is experimental:
 
 | Input | Action |
 | --- | --- |
-| Right mouse drag | Orbit the editor camera |
+| Right mouse drag | Look around from the viewport center |
 | Mouse wheel | Move the editor camera forward/back along the view direction |
 | W / A / S / D | Move the player (when the scene is playing) |
 | Esc | Stop the running scene |

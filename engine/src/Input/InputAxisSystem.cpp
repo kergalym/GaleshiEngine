@@ -131,7 +131,13 @@ void InputAxisSystem::Update(float dt) {
     float mouseY = 0.0f;
     m_mouseButtons = static_cast<uint32_t>(SDL_GetMouseState(&mouseX, &mouseY));
 
-    if (m_hasMousePosition) {
+    if (m_relativeMouseMode) {
+        float relativeX = 0.0f;
+        float relativeY = 0.0f;
+        SDL_GetRelativeMouseState(&relativeX, &relativeY);
+        m_mouseDX = relativeX;
+        m_mouseDY = relativeY;
+    } else if (m_hasMousePosition) {
         m_mouseDX = mouseX - m_previousMouseX;
         m_mouseDY = mouseY - m_previousMouseY;
     } else {
@@ -197,6 +203,14 @@ void InputAxisSystem::Update(float dt) {
 
         axis.value = value;
     }
+}
+
+void InputAxisSystem::SetRelativeMouseMode(bool enabled) {
+    if (m_relativeMouseMode == enabled) return;
+    m_relativeMouseMode = enabled;
+    m_hasMousePosition = false;
+    m_mouseDX = 0.0f;
+    m_mouseDY = 0.0f;
 }
 
 void InputAxisSystem::ProcessEvent(const SDL_Event& event) {

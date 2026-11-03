@@ -323,6 +323,8 @@ Application::Application(const ApplicationSpec& spec)
 Application::~Application() {
     if (!m_impl) return;
 
+    SetMouseCapture(false);
+
     // IMPORTANT: release ImGui resources before shutting down bgfx.
     // Otherwise bgfx::destroy() runs after bgfx::shutdown() and leaks.
     ImGuiBgfx::Shutdown();
@@ -340,6 +342,16 @@ void Application::RequestExit() { m_impl->running = false; }
 Renderer* Application::GetRenderer() const { return m_impl->renderer.get(); }
 
 InputAxisSystem& Application::GetInput() { return m_impl->input; }
+
+void Application::SetMouseCapture(bool enabled) {
+    if (!m_impl || !m_impl->window) return;
+    if (!SDL_SetWindowRelativeMouseMode(m_impl->window, enabled)) {
+        spdlog::warn("[Input] Could not set relative mouse mode: {}",
+                     SDL_GetError());
+        return;
+    }
+    m_impl->input.SetRelativeMouseMode(enabled);
+}
 
 int Application::Run() {
     OnStart();
