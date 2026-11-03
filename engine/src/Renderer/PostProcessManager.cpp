@@ -163,7 +163,7 @@ void PostProcessManager::Init() {
         }
     }
 
-    // Ambient occlusion (ported from tobspr/RenderPipeline)
+    // Screen-space ambient occlusion chain.
     {
         auto makeProg = [](const char* fsName) -> bgfx::ProgramHandle {
             auto vs = LoadBinShader("shaders/vs_fullscreen.bin");
@@ -1519,15 +1519,13 @@ bgfx::TextureHandle PostProcessManager::RenderMotionBlur(bgfx::TextureHandle col
         return BGFX_INVALID_HANDLE;
     }
 
-    // Reference: RenderPipeline motion_blur plugin. The camera velocity is
-    // computed first into an RGBA16F target, then the color is blurred along
-    // that velocity. This keeps per-sample velocity lookups cheap and avoids
-    // reconstructing world positions for every blur tap.
+    // Camera velocity is computed first into an RGBA16F target, then the
+    // color is blurred along it. Per-sample lookups stay cheap and world
+    // positions are not reconstructed for every blur tap.
     float dt = frameDelta;
     if (dt < (1.0f / 1000.0f)) dt = (1.0f / 1000.0f);
     if (dt > 0.1f) dt = 0.1f;
-    // RenderPipeline scales velocity by (1/60) / frame_delta and by a
-    // user-facing camera blur factor.
+    // Scale velocity by the fixed 60 Hz reference and the blur amount.
     float velocityScale = std::max(amount, 0.0f) * (1.0f / 60.0f) / dt;
 
     // View [velocityViewId]: camera velocity in UV space.
@@ -1545,8 +1543,8 @@ bgfx::TextureHandle PostProcessManager::RenderMotionBlur(bgfx::TextureHandle col
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(velocityViewId, m_mbVelocityProg);
 
-    // View [blurViewId]: jittered camera blur. maxVelocity/minVelocity are
-    // expressed in UV units, matching RenderPipeline's 70px and 0.5px limits.
+    // View [blurViewId]: jittered camera blur. Velocity limits are expressed
+    // in UV units (70 px maximum, 0.5 px minimum).
     bgfx::setViewFrameBuffer(blurViewId, target);
     bgfx::setViewRect(blurViewId, 0, 0, w, h);
     bgfx::setViewClear(blurViewId, BGFX_CLEAR_COLOR, 0x000000ff);

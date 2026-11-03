@@ -171,7 +171,7 @@ end
 - Multiple draggable tree species for landscape vegetation; each has its own model, density, size and texture override row, and can be painted or generated together. Dropped tree models default to Size `0.010`. Density scales the species' generated instance count, while Size scales the model itself. Models can be dropped from the Content Browser or viewport; each species' Tree Textures row accepts Albedo/Normal/MR/Emissive/Occlusion/Opacity/Specular drops, while the Landscape keeps its own material texture row.
 - Tree and grass painting brushes with adjustable density and instance size. A single click stamps foliage and dragging continues the stroke. Painted instances are serialized with the scene, and `Hide Default Instances` hides generated procedural trees/grass while keeping authored tree species and painted vegetation visible.
 - Skeletal animation clip sampling with weighted pose blending.
-- Serializable animation state machines with parameters, triggers, transitions, and blend durations. Each state can use clips embedded in the character FBX or a separate animation FBX; separate clips are retargeted onto the character skeleton by bone name. Runtime retargeting also remaps namespace prefixes such as `mixamorig:` or `Korlan:` onto the selected character's root-bone prefix, and provides an `Animation Scale` multiplier for unit conversion (for example `0.01` for UE4 centimeter clips on a meter character).
+- Serializable animation state machines with parameters, triggers, transitions, and blend durations. Each state can use clips embedded in the character FBX or a separate animation FBX; separate clips are retargeted onto the character skeleton by bone name. Runtime retargeting also remaps namespace prefixes such as `mixamorig:` or `Korlan:` onto the selected character's root-bone prefix, and provides an `Animation Scale` multiplier for unit conversion (for example `0.01` for centimeter clips on a meter character).
 - PBR material parameters and texture slots.
 
 ## Editor
@@ -400,6 +400,8 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 | Image loading | [bimg](https://github.com/bkaradzic/bimg) | BSD-2-Clause |
 | Base library | [bx](https://github.com/bkaradzic/bx) | BSD-2-Clause |
 | UI | [Dear ImGui](https://github.com/ocornut/imgui) | MIT |
+| Text editor | [ImGuiColorTextEdit](https://github.com/BalazsJako/ImGuiColorTextEdit) | MIT |
+| Image decoding | [stb_image](https://github.com/nothings/stb) | Public domain / MIT |
 | Gizmo | [ImGuizmo](https://github.com/CedricGuillemet/ImGuizmo) | MIT |
 | Math | [GLM](https://github.com/g-truc/glm) | MIT |
 | Model import | [Assimp](https://github.com/assimp/assimp) | BSD-3-Clause |
@@ -414,13 +416,14 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 | Font rendering | [FreeType](https://freetype.org/) | FreeType License / GPLv2 |
 | UI font | [DejaVu Sans](https://dejavu-fonts.github.io/) | Bitstream Vera License / public domain |
 
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for bundled notices.
+
 ## Credits
 
 - bgfx for the renderer abstraction.
 - Dear ImGui for the editor tooling.
 - Jolt Physics for rigid bodies and soft bodies.
 - Recast and Detour for navigation.
-- The SSAO chain and camera motion blur implementations follow the approach used by [tobspr/renderpipeline](https://github.com/tobspr/renderpipeline).
 - HBAO follows the horizon-based formulation of Bavoil and Sainz; GTAO follows the horizon-integration formulation of Jimenez et al. (2016).
 - All library authors listed above.
 

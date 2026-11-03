@@ -3,74 +3,85 @@ $input v_texcoord0
 
 uniform vec4 u_viewportSize;
 
-#define PI 3.14159265359
-#define SAMPLE_COUNT 1024u
+#define BRDF_PI 3.14159265359
 
-float RadicalInverse_VdC(uint bits) {
-    bits = (bits << 16u) | (bits >> 16u);
-    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
-    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
-    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
-    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
-    return float(bits) * 2.3283064365386963e-10;
-}
-
-vec2 Hammersley(uint i, uint N) {
-    return vec2(float(i) / float(N), RadicalInverse_VdC(i));
-}
-
-vec3 ImportanceSampleGGX(vec2 Xi, vec3 N, float roughness) {
-    float a = roughness * roughness;
-    float phi = 2.0 * PI * Xi.x;
-    float cosTheta = sqrt((1.0 - Xi.y) / (1.0 + (a * a - 1.0) * Xi.y));
-    float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
-
-    vec3 H = vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
-    vec3 up = abs(N.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
-    vec3 tangent = normalize(cross(up, N));
-    vec3 bitangent = cross(N, tangent);
-    return normalize(tangent * H.x + bitangent * H.y + N * H.z);
-}
-
-float GeometrySchlickGGX(float NdotV, float roughness) {
-    float a = roughness;
-    float k = (a * a) / 2.0;
-    return NdotV / (NdotV * (1.0 - k) + k);
-}
-
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {
-    float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    return GeometrySchlickGGX(NdotV, roughness) * GeometrySchlickGGX(NdotL, roughness);
-}
-
-vec2 IntegrateBRDF(float NdotV, float roughness) {
-    vec3 V = vec3(sqrt(1.0 - NdotV * NdotV), 0.0, NdotV);
-    float A = 0.0, B = 0.0;
-    vec3 N = vec3(0.0, 0.0, 1.0);
-
-    for (uint i = 0u; i < SAMPLE_COUNT; ++i) {
-        vec2 Xi = Hammersley(i, SAMPLE_COUNT);
-        vec3 H = ImportanceSampleGGX(Xi, N, roughness);
-        vec3 L = normalize(2.0 * dot(V, H) * H - V);
-        float NdotL = max(L.z, 0.0);
-        float NdotH = max(H.z, 0.0);
-        float VdotH = max(dot(V, H), 0.0);
-        if (NdotL > 0.0) {
-            float G = GeometrySmith(N, V, L, roughness);
-            float G_Vis = (G * VdotH) / (NdotH * NdotV);
-            float Fc = pow(1.0 - VdotH, 5.0);
-            A += (1.0 - Fc) * G_Vis;
-            B += Fc * G_Vis;
-        }
+float vanDerCorput(uint value)
+{
+    float result = 0.0;
+    float fraction = 0.5;
+    for (uint bit = 0u; bit < 32u; ++bit) {
+        result += fraction * float(value & 1u);
+        value >>= 1u;
+        fraction *= 0.5;
     }
-    return vec2(A, B) / float(SAMPLE_COUNT);
+    return result;
 }
 
-void main() {
+vec2 lowDiscrepancyPair(uint index, uint total)
+{
+    return vec2((float(index) + 0.5) / float(total), vanDerCorput(index));
+}
+
+vec3 ggxMicroNormal(vec2 uvPair, vec3 normal, float roughness)
+{
+    float alpha = roughness * roughness;
+    float alpha4 = alpha * alpha;
+    float cosTheta = sqrt(max(0.0, (1.0 - uvPair.y) /
+                                  (1.0 + (alpha4 - 1.0) * uvPair.y)));
+    float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+    float phi = 2.0 * BRDF_PI * uvPair.x;
+
+    vec3 local = vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+    vec3 up = abs(normal.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 tangent = normalize(cross(up, normal));
+    vec3 bitangent = cross(normal, tangent);
+    return normalize(tangent * local.x + bitangent * local.y + normal * local.z);
+}
+
+float smithOne(float ndv, float roughness)
+{
+    float k = 0.5 * roughness * roughness * roughness * roughness;
+    return ndv / max(ndv + k * (1.0 - ndv), 0.000001);
+}
+
+float smithBoth(vec3 normal, vec3 viewDir, vec3 lightDir, float roughness)
+{
+    float ndv = max(dot(normal, viewDir), 0.0);
+    float ndl = max(dot(normal, lightDir), 0.0);
+    return smithOne(ndv, roughness) * smithOne(ndl, roughness);
+}
+
+vec2 integrateBrdf(float ndv, float roughness)
+{
+    const uint pairCount = 1024u;
+    vec3 viewDir = vec3(sqrt(max(0.0, 1.0 - ndv * ndv)), 0.0, ndv);
+    vec3 normal = vec3(0.0, 0.0, 1.0);
+    float sumA = 0.0;
+    float sumB = 0.0;
+
+    for (uint index = 0u; index < pairCount; ++index) {
+        vec3 microNormal = ggxMicroNormal(
+            lowDiscrepancyPair(index, pairCount), normal, roughness);
+        vec3 lightDir = normalize(2.0 * dot(viewDir, microNormal) * microNormal - viewDir);
+        float ndl = max(lightDir.z, 0.0);
+        if (ndl <= 0.0) continue;
+
+        float ndh = max(microNormal.z, 0.000001);
+        float vdh = max(dot(viewDir, microNormal), 0.0);
+        float g = smithBoth(normal, viewDir, lightDir, roughness);
+        float visibility = (g * vdh) / (ndh * ndv);
+        float fresnel = pow(1.0 - vdh, 5.0);
+        sumA += (1.0 - fresnel) * visibility;
+        sumB += fresnel * visibility;
+    }
+
+    return vec2(sumA, sumB) / float(pairCount);
+}
+
+void main()
+{
     vec2 uv = gl_FragCoord.xy / u_viewportSize.xy;
-    float NdotV = clamp(uv.x, 0.001, 0.999);
+    float ndv = clamp(uv.x, 0.001, 0.999);
     float roughness = clamp(uv.y, 0.001, 0.999);
-    vec2 integratedBRDF = IntegrateBRDF(NdotV, roughness);
-    gl_FragColor = vec4(integratedBRDF, 0.0, 1.0);
+    gl_FragColor = vec4(integrateBrdf(ndv, roughness), 0.0, 1.0);
 }

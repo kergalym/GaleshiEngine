@@ -1,85 +1,80 @@
 $input v_texcoord0
 #include <bgfx_shader.sh>
 
-// Specular prefilter: GGX importance sampling of the environment cubemap.
-// One face / mip is rendered into a 2D scratch slice and copied into the
-// mip chain of m_prefilteredCube with bgfx::blit.
-
+// Prefilter one cubemap face / mip into a 2D scratch slice.
 SAMPLERCUBE(s_envCube, 0);
 
 uniform vec4 u_faceParams;      // x = face size, y = face index
 uniform vec4 u_prefilterParams; // x = roughness
 
-#define PI 3.14159265359
-#define SAMPLE_COUNT 512u
+#define PREFILTER_PI 3.14159265359
+#define PREFILTER_TAPS 512u
 
-float radicalInverseVdC(uint bits)
+float vanDerCorput(uint value)
 {
-    bits = (bits << 16u) | (bits >> 16u);
-    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
-    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
-    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
-    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
-    return float(bits) * 2.3283064365386963e-10;
+    float result = 0.0;
+    float fraction = 0.5;
+    for (uint bit = 0u; bit < 32u; ++bit) {
+        result += fraction * float(value & 1u);
+        value >>= 1u;
+        fraction *= 0.5;
+    }
+    return result;
 }
 
-vec2 hammersley(uint i, uint N)
+vec2 lowDiscrepancyPair(uint index, uint total)
 {
-    return vec2(float(i) / float(N), radicalInverseVdC(i));
+    return vec2((float(index) + 0.5) / float(total), vanDerCorput(index));
 }
 
-vec3 importanceSampleGGX(vec2 Xi, vec3 N, float roughness)
+vec3 ggxMicroNormal(vec2 uvPair, vec3 normal, float roughness)
 {
-    float a = roughness * roughness;
-    float phi = 2.0 * PI * Xi.x;
-    float cosTheta = sqrt((1.0 - Xi.y) / (1.0 + (a * a - 1.0) * Xi.y));
-    float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+    float alpha = roughness * roughness;
+    float alpha4 = alpha * alpha;
+    float cosTheta = sqrt(max(0.0, (1.0 - uvPair.y) /
+                                  (1.0 + (alpha4 - 1.0) * uvPair.y)));
+    float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+    float phi = 2.0 * PREFILTER_PI * uvPair.x;
 
-    vec3 H = vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
-
-    vec3 up = abs(N.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-    vec3 tangent = normalize(cross(up, N));
-    vec3 bitangent = cross(N, tangent);
-
-    return normalize(tangent * H.x + bitangent * H.y + N * H.z);
+    vec3 local = vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+    vec3 up = abs(normal.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 tangent = normalize(cross(up, normal));
+    vec3 bitangent = cross(normal, tangent);
+    return normalize(tangent * local.x + bitangent * local.y + normal * local.z);
 }
 
-vec3 faceDirection(vec2 uv, float face)
+vec3 cubeFaceDirection(vec2 uv, float face)
 {
     vec2 st = uv * 2.0 - 1.0;
-    if (face < 0.5)      return normalize(vec3( 1.0, -st.y, -st.x)); // +X
-    else if (face < 1.5) return normalize(vec3(-1.0, -st.y,  st.x)); // -X
-    else if (face < 2.5) return normalize(vec3( st.x,  1.0,  st.y)); // +Y
-    else if (face < 3.5) return normalize(vec3( st.x, -1.0, -st.y)); // -Y
-    else if (face < 4.5) return normalize(vec3( st.x, -st.y,  1.0)); // +Z
-    else                 return normalize(vec3(-st.x, -st.y, -1.0)); // -Z
+    if (face < 0.5)      return normalize(vec3( 1.0, -st.y, -st.x));
+    else if (face < 1.5) return normalize(vec3(-1.0, -st.y,  st.x));
+    else if (face < 2.5) return normalize(vec3( st.x,  1.0,  st.y));
+    else if (face < 3.5) return normalize(vec3( st.x, -1.0, -st.y));
+    else if (face < 4.5) return normalize(vec3( st.x, -st.y,  1.0));
+    else                 return normalize(vec3(-st.x, -st.y, -1.0));
 }
 
 void main()
 {
-    vec3 N = faceDirection(v_texcoord0, u_faceParams.y);
-    vec3 V = N;
-
+    vec3 normal = cubeFaceDirection(v_texcoord0, u_faceParams.y);
+    vec3 viewDir = normal;
     float roughness = clamp(u_prefilterParams.x, 0.0, 1.0);
-    vec3 prefiltered = vec3(0.0);
-    float totalWeight = 0.0;
 
-    for (uint i = 0u; i < SAMPLE_COUNT; ++i)
-    {
-        vec2 Xi = hammersley(i, SAMPLE_COUNT);
-        vec3 H = importanceSampleGGX(Xi, N, roughness);
-        vec3 L = normalize(2.0 * dot(V, H) * H - V);
+    vec3 accumulated = vec3(0.0);
+    float weightSum = 0.0;
 
-        float NdotL = max(dot(N, L), 0.0);
-        if (NdotL > 0.0)
-        {
-            // The environment is a smooth procedural sky and the source cube
-            // has a single mip, so sampling LOD 0 avoids undefined mip data.
-            prefiltered += textureCubeLod(s_envCube, L, 0.0).rgb * NdotL;
-            totalWeight += NdotL;
-        }
+    for (uint index = 0u; index < PREFILTER_TAPS; ++index) {
+        vec3 microNormal = ggxMicroNormal(
+            lowDiscrepancyPair(index, PREFILTER_TAPS), normal, roughness);
+        vec3 lightDir = normalize(2.0 * dot(viewDir, microNormal) * microNormal - viewDir);
+        float ndl = max(dot(normal, lightDir), 0.0);
+        if (ndl <= 0.0) continue;
+
+        // The procedural sky is single-mip; sample LOD 0.
+        accumulated += textureCubeLod(s_envCube, lightDir, 0.0).rgb * ndl;
+        weightSum += ndl;
     }
 
-    prefiltered /= max(totalWeight, 0.0001);
-    gl_FragColor = vec4(prefiltered, 1.0);
+    accumulated /= max(weightSum, 0.0001);
+    gl_FragColor = vec4(accumulated, 1.0);
 }

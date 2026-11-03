@@ -43,8 +43,8 @@ public:
         
         std::unordered_map<std::string, int>   boneMap;
         // Inverse bind matrices by bone name. FBX uses the node rest pose
-        // (Panda3D-style) because this engine bakes mesh-node transforms into
-        // vertex positions. glTF keeps its explicit inverseBindMatrices.
+        // because mesh-node transforms are baked into vertex positions.
+        // glTF keeps its explicit inverseBindMatrices.
         std::unordered_map<std::string, glm::mat4> boneOffsetMatrices;
         bool                                   isGltf = false;
         // Rest-pose world transform of every node. Animation-only FBX files

@@ -3762,9 +3762,9 @@ if (ImGui::BeginMenu("File")) {
             return index;
         };
 
-        // All templates author widgets in the 1920x1080 reference space.  The
-        // runtime and the editor viewport scale the complete canvas to the
-        // destination rectangle, exactly like a Unity/Unreal UI canvas.
+        // All templates author widgets in the 1920x1080 reference space. The
+        // runtime and editor viewport scale the complete canvas to the
+        // destination rectangle.
         canvas.referenceResolution = {1920, 1080};
         canvas.screenSize = {1920.0f, 1080.0f};
         canvas.screenPosition = {0.0f, 0.0f};
@@ -8557,7 +8557,7 @@ if (ImGui::BeginMenu("File")) {
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip(
                 "Uniform scale for retargeted animation translation.\n"
-                "Use 0.01 for UE4 centimeter animations on a meter character.");
+                "Use 0.01 for centimeter animations on a meter character.");
         }
         ImGui::Text("Current State: %d / %zu", machine->currentState,
                     machine->states.size());

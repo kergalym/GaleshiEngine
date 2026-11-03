@@ -30,9 +30,9 @@ public:
     // Compressed formats are uploaded in their GPU format.
     // The full mip chain is preserved.
     // srgb enables hardware sRGB-to-linear sampling.
-    // Most engine formats use a bottom-left V origin (and therefore flip
-    // source images on upload). glTF follows Godot/WebGL's top-left origin and
-    // must be loaded with flipVertically=false so its UVs and images match.
+    // Most engine formats use a bottom-left V origin and flip source images
+    // on upload. glTF uses a top-left origin and must be loaded with
+    // flipVertically=false so its UVs and images stay consistent.
     static Texture* LoadFromFile(const std::string& path, bool srgb = false,
                                  bool flipVertically = true);
     // Loads a Substance Painter/UDIM tile set (1001, 1002, ...) into a single

@@ -1,10 +1,9 @@
 $input v_texcoord0
 #include <bgfx_shader.sh>
 
-// Camera velocity generation, following the RenderPipeline motion_blur
-// plugin: reconstruct the current world position, project it with the
-// previous view-projection matrix, and store the screen-space delta in UV
-// space. The result is consumed by fs_motion_blur.sc.
+// Camera velocity generation: reconstruct the current world position,
+// project it with the previous view-projection matrix, and store the
+// screen-space delta in UV space for fs_motion_blur.sc.
 
 SAMPLER2D(s_worldPos, 0);
 SAMPLER2D(s_mbObjectMotion, 1);
@@ -14,31 +13,24 @@ uniform vec4 u_mbVelocityParams; // x = velocity scale (blur factor * 60/fps)
 
 void main() {
     vec2 uv = v_texcoord0;
-    vec4 wpos = texture2D(s_worldPos, uv);
+    vec4 worldSample = texture2D(s_worldPos, uv);
 
-    // Opaque geometry writes per-object previous-to-current UV motion in
-    // RT4. Sky has no object motion, so keep the camera-only reconstruction
-    // below for background parallax.
-    if (wpos.w >= 0.5) {
-        vec2 motion = texture2D(s_mbObjectMotion, uv).xy;
-        gl_FragColor = vec4(motion * u_mbVelocityParams.x, 0.0, 1.0);
+    // Opaque geometry already carries per-object UV motion.
+    if (worldSample.w >= 0.5) {
+        vec2 objectMotion = texture2D(s_mbObjectMotion, uv).xy;
+        gl_FragColor = vec4(objectMotion * u_mbVelocityParams.x, 0.0, 1.0);
         return;
     }
 
-    vec3 world;
-    if (wpos.w < 0.5) {
-        // Sky has no world position in the G-buffer. Reconstruct a far-plane
-        // point so camera rotation still produces background motion vectors.
-        vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-        vec4 farWorld = mul(u_mbInvVP, vec4(ndc, 1.0, 1.0));
-        if (abs(farWorld.w) < 1e-5) {
-            gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-            return;
-        }
-        world = farWorld.xyz / farWorld.w;
-    } else {
-        world = wpos.xyz;
+    // Sky has no world position. Reconstruct a far-plane point so camera
+    // rotation still produces background parallax.
+    vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    vec4 farPoint = mul(u_mbInvVP, vec4(ndc, 1.0, 1.0));
+    if (abs(farPoint.w) < 1e-5) {
+        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
     }
+    vec3 world = farPoint.xyz / farPoint.w;
 
     vec4 prevClip = mul(u_mbPrevVP, vec4(world, 1.0));
     if (prevClip.w <= 1e-5) {

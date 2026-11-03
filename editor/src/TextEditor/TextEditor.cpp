@@ -4,6 +4,7 @@
 #include <regex>
 #include <cmath>
 
+// ImGuiColorTextEdit - MIT License. See LICENSE in this directory.
 #include "TextEditor.h"
 
 #include "imgui.h"

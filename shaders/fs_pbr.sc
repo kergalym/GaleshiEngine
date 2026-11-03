@@ -34,32 +34,31 @@ SAMPLER2D(s_specularMap,         12);
 
 #define PI 3.14159265359
 
-float distributionGGX(vec3 N, vec3 H, float rough)
+float ggxNdf(vec3 normal, vec3 halfDir, float roughness)
 {
-    float a  = rough * rough;
-    float a2 = a * a;
-    float NdH = max(dot(N, H), 0.0);
-    float d  = NdH * NdH * (a2 - 1.0) + 1.0;
-    return a2 / (PI * d * d);
+    float alpha = roughness * roughness;
+    float alphaSq = alpha * alpha;
+    float ndh = max(dot(normal, halfDir), 0.0);
+    float denom = ndh * ndh * (alphaSq - 1.0) + 1.0;
+    return alphaSq / (PI * max(denom * denom, 0.000001));
 }
 
-float geometrySchlickGGX(float NdV, float rough)
+float smithG1(float ndv, float roughness)
 {
-    float r = rough + 1.0;
-    float k = (r * r) / 8.0;
-    return NdV / (NdV * (1.0 - k) + k);
+    float k = (roughness + 1.0) * (roughness + 1.0) * 0.125;
+    return ndv / max(ndv + k * (1.0 - ndv), 0.000001);
 }
 
-float geometrySmith(vec3 N, vec3 V, vec3 L, float rough)
+float smithG2(vec3 normal, vec3 viewDir, vec3 lightDir, float roughness)
 {
-    float NdV = max(dot(N, V), 0.0);
-    float NdL = max(dot(N, L), 0.0);
-    return geometrySchlickGGX(NdV, rough) * geometrySchlickGGX(NdL, rough);
+    float ndv = max(dot(normal, viewDir), 0.0);
+    float ndl = max(dot(normal, lightDir), 0.0);
+    return smithG1(ndv, roughness) * smithG1(ndl, roughness);
 }
 
-vec3 fresnelSchlick(float cosTheta, vec3 F0)
+vec3 fresnelTerm(float vdh, vec3 f0)
 {
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+    return mix(f0, vec3_splat(1.0), pow(clamp(1.0 - vdh, 0.0, 1.0), 5.0));
 }
 
 vec3 aces_tonemap(vec3 color) {
@@ -124,15 +123,15 @@ void main()
 
     vec3 F0 = mix(vec3_splat(0.04 * specular), albedo, metallic);
 
-    float NDF = distributionGGX(N, H, rough);
-    float G   = geometrySmith(N, V, L, rough);
-    vec3  F   = fresnelSchlick(max(dot(H, V), 0.0), F0);
+    float specDistribution = ggxNdf(N, H, rough);
+    float specGeometry = smithG2(N, V, L, rough);
+    vec3 specFresnel = fresnelTerm(max(dot(H, V), 0.0), F0);
 
-    vec3 numerator    = NDF * G * F;
+    vec3 numerator = specDistribution * specGeometry * specFresnel;
     float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
     vec3 specularDirect = numerator / denominator;
 
-    vec3 kS = F;
+    vec3 kS = specFresnel;
     vec3 kD = (vec3_splat(1.0) - kS) * (1.0 - metallic);
 
     float NdL = max(dot(N, L), 0.0);

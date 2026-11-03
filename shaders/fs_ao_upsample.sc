@@ -2,7 +2,6 @@ $input v_texcoord0
 #include <bgfx_shader.sh>
 
 // Bilateral upsample of the half-resolution AO buffer.
-// Ported from tobspr/RenderPipeline: rpcore/shader/bilateral_upscale.frag.glsl
 
 SAMPLER2D(s_aoSource,   0);
 SAMPLER2D(s_worldPos,   1);
@@ -13,12 +12,12 @@ uniform vec4 u_aoViewport;   // xy=full resolution, zw=1/full resolution
 uniform vec4 u_aoSource;     // xy=AO source size, zw=1/AO source size
 uniform vec4 u_aoBlurParams; // x=max depth difference, y=normal power
 
-vec3 viewNormal(vec2 uv)
+vec3 normalAt(vec2 uv)
 {
     return normalize(texture2D(s_normalRough, uv).xyz * 2.0 - 1.0);
 }
 
-float viewDepth(vec3 worldPos)
+float depthAt(vec3 worldPos)
 {
     return -mul(u_aoView, vec4(worldPos, 1.0)).z;
 }
@@ -33,8 +32,8 @@ void main()
         return;
     }
 
-    float midDepth = viewDepth(midWp.xyz);
-    vec3 midN = viewNormal(uv);
+    float centerDepth = depthAt(midWp.xyz);
+    vec3 centerNormal = normalAt(uv);
 
     ivec2 sourceSize = ivec2(max(vec2(1.0), u_aoSource.xy));
     vec2 sourcePos = uv * u_aoSource.xy - 0.5;
@@ -56,14 +55,16 @@ void main()
             vec4 sourceWp = texture2D(s_worldPos, sourceUV);
             if (sourceWp.w < 0.5) continue;
 
-            float sourceDepth = viewDepth(sourceWp.xyz);
-            vec3 sourceN = viewNormal(sourceUV);
+            float sampleDepth = depthAt(sourceWp.xyz);
+            vec3 sampleNormal = normalAt(sourceUV);
 
-            float depthWeight = 1.0 - saturate(abs(sourceDepth - midDepth) / max(u_aoBlurParams.x, 0.001));
-            float normalWeight = pow(max(dot(sourceN, midN), 0.0), u_aoBlurParams.y);
-            float bilinearWeight = (x == 0 ? 1.0 - frac.x : frac.x) *
-                                   (y == 0 ? 1.0 - frac.y : frac.y);
-            float weight = depthWeight * normalWeight * bilinearWeight;
+            float depthWeight = 1.0 - saturate(
+                abs(sampleDepth - centerDepth) / max(u_aoBlurParams.x, 0.001));
+            float normalWeight = pow(
+                max(dot(sampleNormal, centerNormal), 0.0), u_aoBlurParams.y);
+            float spatialWeight = (x == 0 ? 1.0 - frac.x : frac.x) *
+                                  (y == 0 ? 1.0 - frac.y : frac.y);
+            float weight = depthWeight * normalWeight * spatialWeight;
 
             accum += sourceAO * weight;
             weights += weight;

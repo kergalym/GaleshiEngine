@@ -25,7 +25,7 @@ public:
     // changing the texture file.
     bool      albedoSrgb       = true;
     float     metallicFactor   = 0.0f;
-    // Godot's StandardMaterial3D default.
+    // Standard opaque-material default.
     float     roughnessFactor  = 1.0f;
     float     normalStrength   = 1.0f;
     float     occlusionStrength = 1.0f;
@@ -34,8 +34,8 @@ public:
     // MASK materials and near-opaque BLEND cutouts (eyes) store the cutoff
     // there rather than in a separate opacity map.
     bool      alphaTest        = false;
-    // Forward alpha-blended material, matching Godot's transparency mode for
-    // glTF BLEND materials (hair, eyebrows, eyelashes and similar cards).
+    // Forward alpha-blended material for glTF BLEND surfaces such as hair,
+    // eyebrows, eyelashes and similar cards.
     bool      alphaBlend       = false;
     float     glassOpacity     = 0.35f;
     glm::vec3 emissiveFactor   {0.0f};

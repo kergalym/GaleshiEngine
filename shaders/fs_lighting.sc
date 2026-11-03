@@ -10,9 +10,8 @@ SAMPLER2D(s_shadowMap1,  4);
 SAMPLER2D(s_shadowMap2,  5);
 SAMPLERCUBE(s_irradianceCube, 6);
 SAMPLERCUBE(s_prefilteredCube, 7);
-// Slot 8 is reserved for AO. The split-sum BRDF is evaluated with the
-// analytic UE4 approximation below, because all 16 Vulkan descriptor slots
-// are already consumed by the G-buffer, shadow maps, IBL and tile-light SSBOs.
+// Slot 8 is reserved for AO. The split-sum BRDF uses the analytic
+// approximation below because all 16 Vulkan descriptor slots are consumed.
 SAMPLER2D(s_aoTex,          8);
 // Slot 9 holds the material RT: emissive.rgb + material AO.
 SAMPLER2D(s_materialTex,    9);
@@ -83,8 +82,10 @@ vec3 F_Schlick(float VdotH, vec3 F0) {
     return F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
 }
 
-vec3 F_SchlickRoughness(float NdotV, vec3 F0, float roughness) {
-    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - NdotV, 0.0, 1.0), 5.0);
+vec3 fresnelRough(float ndv, vec3 f0, float roughness) {
+    vec3 ceiling = max(vec3(1.0 - roughness), f0);
+    float weight = pow(clamp(1.0 - ndv, 0.0, 1.0), 5.0);
+    return mix(f0, ceiling, weight);
 }
 
 vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, float specularStrength, vec3 L, vec3 radiance) {
@@ -439,13 +440,13 @@ float calcSpotShadow3(vec4 lightSpacePos, float NdotL) {
     return shadow / 9.0;
 }
 
-vec2 EnvBRDFApprox(float NoV, float roughness)
+vec2 envBrdfApprox(float ndv, float roughness)
 {
-    const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
-    const vec4 c1 = vec4( 1.0,  0.0425,  1.04, -0.04);
-    vec4 r = roughness * c0 + c1;
-    float a004 = min(r.x * r.x, exp2(-9.28 * NoV)) * r.x + r.y;
-    return vec2(-1.04, 1.04) * a004 + r.zw;
+    const vec4 bias = vec4(1.0, 0.0425, 1.04, -0.04);
+    const vec4 slope = vec4(-1.0, -0.0275, -0.572, 0.022);
+    vec4 fit = bias + roughness * slope;
+    float q = fit.y + fit.x * min(fit.x * fit.x, exp2(-9.28 * ndv));
+    return vec2(fit.w, fit.z) + vec2(-1.04, 1.04) * q;
 }
 
 void main()
@@ -514,7 +515,7 @@ void main()
     vec3 F0 = mix(vec3(0.04 * materialSpecular), albedo, metallic);
     float NdotV = max(dot(N, V), 0.000001);
     
-    vec3 F = F_SchlickRoughness(NdotV, F0, rough);
+    vec3 F = fresnelRough(NdotV, F0, rough);
     vec3 kS = F;
     vec3 kD = vec3(1.0) - kS;
     kD *= 1.0 - metallic;
@@ -526,7 +527,7 @@ void main()
     // Specular IBL
     vec3 R = reflect(-V, N);
     vec3 prefilteredColor = textureCubeLod(s_prefilteredCube, R, rough * 4.0).rgb;
-    vec2 brdf = EnvBRDFApprox(NdotV, rough);
+    vec2 brdf = envBrdfApprox(NdotV, rough);
     vec3 specularIBL = prefilteredColor * (F * brdf.x + brdf.y);
     
     vec3 finalColor = (kD * diffuseIBL + specularIBL) * ao + (albedo * 0.05) * ao;

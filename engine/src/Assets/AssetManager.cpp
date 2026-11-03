@@ -584,9 +584,9 @@ std::string BoneNamespacePrefix(const std::string& name) {
                                           : name.substr(0, separator + 1);
 }
 
-// Normalize only the bone-name portion. Blender/UE4 exporters often swap
-// separators ("Head.001" vs "Head_001", "Breast.L" vs "Breast_L") without
-// changing the actual skeleton.
+// Normalize only the bone-name portion. Exporters often swap separators
+// ("Head.001" vs "Head_001", "Breast.L" vs "Breast_L") without changing the
+// skeleton.
 std::string NormalizeBoneName(std::string name) {
     name = StripBoneNamespace(std::move(name));
     std::string normalized;
@@ -698,11 +698,9 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
                   "Skinned FBX import must not pre-transform vertices");
     unsigned int postProcess = kSkinnedImportFlags;
     if (extension == ".gltf" || extension == ".glb") {
-        // Assimp's glTF2 importer already flips V once internally. Godot
-        // imports the glTF UVs exactly as authored, so undo that internal flip
-        // here. The image loader also keeps glTF images in their original
-        // top-left origin (flipVertically=false below), making the complete
-        // UV/image mapping match Godot.
+        // Assimp's glTF2 importer already flips V once internally. Undo that
+        // flip here and keep glTF images in their authored top-left origin
+        // (flipVertically=false below) so UVs and images stay consistent.
         postProcess |= aiProcess_FlipUVs;
         // glTF's front-face winding is opposite to the engine's FBX import
         // path after Assimp's coordinate conversion. Flip the indices once at
@@ -904,7 +902,7 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         Albedo, Normal, Metallic, Roughness, MetallicRoughness,
         Emissive, Occlusion, Opacity, Specular, Unknown
     };
-    // Unreal-style ORM keeps AO in R, roughness in G and metallic in B. Only
+    // Packed ORM maps keep AO in R, roughness in G and metallic in B. Only
     // this channel layout can safely be reused for the occlusion slot.
     auto isOcclusionRoughnessMetallic = [](const std::string& reference) {
         const std::string name = LowerAssetPath(reference);
@@ -1131,8 +1129,8 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         if (hasMetallicFactor)
             mat->metallicFactor = glm::clamp(metallic, 0.0f, 1.0f);
 
-        // Match Godot's StandardMaterial3D default when the source does not
-        // provide a roughness value.
+        // Use the standard material default when the source does not provide
+        // a roughness value.
         float roughness = 1.0f;
         float glossiness = 0.0f;
         const bool hasRoughnessFactor =
@@ -1380,12 +1378,11 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
     out.armatureRootName =
         FindArmatureRootName(scene->mRootNode, out.boneNamespacePrefix);
 
-    // Panda3D's Assimp loader builds the bind pose from the node hierarchy and
-    // ignores aiBone::mOffsetMatrix for skinning. Assimp's FBX offset matrix
-    // contains the mesh-node transform (often scale 100 for Blender/UE4 FBX)
-    // in addition to the inverse bind transform. Our vertices are already
-    // baked into mesh-node space, so applying that offset would transform the
-    // mesh transform twice and produce the long skinned spikes.
+    // Build the FBX bind pose from the node hierarchy instead of
+    // aiBone::mOffsetMatrix. The FBX offset also contains the mesh-node
+    // transform (often scale 100 for Blender FBX) in addition to the inverse
+    // bind transform. Vertices are already baked into mesh-node space, so
+    // applying that offset would transform them twice and produce spikes.
     //
     // glTF is different: its inverseBindMatrices are authoritative and are
     // allowed to differ from inverse(node rest). Keep the glTF offset intact.
@@ -1487,8 +1484,8 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
             }
             if (totalWeight > 0.001f) {
                 // glTF and FBX may contain more than four influences. Keep
-                // the four strongest and normalize them, matching Godot's
-                // 4-influence skinning path.
+                // the four strongest and normalize them for the 4-influence
+                // skinning path.
                 vertex.boneWeights /= totalWeight;
             } else {
                 // Vertices without valid weights stay at bind pose.
@@ -1621,9 +1618,9 @@ void AssetManager::UpdateAnimationClipRetargeted(
         }
     }
 
-    // Animation exporters disagree about namespace prefixes. Blender may
-    // produce "Korlan:Hips", while UE4 animations use "Hips" or
-    // "mixamorig:Hips". Build aliases from all source nodes to the selected
+    // Animation exporters disagree about namespace prefixes. Some produce
+    // "Korlan:Hips", while others use "Hips" or "mixamorig:Hips". Build
+    // aliases from all source nodes to the selected
     // character's root-bone prefix without renaming any assets. Non-animated
     // nodes still carry their animated parent's global pose.
     // A normalized fallback also handles separators such as "Head.001"

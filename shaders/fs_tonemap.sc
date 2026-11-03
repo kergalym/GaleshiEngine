@@ -4,7 +4,7 @@ $input v_texcoord0
 SAMPLER2D(s_texColor, 0);
 uniform vec4 u_colorParams; // x = exposure, y = contrast, z = saturation
 
-// ACES Filmic Tonemapping
+// ACES fit by Krzysztof Narkowicz (CC0/MIT).
 vec3 ACESFilm(vec3 x) {
     float a = 2.51;
     float b = 0.03;

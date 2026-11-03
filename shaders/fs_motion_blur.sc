@@ -1,20 +1,16 @@
 $input v_texcoord0
 #include <bgfx_shader.sh>
 
-// Camera motion blur, adapted from the RenderPipeline motion_blur plugin.
-// The velocity target stores the per-pixel screen-space delta. Samples are
-// distributed along the velocity vector and weighted by how well the sample
-// velocity aligns with the center velocity. This suppresses bleeding from
-// pixels moving in different directions.
+// Camera motion blur. Samples are distributed along the per-pixel
+// screen-space velocity and weighted by directional agreement with the
+// center pixel to suppress bleeding from neighbouring motion.
 
 SAMPLER2D(s_texColor, 0);
 SAMPLER2D(s_mbVelocity, 1);
 uniform vec4 u_motionBlurParams; // x = maxVelocityUV, y = minVelocityUV, z = viewportWidth
 
-float hash12(vec2 p) {
-    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
-    return fract((p3.x + p3.y) * p3.z);
+float pixelJitter(vec2 p) {
+    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
 void main() {
@@ -33,25 +29,22 @@ void main() {
         velocityLen = u_motionBlurParams.x;
     }
 
-    const int numSamples = 12;
-    float jitter = hash12(gl_FragCoord.xy);
-
-    // A small center weight guarantees a non-zero denominator and keeps the
-    // original pixel from disappearing when all sample weights are low.
+    const int tapCount = 12;
+    float jitter = pixelJitter(gl_FragCoord.xy);
     float weightSum = 1e-3;
-    vec3 accum = center.rgb * weightSum;
+    vec3 colorSum = center.rgb * weightSum;
 
-    for (int i = -numSamples + 1; i < numSamples; ++i) {
-        vec2 offset = (float(i) + 0.5 * jitter) / float(numSamples) * velocity;
-        vec2 sampleUV = clamp(uv + offset, vec2(0.0), vec2(1.0));
-        vec2 sampleVelocity = texture2D(s_mbVelocity, sampleUV).xy;
-
-        float weight = saturate(dot(sampleVelocity, velocity) *
+    for (int tap = -tapCount + 1; tap < tapCount; ++tap) {
+        vec2 tapUV = clamp(
+            uv + velocity * ((float(tap) + 0.5 * jitter) / float(tapCount)),
+            vec2(0.0), vec2(1.0));
+        vec2 tapVelocity = texture2D(s_mbVelocity, tapUV).xy;
+        float weight = saturate(dot(tapVelocity, velocity) *
                                 u_motionBlurParams.z * 3.0);
-        accum += texture2D(s_texColor, sampleUV).rgb * weight;
+        colorSum += texture2D(s_texColor, tapUV).rgb * weight;
         weightSum += weight;
     }
 
-    accum /= max(weightSum, 1e-3);
-    gl_FragColor = vec4(max(accum, vec3(0.0)), 1.0);
+    colorSum /= max(weightSum, 1e-3);
+    gl_FragColor = vec4(max(colorSum, vec3(0.0)), 1.0);
 }

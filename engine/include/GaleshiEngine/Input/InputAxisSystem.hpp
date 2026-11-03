@@ -43,7 +43,7 @@ struct InputAxis {
     float rawValue = 0.0f;
 };
 
-// Per-frame keyboard and mouse axes. Defaults provide a small Unity-like set:
+// Per-frame keyboard and mouse axes. Defaults provide a small set:
 // Horizontal, Vertical, Jump, Mouse X, Mouse Y and Mouse ScrollWheel.
 class InputAxisSystem {
 public:
