@@ -18,10 +18,8 @@ inline void ParallelFor(JPH::JobSystem* js, uint32_t count, const std::function<
     uint32_t numThreads = maxConcurrency > 0 ? static_cast<uint32_t>(maxConcurrency) : 1;
     uint32_t chunkSize = (count + numThreads - 1) / numThreads;
 
-    // 1. Создаём барьер, который будет отслеживать завершение всех задач
     JPH::JobSystem::Barrier* barrier = js->CreateBarrier();
 
-    // 2. Создаём задачи и сразу добавляем их в барьер
     for (uint32_t i = 0; i < count; i += chunkSize) {
         uint32_t start = i;
         uint32_t end = std::min(i + chunkSize, count);
@@ -37,10 +35,8 @@ inline void ParallelFor(JPH::JobSystem* js, uint32_t count, const std::function<
         barrier->AddJob(handle);
     }
 
-    // 3. Ждём завершения всех задач, добавленных в барьер
     js->WaitForJobs(barrier);
 
-    // 4. Уничтожаем барьер
     js->DestroyBarrier(barrier);
 }
 

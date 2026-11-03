@@ -38,7 +38,7 @@ public:
         // legitimately unnamed materials.
         std::vector<std::string>               meshNames;
         
-        std::shared_ptr<Assimp::Importer>      importer; // Храним importer
+        std::shared_ptr<Assimp::Importer>      importer;
         std::shared_ptr<aiScene>               rawScene;
         
         std::unordered_map<std::string, int>   boneMap;
@@ -68,7 +68,7 @@ public:
         std::vector<std::string>                animationNames;
         std::vector<float>                      animationDurations; // seconds
         float scale = 1.0f;
-        glm::mat4                              rootTransform{1.0f}; // Трансформация Armature
+        glm::mat4                              rootTransform{1.0f};
     };
     
     LoadedModel LoadModel(const std::string& path);

@@ -20,7 +20,7 @@ public:
     bool Load(const std::string& path,
               const std::atomic<bool>* cancel = nullptr);
 
-    // Для Undo/Redo
+    // Undo/Redo snapshots.
     std::string SaveToString() const;
     bool LoadFromString(const std::string& jsonStr,
                         const std::atomic<bool>* cancel = nullptr);

@@ -29,7 +29,7 @@ void main() {
     float bias = u_ssaoParams.y;
     float intensity = u_ssaoParams.z;
 
-    // Поэлементная инициализация (HLSL -> SPIR-V для Vulkan)
+    // Per-element initialization avoids SPIR-V array constructor issues.
     vec3 kernel[16];
     kernel[0]  = vec3( 0.538,  0.478,  0.718);
     kernel[1]  = vec3(-0.435, -0.118,  0.893);

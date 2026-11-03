@@ -39,7 +39,7 @@ public:
     entt::registry&       Registry()       { return m_registry; }
     const entt::registry& Registry() const { return m_registry; }
 
-    // Утилита: пробегает все сущности с NameComponent
+    // Iterates all entities that have a NameComponent.
     std::vector<Entity> AllEntities();
     Entity FindEntityByName(const std::string& name);
 

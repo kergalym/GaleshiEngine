@@ -53,7 +53,6 @@ public:
     bool GizmoLocked() const { return m_gizmoLocked; }
     void SetGizmoLocked(bool v) { m_gizmoLocked = v; }
 
-    // --- Tool (для Landscape Sculpting) ---
     ToolMode toolMode = ToolMode::Select;
     float brushRadius = 4.0f;
     float brushStrength = 3.0f;

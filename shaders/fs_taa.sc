@@ -32,7 +32,7 @@ void main() {
                       0.5 - (prevClip.y / max(prevClip.w, 0.000001)) * 0.5);
     }
 
-    // Если точка вышла за экран, отдаем текущий кадр
+    // If the history sample is off-screen, return the current frame.
     if (prevUV.x < 0.0 || prevUV.x > 1.0 || prevUV.y < 0.0 || prevUV.y > 1.0) {
         gl_FragColor = current;
         return;
@@ -40,8 +40,8 @@ void main() {
     
     vec4 history = texture2D(s_history, prevUV);
     
-    // --- AABB VARIANCE CLIPPING (Устранение Ghosting) ---
-    // Вычисляем минимальный и максимальный цвет в окрестности 3x3
+    // AABB variance clipping prevents ghosting.
+    // Compute the min/max color in the 3x3 neighborhood.
     vec3 minC = current.rgb, maxC = current.rgb;
     vec2 texel = u_taaTexelSize.xy;
     for(int i = -1; i <= 1; ++i) {
@@ -52,7 +52,7 @@ void main() {
         }
     }
     
-    // Ограничиваем историю цветом текущей сцены (защита от размазывания)
+    // Clamp history to the current neighborhood to prevent smearing.
     history.rgb = clamp(history.rgb, minC, maxC);
     
     // u_taaParams.x is the current-frame contribution. A small value keeps

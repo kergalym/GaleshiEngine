@@ -43,7 +43,7 @@ struct Renderer::Impl {
     uint32_t width  = 1600;
     uint32_t height = 900;
     uint32_t resetFlags = BGFX_RESET_NONE;
-    uint8_t  nextViewId = 10;   // 0..9 — служебные view
+    uint8_t  nextViewId = 10; // Views 0-9 are reserved for engine passes.
     bool     initialized = false;
 };
 
@@ -80,8 +80,8 @@ bool Renderer::Init(const RendererSpec& spec) {
     bgfx::Init init{};
     m_impl->callback.debug = spec.debug;
     init.callback          = &m_impl->callback;
-    init.debug             = false;   // не загружать RenderDoc
-    init.profile           = false;   // не загружать профилировщик
+    init.debug             = false;
+    init.profile           = false;
     init.type              = bgfx::RendererType::Vulkan;
     init.vendorId          = BGFX_PCI_ID_NONE;
     init.platformData      = pd;

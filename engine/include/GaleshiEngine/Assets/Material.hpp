@@ -8,7 +8,7 @@ namespace Galeshi {
 
 class Texture;
 
-// PBR (metallic-roughness) материал.
+// Metallic-roughness PBR material.
 class Material {
 public:
     bool isGlass = false;

@@ -13,8 +13,8 @@ struct Vertex {
     glm::vec3 normal;
     glm::vec3 tangent;
     glm::vec2 uv;
-    glm::vec4  boneIDs{0.0f};     // до 4 костей на вершину
-    glm::vec4  boneWeights{1.0f, 0.0f, 0.0f, 0.0f}; // вес каждой кости
+    glm::vec4  boneIDs{0.0f};
+    glm::vec4  boneWeights{1.0f, 0.0f, 0.0f, 0.0f};
 };
 
 class Mesh {

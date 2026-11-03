@@ -4,7 +4,7 @@ $input v_texcoord0
 SAMPLER2D(s_dofColor, 0);
 SAMPLER2D(s_dofCoc,   1);
 uniform vec4 u_dofTexelSize; // xy = 1/w, 1/h, z = maxCoC (px)
-uniform vec4 u_dofDir;       // (1,0) H-blur  или (0,1) V-blur
+uniform vec4 u_dofDir; // (1,0) horizontal blur, (0,1) vertical blur.
 
 void main() {
     // Must match u_dofParams.w in the CoC pass.
@@ -14,11 +14,10 @@ void main() {
     vec2  texel = u_dofTexelSize.xy;
     float cocC  = texture2D(s_dofCoc, v_texcoord0).r;
 
-    // Центральный сэмпл с весом 1
     vec4  sum  = texture2D(s_dofColor, v_texcoord0);
     float wsum = 1.0;
 
-    // 4 пары сэмплов (9-tap всего), шаг и радиус масштабируются CoC
+    // 4 sample pairs (9 taps total), scaled by CoC.
     float stepSize = 1.0 + maxCoC * cocC * 0.25;
     for (int i = 1; i <= 4; ++i) {
         float stepScale = float(i) * stepSize;

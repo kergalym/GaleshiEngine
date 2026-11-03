@@ -347,10 +347,9 @@ void EnginePhysicsSystem::DestroyBody(uint32_t bodyId) {
 uint32_t EnginePhysicsSystem::CreateCloth(int gridX, int gridY, float spacing, const glm::vec3& origin, entt::entity entity) {
     if (!m_impl->initialized) return 0xFFFFFFFFu;
 
-    // Правильный API Jolt 5.2: SoftBodySharedSettings + AddFace + CreateConstraints
+    // Jolt 5.2 soft-body API: shared settings, faces, then constraints.
     JPH::Ref<JPH::SoftBodySharedSettings> settings = new JPH::SoftBodySharedSettings;
 
-    // 1. Вершины
     for (int y = 0; y < gridY; ++y) {
         for (int x = 0; x < gridX; ++x) {
             JPH::SoftBodySharedSettings::Vertex v;
@@ -360,14 +359,13 @@ uint32_t EnginePhysicsSystem::CreateCloth(int gridX, int gridY, float spacing, c
                 origin.z + (y - gridY * 0.5f) * spacing
             );
             pos.StoreFloat3(&v.mPosition);
-            // Углы фиксированы (invMass = 0), остальные подвижны
+            // Pin corners with invMass = 0; the rest stay dynamic.
             bool isCorner = (x == 0 || x == gridX - 1) && (y == 0 || y == gridY - 1);
             v.mInvMass = isCorner ? 0.0f : 1.0f;
             settings->mVertices.push_back(v);
         }
     }
 
-    // 2. Треугольники (2 на каждый квадрат)
     auto vidx = [gridX](int x, int y) { return x + y * gridX; };
     for (int y = 0; y < gridY - 1; ++y) {
         for (int x = 0; x < gridX - 1; ++x) {
@@ -382,7 +380,6 @@ uint32_t EnginePhysicsSystem::CreateCloth(int gridX, int gridY, float spacing, c
         }
     }
 
-    // 3. Ограничения (пружины)
     JPH::SoftBodySharedSettings::VertexAttributes attr;
     attr.mCompliance = 1.0e-4f;
     attr.mShearCompliance = 1.0e-4f;
@@ -390,7 +387,6 @@ uint32_t EnginePhysicsSystem::CreateCloth(int gridX, int gridY, float spacing, c
     settings->CreateConstraints(&attr, 1, JPH::SoftBodySharedSettings::EBendType::Distance);
     settings->Optimize();
 
-    // 4. Создание тела
     JPH::SoftBodyCreationSettings sbSettings(
         settings,
         JPH::RVec3(origin.x, origin.y, origin.z),
@@ -444,11 +440,11 @@ void EnginePhysicsSystem::SetBodyTransform(uint32_t bodyId, const glm::vec3& pos
     JPH::BodyID id(bodyId);
     if (!m_impl->bodyInterface->IsAdded(id)) return;
     
-    // Jolt использует XYZW для quat, glm использует WXYZ.
+    // Jolt quaternions are XYZW; glm uses WXYZ.
     JPH::Quat joltRot(rotation.x, rotation.y, rotation.z, rotation.w);
     JPH::RVec3 joltPos(position.x, position.y, position.z);
     
-    // Телепортируем тело (отключаем сон, чтобы оно не висело в воздухе, если его разбудили)
+    // Teleport the body and wake it so it cannot sleep in mid-air.
     m_impl->bodyInterface->SetPositionAndRotation(id, joltPos, joltRot, JPH::EActivation::Activate);
     m_impl->bodyInterface->SetLinearAndAngularVelocity(id, JPH::Vec3::sZero(), JPH::Vec3::sZero());
 }

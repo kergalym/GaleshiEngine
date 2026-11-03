@@ -510,9 +510,7 @@ void main()
     // Only ambient/IBL light is modulated; direct light keeps using shadow maps.
     float ao = saturate(texture2D(s_aoTex, uv).r) * saturate(matData.a);
 
-    // 1. Ambient (Базовое освещение, чтобы не было абсолютно черных теней)
-    // Увеличено с 0.15 до 0.3 для лучшей видимости в тенях
-        // Physically correct IBL (Split-Sum)
+    // Physically correct IBL (Split-Sum)
     vec3 F0 = mix(vec3(0.04 * materialSpecular), albedo, metallic);
     float NdotV = max(dot(N, V), 0.000001);
     
@@ -533,7 +531,6 @@ void main()
     
     vec3 finalColor = (kD * diffuseIBL + specularIBL) * ao + (albedo * 0.05) * ao;
 
-    // 2. Directional Light с тенями
     vec3 L_dir = normalize(-u_lightDirection.xyz);
     vec3 radiance_dir = u_lightColorIntensity.rgb * u_lightColorIntensity.a;
     float NdotL = max(dot(N, L_dir), 0.0);

@@ -32,7 +32,7 @@ void NavigationSystem::Init() {
 }
 
 void NavigationSystem::Shutdown() {
-    // Идемпотентный: можно вызывать многократно
+    // Idempotent: safe to call repeatedly.
     if (m_impl->navQuery) {
         dtFreeNavMeshQuery(m_impl->navQuery);
         m_impl->navQuery = nullptr;
@@ -41,7 +41,7 @@ void NavigationSystem::Shutdown() {
         dtFreeNavMesh(m_impl->navMesh);
         m_impl->navMesh = nullptr;
     }
-    // navData владеется navMesh (DT_TILE_FREE_DATA), отдельно не освобождаем
+    // navMesh owns navData (DT_TILE_FREE_DATA); do not free it separately.
     m_impl->navData = nullptr;
     m_impl->navDataSize = 0;
 }
@@ -49,7 +49,6 @@ void NavigationSystem::Shutdown() {
 bool NavigationSystem::BuildFromScene(Scene& scene) {
     spdlog::info("[NavMesh] BuildFromScene started");
 
-    // --- 1. Собираем геометрию ---
     std::vector<float> verts;
     std::vector<int>   tris;
 
@@ -107,7 +106,6 @@ bool NavigationSystem::BuildFromScene(Scene& scene) {
         return false;
     }
 
-    // --- 2. Вычисляем границы из геометрии ---
     float bmin[3] = { FLT_MAX,  FLT_MAX,  FLT_MAX};
     float bmax[3] = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
     for (size_t i = 0; i < verts.size(); i += 3) {
@@ -121,11 +119,10 @@ bool NavigationSystem::BuildFromScene(Scene& scene) {
     spdlog::info("[NavMesh] Bounds: [{:.1f},{:.1f},{:.1f}] - [{:.1f},{:.1f},{:.1f}]",
                  bmin[0], bmin[1], bmin[2], bmax[0], bmax[1], bmax[2]);
 
-    // Небольшой padding
+    // Small bounds padding.
     bmin[0] -= 1.0f; bmin[2] -= 1.0f;
     bmax[0] += 1.0f; bmax[2] += 1.0f;
 
-    // --- 3. Конфигурация Recast ---
     rcConfig cfg;
     std::memset(&cfg, 0, sizeof(cfg));
     cfg.cs = 0.5f;
@@ -148,7 +145,7 @@ bool NavigationSystem::BuildFromScene(Scene& scene) {
 
     spdlog::info("[NavMesh] Grid: {}x{} cells", cfg.width, cfg.height);
 
-    // Защита от огромных сеток
+    // Guard against oversized meshes.
     if (cfg.width > 4096 || cfg.height > 4096) {
         spdlog::warn("[NavMesh] Grid too large ({}x{}), aborting", cfg.width, cfg.height);
         return false;
@@ -288,7 +285,6 @@ bool NavigationSystem::BuildFromScene(Scene& scene) {
     rcFreePolyMeshDetail(dmesh);
     rcFreePolyMesh(pmesh);
 
-    // --- 12. Инициализация navMesh ---
     if (m_impl->navMesh) { dtFreeNavMesh(m_impl->navMesh); m_impl->navMesh = nullptr; }
     m_impl->navMesh = dtAllocNavMesh();
     if (!m_impl->navMesh) { dtFree(navData); return false; }

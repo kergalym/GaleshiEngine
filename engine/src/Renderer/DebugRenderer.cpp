@@ -106,12 +106,11 @@ void DebugRenderer::FlushLines(bgfx::ViewId viewId) {
 
     const uint32_t numVerts = static_cast<uint32_t>(m_lines.size());
 
-    // Двойная буферизация: работаем с текущим слотом
+    // Double-buffer line data; work on the current slot.
     m_frameIdx = (m_frameIdx + 1) % 2;
 
     if (m_lineVBCapacity[m_frameIdx] < numVerts) {
-        // Уничтожаем этот слот (его использовали 2 кадра назад — render thread
-        // уже с ним закончил)
+        // This slot was used two frames ago, so the render thread is done with it.
         if (bgfx::isValid(m_lineVB[m_frameIdx])) { bgfx::destroy(m_lineVB[m_frameIdx]); m_lineVB[m_frameIdx] = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_lineIB[m_frameIdx])) { bgfx::destroy(m_lineIB[m_frameIdx]); m_lineIB[m_frameIdx] = BGFX_INVALID_HANDLE; }
 
@@ -133,7 +132,7 @@ void DebugRenderer::FlushLines(bgfx::ViewId viewId) {
     bgfx::setIndexBuffer(m_lineIB[m_frameIdx]);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
                    BGFX_STATE_DEPTH_TEST_LEQUAL | BGFX_STATE_PT_LINES);
-    bgfx::submit(viewId, m_lineProgram);  // ← viewId, не 0
+    bgfx::submit(viewId, m_lineProgram);
 }
 
 void DebugRenderer::FlushTris(bgfx::ViewId viewId) {
@@ -141,8 +140,7 @@ void DebugRenderer::FlushTris(bgfx::ViewId viewId) {
 
     const uint32_t numVerts = static_cast<uint32_t>(m_tris.size());
 
-    // Обратите внимание: используем тот же m_frameIdx, что и FlushLines
-    // (они оба синхронно меняют слот, так как вызываются в одном кадре)
+    // Both passes advance the same frame slot in one frame.
     if (m_triVBCapacity[m_frameIdx] < numVerts) {
         if (bgfx::isValid(m_triVB[m_frameIdx])) { bgfx::destroy(m_triVB[m_frameIdx]); m_triVB[m_frameIdx] = BGFX_INVALID_HANDLE; }
         if (bgfx::isValid(m_triIB[m_frameIdx])) { bgfx::destroy(m_triIB[m_frameIdx]); m_triIB[m_frameIdx] = BGFX_INVALID_HANDLE; }

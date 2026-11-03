@@ -26,7 +26,7 @@ bool raySphereIntersect(vec3 ro, vec3 rd, float r, out float t0, out float t1) {
 void main() {
     vec3 baseColor = texture2D(s_texColor, v_texcoord0).rgb;
     float depth = texture2D(s_texDepth, v_texcoord0).r;
-    // Если это не небо (есть геометрия), оставляем как есть
+    // Keep geometry pixels unchanged.
     if (depth < 0.9999) {
         gl_FragColor = vec4(baseColor, 1.0);
         return;
@@ -44,7 +44,7 @@ void main() {
     // Derive it relative to the actual scene camera, not the world origin.
     vec3 rd = normalize(farWorld - u_cameraPosition.xyz);
 
-    // Позиция камеры (условно 1000 м над поверхностью планеты)
+    // Approximate camera altitude: 1000 m above the planet.
     vec3 ro = vec3(0.0, u_atmoParams.x + 1000.0, 0.0);
 
     float tAtmo, tAtmoMax;

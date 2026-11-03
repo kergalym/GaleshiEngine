@@ -378,7 +378,7 @@ public:
         : Galeshi::Application({
               .name = isGameMode ? "GaleshiGame" : "GaleshiEditor", 
               .width = 1600, .height = 900, 
-              .editor = true, // ImGui всегда включен
+              .editor = true,
               .debug = debugMode,
               .splashImage = isGameMode ? "" : "assets/icons/galeshi_engine_logo.png"}) {
         m_isGameMode = isGameMode;
@@ -1236,8 +1236,7 @@ protected:
         m_postProcess.Init();
         ConfigureProfilerViewNames();
         m_render->SetDeferredEnabled(true);
-        // SSAO/SSR включим на 2-м кадре — чтобы первый кадр прошёл
-        // без sampling render target (иначе Vulkan layout mismatch).
+        // Enable SSAO/SSR on frame 2 to avoid sampling an uninitialized Vulkan target.
         m_pendingEffectsEnable = true;
         for (int i = 0; i < 3; ++i) {
             m_shadowMaps[i] = bgfx::createTexture2D(2048, 2048, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
@@ -1264,7 +1263,6 @@ protected:
         // loaded explicitly through File -> Load Scene or File -> Recent Scenes.
         spdlog::info("[Editor] Starting with an empty scene");
 
-        // Первый снапшот для Undo/Redo
         m_history.clear();
         m_historyIndex = -1;
         PushHistory();
@@ -1393,7 +1391,6 @@ protected:
             // state remains untouched so Stop can immediately restore it.
             UpdateGameplayCamera();
         } else {
-            // Логика камеры
             // The viewport camera must remain free to navigate through the
             // scene, including over collision-shape wireframes and their
             // transform gizmos. Only an actively manipulated gizmo may block
@@ -1419,7 +1416,6 @@ protected:
                 }
             }
 
-            // Вращение ПКМ
             if (cameraControllable && ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
                 auto d = ImGui::GetIO().MouseDelta;
                 m_editor.camYaw   -= d.x * m_preferences.cameraOrbitSensitivity;
@@ -1449,7 +1445,7 @@ protected:
             m_cpuProfile.particlesMs + m_cpuProfile.cameraMs;
     }
 
-    void OnRender() override {} // Всё во Viewport
+    void OnRender() override {}
 
     void OnImGui() override {
         if (!m_projectLoaded) {
@@ -1558,9 +1554,7 @@ protected:
                                      m_viewportImageSize.y);
         }
 
-        // File Picker (модальный)
         
-        // --- File pickers (модальные диалоги) ---
         std::string chosenOpen = m_filePicker.Draw();
         if (!chosenOpen.empty()) {
             SpawnFromModel(chosenOpen, m_editor.camTarget);
@@ -1656,8 +1650,7 @@ protected:
             m_loadingState.loaderThread.join();
         }
 
-        // Автосохранение ОТКЛЮЧЕНО. Сцена сохраняется только вручную
-        // через File -> Save Scene (Ctrl+S).
+        // Autosave is disabled; scenes are saved only through File -> Save Scene (Ctrl+S).
         SavePreferences();
 
         // Release scene-owned resources while the Vulkan device is still
@@ -1889,7 +1882,6 @@ private:
 
         ImGuiViewport* vp = ImGui::GetMainViewport();
 
-        // Затемнение фона
         ImGui::GetBackgroundDrawList()->AddRectFilled(
             vp->Pos,
             ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y),
@@ -1933,20 +1925,17 @@ private:
         std::snprintf(overlay, sizeof(overlay), "%d%%",
                       static_cast<int>(shown * 100.0f + 0.5f));
 
-        // Прогресс-бар (Цвет кнопки Cancel)
         ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImGui::GetStyleColorVec4(ImGuiCol_Button));
         ImGui::ProgressBar(shown, ImVec2(-1, 20), overlay);
         ImGui::PopStyleColor();
         ImGui::Spacing();
 
-        // Под-статус
         const bool cancelling = s.cancelRequested.load();
         ImGui::TextDisabled("%s", cancelling ? "Cancelling..." : LoadingStageText(s.stage.load()));
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
-        // Кнопка Cancel по центру
         const float buttonWidth = 120.0f;
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - buttonWidth) * 0.5f);
         ImGui::BeginDisabled(cancelling);
@@ -3283,7 +3272,6 @@ if (ImGui::BeginMenu("File")) {
     }
     
     void LoadScene() {
-        // Load Scene -> модальный диалог для .json файлов
         m_scenePicker.Open(SceneStartDirectory(), "Load Scene", { ".json" });
     }
 
@@ -6421,7 +6409,7 @@ if (ImGui::BeginMenu("File")) {
                     m_render->RenderShadowMap(m_scene, lightMtx, 2 + i, m_shadowFbos[i]);
                 }
             } else {
-                // Fallback (без света)
+                // Fallback without a directional light.
                 cascadeSplits[0] = 15.0f; cascadeSplits[1] = 40.0f; cascadeSplits[2] = 100.0f;
                 for (int i = 0; i < 3; ++i) {
                     glm::mat4 lightView = glm::lookAt(glm::vec3(0,20,0), glm::vec3(0), glm::vec3(0,0,1));
@@ -7474,13 +7462,12 @@ if (ImGui::BeginMenu("File")) {
         if (bgfx::isValid(__disp)) {
             if (m_isGameMode) {
                 ImGui::End();
-                return; // Пропускаем гизмо и выделение мышью
+                return; // Skip gizmo and mouse picking in game mode.
             }
 
             ImVec2 imgMin = ImGui::GetItemRectMin();
             ImVec2 imgMax = ImGui::GetItemRectMax();
 
-            // --- 1. Drag (только ЛКМ, screen-space, без стрелок W/E/R) ---
             Galeshi::Entity sel = m_editor.Selected(&m_scene);
             const bool selHasTf = sel && sel.HasComponent<Galeshi::TransformComponent>();
             const bool selectedIsUICanvas =
@@ -7818,7 +7805,6 @@ if (ImGui::BeginMenu("File")) {
                     centerRadiusPx * 0.5f, hintColor, 24, 2.0f);
             }
 
-            // --- 2. ЛКМ Выделение (Raycast по AABB) ---
             if (!landscapeSculptActive && !uiOverlayConsumed &&
                 ImGui::IsItemHovered() &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_isDragging &&
@@ -7851,7 +7837,6 @@ if (ImGui::BeginMenu("File")) {
                     }
                     auto& tc = view.get<Galeshi::TransformComponent>(e);
                     
-                    // 1. Вычисляем МИРОВУЮ позицию (проходим вверх по родителям)
                     glm::vec3 worldPos = tc.position;
                     entt::entity curr = e;
                     int __depth = 0; while (__depth++ < 128 && m_scene.Registry().all_of<Galeshi::ParentComponent>(curr)) {
@@ -7861,16 +7846,14 @@ if (ImGui::BeginMenu("File")) {
                         }
                     }
 
-                    // 2. Увеличиваем коробку для скелетных моделей
                     float size = 0.5f;
                     if (m_scene.Registry().all_of<Galeshi::SkeletalComponent>(curr)) {
-                        size = 1.5f; // Персонажи обычно больше кубов
+                        size = 1.5f; // Larger pick box for skeletal characters.
                     }
 
                     glm::vec3 minB = worldPos - glm::vec3(size);
                     glm::vec3 maxB = worldPos + glm::vec3(size);
                     
-                    // 3. Ray-AABB
                     float tmin = (minB.x - rayOrigin.x) / rayDir.x;
                     float tmax = (maxB.x - rayOrigin.x) / rayDir.x;
                     if (tmin > tmax) std::swap(tmin, tmax);
@@ -7891,11 +7874,11 @@ if (ImGui::BeginMenu("File")) {
                     if (tzmin > tmin) tmin = tzmin;
                     if (tzmax < tmax) tmax = tzmax;
 
-                    if (tmax < 0) continue; // За спиной
+                    if (tmax < 0) continue;
                     
                     if (tmin < bestDist) {
                         bestDist = tmin;
-                        bestHit = Galeshi::Entity(curr, &m_scene); // Выделяем корень, а не кость
+                        bestHit = Galeshi::Entity(curr, &m_scene); // Select the root, not the bone.
                     }
                 }
 
@@ -10329,7 +10312,6 @@ void DrawDetails() {
                         "preset metal plastic rubber gold skin leaf")) {
                 ImGui::Separator();
 
-                // --- Пресеты ---
                 ImGui::Text("Presets:");
                 if (ImGui::Button("Metal")) {
                     m.metallicFactor = 1.0f; m.roughnessFactor = 0.1f;
@@ -10376,7 +10358,6 @@ void DrawDetails() {
                         "cutoff glass transparent opacity two sided emissive")) {
                 ImGui::Separator();
 
-                // --- Основные параметры ---
                 if (showMaterialField("Albedo Factor", "albedo color base"))
                 ImGui::ColorEdit4("Albedo Factor", glm::value_ptr(m.albedoFactor));
                 if (showMaterialField("Metallic Factor", "metal metallic"))
@@ -10489,7 +10470,6 @@ void DrawDetails() {
                 ImGui::Separator();
                 ImGui::Text("Texture Maps (drag from Content Browser):");
 
-                // --- Текстурные слоты ---
                 if (showMaterialField("Albedo Map", "texture map color srgb"))
                 DrawTextureSlot("Albedo Map",           m.albedoMap,           true,
                                 &m.albedoSrgb);
@@ -11869,7 +11849,6 @@ void DrawDetails() {
         if (IsModelAssetPath(path)) {
             SpawnFromModel(path, glm::vec3(0.0f));
         } else if (IsImageAssetPath(path)) {
-            // Применяем к выделенному объекту
             Galeshi::Entity sel = m_editor.Selected(&m_scene);
             if (sel && sel.HasComponent<Galeshi::MaterialComponent>()) {
                 auto& matc = sel.GetComponent<Galeshi::MaterialComponent>();
@@ -11950,7 +11929,7 @@ void DrawDetails() {
             return;
         }
 
-        // Если бросили текстуру на объект с материалом — установить в albedo
+        // Dropping an image on a material sets its albedo map.
         if (IsImageAssetPath(path)) {
             Galeshi::Entity sel = m_editor.Selected(&m_scene);
             if (sel && sel.HasComponent<Galeshi::MaterialComponent>()) {
@@ -12240,7 +12219,7 @@ void DrawDetails() {
                    : sun.AddComponent<Galeshi::DirectionalLightComponent>();
         dl.direction = glm::normalize(glm::vec3(-0.4f, -0.8f, -0.5f));
         dl.color = {1.0f, 0.97f, 0.9f}; dl.intensity = 3.0f;
-        // Добавляем большой пол (чтобы тени падали на него)
+        // Large ground plane to receive shadows.
         auto ground = MakeCube("Ground", {0.0f, -5.0f, 0.0f});
         ground.GetComponent<Galeshi::TransformComponent>().scale = { 100.0f, 10.0f, 100.0f };
         ground.GetComponent<Galeshi::MaterialComponent>().material->albedoFactor = { 0.3f, 0.3f, 0.3f, 1.0f };
@@ -12349,7 +12328,7 @@ void DrawDetails() {
         emitter.GetComponent<Galeshi::TransformComponent>().position = {4.5f, 0.2f, -1.5f};
     }
 
-    // --- Состояние ---
+    // State.
     Galeshi::Scene          m_scene;
     Galeshi::Camera         m_camera;
     Galeshi::EditorState    m_editor;
@@ -12477,14 +12456,13 @@ int PackageProject(const std::string& projectPath) {
     fs::path outDir = fs::current_path() / "build" / "package" / gameName;
     fs::create_directories(outDir);
 
-    // 1. Копируем exe как <name>.bin и ставим права
+    // 1. Copy the executable and make it runnable.
     fs::path exePath = fs::current_path() / "GaleshiEditor";
     if (!fs::exists(exePath)) exePath = fs::current_path() / "build" / "debug" / "bin" / "GaleshiEditor";
     
     if (fs::exists(exePath)) {
         fs::path destExe = outDir / (gameName + ".bin");
         fs::copy_file(exePath, destExe, fs::copy_options::overwrite_existing);
-        // Явно ставим права на выполнение для всех
         fs::permissions(destExe, 
             fs::perms::owner_all | fs::perms::group_all | fs::perms::others_all,
             fs::perm_options::replace);
@@ -12494,7 +12472,7 @@ int PackageProject(const std::string& projectPath) {
         return 1;
     }
 
-    // 2. Копируем assets и shaders
+    // 2. Copy assets and shaders.
     fs::path projectRoot = projPath.parent_path();
     auto copyDir = [&](const std::string& dirName) {
         fs::path srcDir = projectRoot / dirName;
@@ -12508,10 +12486,10 @@ int PackageProject(const std::string& projectPath) {
     };
     copyDir("assets");
     
-    // Копируем СКОМПИЛИРОВАННЫЕ шейдеры из build/debug/bin/shaders
+    // Copy compiled shaders.
     fs::path compiledShaders = fs::current_path() / "build" / "debug" / "bin" / "shaders";
     if (!fs::exists(compiledShaders)) {
-        // Если запускаем из build/debug/bin, то текущая папка уже содержит shaders
+        // When running from build/debug/bin, shaders are in the current directory.
         compiledShaders = fs::current_path() / "shaders";
     }
     if (fs::exists(compiledShaders)) {
@@ -12521,7 +12499,7 @@ int PackageProject(const std::string& projectPath) {
         spdlog::error("[Package] Compiled shaders not found at {}", compiledShaders.string());
     }
 
-    // 3. Копируем scene.json (из $HOME или из корня)
+    // 3. Copy the start scene.
     fs::path scenePath = "";
     if (!homeDir.empty() && fs::exists(homeDir / startScene)) {
         scenePath = homeDir / startScene;
@@ -12536,13 +12514,13 @@ int PackageProject(const std::string& projectPath) {
         spdlog::error("[Package] Could not find start scene {} anywhere!", startScene);
     }
 
-    // 4. Сохраняем .gproj
+    // 4. Save .gproj.
     proj["startScene"] = startScene;
     std::ofstream outProj(outDir / (gameName + ".gproj"));
     outProj << proj.dump(4);
     outProj.close();
 
-    // 5. Создаем run.sh (переходит в папку игры и запускает .bin)
+    // 5. Create run.sh.
     std::ofstream runScript(outDir / "run.sh");
     runScript << "#!/bin/bash\n";
     runScript << "SCRIPT_DIR=\"$( cd \"$( dirname \"${BASH_SOURCE[0]}\" )\" &> /dev/null && pwd )\"\n";
@@ -12566,7 +12544,6 @@ int main(int argc, char** argv) {
         logger->sinks().push_back(editorLogSink);
     }
 
-    // Парсинг аргументов
     std::string packagePath = "";
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -12576,13 +12553,12 @@ int main(int argc, char** argv) {
     }
 
     if (!packagePath.empty()) {
-        // Принудительно небуферизированный вывод
+        // Unbuffered output so package errors are not lost.
         std::setvbuf(stdout, nullptr, _IONBF, 0);
         std::setvbuf(stderr, nullptr, _IONBF, 0);
         return PackageProject(packagePath);
     }
 
-    // Стандартный запуск редактора
 
     bool debugMode = false;
     bool gameMode = false;
@@ -12600,8 +12576,7 @@ int main(int argc, char** argv) {
     if (debugMode) {
         spdlog::set_level(spdlog::level::debug);
     }
-    // Принудительно небуферизированный stdout — чтобы логи
-    // появлялись до любого crash.
+    // Unbuffered stdout so logs survive crashes.
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::setvbuf(stderr, nullptr, _IONBF, 0);
 

@@ -735,7 +735,6 @@ std::string ContentBrowser::Draw() {
     for (const auto& e : m_entries) {
         ImGui::PushID(e.path.string().c_str());
 
-        // Определяем тип файла
         std::string ext;
         if (!e.isDirectory) {
             auto dotPos = e.name.find_last_of('.');
@@ -745,7 +744,7 @@ std::string ContentBrowser::Draw() {
             }
         }
 
-        // Thumbnail для изображений
+        // Image thumbnail.
         bool isImage = (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
                         ext == ".bmp" || ext == ".tga" || ext == ".dds" ||
                         ext == ".ktx");
@@ -806,7 +805,7 @@ std::string ContentBrowser::Draw() {
             ImGui::EndPopup();
         }
 
-        // Источник для drag-n-drop (только файлы, не папки)
+        // Drag source: files only, not folders.
         if (!e.isDirectory &&
             ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
             const std::string p = e.path.string();

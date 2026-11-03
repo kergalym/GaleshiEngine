@@ -100,7 +100,6 @@ std::string FilePickerDialog::Draw() {
     ImGui::SetNextWindowSize(ImVec2(700, 500), ImGuiCond_Appearing);
 
     if (ImGui::BeginPopupModal(titleC, nullptr, ImGuiWindowFlags_NoSavedSettings)) {
-        // Путь
         ImGui::Text("Path:");
         ImGui::SameLine();
         ImGui::TextUnformatted(m_current.string().c_str());
@@ -125,7 +124,6 @@ std::string FilePickerDialog::Draw() {
 
         ImGui::Separator();
 
-        // Список
         const float listHeight = m_saveMode ? -80.0f : -40.0f;
         ImGui::BeginChild("##files", ImVec2(0, listHeight), true);
         for (const auto& e : m_entries) {
@@ -157,7 +155,6 @@ std::string FilePickerDialog::Draw() {
         }
         ImGui::EndChild();
 
-        // Поле ввода имени для Save
         if (m_saveMode) {
             ImGui::Text("File name:");
             ImGui::SameLine();
@@ -165,14 +162,13 @@ std::string FilePickerDialog::Draw() {
             ImGui::InputText("##savename", m_saveNameBuf, sizeof(m_saveNameBuf));
         }
 
-        // Кнопки
         if (m_saveMode) {
             const bool hasName = m_saveNameBuf[0] != '\0';
             ImGui::BeginDisabled(!hasName);
             if (ImGui::Button("Save", ImVec2(120, 0))) {
                 fs::path full = m_current / m_saveNameBuf;
 
-                // Добавляем расширение если его нет
+                // Append the extension when missing.
                 if (!m_allowedExts.empty()) {
                     std::string ext = ToLower(full.extension().string());
                     bool hasValidExt = false;

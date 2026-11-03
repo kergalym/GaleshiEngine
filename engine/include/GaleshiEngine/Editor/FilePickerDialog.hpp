@@ -10,13 +10,10 @@ class FilePickerDialog {
 public:
     FilePickerDialog() = default;
 
-    // Режим открытия файла
     void Open(const std::string& startDir,
               const std::string& title,
               std::vector<std::string> extensions);
 
-    // Режим сохранения файла (с полем ввода имени)
-    // Режим выбора папки
     void PickFolder(const std::string& startDir, const std::string& title);
 
     void SaveAs(const std::string& startDir,
@@ -28,8 +25,7 @@ public:
     bool IsSave()  const { return m_saveMode; }
     void Close()   { m_open = false; }
 
-    // Рисуется каждый кадр. Возвращает выбранный/введённый путь, если
-    // пользователь нажал Open/Save (пустая строка иначе).
+    // Draws every frame and returns the chosen path.
     std::string Draw();
 
 private:

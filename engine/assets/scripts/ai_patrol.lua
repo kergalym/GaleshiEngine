@@ -1,5 +1,5 @@
 -- AI Patrol Controller
--- Патрулирует между 4 точками, но не уходит далеко от центра.
+-- Patrols between four points without wandering far from the center.
 
 log("ai_patrol.lua loaded successfully")
 
@@ -13,7 +13,7 @@ local currentWaypoint = 1
 local waitTimer = 0
 
 function update_ai(eid, dt)
-    -- Если путь закончен, ждём и идём к следующей точке
+    -- Wait at the end of the path, then move to the next point.
     if is_path_done(eid) then
         waitTimer = waitTimer + dt
         if waitTimer > 1.5 then

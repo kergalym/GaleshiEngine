@@ -28,8 +28,7 @@ namespace Galeshi {
 
 const aiScene* g_currentAiScene = nullptr;
 
-// Глобалка для передачи aiScene в MakeMaterialFromAssimp
-// (для embedded FBX текстур — scene->mTextures)
+// Current aiScene used by MakeMaterialFromAssimp.
 
 AssetManager::AssetManager() {
     m_white      = std::shared_ptr<Texture>(Texture::CreateWhite());
@@ -739,7 +738,6 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
     SampleNodeTransforms(scene, nullptr, 0.0f, scene->mRootNode,
                          glm::mat4(1.0f), out.nodeRestGlobals);
 
-    // === ДИАГНОСТИКА ===
     spdlog::info("[AssetManager] Scene stats:");
     spdlog::info("  meshes:           {}", scene->mNumMeshes);
     spdlog::info("  materials:        {}", scene->mNumMaterials);
@@ -977,7 +975,6 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         return TextureRole::Unknown;
     };
 
-    // === МАТЕРИАЛЫ ===
     out.materials.reserve(scene->mNumMaterials);
     for (unsigned i = 0; i < scene->mNumMaterials; ++i) {
         aiMaterial* aiMat = scene->mMaterials[i];
@@ -1284,7 +1281,6 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         out.materials.push_back(mat);
     }
 
-    // === МЕШИ ===
     // Build mesh node transform map to apply correct offsets
     std::unordered_map<unsigned, glm::mat4> meshToNodeTransform;
     std::function<void(aiNode*, const glm::mat4&, int)> processNode = [&](aiNode* node, const glm::mat4& parentTransform, int depth) {
@@ -1360,7 +1356,6 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         out.meshNames.emplace_back(am->mName.C_Str());
     }
 
-    // === BONES (из первого меша) ===
     std::unordered_map<std::string, int> globalBoneMap;
     int nextBoneIndex = 0;
     for (unsigned m = 0; m < scene->mNumMeshes; ++m) {
@@ -1455,7 +1450,6 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         }
     }
 
-    // Заполняем bone weights для каждого меша
     for (size_t i = 0; i < out.meshes.size(); ++i) {
         const aiMesh* am = scene->mMeshes[i];
         if (am->mNumBones == 0) continue;
@@ -1875,7 +1869,7 @@ std::shared_ptr<Mesh> AssetManager::CreateCubeMesh() {
         Vertex vert{};
         vert.position = {v.x, v.y, v.z}; vert.normal = {v.nx, v.ny, v.nz};
         vert.tangent = {v.tx, v.ty, v.tz}; vert.uv = {v.u, v.v};
-        vert.boneIDs = glm::vec4(255.0f, 0, 0, 0); // Для кубов тоже используем Dummy Bone
+        vert.boneIDs = glm::vec4(255.0f, 0, 0, 0); // Cubes also use the identity dummy bone.
         vert.boneWeights = glm::vec4(1.0f, 0, 0, 0);
         vs.push_back(vert);
     }

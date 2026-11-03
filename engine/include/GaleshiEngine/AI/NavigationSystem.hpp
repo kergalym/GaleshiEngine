@@ -16,13 +16,12 @@ public:
     void Init();
     void Shutdown();
 
-    // Генерирует NavMesh из геометрии сцены (ландшафт + меши)
+    // Builds a NavMesh from landscape and mesh geometry.
     bool BuildFromScene(Scene& scene);
 
-    // Ищет путь между двумя точками. Возвращает true, если путь найден.
+    // Finds a path; returns true when one exists.
     bool FindPath(const glm::vec3& start, const glm::vec3& end, std::vector<glm::vec3>& outPath);
 
-    // Для дебаг-отрисовки
     const std::vector<glm::vec3>& GetDebugTriangles() const { return m_debugTriangles; }
 
 private:

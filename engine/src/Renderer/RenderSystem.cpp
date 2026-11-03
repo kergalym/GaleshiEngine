@@ -1367,7 +1367,7 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
     bgfx::setViewRect(viewId, 0, 0, 2048, 2048);
     bgfx::setViewClear(viewId, BGFX_CLEAR_DEPTH, 0, 1.0f, 0);
 
-    // Identity для View, lightMtx для Projection (u_viewProj)
+    // Identity view; lightMtx is the projection for u_viewProj.
     glm::mat4 view = glm::mat4(1.0f);
     bgfx::setViewTransform(viewId, glm::value_ptr(view), glm::value_ptr(lightMtx));
 

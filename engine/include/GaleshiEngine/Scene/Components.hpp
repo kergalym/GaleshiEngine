@@ -454,12 +454,12 @@ struct LuaEntityComponent {};
 
 
 struct SpotLightComponent {
-    glm::vec3 direction = {0.0f, -1.0f, 0.0f}; // Направление взгляда прожектора
-    float innerConeAngle = 15.0f;  // Внутренний угол (градусы), где свет полный
-    float outerConeAngle = 30.0f;  // Внешний угол (градусы), где свет затухает до 0
-    float radius = 10.0f;          // Радиус действия
-    glm::vec3 color = {1.0f, 1.0f, 1.0f};      // Цвет
-    float intensity = 1.0f;        // Интенсивность
+    glm::vec3 direction = {0.0f, -1.0f, 0.0f}; // Spot look direction.
+    float innerConeAngle = 15.0f; // Full-intensity cone angle in degrees.
+    float outerConeAngle = 30.0f; // Cone angle in degrees where the light reaches zero.
+    float radius = 10.0f; // Light range.
+    glm::vec3 color = {1.0f, 1.0f, 1.0f};
+    float intensity = 1.0f;
 };
 
 // CPU-simulated camera-facing billboard emitter.  Particles are spawned in

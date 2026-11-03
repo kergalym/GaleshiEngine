@@ -31,7 +31,6 @@ static void ApplyBlackTheme() {
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* c = style.Colors;
 
-    // Отключаем скругления
     style.WindowRounding    = 0.0f;
     style.ChildRounding     = 0.0f;
     style.FrameRounding     = 2.0f;
@@ -51,14 +50,13 @@ static void ApplyBlackTheme() {
     style.ScrollbarSize     = 12.0f;
     style.GrabMinSize       = 10.0f;
 
-    // --- Чёрная палитра ---
-    const ImVec4 bg0  = ImVec4(0.06f, 0.06f, 0.06f, 1.00f);  // фон окон
-    const ImVec4 bg1  = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);  // фон фреймов
+    const ImVec4 bg0  = ImVec4(0.06f, 0.06f, 0.06f, 1.00f);
+    const ImVec4 bg1  = ImVec4(0.10f, 0.10f, 0.10f, 1.00f);
     const ImVec4 bg2  = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);  // hover
     const ImVec4 bg3  = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);  // active
-    const ImVec4 line = ImVec4(0.25f, 0.25f, 0.25f, 1.00f);  // границы
-    const ImVec4 txt  = ImVec4(0.90f, 0.90f, 0.90f, 1.00f);  // текст
-    const ImVec4 acc  = ImVec4(0.55f, 0.55f, 0.55f, 1.00f);  // акцент (серый)
+    const ImVec4 line = ImVec4(0.25f, 0.25f, 0.25f, 1.00f);
+    const ImVec4 txt  = ImVec4(0.90f, 0.90f, 0.90f, 1.00f);
+    const ImVec4 acc  = ImVec4(0.55f, 0.55f, 0.55f, 1.00f);
 
     c[ImGuiCol_Text]                  = txt;
     c[ImGuiCol_TextDisabled]          = ImVec4(0.45f, 0.45f, 0.45f, 1.00f);
@@ -232,8 +230,7 @@ Application::Application(const ApplicationSpec& spec)
         std::abort();
     }
 
-    // Устанавливаем обработчики сигналов ПОСЛЕ SDL_Init
-    // (SDL может переопределять их при инициализации)
+    // Install signal handlers after SDL_Init; SDL may replace them.
     std::signal(SIGINT,  Galeshi::OnSignal);
     std::signal(SIGTERM, Galeshi::OnSignal);
 
@@ -250,7 +247,7 @@ Application::Application(const ApplicationSpec& spec)
 
     ShowStartupSplash(spec.splashImage);
 
-    // Убираем HIGH_PIXEL_DENSITY — на Qtile может ломать swapchain
+    // HIGH_PIXEL_DENSITY can break the swapchain on Qtile.
     const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
     m_impl->window = SDL_CreateWindow(spec.name.c_str(), spec.width, spec.height, flags);
     if (!m_impl->window) {
@@ -274,7 +271,7 @@ Application::Application(const ApplicationSpec& spec)
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
-    // Загрузка шрифта с FreeType (см. отдельный fix)
+    // Load the font through FreeType.
     ImFontConfig font_cfg;
     font_cfg.PixelSnapH = true;
 #ifdef IMGUI_ENABLE_FREETYPE
@@ -303,7 +300,7 @@ Application::Application(const ApplicationSpec& spec)
                 };
                 io.Fonts->AddFontFromFileTTF(fp, 32.0f, &font_cfg, ranges);
             }
-            io.FontGlobalScale = 0.5f;  // 32px -> визуальные 16px (суперсэмплинг)
+            io.FontGlobalScale = 0.5f; // 32 px source rendered at 16 px for supersampling.
             spdlog::info("[Galeshi] Font loaded: {}", fp);
             fontLoaded = true;
             break;
@@ -326,8 +323,8 @@ Application::Application(const ApplicationSpec& spec)
 Application::~Application() {
     if (!m_impl) return;
 
-    // ВАЖНО: сначала освобождаем ресурсы ImGui, потом гасим bgfx.
-    // Иначе bgfx::destroy() вызовется после bgfx::shutdown() и даст утечку.
+    // IMPORTANT: release ImGui resources before shutting down bgfx.
+    // Otherwise bgfx::destroy() runs after bgfx::shutdown() and leaks.
     ImGuiBgfx::Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
@@ -376,7 +373,7 @@ int Application::Run() {
 
         ImGui_ImplSDL3_NewFrame();
         
-        // Обновляем размеры для корректного DPI/масштабирования
+        // Update dimensions for DPI scaling.
         ImGuiIO& io = ImGui::GetIO();
         int w, h;
         SDL_GetWindowSize(m_impl->window, &w, &h);

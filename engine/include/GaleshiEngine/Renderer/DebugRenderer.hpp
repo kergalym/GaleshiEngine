@@ -42,8 +42,7 @@ private:
 
     bgfx::VertexLayout  m_layout;
 
-    // Двойная буферизация (чтобы не пересоздавать буфер пока render thread
-    // читает предыдущий)
+    // Double-buffered so the render thread can read the previous slot.
     bgfx::DynamicVertexBufferHandle m_lineVB[2] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
     bgfx::IndexBufferHandle         m_lineIB[2] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
     uint32_t m_lineVBCapacity[2] = { 0, 0 };

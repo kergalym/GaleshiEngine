@@ -24,7 +24,7 @@ uint32_t g_frameIdx   = 0;
 void ImGuiBgfx::Init() {
     ImGuiIO& io = ImGui::GetIO();
 
-    // ВАЖНО: НЕ включаем RendererHasTextures, используем старый API
+    // IMPORTANT: use the legacy API; RendererHasTextures is not supported.
     // io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
 
     g_layout
@@ -36,13 +36,12 @@ void ImGuiBgfx::Init() {
 
     g_texUniform = bgfx::createUniform("s_texColor", bgfx::UniformType::Sampler);
 
-    // Загружаем шейдеры
     g_program = ShaderManager::LoadProgram("shaders/vs_imgui.bin", "shaders/fs_imgui.bin");
     if (!bgfx::isValid(g_program)) {
         spdlog::error("[ImGuiBgfx] Failed to load imgui shaders.");
     }
 
-    // --- СТАРЫЙ API: вручную создаём текстуру шрифта ---
+    // Legacy API: create the font texture manually.
     unsigned char* pixels = nullptr;
     int width = 0, height = 0;
     io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
@@ -51,7 +50,7 @@ void ImGuiBgfx::Init() {
         static_cast<uint16_t>(width),
         static_cast<uint16_t>(height),
         false, 1, bgfx::TextureFormat::RGBA8, 
-        BGFX_TEXTURE_NONE, // Линейная фильтрация
+        BGFX_TEXTURE_NONE,
         bgfx::copy(pixels, static_cast<uint32_t>(width * height * 4))
     );
 

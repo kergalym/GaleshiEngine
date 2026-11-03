@@ -743,7 +743,6 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
     m_bloomFboA = bgfx::createFrameBuffer(1, &m_bloomTexA, false);
     m_bloomFboB = bgfx::createFrameBuffer(1, &m_bloomTexB, false);
 
-    // --- DoF textures / FBOs (пересоздаём при resize) ---
     if (bgfx::isValid(m_dofCocFbo))    bgfx::destroy(m_dofCocFbo);
     if (bgfx::isValid(m_dofBlurFboA))  bgfx::destroy(m_dofBlurFboA);
     if (bgfx::isValid(m_dofBlurFboB))  bgfx::destroy(m_dofBlurFboB);
@@ -1338,10 +1337,9 @@ bgfx::TextureHandle PostProcessManager::RenderSmaa(bgfx::TextureHandle color, bg
     if (!bgfx::isValid(m_smaaEdgeProg) || !bgfx::isValid(m_smaaBlendProg) || !bgfx::isValid(s_smaaEdges)) return BGFX_INVALID_HANDLE;
     if (m_width != w || m_height != h) return BGFX_INVALID_HANDLE;
 
-    // View [viewId]: Edge Detection (рендерим в m_blitFboA)
     bgfx::setViewFrameBuffer(viewId, m_blitFboA);
     bgfx::setViewRect(viewId, 0, 0, w, h);
-    bgfx::setTexture(0, s_texColor, color); // Сэмплируем напрямую
+    bgfx::setTexture(0, s_texColor, color);
     float ts[4] = { 1.0f / (float)w, 1.0f / (float)h, 0.0f, 0.0f };
     bgfx::setUniform(u_texelSize, ts);
     bgfx::setVertexBuffer(0, m_vbh);
@@ -1352,7 +1350,7 @@ bgfx::TextureHandle PostProcessManager::RenderSmaa(bgfx::TextureHandle color, bg
     // View [viewId + 1]: Blend
     bgfx::setViewFrameBuffer(viewId + 1, m_pingFbo);
     bgfx::setViewRect(viewId + 1, 0, 0, w, h);
-    bgfx::setTexture(0, s_texColor, color); // Сэмплируем напрямую
+    bgfx::setTexture(0, s_texColor, color);
     bgfx::setTexture(1, s_smaaEdges, m_blitTexA);
     bgfx::setUniform(u_texelSize, ts);
     bgfx::setVertexBuffer(0, m_vbh);
@@ -1388,7 +1386,6 @@ bgfx::TextureHandle PostProcessManager::RenderTaa(bgfx::TextureHandle color, bgf
     if (m_width != w || m_height != h) return BGFX_INVALID_HANDLE;
 
     if (!m_historyValid) {
-        // View [viewId]: Копируем цвет в историю
         bgfx::setViewFrameBuffer(viewId, m_historyFbo);
         bgfx::setViewRect(viewId, 0, 0, w, h);
         bgfx::setTexture(0, s_texColor, color);
@@ -1397,7 +1394,6 @@ bgfx::TextureHandle PostProcessManager::RenderTaa(bgfx::TextureHandle color, bgf
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
         bgfx::submit(viewId, m_program);
 
-        // View [viewId + 1]: Passthrough в target
         bgfx::setViewFrameBuffer(viewId + 1, target);
         bgfx::setViewRect(viewId + 1, 0, 0, w, h);
         bgfx::setTexture(0, s_texColor, color);
@@ -1413,9 +1409,9 @@ bgfx::TextureHandle PostProcessManager::RenderTaa(bgfx::TextureHandle color, bgf
     // View [viewId]: TAA Pass
     bgfx::setViewFrameBuffer(viewId, target);
     bgfx::setViewRect(viewId, 0, 0, w, h);
-    bgfx::setTexture(0, s_texColor, color); // Сэмплируем напрямую
+    bgfx::setTexture(0, s_texColor, color);
     bgfx::setTexture(1, s_taaHistory, m_historyColor);
-    bgfx::setTexture(2, s_texDepth, depth); // Сэмплируем глубину напрямую
+    bgfx::setTexture(2, s_texDepth, depth);
     bgfx::setTexture(3, s_taaMotion, motionVector);
     bgfx::setUniform(u_taaPrevVP, glm::value_ptr(prevVP));
     bgfx::setUniform(u_taaInvVP, glm::value_ptr(invVP));
@@ -1428,7 +1424,6 @@ bgfx::TextureHandle PostProcessManager::RenderTaa(bgfx::TextureHandle color, bgf
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId, m_taaProg);
 
-    // View [viewId + 1]: Копируем результат в историю
     bgfx::setViewFrameBuffer(viewId + 1, m_historyFbo);
     bgfx::setViewRect(viewId + 1, 0, 0, w, h);
     bgfx::setTexture(0, s_texColor, m_pingColor);
@@ -1587,7 +1582,7 @@ bgfx::TextureHandle PostProcessManager::RenderDof(bgfx::TextureHandle color, bgf
     bgfx::setViewRect(viewId, 0, 0, w, h);
     bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR, 0x000000ff);
     bgfx::setTexture(0, s_dofDepth, depth);
-    // Извлекаем near/far из proj (Vulkan, RH):
+    // Extract near/far from the Vulkan RH projection.
     //   m22 = far/(near-far)   m32 = near*far/(near-far)
     float nearV = proj[3][2] / proj[2][2];
     float farV  = proj[3][2] / (proj[2][2] + 1.0f);

@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-// stb_image — header-only. Реализацию включаем ровно в одном .cpp.
+// stb_image is header-only; compile its implementation in exactly one .cpp.
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_PNG
@@ -620,8 +620,8 @@ Texture* LoadEncodedBytes(const uint8_t* data, size_t size,
     int height = 0;
     int channels = 0;
 
-    // UV в bgfx идут сверху-вниз (как в DDS), но stb по умолчанию
-    // грузит снизу-вверх. Разворачиваем.
+    // bgfx V points down, while stb loads images bottom-up.
+    // Flip images on upload unless the caller opts out.
     stbi_set_flip_vertically_on_load(flipVertically);
     unsigned char* pixels = stbi_load_from_memory(
         data, static_cast<int>(size), &width, &height, &channels, 4);
@@ -939,7 +939,7 @@ Texture* Texture::CreateBlack() {
 }
 
 Texture* Texture::CreateFlatNormal() {
-    // (0.5, 0.5, 1.0) в RGBA8
+    // Flat normal (0.5, 0.5, 1.0) encoded as RGBA8.
     const uint32_t pixel = 0xFFFF8080;
     Texture* tex = new Texture();
     tex->m_path = "<flat-normal>";

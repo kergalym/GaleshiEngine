@@ -25,7 +25,7 @@ static const bgfx::Memory* LoadMem(const std::string& path) {
 
     spdlog::info("[ShaderManager] Loading {} ({} bytes)", path, size);
 
-    // bgfx ОЖИДАЕТ ТОЧНЫЙ размер бинарника. Никаких null-терминаторов!
+    // bgfx requires the exact binary size, with no null terminator.
     const bgfx::Memory* mem = bgfx::alloc(static_cast<uint32_t>(size));
     const size_t read = std::fread(mem->data, 1, static_cast<size_t>(size), f);
     std::fclose(f);

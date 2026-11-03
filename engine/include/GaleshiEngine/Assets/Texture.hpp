@@ -26,10 +26,10 @@ public:
     Texture(const Texture&)            = delete;
     Texture& operator=(const Texture&) = delete;
 
-    // Загрузка из файла: PNG/JPG/BMP/TGA (stb) и DDS/KTX/PVR/GNF/TEX (bimg).
-    // Сжатые форматы (BC*, ETC*, ASTC, ...) загружаются без распаковки и
-    // передаются на GPU вместе с полной цепочкой mip-уровней.
-    // srgb=true включает аппаратное sRGB->linear преобразование при выборке.
+    // Loads PNG/JPG/BMP/TGA via stb and DDS/KTX/PVR/GNF/TEX via bimg.
+    // Compressed formats are uploaded in their GPU format.
+    // The full mip chain is preserved.
+    // srgb enables hardware sRGB-to-linear sampling.
     // Most engine formats use a bottom-left V origin (and therefore flip
     // source images on upload). glTF follows Godot/WebGL's top-left origin and
     // must be loaded with flipVertically=false so its UVs and images match.
@@ -52,7 +52,7 @@ public:
         const std::string& displayPath = "<embedded-raw>", bool srgb = false,
         bool flipVertically = true);
 
-    // 1x1 белая / плоская normal / чёрная
+    // 1x1 white, flat normal, and black textures.
     static Texture* CreateWhite();
     static Texture* CreateFlatNormal();
     static Texture* CreateBlack();

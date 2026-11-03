@@ -36,11 +36,11 @@ void main() {
 
             if (sampleDepth >= 0.9999) continue;
 
-            // Depth Weight: не размываем через границы объектов
+            // Depth weight: do not blur across object boundaries.
             float depthDiff = abs(centerDepth - sampleDepth);
             float depthWeight = exp(-depthDiff * 1000.0);
 
-            // Normal Weight: не размываем через изломы нормалей
+            // Normal weight: do not blur across normal discontinuities.
             float normalDot = dot(centerNormal, sampleNormal);
             float normalWeight = pow(max(normalDot, 0.0), 32.0);
 

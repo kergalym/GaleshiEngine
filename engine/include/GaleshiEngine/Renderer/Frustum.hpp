@@ -42,7 +42,7 @@ public:
     bool TestSphere(const glm::vec3& center, float radius) const {
         for (int i = 0; i < 6; ++i) {
             if (glm::dot(planes[i].normal, center) + planes[i].distance < -radius) {
-                return false; // Сфера полностью снаружи пирамиды
+                return false;
             }
         }
         return true;

@@ -12,22 +12,22 @@ struct Ray {
     glm::vec3 direction{0.0f, 0.0f, -1.0f};
 };
 
-// Экранный пиксель -> мировой луч.
+// Screen pixel to world ray.
 Ray ScreenPointToRay(const Camera& camera,
                      float screenX, float screenY,
                      float viewportX, float viewportY,
                      float viewportW, float viewportH);
 
-// Пересечение с горизонтальной плоскостью y = planeY.
+// Intersection with the horizontal plane y = planeY.
 bool IntersectPlaneY(const Ray& ray, float planeY, glm::vec3& outHit);
 
-// Пересечение с AABB (slab method).
+// AABB intersection (slab method).
 bool IntersectAABB(const Ray& ray,
                    const glm::vec3& boxMin,
                    const glm::vec3& boxMax,
                    float& outTNear);
 
-// Möller–Trumbore: пересечение с треугольником.
+// Möller-Trumbore triangle intersection.
 bool IntersectTriangle(const glm::vec3& rayOrigin,
                        const glm::vec3& rayDir,
                        const glm::vec3& v0,
@@ -35,7 +35,7 @@ bool IntersectTriangle(const glm::vec3& rayOrigin,
                        const glm::vec3& v2,
                        float& outT);
 
-// Полное пересечение с мешем (перебирает треугольники).
+// Full mesh intersection (tests every triangle).
 bool IntersectMesh(const glm::vec3& rayOrigin,
                    const glm::vec3& rayDir,
                    const Mesh& mesh,

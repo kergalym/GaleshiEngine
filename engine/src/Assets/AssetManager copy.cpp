@@ -18,8 +18,7 @@ namespace Galeshi {
 
 const aiScene* g_currentAiScene = nullptr;
 
-// Глобалка для передачи aiScene в MakeMaterialFromAssimp
-// (для embedded FBX текстур — scene->mTextures)
+// Current aiScene used by MakeMaterialFromAssimp.
 
 AssetManager::AssetManager() {
     m_white      = std::shared_ptr<Texture>(Texture::CreateWhite());
@@ -104,7 +103,7 @@ void ReadNodeHeirarchy(const aiScene* scene, float time, const aiNode* node, con
 
     if (boneMap.find(nodeName) != boneMap.end()) {
         int boneIndex = boneMap.at(nodeName);
-        if (boneIndex < 254) { // 255 зарезервирован под Identity
+        if (boneIndex < 254) { // 255 is reserved for identity.
             aiBone* bone = nullptr;
             for (unsigned m = 0; m < scene->mNumMeshes && !bone; ++m) {
                 for (unsigned i = 0; i < scene->mMeshes[m]->mNumBones; ++i) {
@@ -156,7 +155,7 @@ std::shared_ptr<Material> MakeMaterialFromAssimp(aiMaterial* mat, const std::str
     return m;
 }
 
-// Рекурсивный обход дерева узлов для применения глобальных матриц
+// Recursively bake node transforms into vertices.
 void ProcessNode(aiNode* node, const aiScene* scene,
                  const glm::mat4& parentTransform,
                  std::vector<std::shared_ptr<Mesh>>& outMeshes,
@@ -165,7 +164,7 @@ void ProcessNode(aiNode* node, const aiScene* scene,
     const glm::mat4 localTransform  = aiToGlm(node->mTransformation);
     const glm::mat4 globalTransform = parentTransform * localTransform;
 
-    // Нормали нужно трансформировать обратно-транспонированной матрицей
+    // Transform normals with the inverse-transpose.
     const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(globalTransform)));
 
     for (unsigned int i = 0; i < node->mNumMeshes; ++i) {
@@ -242,16 +241,16 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
         out.materials.push_back(mat);
     }
 
-    // Извлекаем реальный масштаб из FBX (UnitScaleFactor)
+    // Read the FBX unit scale.
     float unitScale = 1.0f;
     if (scene->mMetaData) {
         scene->mMetaData->Get("UnitScaleFactor", unitScale);
     }
-    // Если FBX в сантиметрах (100), modelScale будет 0.01
+    // Centimeter FBX files use a 0.01 model scale.
     float modelScale = (unitScale > 0.0f) ? (1.0f / unitScale) : 1.0f;
     spdlog::info("[AssetManager] UnitScaleFactor: {}, modelScale: {}", unitScale, modelScale);
 
-    // Обходим иерархию, запекая трансформации в вершины
+    // Bake the node hierarchy into vertices.
     ProcessNode(scene->mRootNode, scene, glm::mat4(1.0f), out.meshes, out.meshMaterialIndex, modelScale);
 
     spdlog::info("[AssetManager] Loaded {} ({} mesh(es), {} material(s))",
@@ -263,7 +262,7 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& path) {
 
 void AssetManager::UpdateAnimation(const LoadedModel& model, float time, std::vector<glm::mat4>& outBoneMatrices) {
     if (outBoneMatrices.size() != 256) outBoneMatrices.resize(256, glm::mat4(1.0f));
-    outBoneMatrices[255] = glm::mat4(1.0f); // Dummy bone всегда Identity
+    outBoneMatrices[255] = glm::mat4(1.0f); // The dummy bone is always identity.
     if (!model.rawScene) return;
     ReadNodeHeirarchy(model.rawScene.get(), time, model.rawScene->mRootNode, glm::mat4(1.0f), outBoneMatrices, model.boneMap);
 }
@@ -295,7 +294,7 @@ std::shared_ptr<Mesh> AssetManager::CreateCubeMesh() {
         Vertex vert{};
         vert.position = {v.x, v.y, v.z}; vert.normal = {v.nx, v.ny, v.nz};
         vert.tangent = {v.tx, v.ty, v.tz}; vert.uv = {v.u, v.v};
-        vert.boneIDs = glm::vec4(255.0f, 0, 0, 0); // Для кубов тоже используем Dummy Bone
+        vert.boneIDs = glm::vec4(255.0f, 0, 0, 0); // Cubes also use the identity dummy bone.
         vert.boneWeights = glm::vec4(1.0f, 0, 0, 0);
         vs.push_back(vert);
     }

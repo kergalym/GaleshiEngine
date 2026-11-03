@@ -14,9 +14,7 @@ class ContentBrowser {
 public:
     explicit ContentBrowser(std::string rootDir, AssetManager* assets = nullptr);
 
-    // Рисует панель. Возвращает путь к файлу, если пользователь сделал
-    // двойной клик по нему или создал новый скрипт через контекстное меню
-    // ("" — ничего не выбрано).
+    // Draws the panel and returns the selected/created file path.
     std::string Draw();
 
     // Creates a Lua script from one of the built-in templates inside
