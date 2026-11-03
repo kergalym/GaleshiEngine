@@ -8968,37 +8968,89 @@ if (ImGui::BeginMenu("File")) {
             return skeletal;
         };
 
-        auto meshView = registry.view<Galeshi::MeshComponent>();
-        for (entt::entity handle : meshView) {
-            const auto& mesh = meshView.get<Galeshi::MeshComponent>(handle);
-            if (!isSkeletalModel(mesh.sourceAssetPath)) continue;
+        auto modelRootForMesh = [&](entt::entity handle) {
             // Prefer the nearest ancestor that owns a skeleton. Walking all
             // the way to the scene root can select a shared parent: editing
             // its state machine would then animate every character below it.
             entt::entity root = handle;
-            entt::entity skeletalRoot = entt::null;
             for (int depth = 0; depth < 128 &&
                                 registry.valid(root);
                  ++depth) {
                 if (registry.all_of<Galeshi::SkeletalComponent>(root) ||
                     registry.all_of<Galeshi::AnimationStateMachineComponent>(
                         root)) {
-                    skeletalRoot = root;
-                    break;
+                    return root;
                 }
                 if (!registry.all_of<Galeshi::ParentComponent>(root)) break;
                 root = registry.get<Galeshi::ParentComponent>(root).parent;
             }
-            if (skeletalRoot != entt::null) {
-                root = skeletalRoot;
-            } else if (registry.all_of<Galeshi::ParentComponent>(handle)) {
+            if (registry.all_of<Galeshi::ParentComponent>(handle)) {
                 // Imported model meshes normally live under their own root;
                 // keep that root instead of the common scene parent.
-                root = registry.get<Galeshi::ParentComponent>(handle).parent;
-            } else {
-                root = handle;
+                return registry.get<Galeshi::ParentComponent>(handle).parent;
             }
-            addCharacter(root, mesh.sourceAssetPath);
+            return handle;
+        };
+
+        auto meshView = registry.view<Galeshi::MeshComponent>();
+        for (entt::entity handle : meshView) {
+            const auto& mesh = meshView.get<Galeshi::MeshComponent>(handle);
+            if (mesh.sourceAssetPath.empty()) continue;
+            // glTF characters can be authored without embedded animation
+            // clips (or even without skin data in the file). They must still
+            // be selectable here so an external clip or a skeleton can be
+            // assigned later. FBX props stay filtered by the skeletal check.
+            const bool gltfModel =
+                IsGltfModelAssetPath(mesh.sourceAssetPath);
+            if (!gltfModel && !isSkeletalModel(mesh.sourceAssetPath)) {
+                continue;
+            }
+            addCharacter(modelRootForMesh(handle), mesh.sourceAssetPath);
+        }
+
+        // A model just added to the scene is usually selected. Include the
+        // selection explicitly so the state machine editor can target it even
+        // if the import does not expose bones or animation metadata.
+        for (Galeshi::Entity selected : m_editor.SelectedAll(&m_scene)) {
+            const entt::entity handle = selected.Handle();
+            if (!registry.valid(handle)) continue;
+            if (const auto* skeleton =
+                    registry.try_get<Galeshi::SkeletalComponent>(handle)) {
+                addCharacter(handle, skeleton->sourcePath);
+                continue;
+            }
+            if (const auto* mesh =
+                    registry.try_get<Galeshi::MeshComponent>(handle);
+                mesh && !mesh->sourceAssetPath.empty()) {
+                addCharacter(modelRootForMesh(handle), mesh->sourceAssetPath);
+                continue;
+            }
+
+            // Selected model root/container: find the first descendant mesh
+            // that belongs to an imported model.
+            std::vector<entt::entity> pending{handle};
+            std::unordered_set<entt::entity> visited;
+            while (!pending.empty()) {
+                const entt::entity current = pending.back();
+                pending.pop_back();
+                if (!registry.valid(current) ||
+                    !visited.insert(current).second) {
+                    continue;
+                }
+                if (const auto* mesh =
+                        registry.try_get<Galeshi::MeshComponent>(current);
+                    mesh && !mesh->sourceAssetPath.empty()) {
+                    addCharacter(handle, mesh->sourceAssetPath);
+                    break;
+                }
+                auto childView = registry.view<Galeshi::ParentComponent>();
+                for (entt::entity child : childView) {
+                    if (childView.get<Galeshi::ParentComponent>(child).parent ==
+                        current) {
+                        pending.push_back(child);
+                    }
+                }
+            }
         }
 
         std::sort(characters.begin(), characters.end(),
