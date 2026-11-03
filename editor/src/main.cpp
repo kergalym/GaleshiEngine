@@ -10184,7 +10184,8 @@ void DrawDetails() {
                             "rubber gold skin leaf albedo factor albedo sRGB color "
                             "space metallic factor roughness factor normal "
                             "strength occlusion strength "
-                            "alpha cutoff glass transparent opacity two sided "
+                            "alpha cutoff alpha test albedo alpha mask alpha blend transparency hair "
+                            "glass transparent opacity two sided "
                             "emissive color subsurface scattering sss enable "
                             "subsurface subsurface color subsurface strength "
                             "subsurface radius translucency enable translucency "
@@ -10340,6 +10341,22 @@ void DrawDetails() {
                 ImGui::SliderFloat("Normal Strength",  &m.normalStrength,  0.0f, 2.0f);
                 if (showMaterialField("Occlusion Strength", "occlusion ao"))
                 ImGui::SliderFloat("Occlusion Strength", &m.occlusionStrength, 0.0f, 1.0f);
+                if (showMaterialField("Alpha Test", "alpha test cutoff mask albedo")) {
+                    ImGui::Checkbox("Alpha Test (albedo alpha)", &m.alphaTest);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "Discard fragments using the albedo texture alpha.\n"
+                            "Used by glTF MASK materials and nearly opaque cutouts.");
+                    }
+                }
+                if (showMaterialField("Alpha Blend", "alpha blend transparency hair")) {
+                    ImGui::Checkbox("Alpha Blend (transparent pass)", &m.alphaBlend);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "Render in the sorted alpha-blended forward pass.\n"
+                            "Used by glTF BLEND cards such as brows and eyelashes.");
+                    }
+                }
                 if (showMaterialField("Alpha Cutoff", "alpha cutoff mask"))
                 ImGui::SliderFloat("Alpha Cutoff",     &m.alphaCutoff,     0.0f, 1.0f);
                 if (showMaterialField("Glass (Transparent)", "glass transparent"))
@@ -11260,11 +11277,15 @@ void DrawDetails() {
         const std::string newName = destination.name;
         const std::string newSourcePath = destination.sourcePath;
         const auto newBase = destination.base;
+        const bool newAlphaTest = destination.alphaTest;
+        const bool newAlphaBlend = destination.alphaBlend;
 
         destination = source;
         destination.name = newName;
         destination.sourcePath = newSourcePath;
         destination.base = newBase;
+        destination.alphaTest = newAlphaTest;
+        destination.alphaBlend = newAlphaBlend;
         destination.albedoMap = newAlbedo ? newAlbedo : source.albedoMap;
         destination.metallicRoughnessMap =
             newMr ? newMr : source.metallicRoughnessMap;

@@ -302,6 +302,8 @@ json MaterialToJson(const Material& m, const AssetManager& assets) {
         {"normalStrength", m.normalStrength},
         {"occlusionStrength", m.occlusionStrength},
         {"alphaCutoff", m.alphaCutoff},
+        {"alphaTest", m.alphaTest},
+        {"alphaBlend", m.alphaBlend},
         {"subsurfaceEnabled", m.subsurfaceEnabled},
         {"subsurfaceColor", Vec3ToJson(m.subsurfaceColor)},
         {"subsurfaceStrength", m.subsurfaceStrength},
@@ -337,7 +339,7 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
         ? Vec4FromJson(jm.at("albedoFactor")) : glm::vec4(1.0f);
     material->albedoSrgb = jm.value("albedoSrgb", true);
     material->metallicFactor = jm.value("metallicFactor", 0.0f);
-    material->roughnessFactor = jm.value("roughnessFactor", 0.5f);
+    material->roughnessFactor = jm.value("roughnessFactor", 1.0f);
     material->emissiveFactor = jm.contains("emissiveFactor")
         ? Vec3FromJson(jm.at("emissiveFactor")) : glm::vec3(0.0f);
     material->isGlass = jm.value("isGlass", false);
@@ -349,6 +351,8 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     material->normalStrength = jm.value("normalStrength", 1.0f);
     material->occlusionStrength = jm.value("occlusionStrength", 1.0f);
     material->alphaCutoff = jm.value("alphaCutoff", 0.5f);
+    material->alphaTest = jm.value("alphaTest", false);
+    material->alphaBlend = jm.value("alphaBlend", false);
     material->subsurfaceEnabled = jm.value("subsurfaceEnabled", false);
     material->subsurfaceColor = jm.contains("subsurfaceColor")
         ? Vec3FromJson(jm.at("subsurfaceColor")) : material->subsurfaceColor;

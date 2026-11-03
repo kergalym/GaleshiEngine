@@ -33,9 +33,9 @@ void main()
     // their opacity map is fully white; multiplying the factor in would
     // discard the whole mesh.
     float alpha = a.a * opacity;
-    // Alpha testing is only meaningful when the material actually has an
-    // opacity map; otherwise a legacy alpha factor would make opaque
-    // materials disappear.
+    // Alpha testing is enabled only for materials with an opacity map or an
+    // explicit albedo-alpha cutout; otherwise a legacy alpha factor would
+    // make opaque materials disappear.
     float cutoff = u_materialFlags.w > 0.5 ? u_materialParams.z : 0.0;
     if (alpha < cutoff) discard;
 

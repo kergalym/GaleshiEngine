@@ -7,6 +7,7 @@
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#include <assimp/GltfMaterial.h>
 #include <spdlog/spdlog.h>
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -1110,13 +1111,32 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         if (aiMat->Get(AI_MATKEY_TRANSPARENCYFACTOR, transparency) == AI_SUCCESS)
             mat->albedoFactor.a *= 1.0f - glm::clamp(transparency, 0.0f, 1.0f);
 
+        // glTF stores MASK/BLEND alpha in the base-color texture. MASK uses a
+        // cutoff; BLEND is resolved after the base-color texture is loaded so
+        // opaque skin materials mislabelled as BLEND stay in the opaque pass.
+        aiString gltfAlphaMode;
+        if (aiMat->Get(AI_MATKEY_GLTF_ALPHAMODE, gltfAlphaMode) == AI_SUCCESS) {
+            const std::string mode = gltfAlphaMode.C_Str();
+            if (mode == "MASK") {
+                mat->alphaTest = true;
+                float cutoff = mat->alphaCutoff;
+                if (aiMat->Get(AI_MATKEY_GLTF_ALPHACUTOFF, cutoff) == AI_SUCCESS) {
+                    mat->alphaCutoff = glm::clamp(cutoff, 0.0f, 1.0f);
+                }
+            } else if (mode == "BLEND") {
+                mat->alphaBlend = true;
+            }
+        }
+
         float metallic = 0.0f;
         const bool hasMetallicFactor =
             aiMat->Get(AI_MATKEY_METALLIC_FACTOR, metallic) == AI_SUCCESS;
         if (hasMetallicFactor)
             mat->metallicFactor = glm::clamp(metallic, 0.0f, 1.0f);
 
-        float roughness = 0.5f;
+        // Match Godot's StandardMaterial3D default when the source does not
+        // provide a roughness value.
+        float roughness = 1.0f;
         float glossiness = 0.0f;
         const bool hasRoughnessFactor =
             aiMat->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness) == AI_SUCCESS;
@@ -1196,6 +1216,29 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         assign(mat->opacityMap, opacityRef, false);
         assign(mat->specularMap, specularRef, false);
 
+        // glTF BLEND is declared on the material, but exporters also mark
+        // fully opaque skin/body materials as BLEND. Use the base-color alpha
+        // to tell true transparency cards from opaque materials. Nearly
+        // opaque textures (eyes) remain alpha-tested; mostly transparent ones
+        // (hair, brows, lashes) go through the sorted forward blend pass.
+        if (mat->alphaBlend) {
+            const bool textureAlpha =
+                mat->albedoMap && mat->albedoMap->HasAlpha();
+            const bool constantAlpha = mat->albedoFactor.a < 0.999f;
+            if (!textureAlpha && !constantAlpha) {
+                mat->alphaBlend = false;
+            } else if (constantAlpha ||
+                       (textureAlpha &&
+                        mat->albedoMap->AlphaCoverage() < 0.5f)) {
+                mat->alphaTest = false;
+            } else {
+                // High alpha coverage: a cutout is cheaper and avoids sorting
+                // artifacts on nearly solid geometry such as eyeballs.
+                mat->alphaBlend = false;
+                mat->alphaTest = true;
+            }
+        }
+
         // Reuse the R channel of packed ORM maps as ambient occlusion when the
         // material does not have a dedicated AO texture.
         if (!mat->occlusionMap && mat->metallicRoughnessMap &&
@@ -1221,9 +1264,10 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
 
         if (!albedoRef.empty()) mat->sourcePath = albedoRef;
 
-        spdlog::info("  PBR: base=({:.2f},{:.2f},{:.2f},{:.2f}) metal={:.2f} rough={:.2f} normal={:.2f} glass={}",
+        spdlog::info("  PBR: base=({:.2f},{:.2f},{:.2f},{:.2f}) metal={:.2f} rough={:.2f} normal={:.2f} glass={} alphaTest={} alphaBlend={}",
                      mat->albedoFactor.r, mat->albedoFactor.g, mat->albedoFactor.b, mat->albedoFactor.a,
-                     mat->metallicFactor, mat->roughnessFactor, mat->normalStrength, mat->isGlass);
+                     mat->metallicFactor, mat->roughnessFactor, mat->normalStrength, mat->isGlass,
+                     mat->alphaTest, mat->alphaBlend);
         spdlog::info("  maps: albedo={} normal={} metal={} rough={} mr={} emissive={} ao={} opacity={} specular={}",
                      mat->albedoMap != nullptr, mat->normalMap != nullptr,
                      mat->metallicMap != nullptr, mat->roughnessMap != nullptr,

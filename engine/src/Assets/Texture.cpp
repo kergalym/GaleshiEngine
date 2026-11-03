@@ -35,7 +35,8 @@ struct TextureUploader {
                        const std::string& path, bool srgb, uint16_t width,
                        uint16_t height, uint8_t numMips,
                        bgfx::TextureFormat::Enum format, bool compressed,
-                       size_t memoryBytes) {
+                       size_t memoryBytes, bool hasAlpha = false,
+                       float alphaCoverage = 1.0f) {
         tex->m_handle = handle;
         tex->m_path = path;
         tex->m_srgb = srgb;
@@ -45,6 +46,8 @@ struct TextureUploader {
         tex->m_format = format;
         tex->m_compressed = compressed;
         tex->m_memoryBytes = memoryBytes;
+        tex->m_hasAlpha = hasAlpha;
+        tex->m_alphaCoverage = alphaCoverage;
     }
 };
 
@@ -241,6 +244,26 @@ std::vector<MipLevel> BuildMipChain(const uint8_t* pixels, uint32_t width,
     return levels;
 }
 
+void MeasureAlpha(const std::vector<MipLevel>& levels, bool& hasAlpha,
+                  float& alphaCoverage) {
+    hasAlpha = false;
+    alphaCoverage = 1.0f;
+    if (levels.empty() || levels.front().pixels.empty()) return;
+
+    const std::vector<uint8_t>& pixels = levels.front().pixels;
+    const size_t pixelCount = pixels.size() / 4;
+    size_t opaquePixels = 0;
+    for (size_t i = 0; i < pixelCount; ++i) {
+        const uint8_t alpha = pixels[i * 4 + 3];
+        if (alpha < 255) hasAlpha = true;
+        if (alpha >= 250) ++opaquePixels;
+    }
+    if (pixelCount > 0) {
+        alphaCoverage = static_cast<float>(opaquePixels) /
+                        static_cast<float>(pixelCount);
+    }
+}
+
 bool EncodeBc7(const MipLevel& level, std::vector<uint8_t>& out) {
     if (level.width == 0 || level.height == 0) return false;
 
@@ -323,10 +346,14 @@ Texture* UploadRgba8(const std::vector<MipLevel>& levels, uint32_t width,
         delete tex;
         return nullptr;
     }
+    bool hasAlpha = false;
+    float alphaCoverage = 1.0f;
+    MeasureAlpha(levels, hasAlpha, alphaCoverage);
     TextureUploader::Assign(tex, handle, path, srgb, static_cast<uint16_t>(width),
                             static_cast<uint16_t>(height),
                             static_cast<uint8_t>(levels.size()),
-                            bgfx::TextureFormat::RGBA8, false, upload.size());
+                            bgfx::TextureFormat::RGBA8, false, upload.size(),
+                            hasAlpha, alphaCoverage);
     return tex;
 }
 
@@ -369,10 +396,14 @@ Texture* UploadBc7(const std::vector<MipLevel>& levels, uint32_t width,
         delete tex;
         return nullptr;
     }
+    bool hasAlpha = false;
+    float alphaCoverage = 1.0f;
+    MeasureAlpha(levels, hasAlpha, alphaCoverage);
     TextureUploader::Assign(tex, handle, path, srgb, static_cast<uint16_t>(width),
                             static_cast<uint16_t>(height),
                             static_cast<uint8_t>(levels.size()),
-                            bgfx::TextureFormat::BC7, true, encoded.size());
+                            bgfx::TextureFormat::BC7, true, encoded.size(),
+                            hasAlpha, alphaCoverage);
     return tex;
 }
 

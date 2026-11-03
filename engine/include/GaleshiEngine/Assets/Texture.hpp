@@ -76,6 +76,12 @@ public:
     bool IsCompressed() const { return m_compressed; }
     size_t MemoryBytes() const { return m_memoryBytes; }
 
+    // Alpha metadata is measured from the decoded base mip. AlphaCoverage is
+    // the fraction of pixels with alpha >= 250; it is used to distinguish
+    // near-opaque cutouts (eyes) from true alpha-blended cards (hair, brows).
+    bool HasAlpha() const { return m_hasAlpha; }
+    float AlphaCoverage() const { return m_alphaCoverage; }
+
     void Destroy();
 
 private:
@@ -85,6 +91,8 @@ private:
     std::string         m_path;
     bool                m_srgb = false;
     bool                m_compressed = false;
+    bool                m_hasAlpha = false;
+    float               m_alphaCoverage = 1.0f;
     uint16_t            m_width = 0;
     uint16_t            m_height = 0;
     uint8_t             m_numMips = 0;

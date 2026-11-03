@@ -134,10 +134,11 @@ namespace {
         glm::vec4 albedoFactor{1.0f};
         glm::vec3 emissiveFactor{0.0f};
         float metallicFactor = 0.0f;
-        float roughnessFactor = 0.5f;
+        float roughnessFactor = 1.0f;
         float normalStrength = 1.0f;
         float occlusionStrength = 1.0f;
         float alphaCutoff = 0.5f;
+        bool alphaTest = false;
         bool twoSided = false;
         std::array<const Texture*, 9> textures{};
 
@@ -156,6 +157,7 @@ namespace {
                    normalStrength == other.normalStrength &&
                    occlusionStrength == other.occlusionStrength &&
                    alphaCutoff == other.alphaCutoff &&
+                   alphaTest == other.alphaTest &&
                    twoSided == other.twoSided &&
                    textures == other.textures;
         }
@@ -187,6 +189,7 @@ namespace {
             HashCombine(seed, HashFloat(key.normalStrength));
             HashCombine(seed, HashFloat(key.occlusionStrength));
             HashCombine(seed, HashFloat(key.alphaCutoff));
+            HashCombine(seed, std::hash<bool>{}(key.alphaTest));
             HashCombine(seed, std::hash<bool>{}(key.twoSided));
             for (const Texture* texture : key.textures) {
                 HashCombine(seed, std::hash<const void*>{}(texture));
@@ -207,6 +210,7 @@ namespace {
         key.normalStrength = mat.normalStrength;
         key.occlusionStrength = mat.occlusionStrength;
         key.alphaCutoff = mat.alphaCutoff;
+        key.alphaTest = mat.alphaTest;
         key.twoSided = mat.twoSided;
         key.textures = {
             mat.albedoMap.get(),
@@ -665,6 +669,7 @@ void RenderSystem::RenderOcclusion(Scene& scene, const Camera& camera,
         const auto& matc = view.get<MaterialComponent>(handle);
         if (!mc.mesh || !mc.mesh->Valid() || !matc.material ||
             matc.material->isGlass || matc.material->translucencyEnabled ||
+            matc.material->alphaBlend ||
             HasSkeletonRoot(scene, handle) ||
             scene.Registry().all_of<SoftBodyComponent>(handle)) {
             continue;
@@ -849,7 +854,10 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         // Transparent glass is submitted later in RenderGlass, after the
         // post-processed image has been copied into the color attachment.
         // Lit translucency has its own forward pass before tonemapping.
-        if (matc.material->isGlass || matc.material->translucencyEnabled) continue;
+        if (matc.material->isGlass || matc.material->translucencyEnabled ||
+            matc.material->alphaBlend) {
+            continue;
+        }
 
         const glm::mat4 model = EntityWorldMatrix(scene, h);
         const uint32_t entityId = static_cast<uint32_t>(entt::to_integral(h));
@@ -1390,7 +1398,10 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
         if (scene.Registry().all_of<MaterialComponent>(h)) {
             const auto& matc = scene.Registry().get<MaterialComponent>(h);
             if (matc.material) {
-                if (matc.material->isGlass || !matc.material->castsShadow) continue;
+                if (matc.material->isGlass || matc.material->alphaBlend ||
+                    !matc.material->castsShadow) {
+                    continue;
+                }
                 twoSided = matc.material->twoSided;
                 shadowDepthOffset = matc.material->shadowDepthOffset;
             }
@@ -1516,7 +1527,10 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
         if (scene.Registry().all_of<MaterialComponent>(h)) {
             const auto& matc = scene.Registry().get<MaterialComponent>(h);
             if (matc.material) {
-                if (matc.material->isGlass || !matc.material->castsShadow) continue;
+                if (matc.material->isGlass || matc.material->alphaBlend ||
+                    !matc.material->castsShadow) {
+                    continue;
+                }
                 twoSided = matc.material->twoSided;
                 shadowDepthOffset = matc.material->shadowDepthOffset;
             }
@@ -1606,7 +1620,7 @@ void RenderSystem::BindMaterial(const Material& mat) {
         mat.metallicMap ? 1.0f : 0.0f,
         mat.roughnessMap ? 1.0f : 0.0f,
         mat.specularMap ? 1.0f : 0.0f,
-        mat.opacityMap ? 1.0f : 0.0f
+        (mat.opacityMap || mat.alphaTest) ? 1.0f : 0.0f
     };
     bgfx::setUniform(u_albedoFactor, alb);
     bgfx::setUniform(u_metallicFactor, met);
@@ -1845,7 +1859,8 @@ bool RenderSystem::RenderPlanarReflection(Scene& scene, const Camera& camera,
         if (!meshComponent.mesh || !meshComponent.mesh->Valid() ||
             !materialComponent.material ||
             materialComponent.material->isGlass ||
-            materialComponent.material->translucencyEnabled) {
+            materialComponent.material->translucencyEnabled ||
+            materialComponent.material->alphaBlend) {
             continue;
         }
 
@@ -2373,7 +2388,9 @@ void RenderSystem::RenderTranslucency(Scene& scene, const Camera& camera,
         const auto& mc = view.get<MeshComponent>(h);
         const auto& matc = view.get<MaterialComponent>(h);
         if (!mc.mesh || !mc.mesh->Valid() || !matc.material ||
-            !matc.material->translucencyEnabled || matc.material->isGlass) {
+            (!matc.material->translucencyEnabled &&
+             !matc.material->alphaBlend) ||
+            matc.material->isGlass) {
             continue;
         }
 
@@ -2381,22 +2398,14 @@ void RenderSystem::RenderTranslucency(Scene& scene, const Camera& camera,
         item.entity = h;
         item.mesh = mc.mesh;
         item.material = matc.material;
+        item.model = EntityWorldMatrix(scene, h);
 
-        entt::entity curr = h;
-        int depth = 0;
-        while (curr != entt::null && depth++ < 128) {
-            if (scene.Registry().all_of<TransformComponent>(curr)) {
-                item.model = item.model *
-                    scene.Registry().get<TransformComponent>(curr).LocalMatrix();
-            }
-            if (scene.Registry().all_of<ParentComponent>(curr)) {
-                curr = scene.Registry().get<ParentComponent>(curr).parent;
-            } else {
-                break;
-            }
-        }
-
-        const glm::vec3 worldPos = glm::vec3(item.model[3]);
+        glm::vec3 boundsMin(0.0f);
+        glm::vec3 boundsMax(0.0f);
+        item.mesh->LocalAABB(boundsMin, boundsMax);
+        const glm::vec3 boundsCenter = (boundsMin + boundsMax) * 0.5f;
+        const glm::vec3 worldPos =
+            glm::vec3(item.model * glm::vec4(boundsCenter, 1.0f));
         item.distanceSq = glm::dot(worldPos - camPos, worldPos - camPos);
         items.push_back(std::move(item));
     }
@@ -2441,15 +2450,24 @@ void RenderSystem::RenderTranslucency(Scene& scene, const Camera& camera,
             mat.specularMap ? 1.0f : 0.0f,
             mat.opacityMap ? 1.0f : 0.0f
         };
-        const float trans[4] = {mat.translucencyOpacity,
-                                mat.translucencyStrength,
-                                mat.translucencyThickness,
-                                mat.translucencyDistortion};
-        const float transColor[4] = {mat.translucencyColor.r,
-                                     mat.translucencyColor.g,
-                                     mat.translucencyColor.b, 1.0f};
-        const float transShadow[4] = {mat.translucencyShadowDepth,
-                                      0.0f, 0.0f, 0.0f};
+        // Pure alpha-blend materials use the albedo alpha directly. Lit
+        // translucency keeps its explicit opacity/tint settings.
+        const bool alphaOnly = mat.alphaBlend && !mat.translucencyEnabled;
+        const float trans[4] = {
+            alphaOnly ? 1.0f : mat.translucencyOpacity,
+            alphaOnly ? 0.0f : mat.translucencyStrength,
+            alphaOnly ? 0.0f : mat.translucencyThickness,
+            alphaOnly ? 0.0f : mat.translucencyDistortion
+        };
+        const float transColor[4] = {
+            alphaOnly ? 0.0f : mat.translucencyColor.r,
+            alphaOnly ? 0.0f : mat.translucencyColor.g,
+            alphaOnly ? 0.0f : mat.translucencyColor.b, 1.0f
+        };
+        const float transShadow[4] = {
+            alphaOnly ? 0.0f : mat.translucencyShadowDepth,
+            0.0f, 0.0f, 0.0f
+        };
 
         bgfx::setUniform(u_albedoFactor, alb);
         bgfx::setUniform(u_metallicFactor, met);
