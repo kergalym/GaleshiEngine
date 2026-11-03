@@ -202,8 +202,9 @@ void PushProfileHistory(std::array<float, N>& values, float value) {
 
 struct EditorPreferences {
     float cameraOrbitSensitivity = 0.01f;
-    float cameraPanSpeed = 10.0f;
-    float cameraZoomSpeed = 0.5f;
+    // Fraction of the current orbit distance travelled per mouse-wheel notch.
+    // The wheel dollies the editor camera forward/back along its view.
+    float cameraWheelSpeed = 0.1f;
     float cameraFovDegrees = 60.0f;
 };
 
@@ -897,10 +898,8 @@ protected:
                 const auto& viewport = j["viewport"];
                 m_preferences.cameraOrbitSensitivity =
                     viewport.value("orbit_sensitivity", m_preferences.cameraOrbitSensitivity);
-                m_preferences.cameraPanSpeed =
-                    viewport.value("pan_speed", m_preferences.cameraPanSpeed);
-                m_preferences.cameraZoomSpeed =
-                    viewport.value("zoom_speed", m_preferences.cameraZoomSpeed);
+                m_preferences.cameraWheelSpeed =
+                    viewport.value("wheel_speed", m_preferences.cameraWheelSpeed);
                 m_preferences.cameraFovDegrees =
                     viewport.value("camera_fov", m_preferences.cameraFovDegrees);
             }
@@ -923,10 +922,8 @@ protected:
 
         m_preferences.cameraOrbitSensitivity =
             std::clamp(m_preferences.cameraOrbitSensitivity, 0.001f, 0.1f);
-        m_preferences.cameraPanSpeed =
-            std::clamp(m_preferences.cameraPanSpeed, 1.0f, 50.0f);
-        m_preferences.cameraZoomSpeed =
-            std::clamp(m_preferences.cameraZoomSpeed, 0.05f, 3.0f);
+        m_preferences.cameraWheelSpeed =
+            std::clamp(m_preferences.cameraWheelSpeed, 0.02f, 0.5f);
         m_preferences.cameraFovDegrees =
             std::clamp(m_preferences.cameraFovDegrees, 30.0f, 110.0f);
 
@@ -943,8 +940,7 @@ protected:
         nlohmann::json j;
         j["viewport"] = {
             {"orbit_sensitivity", m_preferences.cameraOrbitSensitivity},
-            {"pan_speed", m_preferences.cameraPanSpeed},
-            {"zoom_speed", m_preferences.cameraZoomSpeed},
+            {"wheel_speed", m_preferences.cameraWheelSpeed},
             {"camera_fov", m_preferences.cameraFovDegrees},
         };
 
@@ -1406,12 +1402,20 @@ protected:
                 m_viewportHovered && !m_editor.GizmoLocked() &&
                 !ImGuizmo::IsUsing();
             
-            // Зум
-            if (m_viewportHovered) {
-                float wheel = ImGui::GetIO().MouseWheel;
+            // Mouse wheel dollies the viewport camera forward/back along its
+            // view direction. Moving the orbit target as well keeps the
+            // camera orientation unchanged while it travels through the scene.
+            if (cameraControllable && !ImGui::GetIO().WantTextInput) {
+                const float wheel = GetInput().MouseWheel();
                 if (wheel != 0.0f) {
-                    m_editor.camRadius -= wheel * m_preferences.cameraZoomSpeed;
-                    m_editor.camRadius = glm::clamp(m_editor.camRadius, 0.5f, 200.0f);
+                    const float cp = std::cos(m_editor.camPitch);
+                    const float sp = std::sin(m_editor.camPitch);
+                    const float sy = std::sin(m_editor.camYaw);
+                    const float cy = std::cos(m_editor.camYaw);
+                    const glm::vec3 forward{-cp * sy, -sp, -cp * cy};
+                    const float step = std::max(m_editor.camRadius, 0.5f) *
+                                       m_preferences.cameraWheelSpeed;
+                    m_editor.camTarget += forward * (wheel * step);
                 }
             }
 
@@ -1421,20 +1425,6 @@ protected:
                 m_editor.camYaw   -= d.x * m_preferences.cameraOrbitSensitivity;
                 m_editor.camPitch -= d.y * m_preferences.cameraOrbitSensitivity;
                 m_editor.camPitch  = glm::clamp(m_editor.camPitch, -1.5f, 1.5f);
-            }
-
-            // Перемещение стрелками
-            if (cameraControllable && !ImGui::GetIO().WantTextInput) {
-                float panSpeed = m_preferences.cameraPanSpeed * dt;
-                float yaw = m_editor.camYaw;
-                glm::vec3 forward(std::sin(yaw), 0.0f, std::cos(yaw));
-                glm::vec3 right(forward.z, 0.0f, -forward.x);
-
-                if (ImGui::IsKeyDown(ImGuiKey_UpArrow))    m_editor.camTarget -= forward * panSpeed;
-                if (ImGui::IsKeyDown(ImGuiKey_DownArrow))  m_editor.camTarget += forward * panSpeed;
-                if (ImGui::IsKeyDown(ImGuiKey_LeftArrow))  m_editor.camTarget -= right * panSpeed;
-                if (ImGui::IsKeyDown(ImGuiKey_RightArrow)) m_editor.camTarget += right * panSpeed;
-
             }
 
             const float aspect = m_viewportH
@@ -2082,11 +2072,14 @@ private:
                                &m_preferences.cameraOrbitSensitivity,
                                0.001f, 0.05f, "%.3f");
             ImGui::SetNextItemWidth(260.0f);
-            ImGui::SliderFloat("Pan speed", &m_preferences.cameraPanSpeed,
-                               1.0f, 50.0f, "%.1f");
-            ImGui::SetNextItemWidth(260.0f);
-            ImGui::SliderFloat("Zoom speed", &m_preferences.cameraZoomSpeed,
-                               0.05f, 3.0f, "%.2f");
+            ImGui::SliderFloat("Wheel distance", &m_preferences.cameraWheelSpeed,
+                               0.02f, 0.5f, "%.2f");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "How far the viewport camera moves per wheel notch,\n"
+                    "as a fraction of the current orbit distance.\n"
+                    "Wheel up moves forward, wheel down moves backward.");
+            }
             ImGui::SetNextItemWidth(260.0f);
             ImGui::SliderFloat("Field of view", &m_preferences.cameraFovDegrees,
                                30.0f, 110.0f, "%.0f deg");
@@ -2096,7 +2089,8 @@ private:
                               ImVec2(190.0f, 0.0f))) {
                 m_preferences = EditorPreferences{};
             }
-            ImGui::TextDisabled("Right mouse drag orbits; arrow keys pan.");
+            ImGui::TextDisabled(
+                "Right mouse drag orbits; mouse wheel moves forward/back.");
             break;
         }
 

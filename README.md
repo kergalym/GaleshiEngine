@@ -316,8 +316,7 @@ Packaging is experimental:
 | Input | Action |
 | --- | --- |
 | Right mouse drag | Orbit the editor camera |
-| Mouse wheel | Zoom |
-| Arrow keys | Pan the editor camera only |
+| Mouse wheel | Move the editor camera forward/back along the view direction |
 | W / A / S / D | Move the player (when the scene is playing) |
 | Esc | Stop the running scene |
 | Left click | Select an entity |
