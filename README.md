@@ -153,7 +153,8 @@ The ImGuizmo manipulator is currently visual only. Dragging the center marker mo
 git clone <repo> GaleshiEngine
 cd GaleshiEngine
 cmake --preset debug --fresh
-cmake --build --preset debug -j"$(nproc)"
+cmake --build build/debug --target clean
+cmake --build build/debug -j"$(nproc)"
 ```
 
 ```bash
@@ -179,7 +180,8 @@ Optional flags:
 
 ```bash
 cmake --preset debug --fresh
-cmake --build --preset debug -j"$(nproc)"
+cmake --build build/debug --target clean
+cmake --build build/debug -j"$(nproc)"
 ./build/debug/bin/GaleshiRuntime
 ```
 
@@ -189,7 +191,8 @@ cmake --build --preset debug -j"$(nproc)"
 
 ```bash
 cmake --preset release --fresh
-cmake --build --preset release -j"$(nproc)"
+cmake --build build/release --target clean
+cmake --build build/release -j"$(nproc)"
 ./build/release/bin/GaleshiEditor
 ```
 

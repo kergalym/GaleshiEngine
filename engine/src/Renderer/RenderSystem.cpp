@@ -1489,6 +1489,8 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
     }
 
     RenderVegetationShadows(scene, m_instancedShadowProg, viewId);
+    // Drop the pending zero-offset uniform before the next shadow cascade.
+    bgfx::discard();
 }
 
 
@@ -1605,6 +1607,8 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
     }
 
     RenderVegetationShadows(scene, m_instancedShadowPointProg, viewId);
+    // Drop the pending zero-offset uniform before the next shadow view.
+    bgfx::discard();
 }
 
 void RenderSystem::BindMaterial(const Material& mat) {
