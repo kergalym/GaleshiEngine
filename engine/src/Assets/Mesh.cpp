@@ -90,17 +90,35 @@ void Mesh::Upload(const std::vector<Vertex>& vertices, const std::vector<uint32_
     // leak the previous GPU buffers or keep stale LOD geometry.
     Destroy();
 
+    // The skinned vertex shader always evaluates a bone palette. Static
+    // imported meshes have no joint influences, so give unweighted vertices
+    // the identity dummy bone instead of collapsing them to zero. This also
+    // keeps a static glTF correct after an AnimationStateMachineComponent adds
+    // a SkeletalComponent to its root.
+    std::vector<Vertex> weightedVertices;
+    const std::vector<Vertex>* uploadVertices = &vertices;
+    for (size_t i = 0; i < vertices.size(); ++i) {
+        const Vertex& vertex = vertices[i];
+        const float weight = vertex.boneWeights.x + vertex.boneWeights.y +
+                             vertex.boneWeights.z + vertex.boneWeights.w;
+        if (weight > 1e-6f) continue;
+        if (weightedVertices.empty()) weightedVertices = vertices;
+        weightedVertices[i].boneIDs = glm::vec4(255.0f, 0.0f, 0.0f, 0.0f);
+        weightedVertices[i].boneWeights = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
+        uploadVertices = &weightedVertices;
+    }
+
     const bgfx::VertexLayout layout = MakeVertexLayout();
     m_vb = bgfx::createDynamicVertexBuffer(
-        bgfx::copy(vertices.data(),
-                   static_cast<uint32_t>(vertices.size() * sizeof(Vertex))),
+        bgfx::copy(uploadVertices->data(),
+                   static_cast<uint32_t>(uploadVertices->size() * sizeof(Vertex))),
         layout);
     m_ib = bgfx::createIndexBuffer(
         bgfx::copy(indices.data(),
                    static_cast<uint32_t>(indices.size() * sizeof(uint32_t))),
         BGFX_BUFFER_INDEX32);
     m_indexCount = static_cast<uint32_t>(indices.size());
-    m_vertices   = vertices;
+    m_vertices   = *uploadVertices;
     m_indices    = indices;
 }
 
