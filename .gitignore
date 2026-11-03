@@ -37,3 +37,4 @@ engine/assets/meshes/*
 # Local packaging tools and artifacts
 .tools/
 dist/
+AGENTS.md

@@ -12,36 +12,9 @@ GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20
 
 ## Features
 
-| System | Status | Notes |
-| --- | --- | --- |
-| Window and input | Working | SDL3 |
-| Input axes | Working | Keyboard, mouse movement, wheel; tunable in Edit -> Preferences |
-| Scene and ECS | Working | EnTT, parent-child transforms, entity lifecycle |
-| Renderer core | Working | bgfx with the Vulkan backend |
-| Deferred PBR | Working | Metallic-roughness PBR with G-Buffer |
-| IBL | Working | Irradiance and prefiltered environment cubemaps |
-| SSGI | Working | Half-resolution screen-space indirect diffuse lighting with bilateral upsample |
-| Shadow maps | Working | 3-cascade directional PSSM, point and spot shadows |
-| Tiled light culling | Working | 16x16 tiles, up to 64 point lights in the deferred path |
-| Post-processing | Working | DoF, motion blur, atmosphere, fog, and the full stack are tested; effects can be isolated with `GALESHI_EFFECTS` |
-| Physics | Working | Jolt rigid bodies and cloth/soft-body simulation |
-| Particles | Working | CPU-simulated billboard emitters, editable in Details and serialized in scenes |
-| AI and navigation | Working | Recast/Detour NavMesh, path following, behavior trees, and perception |
-| Landscape and vegetation | Working | Heightfield sculpting tools and deterministic instanced trees/grass |
-| Scripting | Working | Lua 5.4 through sol2, hot reload, animation/AI state control |
-| Audio | Working | miniaudio, 2D playback and looping |
-| Asset import | Working | Assimp FBX/glTF, PBR materials, skeletal animation |
-| Editor | Working | Docking UI, viewport, outliner, details, content browser, and Preferences |
-| UI Designer | ✅ Done | Canvas overlay, widget palette (Panel, Text, Button, Image, Slider, Checkbox, Progress, Input, Dropdown, Scroll, Toggle, Layout), live preview, and serialized UI widgets |
-| Gizmo | Partial | ImGuizmo is rendered, but its transform is not applied |
-| Glass material | WIP | Shader and UI flag exist, render pass is not connected |
-| Scene serialization | Working | ECS, materials, landscape/vegetation, animation, AI components, editor camera view, and global post-process settings/volumes |
-| Runtime and packaging | ✅ Done | GameMode is a real editor runtime (`--game <gproj>`) that opens the project, loads `startScene`, and starts playing; AppImage packaging is available |
-| Automated tests | None | `BUILD_TESTING` is disabled |
-
 ---
 
-## Rendering
+### Rendering
 
 The primary rendering path is deferred:
 
@@ -66,8 +39,6 @@ The primary rendering path is deferred:
 - Procedural groom hair with guide curves, dense skin-aware strands, spring/wind simulation, and anisotropic ribbon shading.
 - Skybox and debug line rendering.
 
-There is also a forward PBR fallback in `RenderSystem`, but the deferred path is the primary one and is enabled by default.
-
 Implemented post-processing passes:
 
 - SSAO, HBAO, and GTAO ambient occlusion with quarter/half-resolution AO evaluation and a bilateral upsample
@@ -87,12 +58,9 @@ Implemented post-processing passes:
 - Vignette
 - Chromatic aberration
 - Invert
-- Scene-wide post-processing volumes with per-effect tuning for bloom, DoF, motion blur, tonemap, color correction, vignette, ambient occlusion (SSAO/HBAO/GTAO), SSR, anti-aliasing, god rays, atmosphere, and fog. The highest-priority enabled volume applies to the entire scene; bounds are editor-only visualization. The Post-Process menu edits the active source (volume or global settings), so menu and volume controls override each other on the last change.
-- Realtime Rendering toggle in the Rendering menu pauses only scene, shadow, reflection and post-process GPU render passes while keeping the editor responsive and displaying the last completed viewport frame. Physics, animation, scripts, AI, particles and scene time keep updating normally.
-
 ---
 
-## Physics
+### Physics
 
 - Jolt Physics 5.2.
 - Static, dynamic, and kinematic rigid bodies.
@@ -104,7 +72,7 @@ Implemented post-processing passes:
 
 Joint and constraint interfaces are not exposed yet.
 
-## AI and navigation
+### AI and navigation
 
 - Recast/Detour NavMesh generation from scene meshes and landscape geometry.
 - Pathfinding between world-space points and NavAgent waypoint following.
@@ -119,22 +87,11 @@ Joint and constraint interfaces are not exposed yet.
 
 Squad coordination and shared blackboards are not implemented.
 
-## Scripting
+### Scripting
 
 - Lua 5.4 with sol2.
 - Hot reload with F5.
-- Lifecycle callbacks: `RunOnce()` runs once after the script is loaded (and again after each successful hot reload), then `RunAlways(dt)` runs every frame. The legacy `update(dt)` callback is used as a fallback when `RunAlways` is not defined.
-- Entity creation and destruction.
-- Transform access: `set_position`, `get_position`, `translate`.
-- Input axes and mouse helpers. `get_axis(name)` and `get_axis_raw(name)` read the configured axes; `get_mouse_position()`, `get_mouse_delta()`, `get_mouse_wheel()`, and `is_mouse_button_down(button)` expose raw mouse state.
-- Character roots without a live Jolt body use the script fallback controller; it supports script velocities, gravity and impulses, so `add_impulse`-based Jump works for those roots too.
-- The default axes are `Horizontal` (`A = -1`, `D = +1`), `Vertical` (`W = +1`, `S = -1`), `Jump` (`Space`), `Mouse X`, `Mouse Y`, and `Mouse ScrollWheel`. Keyboard bindings can be rebound per axis in Edit -> Preferences; changes are stored in the project's `input.json`. The same page has `Reset Keys to Defaults`.
-- Impulse and velocity control.
-- Sound playback.
-- Navigation commands for AI agents.
-- Entities created by scripts are tagged with `LuaEntityComponent` and removed on hot reload.
 - Unified `Galeshi` API: namespaced gameplay modules (`world`, `input`, `physics`, `audio`, `animation`, `ai`, `navigation`, `ui`, `particles`, `engine`) plus entity handles with methods. The legacy global functions remain available for existing scripts. See [docs/LUA_API.md](docs/LUA_API.md).
-- Skeletal animation from Lua: declare an imported model with `Galeshi.animation.model(path)`, spawn its mesh hierarchy, or pass it to `animation.play()` / `apply()` for playback and state-machine control.
 
 ```lua
 local player = nil
@@ -151,7 +108,7 @@ function RunAlways(dt)
 end
 ```
 
-## Audio
+### Audio
 
 - miniaudio.
 - File-based playback, looping, stopping, and playback state checks.
@@ -161,32 +118,9 @@ end
 - Mixer buses: Master, Music, SFX, Voice, and Ambient, with per-source routing and volume/mute controls in the Audio Mixer window.
 - Playback can be triggered from Lua, editor actions, or collision callbacks.
 
-## Assets
-
-- Assimp import for FBX and glTF.
-- Meshes, PBR materials, and textures with caching.
-- Primitive cube, sphere, and capsule meshes.
-- Landscape heightfield generation with Raise, Lower, Smooth, Flatten, and Noise brushes, with a terrain-following brush outline.
-- Deterministic procedural tree and grass generation, rendered with per-instance matrices and instanced shadow passes.
-- Multiple draggable tree species for landscape vegetation; each has its own model, density, size and texture override row, and can be painted or generated together. Dropped tree models default to Size `0.010`. Density scales the species' generated instance count, while Size scales the model itself. Models can be dropped from the Content Browser or viewport; each species' Tree Textures row accepts Albedo/Normal/MR/Emissive/Occlusion/Opacity/Specular drops, while the Landscape keeps its own material texture row.
-- Tree and grass painting brushes with adjustable density and instance size. A single click stamps foliage and dragging continues the stroke. Painted instances are serialized with the scene, and `Hide Default Instances` hides generated procedural trees/grass while keeping authored tree species and painted vegetation visible.
-- Skeletal animation clip sampling with weighted pose blending.
-- Serializable animation state machines with parameters, triggers, transitions, and blend durations. Each state can use clips embedded in the character FBX or a separate animation FBX; separate clips are retargeted onto the character skeleton by bone name. Runtime retargeting also remaps namespace prefixes such as `mixamorig:` or `Korlan:` onto the selected character's root-bone prefix, and provides an `Animation Scale` multiplier for unit conversion (for example `0.01` for centimeter clips on a meter character).
-- PBR material parameters and texture slots.
-
-## Editor
+### Editor
 
 - Docking ImGui interface.
-- Viewport with orbit camera, selection, and drag movement. Camera navigation ignores collision shapes and their transform gizmos while moving, so it cannot be blocked by hovering them.
-- World Outliner and Details panels, with independent collision/physics child nodes. Detaching is available only for children of collision shapes; skeletal-model children stay locked, and detach preserves their world transform. Parented static collider bodies follow their moving parent, so cameras attached below collision shapes remain stable during player movement.
-- Collision-shape wireframes keep the same visibility across Play/Stop and are controlled only by their per-collider Visible in Editor flag; attached meshes are never hidden by Play mode.
-- Content Browser with model import and a right-click menu for creating folders/Lua scripts, renaming, moving and deleting files and directories. Models, textures and audio can also be dragged in from any file manager; drops on the browser import into the current folder, other drops go to `assets/`.
-- `File -> New Scene` replaces the current document with an empty scene and releases the previous scene's mesh, material and texture GPU resources before continuing. `File -> Recent Scenes` keeps up to ten recently loaded/saved scenes per project for quick loading.
-- The Details Transform section includes a Uniform Scale control that updates X, Y and Z together for the selection.
-- Create entities, lights, physics primitives, cloth, landscape, AI agents, and gameplay cameras.
-- Camera entities expose FOV, clip planes, primary/priority selection and local Transform offset. A camera parented to a character follows it; during Play the selected primary camera overrides the editor viewport, and Stop restores the orbit camera and its previous view.
-- `Testing -> Build Scene` rebuilds the PBR test scene: 12 colored spheres (3 albedo samples and a 3x3 metallic/roughness grid) plus the physics demo objects and ground.
-- When `scene.json` is missing, the editor starts with an empty scene; the test scene is not built automatically.
 - PBR material editing with Metal, Plastic, Rubber, and Gold presets.
 - Landscape sculpting with brush settings, undo snapshots, and vegetation regeneration.
 - Animation state machine editor with states, clips, parameters, and transitions.
@@ -210,8 +144,6 @@ The ImGuizmo manipulator is currently visual only. Dragging the center marker mo
 - C++20 compiler: GCC 13+, Clang 15+, or MSVC 19.35+.
 - Ninja.
 - A working Vulkan driver and Vulkan SDK.
-- `shaderc` available in `PATH` or in the Vulkan SDK.
-- X11 development headers.
 - FreeType development files.
 - Network access during the first configure, because dependencies are fetched with FetchContent.
 
