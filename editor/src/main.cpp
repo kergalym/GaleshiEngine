@@ -11880,6 +11880,23 @@ void DrawDetails() {
         return maxY > minY ? maxY - minY : 0.0f;
     }
 
+    // Imported objects start with a non-metallic material. Clone the asset
+    // material so this default does not mutate the AssetManager cache or
+    // another instance the artist already adjusted manually.
+    static std::shared_ptr<Galeshi::Material> ImportedMaterial(
+        const std::shared_ptr<Galeshi::Material>& source,
+        std::unordered_map<const Galeshi::Material*,
+                           std::shared_ptr<Galeshi::Material>>& clones) {
+        if (!source) return nullptr;
+        auto [it, inserted] = clones.try_emplace(source.get());
+        if (inserted) {
+            it->second = std::make_shared<Galeshi::Material>(*source);
+            it->second->metallicFactor = 0.0f;
+            it->second->sceneOverride = true;
+        }
+        return it->second;
+    }
+
     Galeshi::Entity CreateMaterialSlotEntity(
         entt::entity parent, const std::string& name,
         const std::shared_ptr<Galeshi::Material>& sourceMaterial) {
@@ -12208,17 +12225,22 @@ void DrawDetails() {
         size_t preservedMaterials = 0;
         std::vector<entt::entity> newMeshEntities;
         newMeshEntities.reserve(newModel.meshes.size());
+        std::unordered_map<const Galeshi::Material*,
+                           std::shared_ptr<Galeshi::Material>> importedMaterials;
         for (size_t i = 0; i < newModel.meshes.size(); ++i) {
             std::shared_ptr<Galeshi::Material> newMaterial;
             if (i < newModel.meshMaterialIndex.size()) {
                 const int materialIndex = newModel.meshMaterialIndex[i];
                 if (materialIndex >= 0 &&
                     materialIndex < static_cast<int>(newModel.materials.size())) {
-                    newMaterial = newModel.materials[static_cast<size_t>(materialIndex)];
+                    newMaterial = ImportedMaterial(
+                        newModel.materials[static_cast<size_t>(materialIndex)],
+                        importedMaterials);
                 }
             }
             if (!newMaterial && !newModel.materials.empty())
-                newMaterial = newModel.materials.front();
+                newMaterial = ImportedMaterial(
+                    newModel.materials.front(), importedMaterials);
             if (!newMaterial)
                 newMaterial = std::make_shared<Galeshi::Material>();
 
@@ -12503,6 +12525,8 @@ void DrawDetails() {
         }
 
         std::unordered_set<int> usedMaterialSlots;
+        std::unordered_map<const Galeshi::Material*,
+                           std::shared_ptr<Galeshi::Material>> importedMaterials;
         for (size_t i = 0; i < model.meshes.size(); ++i) {
             const std::string meshName =
                 (i < model.meshNames.size() && !model.meshNames[i].empty())
@@ -12519,12 +12543,14 @@ void DrawDetails() {
             if (i < model.meshMaterialIndex.size()) {
                 int matIdx = model.meshMaterialIndex[i];
                 if (matIdx >= 0 && matIdx < static_cast<int>(model.materials.size())) {
-                    mat = model.materials[static_cast<size_t>(matIdx)];
+                    mat = ImportedMaterial(
+                        model.materials[static_cast<size_t>(matIdx)],
+                        importedMaterials);
                     usedMaterialSlots.insert(matIdx);
                 }
             }
             if (!mat && !model.materials.empty())
-                mat = model.materials[0];
+                mat = ImportedMaterial(model.materials[0], importedMaterials);
             if (!mat)
                 mat = std::make_shared<Galeshi::Material>();
             // Leave the exported material name untouched. Empty names are
@@ -12540,8 +12566,9 @@ void DrawDetails() {
                 !model.materials[i] || model.materials[i]->name.empty()) {
                 continue;
             }
-            CreateMaterialSlotEntity(root.Handle(), model.materials[i]->name,
-                                     model.materials[i]);
+            CreateMaterialSlotEntity(
+                root.Handle(), model.materials[i]->name,
+                ImportedMaterial(model.materials[i], importedMaterials));
         }
 
         m_editor.Select(root);
