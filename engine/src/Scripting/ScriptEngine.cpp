@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -21,11 +22,14 @@
 #include <utility>
 
 #if defined(__unix__) || defined(__APPLE__)
-#include <dlfcn.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/prctl.h>
+#endif
 #endif
 
 namespace Galeshi {
@@ -104,23 +108,6 @@ float InterpFactor(float deltaTime, float speed) {
     return std::clamp(1.0f - std::exp(-speed * deltaTime), 0.0f, 1.0f);
 }
 
-float ScriptFInterp(float current, float target, float deltaTime,
-                    float speed) {
-    return current + (target - current) *
-                         InterpFactor(deltaTime, speed);
-}
-
-GaleshiScriptVec3 ScriptVInterp(GaleshiScriptVec3 current,
-                                GaleshiScriptVec3 target,
-                                float deltaTime, float speed) {
-    const float t = InterpFactor(deltaTime, speed);
-    return {
-        current.x + (target.x - current.x) * t,
-        current.y + (target.y - current.y) * t,
-        current.z + (target.z - current.z) * t,
-    };
-}
-
 GaleshiScriptVec3 ToScriptVec3(const glm::vec3& value) {
     return {value.x, value.y, value.z};
 }
@@ -135,6 +122,43 @@ bool IsCppScriptPath(const std::filesystem::path& path) {
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
     return extension == ".cpp" || extension == ".cc" || extension == ".cxx";
+}
+
+bool ReadWorkerPacket(int fd, CppWorkerPacket& packet) {
+#if defined(__unix__) || defined(__APPLE__)
+    auto* bytes = reinterpret_cast<unsigned char*>(&packet);
+    std::size_t offset = 0;
+    while (offset < sizeof(packet)) {
+        const ssize_t count = read(fd, bytes + offset,
+                                   sizeof(packet) - offset);
+        if (count <= 0) return false;
+        offset += static_cast<std::size_t>(count);
+    }
+    return true;
+#else
+    (void)fd;
+    (void)packet;
+    return false;
+#endif
+}
+
+bool WriteWorkerPacket(int fd, const CppWorkerPacket& packet) {
+#if defined(__unix__) || defined(__APPLE__)
+    const auto* bytes =
+        reinterpret_cast<const unsigned char*>(&packet);
+    std::size_t offset = 0;
+    while (offset < sizeof(packet)) {
+        const ssize_t count = write(fd, bytes + offset,
+                                    sizeof(packet) - offset);
+        if (count <= 0) return false;
+        offset += static_cast<std::size_t>(count);
+    }
+    return true;
+#else
+    (void)fd;
+    (void)packet;
+    return false;
+#endif
 }
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -233,17 +257,14 @@ ScriptEngine::ScriptEngine() {
     m_lua.open_libraries(sol::lib::base, sol::lib::math,
                          sol::lib::table, sol::lib::string);
     BindFunctions();
-    BuildCppApi();
+#if defined(__unix__) || defined(__APPLE__)
+    // A dead worker must not terminate the editor with SIGPIPE.
+    signal(SIGPIPE, SIG_IGN);
+#endif
 }
 
 ScriptEngine::~ScriptEngine() {
-#if defined(__unix__) || defined(__APPLE__)
-    for (auto& [path, module] : m_cppModules) {
-        (void)path;
-        if (module.library) dlclose(module.library);
-    }
-    m_cppModules.clear();
-#endif
+    StopCppWorker();
 }
 
 void ScriptEngine::AddLog(const std::string& msg) {
@@ -2054,87 +2075,272 @@ void ScriptEngine::BuildApi() {
     (void)engine;
 }
 
-void ScriptEngine::BuildCppApi() {
-    if (m_cppApiBuilt) return;
-    m_cppApiBuilt = true;
-    m_cppApi = {};
-    m_cppApi.user = this;
-    m_cppApi.log = [](void* user, const char* message) {
-        if (user && message) {
-            static_cast<ScriptEngine*>(user)->AddLog(message);
-        }
-    };
-    m_cppApi.is_key_down = [](void* user, const char* key) {
-        auto* self = static_cast<ScriptEngine*>(user);
-        return self && self->m_isKeyDown && key
-            ? self->m_isKeyDown(key)
-            : false;
-    };
-    m_cppApi.get_axis = [](void* user, const char* axis) {
-        auto* self = static_cast<ScriptEngine*>(user);
-        return self && self->m_getAxis && axis
-            ? self->m_getAxis(axis)
-            : 0.0f;
-    };
-    m_cppApi.find_entity = [](void* user, const char* name) -> uint32_t {
-        auto* self = static_cast<ScriptEngine*>(user);
-        if (!self || !self->m_scene || !name) return UINT32_MAX;
-        auto& registry = self->m_scene->Registry();
-        auto view = registry.view<NameComponent>();
-        for (auto entity : view) {
-            if (view.get<NameComponent>(entity).name == name) {
-                return static_cast<uint32_t>(entity);
+CppWorkerPacket ScriptEngine::MakeWorkerResponse(
+    const CppWorkerPacket& request) const {
+    CppWorkerPacket response;
+    response.type = static_cast<uint32_t>(CppWorkerMessage::Response);
+    response.id = request.id;
+    response.entity = UINT32_MAX;
+    const auto kind =
+        static_cast<CppWorkerRequest>(request.kind);
+
+    switch (kind) {
+    case CppWorkerRequest::KeyDown:
+        response.valid = m_isKeyDown && m_isKeyDown(request.text)
+            ? 1u : 0u;
+        break;
+    case CppWorkerRequest::Axis:
+        response.x = m_getAxis ? m_getAxis(request.text) : 0.0f;
+        break;
+    case CppWorkerRequest::FindEntity:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            auto view = registry.view<NameComponent>();
+            for (auto entity : view) {
+                if (view.get<NameComponent>(entity).name == request.text) {
+                    response.entity = static_cast<uint32_t>(entity);
+                    response.valid = 1;
+                    break;
+                }
             }
         }
-        return UINT32_MAX;
-    };
-    m_cppApi.entity_valid = [](void* user, uint32_t entity) {
-        auto* self = static_cast<ScriptEngine*>(user);
-        return self && self->m_scene &&
-               self->m_scene->Registry().valid(
-                   static_cast<entt::entity>(entity));
-    };
-    m_cppApi.get_position = [](void* user, uint32_t entity) {
-        auto* self = static_cast<ScriptEngine*>(user);
-        if (self && self->m_scene) {
-            auto& registry = self->m_scene->Registry();
-            const entt::entity handle = static_cast<entt::entity>(entity);
-            if (registry.valid(handle) &&
-                registry.all_of<TransformComponent>(handle)) {
-                return ToScriptVec3(
-                    registry.get<TransformComponent>(handle).position);
+        break;
+    case CppWorkerRequest::EntityValid:
+        response.valid = m_scene &&
+            m_scene->Registry().valid(
+                static_cast<entt::entity>(request.entity)) ? 1u : 0u;
+        break;
+    case CppWorkerRequest::GetPosition:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<TransformComponent>(entity)) {
+                const GaleshiScriptVec3 value = ToScriptVec3(
+                    registry.get<TransformComponent>(entity).position);
+                response.x = value.x;
+                response.y = value.y;
+                response.z = value.z;
+                response.valid = 1;
             }
         }
-        return GaleshiScriptVec3{};
-    };
-    m_cppApi.set_position = [](void* user, uint32_t entity,
-                               GaleshiScriptVec3 position) {
-        auto* self = static_cast<ScriptEngine*>(user);
-        if (!self || !self->m_scene) return;
-        auto& registry = self->m_scene->Registry();
-        const entt::entity handle = static_cast<entt::entity>(entity);
-        if (registry.valid(handle) &&
-            registry.all_of<TransformComponent>(handle)) {
-            registry.get<TransformComponent>(handle).position =
-                FromScriptVec3(position);
+        break;
+    case CppWorkerRequest::SetPosition:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<TransformComponent>(entity)) {
+                registry.get<TransformComponent>(entity).position =
+                    FromScriptVec3({request.x, request.y, request.z});
+                response.valid = 1;
+            }
         }
-    };
-    m_cppApi.get_velocity = [](void* user, uint32_t entity) {
-        auto* self = static_cast<ScriptEngine*>(user);
-        if (self && self->m_getVelocity) {
-            return ToScriptVec3(self->m_getVelocity(entity));
+        break;
+    case CppWorkerRequest::GetVelocity:
+        if (m_getVelocity) {
+            const GaleshiScriptVec3 value =
+                ToScriptVec3(m_getVelocity(request.entity));
+            response.x = value.x;
+            response.y = value.y;
+            response.z = value.z;
+            response.valid = 1;
         }
-        return GaleshiScriptVec3{};
-    };
-    m_cppApi.set_velocity = [](void* user, uint32_t entity,
-                               GaleshiScriptVec3 velocity) {
-        auto* self = static_cast<ScriptEngine*>(user);
-        if (self && self->m_setVelocity) {
-            self->m_setVelocity(entity, FromScriptVec3(velocity));
+        break;
+    case CppWorkerRequest::SetVelocity:
+        if (m_setVelocity) {
+            m_setVelocity(
+                request.entity,
+                FromScriptVec3({request.x, request.y, request.z}));
+            response.valid = 1;
         }
-    };
-    m_cppApi.f_interp = &ScriptFInterp;
-    m_cppApi.v_interp = &ScriptVInterp;
+        break;
+    }
+    return response;
+}
+
+bool ScriptEngine::HandleWorkerPacket(CppWorkerPacket& packet) {
+    const auto type = static_cast<CppWorkerMessage>(packet.type);
+    if (type == CppWorkerMessage::Log) {
+        AddLog(packet.text);
+        return true;
+    }
+    if (type == CppWorkerMessage::Request) {
+        CppWorkerPacket response = MakeWorkerResponse(packet);
+        return WriteWorkerPacket(m_cppWorkerWrite, response);
+    }
+    return true;
+}
+
+bool ScriptEngine::StartCppWorker() {
+    StopCppWorker();
+    if (m_cppModules.empty()) return true;
+
+#if !defined(__unix__) && !defined(__APPLE__)
+    m_cppBuildErrors += "C++ script worker is only supported on Unix.\n";
+    return false;
+#else
+    std::error_code ec;
+    std::filesystem::path workerPath;
+#if defined(__linux__)
+    const std::filesystem::path executable =
+        std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (!ec) {
+        workerPath = executable.parent_path() / "GaleshiScriptWorker";
+    }
+#endif
+    if (workerPath.empty() || !std::filesystem::exists(workerPath, ec)) {
+        workerPath = std::filesystem::current_path() / "GaleshiScriptWorker";
+    }
+    if (!std::filesystem::exists(workerPath, ec)) {
+        m_cppBuildErrors +=
+            "C++ script worker executable was not found: " +
+            workerPath.string() + "\n";
+        AddLog("C++ script worker executable was not found: " +
+               workerPath.string());
+        return false;
+    }
+
+    int toWorker[2] = {-1, -1};
+    int fromWorker[2] = {-1, -1};
+    if (pipe(toWorker) != 0 || pipe(fromWorker) != 0) {
+        if (toWorker[0] >= 0) { close(toWorker[0]); close(toWorker[1]); }
+        if (fromWorker[0] >= 0) { close(fromWorker[0]); close(fromWorker[1]); }
+        m_cppBuildErrors += "Could not create C++ worker pipes.\n";
+        return false;
+    }
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+        close(toWorker[0]); close(toWorker[1]);
+        close(fromWorker[0]); close(fromWorker[1]);
+        m_cppBuildErrors += "Could not start C++ script worker.\n";
+        return false;
+    }
+    if (pid == 0) {
+#if defined(__linux__)
+        // Do not leave an orphan worker behind if the editor exits abruptly.
+        prctl(PR_SET_PDEATHSIG, SIGKILL);
+#endif
+        rlimit coreLimit{0, 0};
+        setrlimit(RLIMIT_CORE, &coreLimit);
+        rlimit memoryLimit{2ull * 1024ull * 1024ull * 1024ull,
+                           2ull * 1024ull * 1024ull * 1024ull};
+        setrlimit(RLIMIT_AS, &memoryLimit);
+
+        close(toWorker[1]);
+        close(fromWorker[0]);
+        dup2(toWorker[0], STDIN_FILENO);
+        dup2(fromWorker[1], STDOUT_FILENO);
+        close(toWorker[0]);
+        close(fromWorker[1]);
+        execl(workerPath.string().c_str(), "GaleshiScriptWorker",
+              static_cast<char*>(nullptr));
+        _exit(127);
+    }
+
+    close(toWorker[0]);
+    close(fromWorker[1]);
+    m_cppWorkerPid = static_cast<int>(pid);
+    m_cppWorkerWrite = toWorker[1];
+    m_cppWorkerRead = fromWorker[0];
+    m_cppWorkerReady = false;
+
+    // LOAD
+    for (const auto& [path, module] : m_cppModules) {
+        CppWorkerPacket load;
+        load.type = static_cast<uint32_t>(CppWorkerMessage::Load);
+        std::snprintf(load.text, sizeof(load.text), "%s",
+                      module.libraryPath.c_str());
+        if (!WriteWorkerPacket(m_cppWorkerWrite, load)) {
+            StopCppWorker("C++ worker exited while loading modules.");
+            return false;
+        }
+    }
+    CppWorkerPacket start;
+    start.type = static_cast<uint32_t>(CppWorkerMessage::Start);
+    if (!WriteWorkerPacket(m_cppWorkerWrite, start)) {
+        StopCppWorker("C++ worker exited while starting.");
+        return false;
+    }
+
+    bool loadFailed = false;
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (true) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
+        if (remaining.count() <= 0) {
+            StopCppWorker("C++ worker startup timed out.");
+            return false;
+        }
+        pollfd descriptor{m_cppWorkerRead, POLLIN, 0};
+        const int ready = poll(&descriptor, 1,
+                               static_cast<int>(remaining.count()));
+        if (ready == 0) {
+            StopCppWorker("C++ worker startup timed out.");
+            return false;
+        }
+        if (ready < 0) {
+            StopCppWorker("C++ worker poll failed during startup.");
+            return false;
+        }
+        CppWorkerPacket packet;
+        if (!ReadWorkerPacket(m_cppWorkerRead, packet)) {
+            StopCppWorker("C++ worker exited during startup.");
+            return false;
+        }
+        const auto type = static_cast<CppWorkerMessage>(packet.type);
+        if (type == CppWorkerMessage::Ready) {
+            m_cppWorkerReady = true;
+            m_cppBuildOutput += "C++ worker ready.\n";
+            return !loadFailed;
+        }
+        if (type == CppWorkerMessage::LoadResult) {
+            if (!packet.valid) {
+                loadFailed = true;
+                m_cppBuildErrors += "C++ worker load error: " +
+                    std::string(packet.text) + "\n";
+                AddLog("C++ worker load error: " + std::string(packet.text));
+            }
+            continue;
+        }
+        if (!HandleWorkerPacket(packet)) {
+            StopCppWorker("C++ worker communication failed during startup.");
+            return false;
+        }
+    }
+#endif
+}
+
+void ScriptEngine::StopCppWorker(const std::string& reason) {
+#if defined(__unix__) || defined(__APPLE__)
+    if (m_cppWorkerWrite >= 0) {
+        CppWorkerPacket quit;
+        quit.type = static_cast<uint32_t>(CppWorkerMessage::Quit);
+        WriteWorkerPacket(m_cppWorkerWrite, quit);
+        close(m_cppWorkerWrite);
+        m_cppWorkerWrite = -1;
+    }
+    if (m_cppWorkerRead >= 0) {
+        close(m_cppWorkerRead);
+        m_cppWorkerRead = -1;
+    }
+    if (m_cppWorkerPid > 0) {
+        kill(static_cast<pid_t>(m_cppWorkerPid), SIGKILL);
+        int status = 0;
+        waitpid(static_cast<pid_t>(m_cppWorkerPid), &status, 0);
+        m_cppWorkerPid = -1;
+    }
+#endif
+    m_cppWorkerReady = false;
+    if (!reason.empty()) {
+        m_cppBuildErrors += reason + "\n";
+        m_cppBuildOutput += reason + "\n";
+        AddLog(reason);
+    }
 }
 
 void ScriptEngine::BindFunctions() {
@@ -2277,8 +2483,6 @@ void ScriptEngine::BindEngine(std::function<void()> requestExit) {
 }
 
 bool ScriptEngine::ReloadCppScripts(bool force) {
-    BuildCppApi();
-
     namespace fs = std::filesystem;
     std::map<std::string, fs::path> sources;
     std::string projectRoot = ProjectManager::GetProjectPath();
@@ -2307,13 +2511,12 @@ bool ScriptEngine::ReloadCppScripts(bool force) {
         }
     }
 
+    bool modulesChanged = false;
     for (auto it = m_cppModules.begin(); it != m_cppModules.end();) {
         if (sources.find(it->first) == sources.end()) {
-#if defined(__unix__) || defined(__APPLE__)
-            if (it->second.library) dlclose(it->second.library);
-#endif
             AddLog("Unloaded C++ script: " + it->first);
             it = m_cppModules.erase(it);
+            modulesChanged = true;
         } else {
             ++it;
         }
@@ -2408,65 +2611,22 @@ bool ScriptEngine::ReloadCppScripts(bool force) {
             m_cppBuildOutput += compilerOutput;
         }
 
-        void* library = dlopen(output.string().c_str(), RTLD_NOW | RTLD_LOCAL);
-        if (!library) {
-            const std::string message = dlerror();
-            m_cppBuildErrors += "=== " + pathKey + " ===\n" + message + "\n";
-            m_cppBuildOutput += "FAILED to load " + pathKey + "\n";
-            AddLog("C++ load error in " + pathKey + ": " + message);
-            m_cppFailures[pathKey] = writeTime;
-            allSucceeded = false;
-            continue;
-        }
-        auto registerFn = reinterpret_cast<GaleshiScriptRegisterFn>(
-            dlsym(library, "GaleshiScriptRegister"));
-        auto updateFn = reinterpret_cast<GaleshiScriptUpdateFn>(
-            dlsym(library, "GaleshiScriptUpdate"));
-        if (!registerFn || !updateFn) {
-            const std::string message =
-                "Missing GaleshiScriptRegister/GaleshiScriptUpdate exports.";
-            m_cppBuildErrors += "=== " + pathKey + " ===\n" + message + "\n";
-            m_cppBuildOutput += "FAILED " + pathKey + "\n";
-            AddLog("C++ script missing exports: " + pathKey +
-                   " (expected GaleshiScriptRegister/GaleshiScriptUpdate)");
-            dlclose(library);
-            m_cppFailures[pathKey] = writeTime;
-            allSucceeded = false;
-            continue;
-        }
-
-        try {
-            registerFn(&m_cppApi);
-        } catch (const std::exception& error) {
-            const std::string message =
-                std::string("Register exception: ") + error.what();
-            m_cppBuildErrors += "=== " + pathKey + " ===\n" + message + "\n";
-            m_cppBuildOutput += "FAILED " + pathKey + "\n";
-            dlclose(library);
-            m_cppFailures[pathKey] = writeTime;
-            allSucceeded = false;
-            continue;
-        } catch (...) {
-            m_cppBuildErrors += "=== " + pathKey +
-                " ===\nRegister threw an unknown exception.\n";
-            m_cppBuildOutput += "FAILED " + pathKey + "\n";
-            dlclose(library);
-            m_cppFailures[pathKey] = writeTime;
-            allSucceeded = false;
-            continue;
-        }
-        if (moduleIt != m_cppModules.end() && moduleIt->second.library) {
-            dlclose(moduleIt->second.library);
-        }
         CppScriptModule module;
         module.path = pathKey;
         module.writeTime = writeTime;
-        module.library = library;
-        module.update = updateFn;
+        module.libraryPath = output.string();
         m_cppModules[pathKey] = std::move(module);
         m_cppFailures.erase(pathKey);
-        m_cppBuildOutput += "Loaded " + pathKey + "\n";
-        AddLog("Loaded C++ script: " + pathKey);
+        modulesChanged = true;
+        m_cppBuildOutput += "Compiled " + pathKey + "\n";
+    }
+
+    if (modulesChanged || force) {
+        if (m_cppModules.empty()) {
+            StopCppWorker();
+        } else if (!StartCppWorker()) {
+            allSucceeded = false;
+        }
     }
     return allSucceeded;
 #endif
@@ -2478,18 +2638,57 @@ void ScriptEngine::UpdateCppScripts(float dt) {
         m_nextCppScan = now + std::chrono::seconds(1);
         ReloadCppScripts(false);
     }
-    for (auto& [path, module] : m_cppModules) {
-        (void)path;
-        if (!module.update) continue;
-        try {
-            module.update(dt);
-        } catch (const std::exception& error) {
-            AddLog(std::string("C++ script exception in ") + path + ": " +
-                   error.what());
-            module.update = nullptr;
-        } catch (...) {
-            AddLog("C++ script threw an unknown exception: " + path);
-            module.update = nullptr;
+    if (!m_cppWorkerReady || m_cppWorkerWrite < 0 ||
+        m_cppWorkerRead < 0) {
+        return;
+    }
+
+    CppWorkerPacket frame;
+    frame.type = static_cast<uint32_t>(CppWorkerMessage::Frame);
+    frame.x = dt;
+    if (!WriteWorkerPacket(m_cppWorkerWrite, frame)) {
+        StopCppWorker("C++ worker exited before update.");
+        return;
+    }
+
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (true) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
+        if (remaining.count() <= 0) {
+            StopCppWorker("C++ worker timed out during update.");
+            return;
+        }
+        pollfd descriptor{m_cppWorkerRead, POLLIN, 0};
+        const int ready = poll(&descriptor, 1,
+                               static_cast<int>(remaining.count()));
+        if (ready == 0) {
+            StopCppWorker("C++ worker timed out during update.");
+            return;
+        }
+        if (ready < 0) {
+            StopCppWorker("C++ worker poll failed during update.");
+            return;
+        }
+        CppWorkerPacket packet;
+        if (!ReadWorkerPacket(m_cppWorkerRead, packet)) {
+            StopCppWorker("C++ worker exited during update.");
+            return;
+        }
+        const auto type = static_cast<CppWorkerMessage>(packet.type);
+        if (type == CppWorkerMessage::FrameDone) return;
+        if (type == CppWorkerMessage::LoadResult) {
+            if (!packet.valid) {
+                m_cppBuildErrors += "C++ worker load error: " +
+                    std::string(packet.text) + "\n";
+                AddLog("C++ worker load error: " + std::string(packet.text));
+            }
+            continue;
+        }
+        if (!HandleWorkerPacket(packet)) {
+            StopCppWorker("C++ worker communication failed during update.");
+            return;
         }
     }
 }

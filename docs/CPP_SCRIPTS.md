@@ -2,7 +2,8 @@
 
 Place `.cpp`, `.cc` or `.cxx` files in the project's `scripts/` or
 `assets/scripts/` directory. The editor compiles changed files into temporary
-shared libraries and hot-reloads them without restarting.
+shared libraries and loads them in a separate `GaleshiScriptWorker` process, so
+crashes, hangs and compile failures cannot take down the editor.
 
 A script module must export two C functions:
 

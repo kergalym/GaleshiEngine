@@ -12,6 +12,7 @@
 #include <glm/glm.hpp>
 
 #include "GaleshiEngine/Scripting/CppScriptApi.hpp"
+#include "GaleshiEngine/Scripting/CppScriptWorkerProtocol.hpp"
 
 namespace Galeshi {
 
@@ -114,8 +115,11 @@ public:
 
 private:
     void BuildApi();
-    void BuildCppApi();
     void UpdateCppScripts(float dt);
+    bool StartCppWorker();
+    void StopCppWorker(const std::string& reason = {});
+    bool HandleWorkerPacket(CppWorkerPacket& packet);
+    CppWorkerPacket MakeWorkerResponse(const CppWorkerPacket& request) const;
     void DestroyEntity(entt::entity entity);
     bool HasPhysicsBody(uint32_t entityId) const;
 
@@ -170,17 +174,19 @@ private:
     struct CppScriptModule {
         std::string path;
         std::filesystem::file_time_type writeTime{};
-        void* library = nullptr;
-        GaleshiScriptUpdateFn update = nullptr;
+        std::string libraryPath;
     };
-    GaleshiScriptApi m_cppApi{};
-    bool m_cppApiBuilt = false;
     std::unordered_map<std::string, CppScriptModule> m_cppModules;
     std::unordered_map<std::string, std::filesystem::file_time_type>
         m_cppFailures;
     std::chrono::steady_clock::time_point m_nextCppScan{};
     std::string m_cppBuildOutput;
     std::string m_cppBuildErrors;
+
+    int m_cppWorkerPid = -1;
+    int m_cppWorkerWrite = -1;
+    int m_cppWorkerRead = -1;
+    bool m_cppWorkerReady = false;
 
     std::vector<std::string> m_logs;
     bool m_runOnceInvoked = false;

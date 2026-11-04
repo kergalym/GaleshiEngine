@@ -13147,6 +13147,23 @@ int PackageProject(const std::string& projectPath) {
             fs::perms::owner_all | fs::perms::group_all | fs::perms::others_all,
             fs::perm_options::replace);
         spdlog::info("[Package] Copied executable to {} (chmod +x)", destExe.filename().string());
+
+        // C++ scripts run in this helper process. Keep it beside the game
+        // binary so runtime isolation also works from packaged builds.
+        const fs::path workerPath =
+            exePath.parent_path() / "GaleshiScriptWorker";
+        if (fs::exists(workerPath)) {
+            const fs::path destWorker = outDir / "GaleshiScriptWorker";
+            fs::copy_file(workerPath, destWorker,
+                          fs::copy_options::overwrite_existing);
+            fs::permissions(destWorker,
+                fs::perms::owner_all | fs::perms::group_all |
+                    fs::perms::others_all,
+                fs::perm_options::replace);
+        } else {
+            spdlog::warn("[Package] C++ script worker not found at {}",
+                         workerPath.string());
+        }
     } else {
         spdlog::error("[Package] Executable not found at {}", exePath.string());
         return 1;
