@@ -169,6 +169,11 @@ static bool IsShaderAssetPath(const std::string& path) {
     return extension == ".glsl" || extension == ".hlsl";
 }
 
+static bool IsVertexShaderSource(const std::string& source) {
+    return source.find("gl_Position") != std::string::npos &&
+           source.find("gl_FragColor") == std::string::npos;
+}
+
 static bool IsCodeAssetPath(const std::string& path) {
     return AssetExtensionLower(path) == ".lua" || IsCppCodeAssetPath(path) ||
            IsShaderAssetPath(path);
@@ -12379,6 +12384,7 @@ void DrawDetails() {
             return;
         }
 
+        const bool vertexShader = IsVertexShaderSource(source);
         const std::string shaderc = FindShadercExecutable();
         if (shaderc.empty()) {
             m_shaderPreviewError =
@@ -12427,7 +12433,8 @@ void DrawDetails() {
         const std::string command =
             ShellQuote(shaderc) + " -f " + ShellQuote(sourcePath.string()) +
             " -o " + ShellQuote(binaryPath.string()) +
-            " --type fragment --platform " + platform +
+            " --type " + (vertexShader ? "vertex" : "fragment") +
+            " --platform " + platform +
             " --profile spirv -i " + ShellQuote(include.string()) +
             " --varyingdef " +
             ShellQuote((include / "varying_fullscreen.def.sc").string()) +
@@ -12452,8 +12459,11 @@ void DrawDetails() {
             return;
         }
 
-        m_shaderPreviewProgram = Galeshi::ShaderManager::LoadProgram(
-            "shaders/vs_fullscreen.bin", binaryPath.string());
+        m_shaderPreviewProgram = vertexShader
+            ? Galeshi::ShaderManager::LoadProgram(
+                  binaryPath.string(), "shaders/fs_passthrough.bin")
+            : Galeshi::ShaderManager::LoadProgram(
+                  "shaders/vs_fullscreen.bin", binaryPath.string());
         if (!bgfx::isValid(m_shaderPreviewProgram)) {
             m_shaderPreviewError =
                 "Compiled shader could not be loaded by bgfx.";

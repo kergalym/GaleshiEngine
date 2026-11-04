@@ -116,6 +116,50 @@ void main()
 )HLSL"
     },
     {
+        "shader_vertex_glsl",
+        "Vertex Shader (GLSL)",
+        "GLSL vertex shader with a live Code Editor preview.",
+        "new_vertex_shader.glsl",
+        R"GLSL($input a_position
+$output v_texcoord0
+#include <bgfx_shader.sh>
+
+uniform vec4 u_shaderTime;
+
+void main()
+{
+    vec3 position = a_position;
+    float wave = sin(position.y * 8.0 + u_shaderTime.x * 3.0);
+    position.x += wave * 0.08;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+    v_texcoord0 = vec2(position.x * 0.5 + 0.5,
+                       1.0 - (position.y * 0.5 + 0.5));
+}
+)GLSL"
+    },
+    {
+        "shader_vertex_hlsl",
+        "Vertex Shader (HLSL)",
+        "HLSL vertex shader with a live Code Editor preview.",
+        "new_vertex_shader.hlsl",
+        R"HLSL($input a_position
+$output v_texcoord0
+#include <bgfx_shader.sh>
+
+uniform vec4 u_shaderTime;
+
+void main()
+{
+    vec3 position = a_position;
+    float wave = sin(position.y * 8.0 + u_shaderTime.x * 3.0);
+    position.x += wave * 0.08;
+    gl_Position = vec4(position.x, position.y, 0.0, 1.0);
+    v_texcoord0 = vec2(position.x * 0.5 + 0.5,
+                       1.0 - (position.y * 0.5 + 0.5));
+}
+)HLSL"
+    },
+    {
         "player_controller",
         "Player Controller",
         "Physics movement and jumping for an entity named Player.",
