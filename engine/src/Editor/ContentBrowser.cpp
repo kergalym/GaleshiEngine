@@ -98,11 +98,12 @@ function RunAlways(dt)
     end
 
     local velocity = Galeshi.physics.get_velocity(player)
-    -- A is -1 and D is +1 on the Horizontal axis. Invert the axis for
-    -- screen-space movement so A moves left and D moves right.
-    local moveX = -Galeshi.input.axis("Horizontal") * moveSpeed
-    local moveZ = Galeshi.input.axis("Vertical") * moveSpeed
-    Galeshi.physics.set_velocity(player, moveX, velocity.y, moveZ)
+    -- Movement is relative to the current player camera orientation.
+    local move = Galeshi.camera.movement(
+        Galeshi.input.axis("Horizontal"),
+        Galeshi.input.axis("Vertical"))
+    Galeshi.physics.set_velocity(
+        player, move.x * moveSpeed, velocity.y, move.z * moveSpeed)
 
     if Galeshi.input.axis("Jump") > 0.5 and math.abs(velocity.y) < 0.5 then
         Galeshi.physics.add_impulse(player, 0.0, jumpImpulse, 0.0)

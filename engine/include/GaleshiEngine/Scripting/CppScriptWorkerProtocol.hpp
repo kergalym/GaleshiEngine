@@ -29,6 +29,8 @@ enum class CppWorkerRequest : uint32_t {
     SetVelocity = 8,
     SetCameraMode = 9,
     GetCameraMode = 10,
+    GetCameraForward = 11,
+    GetCameraRight = 12,
 };
 
 constexpr std::size_t kCppWorkerTextSize = 512;

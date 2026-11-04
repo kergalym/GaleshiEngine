@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstddef>
 #include <cstring>
@@ -319,6 +320,9 @@ public:
         };
         m_api.set_camera_mode = &ScriptWorker::SetCameraMode;
         m_api.get_camera_mode = &ScriptWorker::GetCameraMode;
+        m_api.get_camera_forward = &ScriptWorker::GetCameraForward;
+        m_api.get_camera_right = &ScriptWorker::GetCameraRight;
+        m_api.get_camera_movement = &ScriptWorker::GetCameraMovement;
     }
 
     ~ScriptWorker() {
@@ -549,6 +553,48 @@ private:
         return response.valid
             ? static_cast<int>(response.entity)
             : static_cast<int>(GALESHI_CAMERA_THIRD_PERSON);
+    }
+
+    static GaleshiScriptVec3 GetCameraForward(void* user) {
+        if (!user) return {};
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetCameraForward, UINT32_MAX);
+        return response.valid
+            ? GaleshiScriptVec3{response.x, response.y, response.z}
+            : GaleshiScriptVec3{0.0f, 0.0f, -1.0f};
+    }
+
+    static GaleshiScriptVec3 GetCameraRight(void* user) {
+        if (!user) return {};
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetCameraRight, UINT32_MAX);
+        return response.valid
+            ? GaleshiScriptVec3{response.x, response.y, response.z}
+            : GaleshiScriptVec3{1.0f, 0.0f, 0.0f};
+    }
+
+    static GaleshiScriptVec3 GetCameraMovement(
+        void* user, float horizontal, float vertical) {
+        if (!user) return {};
+        const GaleshiScriptVec3 forward = GetCameraForward(user);
+        const GaleshiScriptVec3 right = GetCameraRight(user);
+        GaleshiScriptVec3 movement{
+            forward.x * vertical + right.x * horizontal,
+            forward.y * vertical + right.y * horizontal,
+            forward.z * vertical + right.z * horizontal,
+        };
+        const float length = std::sqrt(
+            movement.x * movement.x +
+            movement.y * movement.y +
+            movement.z * movement.z);
+        if (length > 1.0f) {
+            movement.x /= length;
+            movement.y /= length;
+            movement.z /= length;
+        }
+        return movement;
     }
 
     int m_protocolOut = STDOUT_FILENO;

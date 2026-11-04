@@ -2103,14 +2103,43 @@ void ScriptEngine::BuildApi() {
             ? m_getCameraMode()
             : static_cast<int>(GALESHI_CAMERA_THIRD_PERSON);
     };
+    const auto cameraForward = [this, makeVec3]() {
+        return makeVec3(m_getCameraForward
+            ? m_getCameraForward()
+            : glm::vec3(0.0f, 0.0f, -1.0f));
+    };
+    const auto cameraRight = [this, makeVec3]() {
+        return makeVec3(m_getCameraRight
+            ? m_getCameraRight()
+            : glm::vec3(1.0f, 0.0f, 0.0f));
+    };
+    const auto cameraMovement =
+        [this, makeVec3](float horizontal, float vertical) {
+            const glm::vec3 forward = m_getCameraForward
+                ? m_getCameraForward()
+                : glm::vec3(0.0f, 0.0f, -1.0f);
+            const glm::vec3 right = m_getCameraRight
+                ? m_getCameraRight()
+                : glm::vec3(1.0f, 0.0f, 0.0f);
+            glm::vec3 movement = forward * vertical + right * horizontal;
+            const float length = glm::length(movement);
+            if (length > 1.0f) movement /= length;
+            return makeVec3(movement);
+        };
     camera["THIRD_PERSON"] =
         static_cast<int>(GALESHI_CAMERA_THIRD_PERSON);
     camera["FIRST_PERSON"] =
         static_cast<int>(GALESHI_CAMERA_FIRST_PERSON);
     camera["set_mode"] = setCameraMode;
     camera["mode"] = getCameraMode;
+    camera["forward"] = cameraForward;
+    camera["right"] = cameraRight;
+    camera["movement"] = cameraMovement;
     m_lua.set_function("set_camera_mode", setCameraMode);
     m_lua.set_function("get_camera_mode", getCameraMode);
+    m_lua.set_function("get_camera_forward", cameraForward);
+    m_lua.set_function("get_camera_right", cameraRight);
+    m_lua.set_function("get_camera_movement", cameraMovement);
 
     // Explicitly release the temporary tables; all bound functions are owned
     // by the Lua state / m_api now.
@@ -2219,6 +2248,26 @@ CppWorkerPacket ScriptEngine::MakeWorkerResponse(
         if (m_getCameraMode) {
             response.entity =
                 static_cast<uint32_t>(m_getCameraMode());
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::GetCameraForward:
+        if (m_getCameraForward) {
+            const GaleshiScriptVec3 value =
+                ToScriptVec3(m_getCameraForward());
+            response.x = value.x;
+            response.y = value.y;
+            response.z = value.z;
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::GetCameraRight:
+        if (m_getCameraRight) {
+            const GaleshiScriptVec3 value =
+                ToScriptVec3(m_getCameraRight());
+            response.x = value.x;
+            response.y = value.y;
+            response.z = value.z;
             response.valid = 1;
         }
         break;
@@ -2548,10 +2597,14 @@ void ScriptEngine::BindEngine(std::function<void()> requestExit) {
 }
 
 void ScriptEngine::BindCamera(std::function<bool(int)> setMode,
-                              std::function<int()> getMode) {
+                              std::function<int()> getMode,
+                              std::function<glm::vec3()> getForward,
+                              std::function<glm::vec3()> getRight) {
     BuildApi();
     m_setCameraMode = std::move(setMode);
     m_getCameraMode = std::move(getMode);
+    m_getCameraForward = std::move(getForward);
+    m_getCameraRight = std::move(getRight);
 }
 
 bool ScriptEngine::CheckCppSyntax(const std::string& source,

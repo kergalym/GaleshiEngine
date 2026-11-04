@@ -101,10 +101,25 @@ Galeshi.camera.set_mode(Galeshi.camera.THIRD_PERSON)
 Galeshi.camera.set_mode(Galeshi.camera.FIRST_PERSON)
 Galeshi.camera.set_mode("first_person") -- strings are accepted too
 local mode = Galeshi.camera.mode()
+
+Galeshi.camera.forward()  -- horizontal camera forward {x,y,z}
+Galeshi.camera.right()    -- horizontal camera right {x,y,z}
+Galeshi.camera.movement(horizontal, vertical)
 ```
 
-The legacy aliases `set_camera_mode(mode)` and `get_camera_mode()` are also
-available. The host must bind a gameplay camera; the editor does this
+`movement()` returns a horizontal, camera-relative direction with length at
+most 1. Use it for camera-relative player movement:
+
+```lua
+local move = Galeshi.camera.movement(
+    Galeshi.input.axis("Horizontal"),
+    Galeshi.input.axis("Vertical"))
+Galeshi.physics.set_velocity(player, move.x * speed, velocity.y, move.z * speed)
+```
+
+The legacy aliases `set_camera_mode(mode)`, `get_camera_mode()`,
+`get_camera_forward()`, `get_camera_right()` and `get_camera_movement()` are
+also available. The host must bind a gameplay camera; the editor does this
 automatically.
 
 ### `Galeshi.physics`

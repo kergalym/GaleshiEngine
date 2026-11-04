@@ -42,11 +42,11 @@ function RunAlways(dt)
 
     local horizontal = Galeshi.input.axis("Horizontal")
     local vertical = Galeshi.input.axis("Vertical")
-    -- Horizontal follows the conventional A=-1 / D=+1 axis signs. Negate it
-    -- here so A moves screen-left and D moves screen-right with the default
-    -- character camera.
-    local vx = -horizontal * speed
-    local vz = vertical * speed
+    -- Horizontal follows A=-1 / D=+1 and vertical W=+1 / S=-1. The camera
+    -- helper turns them into a horizontal camera-relative move direction.
+    local move = Galeshi.camera.movement(horizontal, vertical)
+    local vx = move.x * speed
+    local vz = move.z * speed
 
     -- Always write the horizontal velocity so the player stops when no key is
     -- held. This also drives the script fallback used by body-less Player roots.

@@ -1206,7 +1206,9 @@ protected:
         m_scripts.BindEngine([this]() { RequestExit(); });
         m_scripts.BindCamera(
             [this](int mode) { return SetGameplayCameraMode(mode); },
-            [this]() { return GetGameplayCameraMode(); });
+            [this]() { return GetGameplayCameraMode(); },
+            [this]() { return GetGameplayCameraMoveForward(); },
+            [this]() { return GetGameplayCameraMoveRight(); });
         // Project-local key bindings override the built-in axis defaults
         // before scripts start reading input.
         LoadInputBindings();
@@ -5116,32 +5118,49 @@ if (ImGui::BeginMenu("File")) {
     }
 
     // Player-tagged entities are the orbit centre for the gameplay camera.
-    // When no player tag exists, a camera parented to a character/model uses
-    // that ancestor so authored third-person rigs still orbit the character.
+    // Prefer a Player in the camera's own hierarchy so a stray Player elsewhere
+    // in the scene cannot make an attached camera jump away from its character.
     entt::entity FindGameplayCameraTarget(entt::entity cameraEntity) {
         auto& reg = m_scene.Registry();
-        auto players = reg.view<Galeshi::PlayerTagComponent,
-                                Galeshi::TransformComponent>();
-        for (auto entity : players) return entity;
-
+        entt::entity characterAncestor = entt::null;
         entt::entity current = cameraEntity;
         for (int depth = 0; depth < 128; ++depth) {
             if (!reg.all_of<Galeshi::ParentComponent>(current)) break;
             current = reg.get<Galeshi::ParentComponent>(current).parent;
             if (current == entt::null) break;
-            if (reg.all_of<Galeshi::SkeletalComponent>(current) ||
-                reg.all_of<Galeshi::ModelComponent>(current) ||
-                reg.all_of<Galeshi::MeshComponent>(current)) {
+            if (reg.all_of<Galeshi::TransformComponent>(current) &&
+                reg.all_of<Galeshi::PlayerTagComponent>(current)) {
                 return current;
             }
+            if (reg.all_of<Galeshi::TransformComponent>(current) &&
+                reg.all_of<Galeshi::NameComponent>(current) &&
+                reg.get<Galeshi::NameComponent>(current).name == "Player") {
+                return current;
+            }
+            if (characterAncestor == entt::null &&
+                (reg.all_of<Galeshi::SkeletalComponent>(current) ||
+                 reg.all_of<Galeshi::ModelComponent>(current) ||
+                 reg.all_of<Galeshi::MeshComponent>(current))) {
+                characterAncestor = current;
+            }
         }
-        return entt::null;
+
+        auto players = reg.view<Galeshi::PlayerTagComponent,
+                                Galeshi::TransformComponent>();
+        for (auto entity : players) return entity;
+
+        return characterAncestor;
     }
 
     bool SetGameplayCameraMode(int mode) {
         if (mode != GALESHI_CAMERA_THIRD_PERSON &&
             mode != GALESHI_CAMERA_FIRST_PERSON) {
             return false;
+        }
+        if (static_cast<int>(m_gameCameraMode) != mode) {
+            // Rebuild the cached eye/pivot from the current character state on
+            // the next camera update.
+            m_gameCameraTarget = entt::null;
         }
         m_gameCameraMode = static_cast<GaleshiScriptCameraMode>(mode);
         return true;
@@ -5151,11 +5170,22 @@ if (ImGui::BeginMenu("File")) {
         return static_cast<int>(m_gameCameraMode);
     }
 
-    // Cache the bounds centre in the target's local space so orbiting does not
-    // scan every mesh in the scene each frame. The camera's authored local
-    // height also becomes the first-person eye height.
-    void RefreshGameplayCameraTarget(entt::entity target,
-                                     entt::entity cameraEntity) {
+    glm::vec3 GetGameplayCameraMoveForward() const {
+        glm::vec3 forward = CameraForward();
+        forward.y = 0.0f;
+        const float length = glm::length(forward);
+        if (length < 1e-5f) return glm::vec3(0.0f, 0.0f, -1.0f);
+        return forward / length;
+    }
+
+    glm::vec3 GetGameplayCameraMoveRight() const {
+        return glm::normalize(glm::cross(
+            GetGameplayCameraMoveForward(), glm::vec3(0.0f, 1.0f, 0.0f)));
+    }
+
+    // Cache the bounds centre and eye position in the target's local space so
+    // orbiting does not scan every mesh in the scene each frame.
+    void RefreshGameplayCameraTarget(entt::entity target) {
         m_gameCameraTarget = target;
         m_gameCameraPivotLocal = glm::vec3(0.0f);
         m_gameCameraEyeLocal = glm::vec3(0.0f, 1.6f, 0.0f);
@@ -5165,30 +5195,23 @@ if (ImGui::BeginMenu("File")) {
         const glm::mat4 inverseTarget = glm::inverse(targetWorld);
 
         glm::vec3 center;
-        EntityWorldBoundsCenter(target, center);
+        glm::vec3 boundsMin;
+        glm::vec3 boundsMax;
+        const bool haveBounds = EntityWorldBoundsCenter(
+            target, center, &boundsMin, &boundsMax);
         m_gameCameraPivotLocal = glm::vec3(
             inverseTarget * glm::vec4(center, 1.0f));
 
-        // An attached camera stores its eye height in the local offset. Keep
-        // only the height for first person; the horizontal part is the
-        // third-person distance and must not move the eye sideways.
-        entt::entity current = cameraEntity;
-        for (int depth = 0; depth < 128 && current != entt::null; ++depth) {
-            if (current == target) {
-                const glm::mat4 cameraWorld = EntityWorldMatrix(cameraEntity);
-                const glm::vec3 cameraLocal = glm::vec3(
-                    inverseTarget *
-                    glm::vec4(glm::vec3(cameraWorld[3]), 1.0f));
-                if (cameraLocal.y > 0.05f) {
-                    m_gameCameraEyeLocal.y = cameraLocal.y;
-                }
-                break;
-            }
-            if (!m_scene.Registry().all_of<Galeshi::ParentComponent>(current)) {
-                break;
-            }
-            current = m_scene.Registry()
-                .get<Galeshi::ParentComponent>(current).parent;
+        if (haveBounds) {
+            // Eye height comes from the character itself, not from the
+            // third-person camera offset.
+            const glm::vec3 eyeWorld{
+                center.x,
+                boundsMin.y + (boundsMax.y - boundsMin.y) * 0.9f,
+                center.z,
+            };
+            m_gameCameraEyeLocal = glm::vec3(
+                inverseTarget * glm::vec4(eyeWorld, 1.0f));
         }
     }
 
@@ -5255,7 +5278,7 @@ if (ImGui::BeginMenu("File")) {
         entt::entity target = FindGameplayCameraTarget(cameraEntity.Handle());
         if (target != m_gameCameraTarget ||
             cameraEntity.Handle() != m_activeGameCamera) {
-            RefreshGameplayCameraTarget(target, cameraEntity.Handle());
+            RefreshGameplayCameraTarget(target);
         }
         const bool validTarget =
             target != entt::null && m_scene.Registry().valid(target);
@@ -5589,7 +5612,9 @@ if (ImGui::BeginMenu("File")) {
     // Returns the world-space centre of all mesh bounds below a root entity.
     // For skeletal characters the meshes live on child entities, so the root
     // alone usually only has a feet-level transform.
-    bool EntityWorldBoundsCenter(entt::entity root, glm::vec3& outCenter) {
+    bool EntityWorldBoundsCenter(entt::entity root, glm::vec3& outCenter,
+                                 glm::vec3* outMin = nullptr,
+                                 glm::vec3* outMax = nullptr) {
         auto& reg = m_scene.Registry();
         glm::vec3 boundsMin(std::numeric_limits<float>::max());
         glm::vec3 boundsMax(-std::numeric_limits<float>::max());
@@ -5637,6 +5662,8 @@ if (ImGui::BeginMenu("File")) {
 
         if (haveBounds) {
             outCenter = (boundsMin + boundsMax) * 0.5f;
+            if (outMin) *outMin = boundsMin;
+            if (outMax) *outMax = boundsMax;
             return true;
         }
 
@@ -5645,6 +5672,8 @@ if (ImGui::BeginMenu("File")) {
         if (reg.all_of<Galeshi::SkeletalComponent>(root)) {
             outCenter.y += 1.0f;
         }
+        if (outMin) *outMin = outCenter;
+        if (outMax) *outMax = outCenter;
         return false;
     }
 

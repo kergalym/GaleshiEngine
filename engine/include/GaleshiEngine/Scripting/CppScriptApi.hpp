@@ -43,6 +43,13 @@ struct GaleshiScriptApi {
     // false when the host has no gameplay camera or the mode is invalid.
     bool (*set_camera_mode)(void* user, int mode) = nullptr;
     int (*get_camera_mode)(void* user) = nullptr;
+
+    // Horizontal camera basis for camera-relative player movement.
+    GaleshiScriptVec3 (*get_camera_forward)(void* user) = nullptr;
+    GaleshiScriptVec3 (*get_camera_right)(void* user) = nullptr;
+    GaleshiScriptVec3 (*get_camera_movement)(void* user,
+                                              float horizontal,
+                                              float vertical) = nullptr;
 };
 
 inline float GaleshiInterpFactor(float deltaTime, float speed) {

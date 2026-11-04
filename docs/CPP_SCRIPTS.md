@@ -38,10 +38,16 @@ rebuilt independently.
 ```cpp
 g_api->set_camera_mode(g_api->user, GALESHI_CAMERA_FIRST_PERSON);
 const int mode = g_api->get_camera_mode(g_api->user);
+
+const GaleshiScriptVec3 move =
+    g_api->get_camera_movement(g_api->user, horizontal, vertical);
 ```
 
-Camera mode changes apply to the current player camera. Hosts without a
-gameplay camera leave the mode flag at `GALESHI_CAMERA_THIRD_PERSON`.
+Camera mode changes apply to the current player camera.
+`get_camera_forward()` and `get_camera_right()` expose the horizontal camera
+basis; `get_camera_movement()` combines them into a camera-relative direction
+with length at most 1. Hosts without a gameplay camera leave the mode flag at
+`GALESHI_CAMERA_THIRD_PERSON`.
 
 Compilation uses `g++` by default; set `CXX` to override the compiler. The
 compiler runs in a child process and is stopped after 30 seconds. Compile
