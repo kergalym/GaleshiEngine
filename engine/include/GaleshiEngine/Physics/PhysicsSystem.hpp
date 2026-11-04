@@ -40,6 +40,14 @@ public:
                             entt::entity entity = entt::null);
     void DestroyBody(uint32_t bodyId);
 
+    // Sweep a sphere from origin to target and report the first body accepted
+    // by filter. Bodies without a mapped entity are ignored, so the internal
+    // default ground plane never participates.
+    bool SphereCast(const glm::vec3& origin, const glm::vec3& target,
+                    float radius,
+                    const std::function<bool(entt::entity)>& filter,
+                    glm::vec3& hitPoint) const;
+
     void SyncTransformsToECS(Scene& scene);
     uint32_t CreateCloth(int gridX, int gridY, float spacing, const glm::vec3& origin, entt::entity entity);
     void UpdateSoftBodies(Scene& scene);

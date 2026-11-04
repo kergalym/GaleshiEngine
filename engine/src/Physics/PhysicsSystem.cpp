@@ -9,10 +9,14 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
 #include <Jolt/Physics/Body/BodyID.h>
+#include <Jolt/Physics/Body/BodyFilter.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
+#include <Jolt/Physics/Collision/ShapeCast.h>
+#include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
+#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
 #include <Jolt/Physics/SoftBody/SoftBodySharedSettings.h>
 #include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
@@ -167,6 +171,7 @@ void EnginePhysicsSystem::Shutdown() {
     m_impl->physicsSystem.reset();
     m_impl->jobSystem.reset();
     m_impl->tempAllocator.reset();
+    m_impl->bodyToEntity.clear();
     JPH::UnregisterTypes();
     delete JPH::Factory::sInstance;
     JPH::Factory::sInstance = nullptr;
@@ -341,6 +346,55 @@ void EnginePhysicsSystem::DestroyBody(uint32_t bodyId) {
     }
     m_impl->bodyInterface->DestroyBody(id);
     m_impl->bodyToEntity.erase(bodyId);
+}
+
+bool EnginePhysicsSystem::SphereCast(
+    const glm::vec3& origin, const glm::vec3& target, float radius,
+    const std::function<bool(entt::entity)>& filter,
+    glm::vec3& hitPoint) const {
+    if (!m_impl->initialized || !filter) return false;
+
+    const glm::vec3 delta = target - origin;
+    if (glm::dot(delta, delta) < 1e-8f) return false;
+
+    class EntityFilter final : public JPH::BodyFilter {
+    public:
+        EntityFilter(
+            const std::unordered_map<uint32_t, entt::entity>& entities,
+            const std::function<bool(entt::entity)>& accept)
+            : mEntities(entities), mAccept(accept) {}
+
+        bool ShouldCollide(const JPH::BodyID& body) const override {
+            const auto it = mEntities.find(
+                body.GetIndexAndSequenceNumber());
+            return it != mEntities.end() && mAccept(it->second);
+        }
+
+    private:
+        const std::unordered_map<uint32_t, entt::entity>& mEntities;
+        const std::function<bool(entt::entity)>& mAccept;
+    } entityFilter(m_impl->bodyToEntity, filter);
+
+    JPH::SphereShape sphere(std::max(radius, 0.01f));
+    JPH::RShapeCast cast(
+        &sphere, JPH::Vec3::sReplicate(1.0f),
+        JPH::RMat44::sTranslation(
+            JPH::RVec3(origin.x, origin.y, origin.z)),
+        JPH::Vec3(delta.x, delta.y, delta.z));
+
+    JPH::ShapeCastSettings settings;
+    settings.mBackFaceModeTriangles =
+        JPH::EBackFaceMode::CollideWithBackFaces;
+    JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
+    m_impl->physicsSystem->GetNarrowPhaseQuery().CastShape(
+        cast, settings, JPH::RVec3::sZero(), collector, {}, {},
+        entityFilter);
+    if (!collector.HadHit()) return false;
+
+    const float fraction =
+        glm::clamp(collector.mHit.mFraction, 0.0f, 1.0f);
+    hitPoint = origin + delta * fraction;
+    return true;
 }
 
 

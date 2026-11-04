@@ -5069,6 +5069,34 @@ if (ImGui::BeginMenu("File")) {
         return best;
     }
 
+    bool IsEntityInHierarchy(entt::entity entity, entt::entity root) {
+        if (root == entt::null) return false;
+        auto& reg = m_scene.Registry();
+        for (int depth = 0; depth < 128 && entity != entt::null; ++depth) {
+            if (entity == root) return true;
+            if (!reg.all_of<Galeshi::ParentComponent>(entity)) break;
+            entity = reg.get<Galeshi::ParentComponent>(entity).parent;
+        }
+        return false;
+    }
+
+    // Camera blocking is limited to authored colliders. Meshes without an
+    // active ColliderComponent and trigger volumes never block the view.
+    bool IsCameraCollisionBlocker(entt::entity entity,
+                                  entt::entity ignoreRoot) {
+        auto& reg = m_scene.Registry();
+        if (!reg.valid(entity)) return false;
+        const auto* collider =
+            reg.try_get<Galeshi::ColliderComponent>(entity);
+        if (!collider || collider->isTrigger) return false;
+        if (ignoreRoot != entt::null &&
+            (IsEntityInHierarchy(entity, ignoreRoot) ||
+             IsEntityInHierarchy(ignoreRoot, entity))) {
+            return false;
+        }
+        return true;
+    }
+
     bool IsGameplayCameraAttachedToPlayer(entt::entity cameraEntity) {
         auto& reg = m_scene.Registry();
         entt::entity current = cameraEntity;
@@ -5224,14 +5252,13 @@ if (ImGui::BeginMenu("File")) {
             glm::radians(glm::clamp(camera.fovY, 1.0f, 179.0f)), aspect,
             std::max(camera.nearZ, 1e-4f), std::max(camera.farZ, camera.nearZ + 0.001f));
 
-        entt::entity target = entt::null;
-        if (firstPerson || hasLookOffset) {
-            target = FindGameplayCameraTarget(cameraEntity.Handle());
-            if (target != m_gameCameraTarget ||
-                cameraEntity.Handle() != m_activeGameCamera) {
-                RefreshGameplayCameraTarget(target, cameraEntity.Handle());
-            }
+        entt::entity target = FindGameplayCameraTarget(cameraEntity.Handle());
+        if (target != m_gameCameraTarget ||
+            cameraEntity.Handle() != m_activeGameCamera) {
+            RefreshGameplayCameraTarget(target, cameraEntity.Handle());
         }
+        const bool validTarget =
+            target != entt::null && m_scene.Registry().valid(target);
 
         const auto applyInPlaceLook = [&]() {
             if (!hasLookOffset) return;
@@ -5247,9 +5274,7 @@ if (ImGui::BeginMenu("File")) {
             up = glm::vec3(0.0f, 1.0f, 0.0f);
         };
 
-        bool viewSet = false;
-        if (firstPerson && target != entt::null &&
-            m_scene.Registry().valid(target)) {
+        if (firstPerson && validTarget) {
             // Stand at the character's authored eye height and rotate the view
             // in place instead of orbiting around the body.
             eye = glm::vec3(
@@ -5257,35 +5282,60 @@ if (ImGui::BeginMenu("File")) {
                 glm::vec4(m_gameCameraEyeLocal, 1.0f));
             applyInPlaceLook();
             m_camera.SetView(eye, eye + forward, up);
-            viewSet = true;
-        }
+        } else {
+            bool orbitActive = false;
+            glm::vec3 pivot{0.0f};
+            if (validTarget) {
+                pivot = glm::vec3(
+                    EntityWorldMatrix(target) *
+                    glm::vec4(m_gameCameraPivotLocal, 1.0f));
+                if (hasLookOffset) {
+                    const glm::vec3 orbitOffset = eye - pivot;
+                    const float radius = glm::length(orbitOffset);
+                    if (radius > 1e-3f) {
+                        // Orbit the authored offset around the character
+                        // centre, keeping the current third-person distance.
+                        const float baseYaw =
+                            std::atan2(orbitOffset.x, orbitOffset.z);
+                        const float basePitch = std::asin(glm::clamp(
+                            orbitOffset.y / radius, -1.0f, 1.0f));
+                        const float yaw =
+                            baseYaw + m_gameCameraYawOffset;
+                        const float pitch = glm::clamp(
+                            basePitch - m_gameCameraPitchOffset,
+                            -1.50f, 1.50f);
+                        const float horizontal = std::cos(pitch);
+                        eye = pivot + glm::vec3(
+                            radius * horizontal * std::sin(yaw),
+                            radius * std::sin(pitch),
+                            radius * horizontal * std::cos(yaw));
+                        orbitActive = true;
+                    }
+                }
 
-        if (!viewSet && hasLookOffset && !firstPerson &&
-            target != entt::null && m_scene.Registry().valid(target)) {
-            const glm::vec3 pivot = glm::vec3(
-                EntityWorldMatrix(target) *
-                glm::vec4(m_gameCameraPivotLocal, 1.0f));
-            const glm::vec3 orbitOffset = eye - pivot;
-            const float radius = glm::length(orbitOffset);
-            if (radius > 1e-3f) {
-                // Orbit the authored offset around the character centre,
-                // keeping the current third-person distance.
-                const float baseYaw =
-                    std::atan2(orbitOffset.x, orbitOffset.z);
-                const float basePitch = std::asin(glm::clamp(
-                    orbitOffset.y / radius, -1.0f, 1.0f));
-                m_camera.Orbit(
-                    pivot, baseYaw + m_gameCameraYawOffset,
-                    glm::clamp(basePitch - m_gameCameraPitchOffset,
-                               -1.50f, 1.50f),
-                    radius);
-                viewSet = true;
+                if (m_physics) {
+                    const float collisionRadius =
+                        std::max(0.2f, camera.nearZ);
+                    const auto collisionFilter =
+                        [this, target](entt::entity entity) {
+                            return IsCameraCollisionBlocker(entity, target);
+                        };
+                    glm::vec3 collisionPoint;
+                    if (m_physics->SphereCast(
+                            pivot, eye, collisionRadius,
+                            collisionFilter, collisionPoint)) {
+                        eye = collisionPoint;
+                    }
+                }
             }
-        }
 
-        if (!viewSet) {
-            applyInPlaceLook();
-            m_camera.SetView(eye, eye + forward, up);
+            if (orbitActive &&
+                glm::length(eye - pivot) > 1e-3f) {
+                m_camera.SetView(eye, pivot, glm::vec3(0.0f, 1.0f, 0.0f));
+            } else {
+                applyInPlaceLook();
+                m_camera.SetView(eye, eye + forward, up);
+            }
         }
         m_usingGameCamera = true;
         m_activeGameCamera = cameraEntity.Handle();
