@@ -11503,7 +11503,8 @@ void DrawDetails() {
             beginDetailsSection(
                 "Vegetation (Instanced)", ImGuiTreeNodeFlags_DefaultOpen,
                 "vegetation trees grass instanced density scale slope seed "
-                "colors models painting shadows")) {
+                "colors models painting shadows leaf leaves foliage textures "
+                "albedo orm normal")) {
             auto& veg = selected[0].GetComponent<Galeshi::VegetationComponent>();
             bool changed = false;
             changed |= ImGui::Checkbox("Enabled", &veg.enabled);
@@ -11655,8 +11656,8 @@ void DrawDetails() {
                 // Each authored tree species owns its own texture row. Leave
                 // the Landscape material texture row above untouched; this
                 // override is only used when at least one slot is assigned.
-                if (ImGui::TreeNodeEx("Tree Textures",
-                                      ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::TreeNodeEx("Whole Tree Textures",
+                                      ImGuiTreeNodeFlags_None)) {
                     ImGui::TextDisabled(
                         "Drag textures from the Content Browser. Empty slots "
                         "use the tree model's imported materials.");
@@ -11689,6 +11690,192 @@ void DrawDetails() {
                         DrawTextureSlot("Specular Map",
                                         type.material->specularMap, false,
                                         &type.material->specularSrgb);
+                    }
+                    ImGui::TreePop();
+                }
+
+                if (ImGui::TreeNodeEx(
+                        "Leaf Textures",
+                        ImGuiTreeNodeFlags_DefaultOpen)) {
+                    ImGui::TextDisabled(
+                        "Add one set per leaf mesh. Each set overrides only "
+                        "its target mesh; the trunk keeps the model material.");
+                    Galeshi::AssetManager::LoadedModel treeModel;
+                    if (!type.meshPath.empty()) {
+                        treeModel = m_assets->LoadModel(type.meshPath);
+                    }
+                    if (type.meshPath.empty()) {
+                        ImGui::TextDisabled(
+                            "Assign a tree model first, then add leaf sets.");
+                    } else if (treeModel.meshes.empty()) {
+                        ImGui::TextDisabled(
+                            "The tree model has no usable meshes.");
+                    } else {
+                        std::vector<std::string> meshLabels;
+                        meshLabels.reserve(treeModel.meshes.size());
+                        for (int meshIndex = 0;
+                             meshIndex <
+                             static_cast<int>(treeModel.meshes.size());
+                             ++meshIndex) {
+                            meshLabels.push_back(
+                                TreeMeshLabel(treeModel, meshIndex));
+                        }
+
+                        int removeLeaf = -1;
+                        for (int leafIndex = 0;
+                             leafIndex <
+                             static_cast<int>(type.leafSets.size());
+                             ++leafIndex) {
+                            auto& leaf = type.leafSets[
+                                static_cast<size_t>(leafIndex)];
+                            EnsureLeafMaterial(leaf, typeIndex, leafIndex);
+                            ImGui::PushID(leafIndex);
+                            ImGui::Separator();
+                            ImGui::Text("Leaf %d", leafIndex + 1);
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("- Remove Leaf")) {
+                                removeLeaf = leafIndex;
+                            }
+
+                            const char* preview =
+                                leaf.meshIndex >= 0 &&
+                                    leaf.meshIndex <
+                                        static_cast<int>(
+                                            meshLabels.size())
+                                    ? meshLabels[static_cast<size_t>(
+                                          leaf.meshIndex)].c_str()
+                                    : "Select leaf mesh";
+                            ImGui::SetNextItemWidth(260.0f);
+                            if (ImGui::BeginCombo("Leaf Mesh", preview)) {
+                                for (int meshIndex = 0;
+                                     meshIndex <
+                                     static_cast<int>(meshLabels.size());
+                                     ++meshIndex) {
+                                    const bool isSelected =
+                                        leaf.meshIndex == meshIndex;
+                                    ImGui::PushID(meshIndex);
+                                    if (ImGui::Selectable(
+                                            meshLabels[static_cast<size_t>(
+                                                meshIndex)].c_str(),
+                                            isSelected)) {
+                                        PushHistory();
+                                        leaf.meshIndex = meshIndex;
+                                    }
+                                    if (isSelected) {
+                                        ImGui::SetItemDefaultFocus();
+                                    }
+                                    ImGui::PopID();
+                                }
+                                ImGui::EndCombo();
+                            }
+                            if (leaf.meshIndex < 0 ||
+                                leaf.meshIndex >=
+                                    static_cast<int>(meshLabels.size())) {
+                                ImGui::TextColored(
+                                    ImVec4(1.0f, 0.7f, 0.35f, 1.0f),
+                                    "Choose the imported mesh this leaf "
+                                    "material replaces.");
+                            } else {
+                                for (int other = 0;
+                                     other <
+                                     static_cast<int>(
+                                         type.leafSets.size());
+                                     ++other) {
+                                    if (other == leafIndex) continue;
+                                    if (type.leafSets[static_cast<size_t>(
+                                            other)].meshIndex ==
+                                        leaf.meshIndex) {
+                                        ImGui::TextColored(
+                                            ImVec4(1.0f, 0.7f, 0.35f, 1.0f),
+                                            "Mesh also used by Leaf %d; "
+                                            "the first matching set wins.",
+                                            other + 1);
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (leaf.material) {
+                                DrawTextureSlot(
+                                    "Albedo",
+                                    leaf.material->albedoMap, true,
+                                    &leaf.material->albedoSrgb);
+                                DrawTextureSlot(
+                                    "ORM",
+                                    leaf.material->metallicRoughnessMap,
+                                    false,
+                                    &leaf.material->
+                                        metallicRoughnessSrgb);
+                                // ORM is authored as one texture: R=AO,
+                                // G=roughness, B=metallic. Bind it to both
+                                // material slots the PBR shader reads.
+                                leaf.material->occlusionMap =
+                                    leaf.material->metallicRoughnessMap;
+                                leaf.material->occlusionSrgb =
+                                    leaf.material->metallicRoughnessSrgb;
+                                if (leaf.material->metallicRoughnessMap) {
+                                    leaf.material->metallicFactor = 1.0f;
+                                    leaf.material->roughnessFactor = 1.0f;
+                                } else {
+                                    leaf.material->metallicFactor = 0.0f;
+                                    leaf.material->roughnessFactor = 1.0f;
+                                }
+                                DrawTextureSlot(
+                                    "Normal",
+                                    leaf.material->normalMap, false,
+                                    &leaf.material->normalSrgb);
+                                ImGui::TextDisabled(
+                                    "ORM: R occlusion, G roughness, "
+                                    "B metallic.");
+
+                                bool twoSided =
+                                    !leaf.material->backfaceCulling;
+                                if (ImGui::Checkbox(
+                                        "Two Sided", &twoSided)) {
+                                    PushHistory();
+                                    leaf.material->twoSided = twoSided;
+                                    leaf.material->backfaceCulling =
+                                        !twoSided;
+                                }
+                                bool alphaCutout =
+                                    leaf.material->alphaTest;
+                                if (ImGui::Checkbox(
+                                        "Alpha Cutout",
+                                        &alphaCutout)) {
+                                    PushHistory();
+                                    leaf.material->alphaTest =
+                                        alphaCutout;
+                                }
+                                if (leaf.material->alphaTest) {
+                                    ImGui::SetNextItemWidth(160.0f);
+                                    ImGui::SliderFloat(
+                                        "Alpha Cutoff",
+                                        &leaf.material->alphaCutoff,
+                                        0.0f, 1.0f);
+                                }
+                            }
+                            ImGui::PopID();
+                        }
+                        if (removeLeaf >= 0) {
+                            PushHistory();
+                            type.leafSets.erase(
+                                type.leafSets.begin() + removeLeaf);
+                        }
+                        if (ImGui::Button("+ Add Leaf")) {
+                            PushHistory();
+                            Galeshi::VegetationLeafSet leaf;
+                            leaf.meshIndex = SuggestedLeafMeshIndex(
+                                treeModel, type.leafSets);
+                            EnsureLeafMaterial(
+                                leaf, typeIndex,
+                                static_cast<int>(type.leafSets.size()));
+                            type.leafSets.push_back(std::move(leaf));
+                        }
+                        if (type.leafSets.empty()) {
+                            ImGui::SameLine();
+                            ImGui::TextDisabled(
+                                "No leaf mesh overrides.");
+                        }
                     }
                     ImGui::TreePop();
                 }
@@ -13726,6 +13913,109 @@ void DrawDetails() {
         type.material->castsShadow = true;
     }
 
+    void EnsureLeafMaterial(Galeshi::VegetationLeafSet& leaf,
+                            int typeIndex, int leafIndex) {
+        if (leaf.material) {
+            // ORM textures carry their own metallic channel; the material
+            // factor must be neutral for that channel to have an effect.
+            if (leaf.material->metallicRoughnessMap) {
+                leaf.material->metallicFactor = 1.0f;
+                leaf.material->roughnessFactor = 1.0f;
+            }
+            return;
+        }
+        leaf.material = std::make_shared<Galeshi::Material>();
+        leaf.material->name = "Tree " + std::to_string(typeIndex + 1) +
+                              " Leaf " + std::to_string(leafIndex + 1);
+        leaf.material->twoSided = true;
+        leaf.material->backfaceCulling = false;
+        leaf.material->castsShadow = true;
+        // Leaf textures commonly carry an alpha mask. The shader ignores
+        // this when the alpha channel is fully opaque.
+        leaf.material->alphaTest = true;
+        leaf.material->alphaCutoff = 0.5f;
+        leaf.material->sceneOverride = true;
+    }
+
+    static bool IsLeafMeshName(const std::string& meshName,
+                               const std::string& materialName) {
+        const std::string haystack =
+            ToLowerCopy(meshName + " " + materialName);
+        for (const char* token :
+             {"leaf", "leaves", "foliage", "frond", "needle", "canopy"}) {
+            if (haystack.find(token) != std::string::npos) return true;
+        }
+        return false;
+    }
+
+    static std::string TreeMeshLabel(
+        const Galeshi::AssetManager::LoadedModel& model, int index) {
+        std::string label =
+            index >= 0 &&
+                index < static_cast<int>(model.meshNames.size()) &&
+                !model.meshNames[static_cast<size_t>(index)].empty()
+                ? model.meshNames[static_cast<size_t>(index)]
+                : "Mesh " + std::to_string(index);
+        if (index >= 0 &&
+            index < static_cast<int>(model.meshMaterialIndex.size())) {
+            const int materialIndex =
+                model.meshMaterialIndex[static_cast<size_t>(index)];
+            if (materialIndex >= 0 &&
+                materialIndex <
+                    static_cast<int>(model.materials.size()) &&
+                model.materials[static_cast<size_t>(materialIndex)]) {
+                const auto& material =
+                    model.materials[static_cast<size_t>(materialIndex)];
+                if (!material->name.empty()) {
+                    label += " (" + material->name + ")";
+                }
+            }
+        }
+        return label;
+    }
+
+    static int SuggestedLeafMeshIndex(
+        const Galeshi::AssetManager::LoadedModel& model,
+        const std::vector<Galeshi::VegetationLeafSet>& leafSets) {
+        std::vector<bool> used(model.meshes.size(), false);
+        for (const auto& leaf : leafSets) {
+            if (leaf.meshIndex >= 0 &&
+                leaf.meshIndex < static_cast<int>(used.size())) {
+                used[static_cast<size_t>(leaf.meshIndex)] = true;
+            }
+        }
+        for (int pass = 0; pass < 2; ++pass) {
+            for (int i = 0; i < static_cast<int>(model.meshes.size()); ++i) {
+                if (used[static_cast<size_t>(i)]) continue;
+                if (!model.meshes[static_cast<size_t>(i)] ||
+                    !model.meshes[static_cast<size_t>(i)]->Valid()) {
+                    continue;
+                }
+                std::string materialName;
+                if (i < static_cast<int>(model.meshMaterialIndex.size())) {
+                    const int materialIndex =
+                        model.meshMaterialIndex[static_cast<size_t>(i)];
+                    if (materialIndex >= 0 &&
+                        materialIndex <
+                            static_cast<int>(model.materials.size()) &&
+                        model.materials[static_cast<size_t>(materialIndex)]) {
+                        materialName =
+                            model.materials[static_cast<size_t>(materialIndex)]
+                                ->name;
+                    }
+                }
+                const std::string meshName =
+                    i < static_cast<int>(model.meshNames.size())
+                        ? model.meshNames[static_cast<size_t>(i)]
+                        : std::string{};
+                if (pass == 1 || IsLeafMeshName(meshName, materialName)) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
     // Assign a static tree model to a Landscape's instanced vegetation.
     // The model is validated before the component/path is changed so a
     // broken FBX cannot silently replace a working tree mesh.
@@ -13766,6 +14056,10 @@ void DrawDetails() {
         if (typeIndex >= 0 &&
             typeIndex < static_cast<int>(vegetation.treeTypes.size())) {
             auto& type = vegetation.treeTypes[static_cast<size_t>(typeIndex)];
+            if (type.meshPath != path) {
+                // Leaf overrides address mesh indices in the old model.
+                type.leafSets.clear();
+            }
             type.meshPath = path;
             // Imported source trees are commonly authored in centimeter-like
             // units. Use 0.010 as the default multiplier instead of making

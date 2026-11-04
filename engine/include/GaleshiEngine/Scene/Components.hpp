@@ -259,6 +259,15 @@ struct LandscapeComponent {
     std::string bakedNormalPath;
 };
 
+// One user-defined leaf material assigned to a specific mesh of an imported
+// tree model. Several sets can be added to one tree type; each set overrides
+// only its target mesh so trunks and other parts keep their imported
+// materials.
+struct VegetationLeafSet {
+    int meshIndex = -1;
+    std::shared_ptr<Material> material;
+};
+
 // One independently configured tree species used by landscape vegetation.
 // Density scales the number of automatically generated instances of this
 // species relative to the base Trees count; Size is a model-space multiplier
@@ -272,6 +281,10 @@ struct VegetationTreeType {
     // imported model's own materials; once any slot is assigned, this
     // material is applied to the species' tree meshes.
     std::shared_ptr<Material> material;
+
+    // Per-mesh leaf overrides. These take precedence over `material` on the
+    // targeted mesh.
+    std::vector<VegetationLeafSet> leafSets;
 
     // Runtime-generated instances are deterministic from the vegetation seed
     // and are not serialized. Painted instances are authored by the brush and

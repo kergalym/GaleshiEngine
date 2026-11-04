@@ -49,6 +49,52 @@ namespace {
                 material->specularMap);
     }
 
+    std::shared_ptr<Material> FindLeafOverride(
+        const std::vector<VegetationLeafSet>& leafSets, size_t meshIndex) {
+        for (const auto& leaf : leafSets) {
+            if (leaf.meshIndex == static_cast<int>(meshIndex) &&
+                HasTreeTextureOverride(leaf.material)) {
+                return leaf.material;
+            }
+        }
+        return nullptr;
+    }
+
+    // Leaf sets only require the three user textures. Empty slots fall back
+    // to the imported mesh material so a leaf override can change just one
+    // map without turning the other channels white.
+    std::shared_ptr<Material> ComposeLeafOverride(
+        const std::shared_ptr<Material>& leaf,
+        const std::shared_ptr<Material>& imported) {
+        if (!leaf) return imported;
+        if (!imported ||
+            (leaf->albedoMap && leaf->metallicRoughnessMap &&
+             leaf->normalMap && leaf->occlusionMap)) {
+            return leaf;
+        }
+        auto result = std::make_shared<Material>(*leaf);
+        if (!result->albedoMap) result->albedoMap = imported->albedoMap;
+        if (!result->metallicRoughnessMap) {
+            result->metallicRoughnessMap = imported->metallicRoughnessMap;
+            result->metallicFactor = imported->metallicFactor;
+            result->roughnessFactor = imported->roughnessFactor;
+            if (!result->metallicMap) {
+                result->metallicMap = imported->metallicMap;
+            }
+            if (!result->roughnessMap) {
+                result->roughnessMap = imported->roughnessMap;
+            }
+        }
+        if (!result->occlusionMap) {
+            result->occlusionMap = result->metallicRoughnessMap
+                ? result->metallicRoughnessMap
+                : imported->occlusionMap;
+        }
+        if (!result->normalMap) result->normalMap = imported->normalMap;
+        if (!result->opacityMap) result->opacityMap = imported->opacityMap;
+        return result;
+    }
+
     entt::entity FindRootEntity(Scene& scene, entt::entity handle) {
         entt::entity root = handle;
         int depth = 0;
@@ -1154,7 +1200,8 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
             std::shared_ptr<Material> material;
         };
         auto loadTreeDraws = [&](const std::string& path,
-                                 const std::shared_ptr<Material>& overrideMaterial) {
+                                 const std::shared_ptr<Material>& overrideMaterial,
+                                 const std::vector<VegetationLeafSet>* leafSets) {
             std::vector<CustomTreeDraw> draws;
             if (path.empty()) return draws;
             auto treeModel = m_assets->LoadModel(path);
@@ -1174,7 +1221,18 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
                 if (!material && !treeModel.materials.empty()) {
                     material = treeModel.materials.front();
                 }
-                if (useOverride) material = overrideMaterial;
+                std::shared_ptr<Material> leafOverride;
+                if (leafSets) {
+                    leafOverride = FindLeafOverride(*leafSets, i);
+                }
+                const std::shared_ptr<Material> baseMaterial =
+                    useOverride ? overrideMaterial : material;
+                if (leafOverride) {
+                    material = ComposeLeafOverride(leafOverride,
+                                                   baseMaterial);
+                } else {
+                    material = baseMaterial;
+                }
                 draws.push_back({treeModel.meshes[i], material});
             }
             return draws;
@@ -1244,7 +1302,7 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
 
         const std::vector<CustomTreeDraw> legacyTreeDraws =
             vegetation.treeTypes.empty()
-                ? loadTreeDraws(vegetation.treeMeshPath, nullptr)
+                ? loadTreeDraws(vegetation.treeMeshPath, nullptr, nullptr)
                 : std::vector<CustomTreeDraw>{};
 
         if (vegetation.treeTypes.empty()) {
@@ -1256,13 +1314,15 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
             // legacy procedural defaults that Hide Default Instances targets.
             for (const auto& type : vegetation.treeTypes) {
                 drawTreeBatch(type.generatedInstances,
-                              loadTreeDraws(type.meshPath, type.material));
+                              loadTreeDraws(type.meshPath, type.material,
+                                            &type.leafSets));
             }
         }
         if (!vegetation.treeTypes.empty()) {
             for (const auto& type : vegetation.treeTypes) {
                 drawTreeBatch(type.paintedInstances,
-                              loadTreeDraws(type.meshPath, type.material));
+                              loadTreeDraws(type.meshPath, type.material,
+                                            &type.leafSets));
             }
         }
         drawTreeBatch(vegetation.paintedTreeInstances, legacyTreeDraws);
@@ -1321,7 +1381,8 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
             bool twoSided = false;
         };
         auto loadShadowDraws = [&](const std::string& path,
-                                   const std::shared_ptr<Material>& overrideMaterial) {
+                                   const std::shared_ptr<Material>& overrideMaterial,
+                                   const std::vector<VegetationLeafSet>* leafSets) {
             std::vector<CustomTreeShadowDraw> draws;
             if (path.empty()) return draws;
             auto treeModel = m_assets->LoadModel(path);
@@ -1340,7 +1401,13 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
                             static_cast<size_t>(materialIndex)]->backfaceCulling;
                     }
                 }
-                if (useOverride) {
+                std::shared_ptr<Material> leafOverride;
+                if (leafSets) {
+                    leafOverride = FindLeafOverride(*leafSets, i);
+                }
+                if (leafOverride) {
+                    twoSided = !leafOverride->backfaceCulling;
+                } else if (useOverride) {
                     twoSided = !overrideMaterial->backfaceCulling;
                 }
                 draws.push_back({treeModel.meshes[i], twoSided});
@@ -1368,7 +1435,7 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
 
         const std::vector<CustomTreeShadowDraw> legacyTreeDraws =
             vegetation.treeTypes.empty()
-                ? loadShadowDraws(vegetation.treeMeshPath, nullptr)
+                ? loadShadowDraws(vegetation.treeMeshPath, nullptr, nullptr)
                 : std::vector<CustomTreeShadowDraw>{};
 
         if (vegetation.castShadows) {
@@ -1380,14 +1447,16 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
                 for (const auto& type : vegetation.treeTypes) {
                     drawShadowBatch(type.generatedInstances,
                                     loadShadowDraws(type.meshPath,
-                                                    type.material));
+                                                    type.material,
+                                                    &type.leafSets));
                 }
             }
             if (!vegetation.treeTypes.empty()) {
                 for (const auto& type : vegetation.treeTypes) {
                     drawShadowBatch(type.paintedInstances,
                                     loadShadowDraws(type.meshPath,
-                                                    type.material));
+                                                    type.material,
+                                                    &type.leafSets));
                 }
             }
             drawShadowBatch(vegetation.paintedTreeInstances, legacyTreeDraws);

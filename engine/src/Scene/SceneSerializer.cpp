@@ -749,6 +749,16 @@ std::string SceneSerializer::SaveToString(bool includeEditorState) const {
                 if (type.material) {
                     jt["material"] = MaterialToJson(*type.material, m_assets);
                 }
+                json leafSets = json::array();
+                for (const auto& leaf : type.leafSets) {
+                    json jl = {{"meshIndex", leaf.meshIndex}};
+                    if (leaf.material) {
+                        jl["material"] =
+                            MaterialToJson(*leaf.material, m_assets);
+                    }
+                    leafSets.push_back(std::move(jl));
+                }
+                jt["leafSets"] = std::move(leafSets);
                 treeTypes.push_back(std::move(jt));
             }
             je["vegetation"] = {
@@ -1580,6 +1590,26 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                         jt["material"].is_object()) {
                         type.material = MaterialFromJson(
                             jt["material"], m_assets, type.meshPath);
+                    }
+                    if (jt.contains("leafSets") &&
+                        jt["leafSets"].is_array()) {
+                        for (const auto& jl : jt["leafSets"]) {
+                            VegetationLeafSet leaf;
+                            leaf.meshIndex =
+                                jl.value("meshIndex", -1);
+                            if (jl.contains("material") &&
+                                jl["material"].is_object()) {
+                                leaf.material = MaterialFromJson(
+                                    jl["material"], m_assets,
+                                    type.meshPath);
+                            }
+                            if (leaf.material &&
+                                !leaf.material->occlusionMap) {
+                                leaf.material->occlusionMap =
+                                    leaf.material->metallicRoughnessMap;
+                            }
+                            type.leafSets.push_back(std::move(leaf));
+                        }
                     }
                     vegetation.treeTypes.push_back(std::move(type));
                 }
