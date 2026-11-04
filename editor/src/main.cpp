@@ -155,6 +155,17 @@ static bool IsImageAssetPath(const std::string& path) {
            extension == ".ktx";
 }
 
+static bool IsCppCodeAssetPath(const std::string& path) {
+    const std::string extension = AssetExtensionLower(path);
+    return extension == ".cpp" || extension == ".cc" ||
+           extension == ".cxx" || extension == ".hpp" ||
+           extension == ".h";
+}
+
+static bool IsCodeAssetPath(const std::string& path) {
+    return AssetExtensionLower(path) == ".lua" || IsCppCodeAssetPath(path);
+}
+
 inline float ProfileElapsedMs(ProfileClock::time_point begin,
                               ProfileClock::time_point end) {
     return std::chrono::duration<float, std::milli>(end - begin).count();
@@ -1566,8 +1577,9 @@ protected:
             if (ImGui::IsKeyPressed(ImGuiKey_R)) m_editor.SetMode(Galeshi::GizmoMode::Scale);
             if (ImGui::IsKeyPressed(ImGuiKey_Delete)) DeleteSelected();
             if (ImGui::IsKeyPressed(ImGuiKey_F5)) {
-                spdlog::info("[Lua] Hot-reload init.lua");
+                spdlog::info("[Script] Hot-reload init.lua and C++ modules");
                 m_scripts.HotReload("assets/scripts/init.lua");
+                m_scripts.ReloadCppScripts(false);
             }
             // Space is now used by Lua (Jump)
 
@@ -1590,7 +1602,7 @@ protected:
         DrawOutliner();
         DrawDetails();
         DrawContentBrowser();
-        DrawLuaEditor();
+        DrawCodeEditor();
         DrawLuaConsole();
         DrawScriptComponents();
         DrawUIDesigner();
@@ -4361,7 +4373,7 @@ if (ImGui::BeginMenu("File")) {
 
         if (ImGui::Button("+ Add Widget")) AddDefaultUIWidget(Galeshi::UIWidgetType::Button);
         ImGui::SameLine();
-        if (ImGui::Button("Open Script")) ImGui::SetWindowFocus("Lua Editor");
+        if (ImGui::Button("Open Script")) ImGui::SetWindowFocus("Code Editor");
     }
 
     void DrawUIWidgetProperties(Galeshi::UICanvas& canvas,
@@ -4461,7 +4473,7 @@ if (ImGui::BeginMenu("File")) {
 
         if (ImGui::Button("+ Add Widget")) AddDefaultUIWidget(Galeshi::UIWidgetType::Button);
         ImGui::SameLine();
-        if (ImGui::Button("Open Script")) ImGui::SetWindowFocus("Lua Editor");
+        if (ImGui::Button("Open Script")) ImGui::SetWindowFocus("Code Editor");
         ImGui::SameLine();
         if (ImGui::Button("Delete Widget")) {
             const int index = static_cast<int>(&widget - canvas.widgets.data());
@@ -5000,7 +5012,7 @@ if (ImGui::BeginMenu("File")) {
             ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down,  0.35f, nullptr, &center);
             ImGuiID left   = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left,  0.20f, nullptr, &center);
 
-            // Split the bottom area into Left (Content Browser) and Right (Lua Editor)
+            // Split the bottom area into Left (Content Browser) and Right (Code Editor)
             ImGuiID bottomLeft = ImGui::DockBuilderSplitNode(bottom, ImGuiDir_Left, 0.20f, nullptr, &bottom);
 
             ImGui::DockBuilderDockWindow("Viewport",          center);
@@ -5015,7 +5027,7 @@ if (ImGui::BeginMenu("File")) {
             ImGui::DockBuilderDockWindow("Output Log",        bottom);
             ImGui::DockBuilderDockWindow("Animation State Machine Editor",
                                          bottom);
-            ImGui::DockBuilderDockWindow("Lua Editor",        bottom);
+            ImGui::DockBuilderDockWindow("Code Editor",        bottom);
             ImGui::DockBuilderDockWindow("Lua Console",       bottom);
             ImGui::DockBuilderDockWindow("Script Components", bottom);
 
@@ -11455,38 +11467,99 @@ void DrawDetails() {
     // -------------------------------------------------------------------
     // Content Browser & Assets
     // -------------------------------------------------------------------
-    void DrawLuaEditor() {
-        ImGui::Begin("Lua Editor");
-        if (!m_luaEditorInitialized) {
-            m_luaEditor.SetLanguageDefinition(TextEditor::LanguageDefinition::Lua());
-            m_luaEditor.SetPalette(TextEditor::GetDarkPalette());
-            m_luaEditor.SetText("-- Select a .lua file from Content Browser");
-            m_luaEditorInitialized = true;
+    void OpenCodeFile(const std::string& path) {
+        m_currentCodeFile = path;
+        m_codeEditorCppMode = IsCppCodeAssetPath(path);
+        m_codeEditor.SetLanguageDefinition(
+            m_codeEditorCppMode
+                ? TextEditor::LanguageDefinition::CPlusPlus()
+                : TextEditor::LanguageDefinition::Lua());
+        std::ifstream in(path);
+        if (in.is_open()) {
+            std::stringstream ss;
+            ss << in.rdbuf();
+            m_codeEditor.SetText(ss.str());
         }
-        if (m_currentLuaFile.empty()) {
-            ImGui::TextDisabled("No file opened. Double-click a .lua file in Content Browser.");
+        ImGui::SetWindowFocus("Code Editor");
+    }
+
+    void DrawCodeEditor() {
+        ImGui::Begin("Code Editor");
+        const std::string chosenCodeFile = m_codeFilePicker.Draw();
+        if (!chosenCodeFile.empty()) OpenCodeFile(chosenCodeFile);
+        if (!m_codeEditorInitialized) {
+            m_codeEditor.SetLanguageDefinition(
+                m_codeEditorCppMode
+                    ? TextEditor::LanguageDefinition::CPlusPlus()
+                    : TextEditor::LanguageDefinition::Lua());
+            m_codeEditor.SetPalette(TextEditor::GetDarkPalette());
+            m_codeEditor.SetText(
+                "-- Select a .lua or .cpp file from Content Browser");
+            m_codeEditorInitialized = true;
+        }
+        if (ImGui::Button("Open...")) {
+            std::filesystem::path start =
+                Galeshi::ProjectManager::GetProjectPath();
+            if (start.empty()) start = std::filesystem::current_path();
+            start /= "scripts";
+            if (!std::filesystem::is_directory(start)) {
+                start = std::filesystem::path(
+                    Galeshi::ProjectManager::GetProjectPath()) / "assets/scripts";
+            }
+            if (!std::filesystem::is_directory(start)) {
+                start = std::filesystem::current_path() / "assets/scripts";
+            }
+            m_codeFilePicker.Open(start.string(), "Open Code File",
+                                  {".lua", ".cpp", ".cc", ".cxx",
+                                   ".hpp", ".h"});
+        }
+        ImGui::SameLine();
+        if (m_currentCodeFile.empty()) {
+            ImGui::TextDisabled(
+                "No file opened. Double-click a .lua or .cpp file in "
+                "Content Browser, or use Open...");
         } else {
+            const bool cppFile = IsCppCodeAssetPath(m_currentCodeFile);
+            if (ImGui::Checkbox("C++ mode", &m_codeEditorCppMode)) {
+                m_codeEditor.SetLanguageDefinition(
+                    m_codeEditorCppMode
+                        ? TextEditor::LanguageDefinition::CPlusPlus()
+                        : TextEditor::LanguageDefinition::Lua());
+            }
+            ImGui::SameLine();
             if (ImGui::Button("Save")) {
-                spdlog::info("[Editor] Attempting to save Lua script to: {}", std::filesystem::absolute(m_currentLuaFile).string());
-                std::ofstream out(m_currentLuaFile);
+                std::ofstream out(m_currentCodeFile);
                 if (out.is_open()) {
-                    out << m_luaEditor.GetText();
+                    out << m_codeEditor.GetText();
                     out.close();
-                    spdlog::info("[Editor] Successfully saved Lua script.");
+                    spdlog::info("[Editor] Saved code file: {}",
+                                 std::filesystem::absolute(m_currentCodeFile).string());
+                    if (cppFile) {
+                        m_scripts.ReloadCppScripts(true);
+                    }
                 } else {
-                    spdlog::error("[Editor] FAILED to open file for saving: {}", m_currentLuaFile);
+                    spdlog::error("[Editor] FAILED to open file for saving: {}",
+                                  m_currentCodeFile);
                 }
             }
             ImGui::SameLine();
             if (ImGui::Button("Reload")) {
-                if (m_scripts.HotReload(m_currentLuaFile)) {
-                    spdlog::info("[Editor] Reloaded {}", m_currentLuaFile);
+                if (cppFile) {
+                    m_scripts.ReloadCppScripts(true);
+                } else if (m_scripts.HotReload(m_currentCodeFile)) {
+                    spdlog::info("[Editor] Reloaded {}", m_currentCodeFile);
+                }
+            }
+            if (cppFile) {
+                ImGui::SameLine();
+                if (ImGui::Button("Compile C++")) {
+                    m_scripts.ReloadCppScripts(true);
                 }
             }
             ImGui::SameLine();
-            ImGui::TextDisabled("%s", m_currentLuaFile.c_str());
+            ImGui::TextDisabled("%s", m_currentCodeFile.c_str());
             ImGui::Separator();
-            m_luaEditor.Render("LuaEditor");
+            m_codeEditor.Render("CodeEditor");
         }
         ImGui::End();
     }
@@ -12375,16 +12448,8 @@ void DrawDetails() {
     }
 
     void OnAssetDoubleClicked(const std::string& path) {
-        const std::string ext = AssetExtensionLower(path);
-
-        if (ext == ".lua") {
-            m_currentLuaFile = path;
-            std::ifstream in(path);
-            if (in.is_open()) {
-                std::stringstream ss;
-                ss << in.rdbuf();
-                m_luaEditor.SetText(ss.str());
-            }
+        if (IsCodeAssetPath(path)) {
+            OpenCodeFile(path);
             return;
         }
         if (IsModelAssetPath(path)) {
@@ -12433,16 +12498,8 @@ void DrawDetails() {
     }
 
     void OnAssetDropped(const std::string& path, glm::vec3 pos) {
-        const std::string ext = AssetExtensionLower(path);
-
-        if (ext == ".lua") {
-            m_currentLuaFile = path;
-            std::ifstream in(path);
-            if (in.is_open()) {
-                std::stringstream ss;
-                ss << in.rdbuf();
-                m_luaEditor.SetText(ss.str());
-            }
+        if (IsCodeAssetPath(path)) {
+            OpenCodeFile(path);
             return;
         }
         if (IsModelAssetPath(path)) {
@@ -12926,6 +12983,7 @@ void DrawDetails() {
     std::string m_currentScenePath;
     Galeshi::FilePickerDialog m_filePicker;
     Galeshi::FilePickerDialog m_filePickerSave;
+    Galeshi::FilePickerDialog m_codeFilePicker;
     Galeshi::FilePickerDialog m_scenePicker;
     Galeshi::FilePickerDialog m_vegetationMeshPicker;
     entt::entity m_vegetationMeshTarget = entt::null;
@@ -12943,9 +13001,10 @@ void DrawDetails() {
     std::string m_detailsSearch;
     char m_detailsSearchBuffer[256] = {};
     bool m_detailsSearchScrollPending = false;
-    TextEditor m_luaEditor;
-    std::string m_currentLuaFile;
-    bool m_luaEditorInitialized = false;
+    TextEditor m_codeEditor;
+    std::string m_currentCodeFile;
+    bool m_codeEditorInitialized = false;
+    bool m_codeEditorCppMode = false;
 
     std::vector<std::string> m_history;
     int  m_historyIndex = -1;

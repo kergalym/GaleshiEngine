@@ -1,4 +1,5 @@
 #include "GaleshiEngine/Scripting/ScriptEngine.hpp"
+#include "GaleshiEngine/Core/ProjectManager.hpp"
 #include "GaleshiEngine/Scene/Scene.hpp"
 #include "GaleshiEngine/Scene/Components.hpp"
 #include "GaleshiEngine/Animation/AnimationSystem.hpp"
@@ -10,10 +11,19 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <limits>
+#include <map>
+#include <set>
 #include <sstream>
 #include <utility>
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <dlfcn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 namespace Galeshi {
 
@@ -85,18 +95,143 @@ const char* WidgetTypeName(UIWidgetType type) {
     }
 }
 
+float InterpFactor(float deltaTime, float speed) {
+    if (speed <= 0.0f) return 1.0f;
+    if (deltaTime <= 0.0f) return 0.0f;
+    return std::clamp(1.0f - std::exp(-speed * deltaTime), 0.0f, 1.0f);
+}
+
+float ScriptFInterp(float current, float target, float deltaTime,
+                    float speed) {
+    return current + (target - current) *
+                         InterpFactor(deltaTime, speed);
+}
+
+GaleshiScriptVec3 ScriptVInterp(GaleshiScriptVec3 current,
+                                GaleshiScriptVec3 target,
+                                float deltaTime, float speed) {
+    const float t = InterpFactor(deltaTime, speed);
+    return {
+        current.x + (target.x - current.x) * t,
+        current.y + (target.y - current.y) * t,
+        current.z + (target.z - current.z) * t,
+    };
+}
+
+GaleshiScriptVec3 ToScriptVec3(const glm::vec3& value) {
+    return {value.x, value.y, value.z};
+}
+
+glm::vec3 FromScriptVec3(const GaleshiScriptVec3& value) {
+    return {value.x, value.y, value.z};
+}
+
+bool IsCppScriptPath(const std::filesystem::path& path) {
+    std::string extension = path.extension().string();
+    for (char& c : extension) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return extension == ".cpp" || extension == ".cc" || extension == ".cxx";
+}
+
+#if defined(__unix__) || defined(__APPLE__)
+bool CompileCppScript(const std::filesystem::path& source,
+                      const std::filesystem::path& output,
+                      const std::string& includeRoot,
+                      const std::string& projectRoot,
+                      std::string& compilerOutput) {
+    const char* envCompiler = std::getenv("CXX");
+    const std::string compiler =
+        envCompiler && *envCompiler ? envCompiler : "g++";
+
+    std::vector<std::string> arguments = {
+        compiler,
+        "-std=c++20",
+        "-shared",
+        "-fPIC",
+        "-O1",
+        "-I" + includeRoot,
+        "-I" + projectRoot,
+        "-I" + source.parent_path().string(),
+        "-o",
+        output.string(),
+        source.string(),
+    };
+    std::vector<char*> argv;
+    argv.reserve(arguments.size() + 1);
+    for (auto& argument : arguments) argv.push_back(argument.data());
+    argv.push_back(nullptr);
+
+    int pipeFds[2] = {-1, -1};
+    if (pipe(pipeFds) != 0) {
+        compilerOutput = "Could not create compiler output pipe";
+        return false;
+    }
+
+    const pid_t pid = fork();
+    if (pid < 0) {
+        close(pipeFds[0]);
+        close(pipeFds[1]);
+        compilerOutput = "Could not start compiler process";
+        return false;
+    }
+    if (pid == 0) {
+        dup2(pipeFds[1], STDERR_FILENO);
+        close(pipeFds[0]);
+        close(pipeFds[1]);
+        execvp(argv[0], argv.data());
+        _exit(127);
+    }
+
+    close(pipeFds[1]);
+    char buffer[4096];
+    ssize_t count = 0;
+    while ((count = read(pipeFds[0], buffer, sizeof(buffer))) > 0) {
+        compilerOutput.append(buffer, static_cast<std::size_t>(count));
+    }
+    close(pipeFds[0]);
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        compilerOutput += "\nCould not wait for compiler process";
+        return false;
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+#else
+bool CompileCppScript(const std::filesystem::path&,
+                      const std::filesystem::path&,
+                      const std::string&,
+                      const std::string&,
+                      std::string& compilerOutput) {
+    compilerOutput = "C++ script compilation is only supported on Unix";
+    return false;
+}
+#endif
+
 } // namespace
 
 ScriptEngine::ScriptEngine() {
     m_lua.open_libraries(sol::lib::base, sol::lib::math,
                          sol::lib::table, sol::lib::string);
     BindFunctions();
+    BuildCppApi();
+}
+
+ScriptEngine::~ScriptEngine() {
+#if defined(__unix__) || defined(__APPLE__)
+    for (auto& [path, module] : m_cppModules) {
+        (void)path;
+        if (module.library) dlclose(module.library);
+    }
+    m_cppModules.clear();
+#endif
 }
 
 void ScriptEngine::AddLog(const std::string& msg) {
     m_logs.push_back(msg);
     if (m_logs.size() > 1000) m_logs.erase(m_logs.begin());
-    spdlog::info("[Lua] {}", msg);
+    spdlog::info("[Script] {}", msg);
 }
 
 bool ScriptEngine::RunScript(const std::string& filepath) {
@@ -321,6 +456,40 @@ void ScriptEngine::BuildApi() {
                                sol::optional<float> w) {
         return makeQuat(glm::quat(w.value_or(1.0f), x, y, z));
     };
+
+    auto fInterp = [](float current, float target, float deltaTime,
+                      float speed) {
+        return current + (target - current) *
+                             InterpFactor(deltaTime, speed);
+    };
+    auto vInterp = [readVec3, makeVec3](
+                       const sol::object& current,
+                       const sol::object& target,
+                       float deltaTime,
+                       float speed) {
+        glm::vec3 from{0.0f};
+        glm::vec3 to{0.0f};
+        if (!readVec3(current, from) || !readVec3(target, to)) {
+            return makeVec3(glm::vec3{0.0f});
+        }
+        const float t = InterpFactor(deltaTime, speed);
+        return makeVec3(from + (to - from) * t);
+    };
+
+    sol::table math = m_lua.create_table();
+    math["FInterp"] = fInterp;
+    math["f_interp"] = fInterp;
+    math["VInterp"] = vInterp;
+    math["v_interp"] = vInterp;
+    m_api["math"] = math;
+    m_api["FInterp"] = fInterp;
+    m_api["f_interp"] = fInterp;
+    m_api["VInterp"] = vInterp;
+    m_api["v_interp"] = vInterp;
+    m_lua.set_function("FInterp", fInterp);
+    m_lua.set_function("f_interp", fInterp);
+    m_lua.set_function("VInterp", vInterp);
+    m_lua.set_function("v_interp", vInterp);
 
     sol::table world = m_lua.create_table();
     sol::table input = m_lua.create_table();
@@ -1867,6 +2036,89 @@ void ScriptEngine::BuildApi() {
     (void)engine;
 }
 
+void ScriptEngine::BuildCppApi() {
+    if (m_cppApiBuilt) return;
+    m_cppApiBuilt = true;
+    m_cppApi = {};
+    m_cppApi.user = this;
+    m_cppApi.log = [](void* user, const char* message) {
+        if (user && message) {
+            static_cast<ScriptEngine*>(user)->AddLog(message);
+        }
+    };
+    m_cppApi.is_key_down = [](void* user, const char* key) {
+        auto* self = static_cast<ScriptEngine*>(user);
+        return self && self->m_isKeyDown && key
+            ? self->m_isKeyDown(key)
+            : false;
+    };
+    m_cppApi.get_axis = [](void* user, const char* axis) {
+        auto* self = static_cast<ScriptEngine*>(user);
+        return self && self->m_getAxis && axis
+            ? self->m_getAxis(axis)
+            : 0.0f;
+    };
+    m_cppApi.find_entity = [](void* user, const char* name) -> uint32_t {
+        auto* self = static_cast<ScriptEngine*>(user);
+        if (!self || !self->m_scene || !name) return UINT32_MAX;
+        auto& registry = self->m_scene->Registry();
+        auto view = registry.view<NameComponent>();
+        for (auto entity : view) {
+            if (view.get<NameComponent>(entity).name == name) {
+                return static_cast<uint32_t>(entity);
+            }
+        }
+        return UINT32_MAX;
+    };
+    m_cppApi.entity_valid = [](void* user, uint32_t entity) {
+        auto* self = static_cast<ScriptEngine*>(user);
+        return self && self->m_scene &&
+               self->m_scene->Registry().valid(
+                   static_cast<entt::entity>(entity));
+    };
+    m_cppApi.get_position = [](void* user, uint32_t entity) {
+        auto* self = static_cast<ScriptEngine*>(user);
+        if (self && self->m_scene) {
+            auto& registry = self->m_scene->Registry();
+            const entt::entity handle = static_cast<entt::entity>(entity);
+            if (registry.valid(handle) &&
+                registry.all_of<TransformComponent>(handle)) {
+                return ToScriptVec3(
+                    registry.get<TransformComponent>(handle).position);
+            }
+        }
+        return GaleshiScriptVec3{};
+    };
+    m_cppApi.set_position = [](void* user, uint32_t entity,
+                               GaleshiScriptVec3 position) {
+        auto* self = static_cast<ScriptEngine*>(user);
+        if (!self || !self->m_scene) return;
+        auto& registry = self->m_scene->Registry();
+        const entt::entity handle = static_cast<entt::entity>(entity);
+        if (registry.valid(handle) &&
+            registry.all_of<TransformComponent>(handle)) {
+            registry.get<TransformComponent>(handle).position =
+                FromScriptVec3(position);
+        }
+    };
+    m_cppApi.get_velocity = [](void* user, uint32_t entity) {
+        auto* self = static_cast<ScriptEngine*>(user);
+        if (self && self->m_getVelocity) {
+            return ToScriptVec3(self->m_getVelocity(entity));
+        }
+        return GaleshiScriptVec3{};
+    };
+    m_cppApi.set_velocity = [](void* user, uint32_t entity,
+                               GaleshiScriptVec3 velocity) {
+        auto* self = static_cast<ScriptEngine*>(user);
+        if (self && self->m_setVelocity) {
+            self->m_setVelocity(entity, FromScriptVec3(velocity));
+        }
+    };
+    m_cppApi.f_interp = &ScriptFInterp;
+    m_cppApi.v_interp = &ScriptVInterp;
+}
+
 void ScriptEngine::BindFunctions() {
     BuildApi();
 }
@@ -2006,6 +2258,158 @@ void ScriptEngine::BindEngine(std::function<void()> requestExit) {
     m_requestExit = std::move(requestExit);
 }
 
+bool ScriptEngine::ReloadCppScripts(bool force) {
+    BuildCppApi();
+
+    namespace fs = std::filesystem;
+    std::map<std::string, fs::path> sources;
+    std::string projectRoot = ProjectManager::GetProjectPath();
+    if (projectRoot.empty()) {
+        projectRoot = fs::current_path().string();
+    }
+
+    std::set<std::string> roots;
+    const fs::path current = fs::current_path();
+    const fs::path project(projectRoot);
+    for (const fs::path& root : {
+             project / "scripts",
+             project / "assets/scripts",
+             current / "scripts",
+             current / "assets/scripts"}) {
+        std::error_code ec;
+        const fs::path absolute = fs::absolute(root, ec).lexically_normal();
+        if (ec || !fs::is_directory(absolute, ec)) continue;
+        if (!roots.insert(absolute.string()).second) continue;
+        for (fs::directory_iterator it(absolute, ec), end; !ec && it != end;
+             it.increment(ec)) {
+            if (!it->is_regular_file(ec)) continue;
+            const fs::path source = it->path();
+            if (!IsCppScriptPath(source)) continue;
+            sources[fs::absolute(source).lexically_normal().string()] = source;
+        }
+    }
+
+    for (auto it = m_cppModules.begin(); it != m_cppModules.end();) {
+        if (sources.find(it->first) == sources.end()) {
+#if defined(__unix__) || defined(__APPLE__)
+            if (it->second.library) dlclose(it->second.library);
+#endif
+            AddLog("Unloaded C++ script: " + it->first);
+            it = m_cppModules.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+#if !defined(__unix__) && !defined(__APPLE__)
+    if (!sources.empty()) {
+        AddLog("C++ scripts are not supported on this platform");
+    }
+    return false;
+#else
+    const fs::path cacheRoot =
+        fs::temp_directory_path() / "galeshi_cpp_scripts";
+    std::error_code cacheEc;
+    fs::create_directories(cacheRoot, cacheEc);
+
+    const std::string includeRoot =
+#ifdef GALESHI_SCRIPT_INCLUDE_DIR
+        GALESHI_SCRIPT_INCLUDE_DIR;
+#else
+        "engine/include";
+#endif
+
+    bool allSucceeded = true;
+    for (const auto& [pathKey, source] : sources) {
+        std::error_code timeEc;
+        const auto writeTime = fs::last_write_time(source, timeEc);
+        if (timeEc) continue;
+
+        auto moduleIt = m_cppModules.find(pathKey);
+        if (!force && moduleIt != m_cppModules.end() &&
+            moduleIt->second.writeTime == writeTime) {
+            continue;
+        }
+        auto failed = m_cppFailures.find(pathKey);
+        if (!force && failed != m_cppFailures.end() &&
+            failed->second == writeTime) {
+            continue;
+        }
+
+        const auto stamp = writeTime.time_since_epoch().count();
+        const std::string hash = std::to_string(
+            std::hash<std::string>{}(pathKey + ":" + std::to_string(stamp)));
+        const fs::path output = cacheRoot /
+            (source.stem().string() + "_" + hash + ".so");
+        std::error_code removeEc;
+        fs::remove(output, removeEc);
+
+        std::string compilerOutput;
+        if (!CompileCppScript(source, output, includeRoot, projectRoot,
+                              compilerOutput)) {
+            if (!compilerOutput.empty()) {
+                AddLog("C++ compile error in " + pathKey + ":\n" +
+                       compilerOutput);
+            } else {
+                AddLog("C++ compile error in " + pathKey);
+            }
+            m_cppFailures[pathKey] = writeTime;
+            if (moduleIt != m_cppModules.end()) {
+                moduleIt->second.writeTime = writeTime;
+            }
+            allSucceeded = false;
+            continue;
+        }
+
+        void* library = dlopen(output.string().c_str(), RTLD_NOW | RTLD_LOCAL);
+        if (!library) {
+            AddLog("C++ load error in " + pathKey + ": " + dlerror());
+            m_cppFailures[pathKey] = writeTime;
+            allSucceeded = false;
+            continue;
+        }
+        auto registerFn = reinterpret_cast<GaleshiScriptRegisterFn>(
+            dlsym(library, "GaleshiScriptRegister"));
+        auto updateFn = reinterpret_cast<GaleshiScriptUpdateFn>(
+            dlsym(library, "GaleshiScriptUpdate"));
+        if (!registerFn || !updateFn) {
+            AddLog("C++ script missing exports: " + pathKey +
+                   " (expected GaleshiScriptRegister/GaleshiScriptUpdate)");
+            dlclose(library);
+            m_cppFailures[pathKey] = writeTime;
+            allSucceeded = false;
+            continue;
+        }
+
+        registerFn(&m_cppApi);
+        if (moduleIt != m_cppModules.end() && moduleIt->second.library) {
+            dlclose(moduleIt->second.library);
+        }
+        CppScriptModule module;
+        module.path = pathKey;
+        module.writeTime = writeTime;
+        module.library = library;
+        module.update = updateFn;
+        m_cppModules[pathKey] = std::move(module);
+        m_cppFailures.erase(pathKey);
+        AddLog("Loaded C++ script: " + pathKey);
+    }
+    return allSucceeded;
+#endif
+}
+
+void ScriptEngine::UpdateCppScripts(float dt) {
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= m_nextCppScan) {
+        m_nextCppScan = now + std::chrono::seconds(1);
+        ReloadCppScripts(false);
+    }
+    for (auto& [path, module] : m_cppModules) {
+        (void)path;
+        if (module.update) module.update(dt);
+    }
+}
+
 void ScriptEngine::RunAIScripts(Scene& scene, float dt) {
     auto& reg = scene.Registry();
     auto view = reg.view<AIControllerComponent>();
@@ -2084,6 +2488,8 @@ void ScriptEngine::Update(float dt) {
     m_deltaTime = dt;
     m_time += static_cast<double>(dt);
     ++m_frame;
+
+    UpdateCppScripts(dt);
 
     if (!m_runOnceInvoked) {
         // Mark as invoked before the call so a failing RunOnce is not retried

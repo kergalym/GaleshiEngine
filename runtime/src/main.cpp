@@ -105,6 +105,8 @@ protected:
         }
     }
 
+    void OnUpdate(float dt) override { m_scripts.Update(dt); }
+
     void OnImGui() override { m_ui.Render(m_scene); }
 
 private:

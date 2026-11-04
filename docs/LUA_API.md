@@ -6,7 +6,7 @@ available for compatibility, but new scripts should use `Galeshi`.
 
 The Content Browser can generate starter scripts: right-click inside the file
 list and choose a template under **Create Script**. Files are written to
-`assets/scripts`; the editor opens the new file in the Lua Editor. Existing
+`assets/scripts`; the editor opens the new file in the Code Editor. Existing
 files are never overwritten — a numeric suffix is added instead.
 
 ```lua
@@ -18,6 +18,18 @@ function RunAlways(dt)
     player:translate(move * 5 * dt, 0, 0)
 end
 ```
+
+## Interpolation
+
+Frame-rate independent exponential interpolation is available in both forms:
+
+```lua
+local f = FInterp(0, 10, dt, 8)          -- number
+local v = VInterp(a, b, dt, 8)            -- {x, y, z}
+local f2 = Galeshi.math.FInterp(0, 10, dt, 8)
+```
+
+`f_interp` / `v_interp` lowercase aliases are also available.
 
 ## Entity handles
 

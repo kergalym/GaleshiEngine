@@ -4,10 +4,14 @@
 #include <entt/entt.hpp>
 #include <string>
 #include <cstdint>
+#include <chrono>
+#include <filesystem>
 #include <functional>
 #include <vector>
 #include <unordered_map>
 #include <glm/glm.hpp>
+
+#include "GaleshiEngine/Scripting/CppScriptApi.hpp"
 
 namespace Galeshi {
 
@@ -36,6 +40,7 @@ public:
     };
 
     ScriptEngine();
+    ~ScriptEngine();
 
     bool RunScript(const std::string& filepath);
 
@@ -82,6 +87,9 @@ public:
     void RunAIScripts(Scene& scene, float dt);
     void ClearLuaEntities();
     bool HotReload(const std::string& path = "assets/scripts/init.lua");
+    // Scans project scripts/ and assets/scripts/ for .cpp modules, rebuilds
+    // changed sources, and swaps loaded libraries in place.
+    bool ReloadCppScripts(bool force = false);
     void Update(float dt);
 
     sol::state& GetState() { return m_lua; }
@@ -100,6 +108,8 @@ public:
 
 private:
     void BuildApi();
+    void BuildCppApi();
+    void UpdateCppScripts(float dt);
     void DestroyEntity(entt::entity entity);
     bool HasPhysicsBody(uint32_t entityId) const;
 
@@ -150,6 +160,20 @@ private:
         std::string loadedPath;
     };
     std::unordered_map<uint32_t, AIControllerInstance> m_aiControllers;
+
+    struct CppScriptModule {
+        std::string path;
+        std::filesystem::file_time_type writeTime{};
+        void* library = nullptr;
+        GaleshiScriptUpdateFn update = nullptr;
+    };
+    GaleshiScriptApi m_cppApi{};
+    bool m_cppApiBuilt = false;
+    std::unordered_map<std::string, CppScriptModule> m_cppModules;
+    std::unordered_map<std::string, std::filesystem::file_time_type>
+        m_cppFailures;
+    std::chrono::steady_clock::time_point m_nextCppScan{};
+
     std::vector<std::string> m_logs;
     bool m_runOnceInvoked = false;
     double m_time = 0.0;

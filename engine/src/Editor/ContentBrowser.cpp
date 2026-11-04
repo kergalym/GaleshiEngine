@@ -27,6 +27,35 @@ struct ScriptTemplate {
 
 const ScriptTemplate kScriptTemplates[] = {
     {
+        "empty_header_cpp",
+        "Empty Header (C++)",
+        "Empty C++ header for gameplay code.",
+        "empty_header.h",
+        R"CPP(#pragma once
+
+// Gameplay header.
+)CPP"
+    },
+    {
+        "empty_script_cpp",
+        "Empty Script (C++)",
+        "Empty hot-reloaded C++ script.",
+        "empty_script.cpp",
+        R"CPP(#include "GaleshiEngine/Scripting/CppScriptApi.hpp"
+
+static const GaleshiScriptApi* g_api = nullptr;
+
+extern "C" void GaleshiScriptRegister(const GaleshiScriptApi* api) {
+    g_api = api;
+}
+
+extern "C" void GaleshiScriptUpdate(float dt) {
+    (void)dt;
+    (void)g_api;
+}
+)CPP"
+    },
+    {
         "empty",
         "Empty Script",
         "Lifecycle callbacks only.",

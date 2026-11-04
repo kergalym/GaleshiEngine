@@ -17,9 +17,8 @@ public:
     // Draws the panel and returns the selected/created file path.
     std::string Draw();
 
-    // Creates a Lua script from one of the built-in templates inside
-    // <content root>/scripts. Returns the created file path, or an empty
-    // string on failure.
+    // Creates a code template (Lua or C++) inside <content root>/scripts.
+    // Returns the created file path, or an empty string on failure.
     std::string CreateScript(const std::string& templateId);
 
     void Refresh();
