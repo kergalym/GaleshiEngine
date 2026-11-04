@@ -147,24 +147,31 @@ The ImGuizmo manipulator is currently visual only. Dragging the center marker mo
 - FreeType development files.
 - Network access during the first configure, because dependencies are fetched with FetchContent.
 
-### Debug build
+### Optain
 
 ```bash
 git clone <repo> GaleshiEngine
 cd GaleshiEngine
+```
+
+### Debug build
+
+```bash
+# full
 cmake --preset debug --fresh
 cmake --build build/debug --target clean
 cmake --build build/debug -j"$(nproc)"
-```
-
-```bash
-bash scripts/compile_shaders.sh build/debug shaders build/debug/bin/shaders
+#shaders 
+cmake --build build/debug --target CompileGaleshiShaders -j"$(nproc)"
+# editor
+cmake --build build/debug --target GaleshiEditor -j"$(nproc)"
 ```
 
 ### Running
 
 ```bash
 ./build/debug/bin/GaleshiEditor
+./build/debug/bin/GaleshiRuntime
 ```
 
 Optional flags:
@@ -179,10 +186,8 @@ Optional flags:
 ### GaleshiRuntime
 
 ```bash
-cmake --preset debug --fresh
-cmake --build build/debug --target clean
-cmake --build build/debug -j"$(nproc)"
-./build/debug/bin/GaleshiRuntime
+cmake --build build/release --target GaleshiRuntime -j"$(nproc)"
+cmake --build build/debug --target GaleshiRuntime -j"$(nproc)"
 ```
 
 `GaleshiRuntime` is a standalone editor runtime target. It accepts `--game <path>.gproj` to open a project and load its `startScene`, and runs the scene directly without the full editor UI.
@@ -190,15 +195,23 @@ cmake --build build/debug -j"$(nproc)"
 ### Release build
 
 ```bash
+# full
 cmake --preset release --fresh
 cmake --build build/release --target clean
 cmake --build build/release -j"$(nproc)"
+#shaders 
+cmake --build build/release --target CompileGaleshiShaders -j"$(nproc)"
+# Editor
+cmake --build build/release --target GaleshiEditor -j"$(nproc)"
+```
+### Running
+
+```bash
 ./build/release/bin/GaleshiEditor
+./build/release/bin/GaleshiRuntime
 ```
 
 ### AppImage (single-file editor)
-
-The editor can be packaged as a single-file AppImage that contains the executable, engine assets, shaders, the bundled DejaVu Sans font, and the non-system shared libraries:
 
 ```bash
 ./scripts/package_engine_appimage.sh

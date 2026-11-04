@@ -1142,7 +1142,7 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
 
         // Use the standard material default when the source does not provide
         // a roughness value.
-        float roughness = 1.0f;
+        float roughness = 0.0f;
         float glossiness = 0.0f;
         const bool hasRoughnessFactor =
             aiMat->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness) == AI_SUCCESS;
@@ -1272,21 +1272,14 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
             mat->occlusionMap = mat->metallicRoughnessMap;
         }
 
-        // FBX materials usually keep the viewport diffuse colour next to a
-        // BaseColor texture. Multiplying both makes textured characters almost
-        // black (the Korlan armour is a good example), so the texture replaces
-        // the RGB tint. glTF baseColorFactor is authored data and must stay.
-        if (mat->albedoMap && !out.isGltf) {
+        if (mat->albedoMap) {
             mat->albedoFactor.r = 1.0f;
             mat->albedoFactor.g = 1.0f;
             mat->albedoFactor.b = 1.0f;
         }
-        // Default non-metal for textured materials. FBX packs often rely on
-        // the old implicit 1.0, while glTF/Blender materials keep metalness 0
-        // unless the file explicitly authors a metallic factor.
-        if (!hasMetallicFactor && !out.isGltf &&
+        if (!hasMetallicFactor &&
             (mat->metallicRoughnessMap || mat->metallicMap)) {
-            mat->metallicFactor = 1.0f;
+            mat->metallicFactor = 0.0f;
         }
         if (!hasRoughnessFactor && (mat->metallicRoughnessMap || mat->roughnessMap))
             mat->roughnessFactor = 1.0f;
