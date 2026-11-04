@@ -12,6 +12,11 @@ struct GaleshiScriptVec3 {
     float z = 0.0f;
 };
 
+enum GaleshiScriptCameraMode : int {
+    GALESHI_CAMERA_THIRD_PERSON = 0,
+    GALESHI_CAMERA_FIRST_PERSON = 1,
+};
+
 struct GaleshiScriptApi {
     void* user = nullptr;
 
@@ -33,6 +38,11 @@ struct GaleshiScriptApi {
     GaleshiScriptVec3 (*v_interp)(GaleshiScriptVec3 current,
                                   GaleshiScriptVec3 target,
                                   float deltaTime, float speed) = nullptr;
+
+    // Switches the gameplay camera for the current player/character. Returns
+    // false when the host has no gameplay camera or the mode is invalid.
+    bool (*set_camera_mode)(void* user, int mode) = nullptr;
+    int (*get_camera_mode)(void* user) = nullptr;
 };
 
 inline float GaleshiInterpFactor(float deltaTime, float speed) {

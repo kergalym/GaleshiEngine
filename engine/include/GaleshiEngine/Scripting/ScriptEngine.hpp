@@ -84,6 +84,8 @@ public:
                            std::vector<glm::vec3>&)> findPath,
         std::function<bool()> buildNavMesh = {});
     void BindEngine(std::function<void()> requestExit);
+    void BindCamera(std::function<bool(int)> setMode,
+                    std::function<int()> getMode);
 
     void RunAIScripts(Scene& scene, float dt);
     void ClearLuaEntities();
@@ -157,6 +159,8 @@ private:
                        std::vector<glm::vec3>&)> m_findPath;
     std::function<bool()> m_buildNavMesh;
     std::function<void()> m_requestExit;
+    std::function<bool(int)> m_setCameraMode;
+    std::function<int()> m_getCameraMode;
 
     std::unordered_map<std::string, sol::protected_function> m_uiHandlers;
 

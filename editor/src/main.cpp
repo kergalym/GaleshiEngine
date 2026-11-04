@@ -1204,6 +1204,9 @@ protected:
         };
         m_scripts.BindPhysics(scriptPhysics);
         m_scripts.BindEngine([this]() { RequestExit(); });
+        m_scripts.BindCamera(
+            [this](int mode) { return SetGameplayCameraMode(mode); },
+            [this]() { return GetGameplayCameraMode(); });
         // Project-local key bindings override the built-in axis defaults
         // before scripts start reading input.
         LoadInputBindings();
@@ -5066,6 +5069,83 @@ if (ImGui::BeginMenu("File")) {
         return best;
     }
 
+    // Player-tagged entities are the orbit centre for the gameplay camera.
+    // When no player tag exists, a camera parented to a character/model uses
+    // that ancestor so authored third-person rigs still orbit the character.
+    entt::entity FindGameplayCameraTarget(entt::entity cameraEntity) {
+        auto& reg = m_scene.Registry();
+        auto players = reg.view<Galeshi::PlayerTagComponent,
+                                Galeshi::TransformComponent>();
+        for (auto entity : players) return entity;
+
+        entt::entity current = cameraEntity;
+        for (int depth = 0; depth < 128; ++depth) {
+            if (!reg.all_of<Galeshi::ParentComponent>(current)) break;
+            current = reg.get<Galeshi::ParentComponent>(current).parent;
+            if (current == entt::null) break;
+            if (reg.all_of<Galeshi::SkeletalComponent>(current) ||
+                reg.all_of<Galeshi::ModelComponent>(current) ||
+                reg.all_of<Galeshi::MeshComponent>(current)) {
+                return current;
+            }
+        }
+        return entt::null;
+    }
+
+    bool SetGameplayCameraMode(int mode) {
+        if (mode != GALESHI_CAMERA_THIRD_PERSON &&
+            mode != GALESHI_CAMERA_FIRST_PERSON) {
+            return false;
+        }
+        m_gameCameraMode = static_cast<GaleshiScriptCameraMode>(mode);
+        return true;
+    }
+
+    int GetGameplayCameraMode() const {
+        return static_cast<int>(m_gameCameraMode);
+    }
+
+    // Cache the bounds centre in the target's local space so orbiting does not
+    // scan every mesh in the scene each frame. The camera's authored local
+    // height also becomes the first-person eye height.
+    void RefreshGameplayCameraTarget(entt::entity target,
+                                     entt::entity cameraEntity) {
+        m_gameCameraTarget = target;
+        m_gameCameraPivotLocal = glm::vec3(0.0f);
+        m_gameCameraEyeLocal = glm::vec3(0.0f, 1.6f, 0.0f);
+        if (target == entt::null) return;
+
+        const glm::mat4 targetWorld = EntityWorldMatrix(target);
+        const glm::mat4 inverseTarget = glm::inverse(targetWorld);
+
+        glm::vec3 center;
+        EntityWorldBoundsCenter(target, center);
+        m_gameCameraPivotLocal = glm::vec3(
+            inverseTarget * glm::vec4(center, 1.0f));
+
+        // An attached camera stores its eye height in the local offset. Keep
+        // only the height for first person; the horizontal part is the
+        // third-person distance and must not move the eye sideways.
+        entt::entity current = cameraEntity;
+        for (int depth = 0; depth < 128 && current != entt::null; ++depth) {
+            if (current == target) {
+                const glm::mat4 cameraWorld = EntityWorldMatrix(cameraEntity);
+                const glm::vec3 cameraLocal = glm::vec3(
+                    inverseTarget *
+                    glm::vec4(glm::vec3(cameraWorld[3]), 1.0f));
+                if (cameraLocal.y > 0.05f) {
+                    m_gameCameraEyeLocal.y = cameraLocal.y;
+                }
+                break;
+            }
+            if (!m_scene.Registry().all_of<Galeshi::ParentComponent>(current)) {
+                break;
+            }
+            current = m_scene.Registry()
+                .get<Galeshi::ParentComponent>(current).parent;
+        }
+    }
+
     void UpdateGameplayCamera() {
         Galeshi::Entity cameraEntity = FindGameplayCamera();
         if (!cameraEntity) {
@@ -5096,9 +5176,9 @@ if (ImGui::BeginMenu("File")) {
                 : glm::vec3(0.0f, 1.0f, 0.0f);
         }
 
-        // Mouse-look overrides the game camera without changing the scene
-        // entity. This keeps gameplay scripts free to move/rotate the
-        // character while the player can still look around by holding RMB.
+        // Mouse-look orbits the gameplay camera around the character without
+        // changing the scene entity. This keeps gameplay scripts free to
+        // move/rotate the character while the player looks around with RMB.
         const bool gameLookInput =
             (m_editor.isPlaying || m_isGameMode) &&
             (m_viewportHovered || m_isGameMode) &&
@@ -5114,10 +5194,32 @@ if (ImGui::BeginMenu("File")) {
                 m_gameCameraPitchOffset, -1.50f, 1.50f);
         }
 
-        if (std::abs(m_gameCameraYawOffset) > 1e-6f ||
-            std::abs(m_gameCameraPitchOffset) > 1e-6f) {
+        const bool hasLookOffset =
+            std::abs(m_gameCameraYawOffset) > 1e-6f ||
+            std::abs(m_gameCameraPitchOffset) > 1e-6f;
+        const bool firstPerson =
+            m_gameCameraMode == GALESHI_CAMERA_FIRST_PERSON;
+        const float aspect = m_viewportH
+            ? static_cast<float>(m_viewportW) / static_cast<float>(m_viewportH)
+            : 16.0f / 9.0f;
+        m_camera.SetPerspective(
+            glm::radians(glm::clamp(camera.fovY, 1.0f, 179.0f)), aspect,
+            std::max(camera.nearZ, 1e-4f), std::max(camera.farZ, camera.nearZ + 0.001f));
+
+        entt::entity target = entt::null;
+        if (firstPerson || hasLookOffset) {
+            target = FindGameplayCameraTarget(cameraEntity.Handle());
+            if (target != m_gameCameraTarget ||
+                cameraEntity.Handle() != m_activeGameCamera) {
+                RefreshGameplayCameraTarget(target, cameraEntity.Handle());
+            }
+        }
+
+        const auto applyInPlaceLook = [&]() {
+            if (!hasLookOffset) return;
             const float baseYaw = std::atan2(forward.x, forward.z);
-            const float basePitch = std::asin(glm::clamp(forward.y, -1.0f, 1.0f));
+            const float basePitch =
+                std::asin(glm::clamp(forward.y, -1.0f, 1.0f));
             const float yaw = baseYaw + m_gameCameraYawOffset;
             const float pitch = glm::clamp(
                 basePitch + m_gameCameraPitchOffset, -1.52f, 1.52f);
@@ -5125,15 +5227,48 @@ if (ImGui::BeginMenu("File")) {
             forward = {std::sin(yaw) * horizontal, std::sin(pitch),
                        std::cos(yaw) * horizontal};
             up = glm::vec3(0.0f, 1.0f, 0.0f);
+        };
+
+        bool viewSet = false;
+        if (firstPerson && target != entt::null &&
+            m_scene.Registry().valid(target)) {
+            // Stand at the character's authored eye height and rotate the view
+            // in place instead of orbiting around the body.
+            eye = glm::vec3(
+                EntityWorldMatrix(target) *
+                glm::vec4(m_gameCameraEyeLocal, 1.0f));
+            applyInPlaceLook();
+            m_camera.SetView(eye, eye + forward, up);
+            viewSet = true;
         }
 
-        const float aspect = m_viewportH
-            ? static_cast<float>(m_viewportW) / static_cast<float>(m_viewportH)
-            : 16.0f / 9.0f;
-        m_camera.SetPerspective(
-            glm::radians(glm::clamp(camera.fovY, 1.0f, 179.0f)), aspect,
-            std::max(camera.nearZ, 1e-4f), std::max(camera.farZ, camera.nearZ + 0.001f));
-        m_camera.SetView(eye, eye + forward, up);
+        if (!viewSet && hasLookOffset && !firstPerson &&
+            target != entt::null && m_scene.Registry().valid(target)) {
+            const glm::vec3 pivot = glm::vec3(
+                EntityWorldMatrix(target) *
+                glm::vec4(m_gameCameraPivotLocal, 1.0f));
+            const glm::vec3 orbitOffset = eye - pivot;
+            const float radius = glm::length(orbitOffset);
+            if (radius > 1e-3f) {
+                // Orbit the authored offset around the character centre,
+                // keeping the current third-person distance.
+                const float baseYaw =
+                    std::atan2(orbitOffset.x, orbitOffset.z);
+                const float basePitch = std::asin(glm::clamp(
+                    orbitOffset.y / radius, -1.0f, 1.0f));
+                m_camera.Orbit(
+                    pivot, baseYaw + m_gameCameraYawOffset,
+                    glm::clamp(basePitch - m_gameCameraPitchOffset,
+                               -1.50f, 1.50f),
+                    radius);
+                viewSet = true;
+            }
+        }
+
+        if (!viewSet) {
+            applyInPlaceLook();
+            m_camera.SetView(eye, eye + forward, up);
+        }
         m_usingGameCamera = true;
         m_activeGameCamera = cameraEntity.Handle();
     }
@@ -5161,6 +5296,9 @@ if (ImGui::BeginMenu("File")) {
 
     bool ActivateGameplayCamera() {
         m_usingGameCamera = true;
+        m_gameCameraTarget = entt::null;
+        m_gameCameraPivotLocal = glm::vec3(0.0f);
+        m_gameCameraEyeLocal = glm::vec3(0.0f, 1.6f, 0.0f);
         m_gameCameraYawOffset = 0.0f;
         m_gameCameraPitchOffset = 0.0f;
         UpdateGameplayCamera();
@@ -13274,6 +13412,10 @@ void DrawDetails() {
     Galeshi::EditorState    m_editor;
     bool                    m_usingGameCamera = false;
     entt::entity            m_activeGameCamera = entt::null;
+    entt::entity            m_gameCameraTarget = entt::null;
+    glm::vec3               m_gameCameraPivotLocal{0.0f};
+    glm::vec3               m_gameCameraEyeLocal{0.0f, 1.6f, 0.0f};
+    GaleshiScriptCameraMode m_gameCameraMode = GALESHI_CAMERA_THIRD_PERSON;
     float                   m_gameCameraYawOffset = 0.0f;
     float                   m_gameCameraPitchOffset = 0.0f;
     float                   m_time = 0.0f;

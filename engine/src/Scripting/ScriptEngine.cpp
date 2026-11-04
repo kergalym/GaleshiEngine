@@ -550,6 +550,7 @@ void ScriptEngine::BuildApi() {
     sol::table ui = m_lua.create_table();
     sol::table particles = m_lua.create_table();
     sol::table engine = m_lua.create_table();
+    sol::table camera = m_lua.create_table();
     m_api["world"] = world;
     m_api["input"] = input;
     m_api["physics"] = physics;
@@ -560,6 +561,7 @@ void ScriptEngine::BuildApi() {
     m_api["ui"] = ui;
     m_api["particles"] = particles;
     m_api["engine"] = engine;
+    m_api["camera"] = camera;
 
     // ------------------------------------------------------------------
     // Entity handle helpers.  Handles are lightweight Lua tables with an
@@ -2071,6 +2073,45 @@ void ScriptEngine::BuildApi() {
     engine["warn"] = warnFn;
     engine["error"] = errorFn;
 
+    // ------------------------------------------------------------------
+    // Gameplay camera mode. The host owns the actual camera; these calls
+    // only switch between the player's third- and first-person views.
+    // ------------------------------------------------------------------
+    auto setCameraMode = [this](sol::object value) -> bool {
+        int mode = -1;
+        if (value.get_type() == sol::type::number) {
+            const int numeric = value.as<int>();
+            if (numeric == GALESHI_CAMERA_THIRD_PERSON ||
+                numeric == GALESHI_CAMERA_FIRST_PERSON) {
+                mode = numeric;
+            }
+        } else if (value.get_type() == sol::type::string) {
+            const std::string name = NormalizeKey(value.as<std::string>());
+            if (name == "third" || name == "third_person" ||
+                name == "thirdperson") {
+                mode = GALESHI_CAMERA_THIRD_PERSON;
+            } else if (name == "first" || name == "first_person" ||
+                       name == "firstperson") {
+                mode = GALESHI_CAMERA_FIRST_PERSON;
+            }
+        }
+        if (!m_setCameraMode || mode < 0) return false;
+        return m_setCameraMode(mode);
+    };
+    const auto getCameraMode = [this]() -> int {
+        return m_getCameraMode
+            ? m_getCameraMode()
+            : static_cast<int>(GALESHI_CAMERA_THIRD_PERSON);
+    };
+    camera["THIRD_PERSON"] =
+        static_cast<int>(GALESHI_CAMERA_THIRD_PERSON);
+    camera["FIRST_PERSON"] =
+        static_cast<int>(GALESHI_CAMERA_FIRST_PERSON);
+    camera["set_mode"] = setCameraMode;
+    camera["mode"] = getCameraMode;
+    m_lua.set_function("set_camera_mode", setCameraMode);
+    m_lua.set_function("get_camera_mode", getCameraMode);
+
     // Explicitly release the temporary tables; all bound functions are owned
     // by the Lua state / m_api now.
     (void)world;
@@ -2083,6 +2124,7 @@ void ScriptEngine::BuildApi() {
     (void)ui;
     (void)particles;
     (void)engine;
+    (void)camera;
 }
 
 CppWorkerPacket ScriptEngine::MakeWorkerResponse(
@@ -2164,6 +2206,19 @@ CppWorkerPacket ScriptEngine::MakeWorkerResponse(
             m_setVelocity(
                 request.entity,
                 FromScriptVec3({request.x, request.y, request.z}));
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::SetCameraMode:
+        if (m_setCameraMode) {
+            response.valid = m_setCameraMode(
+                static_cast<int>(request.entity)) ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::GetCameraMode:
+        if (m_getCameraMode) {
+            response.entity =
+                static_cast<uint32_t>(m_getCameraMode());
             response.valid = 1;
         }
         break;
@@ -2490,6 +2545,13 @@ void ScriptEngine::BindNavigation(
 void ScriptEngine::BindEngine(std::function<void()> requestExit) {
     BuildApi();
     m_requestExit = std::move(requestExit);
+}
+
+void ScriptEngine::BindCamera(std::function<bool(int)> setMode,
+                              std::function<int()> getMode) {
+    BuildApi();
+    m_setCameraMode = std::move(setMode);
+    m_getCameraMode = std::move(getMode);
 }
 
 bool ScriptEngine::CheckCppSyntax(const std::string& source,

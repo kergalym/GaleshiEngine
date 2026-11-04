@@ -90,6 +90,23 @@ Galeshi.input.mouse_delta()    -- {x, y}
 Galeshi.input.mouse_wheel()
 ```
 
+### `Galeshi.camera`
+
+Switches the player camera between third-person orbit and first-person view.
+The camera must be attached to the player character, or the character must
+carry a `PlayerTagComponent`.
+
+```lua
+Galeshi.camera.set_mode(Galeshi.camera.THIRD_PERSON)
+Galeshi.camera.set_mode(Galeshi.camera.FIRST_PERSON)
+Galeshi.camera.set_mode("first_person") -- strings are accepted too
+local mode = Galeshi.camera.mode()
+```
+
+The legacy aliases `set_camera_mode(mode)` and `get_camera_mode()` are also
+available. The host must bind a gameplay camera; the editor does this
+automatically.
+
 ### `Galeshi.physics`
 
 Physics objects are ECS entities.  The host application creates the native

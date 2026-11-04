@@ -317,6 +317,8 @@ public:
                 current.z + (target.z - current.z) * t,
             };
         };
+        m_api.set_camera_mode = &ScriptWorker::SetCameraMode;
+        m_api.get_camera_mode = &ScriptWorker::GetCameraMode;
     }
 
     ~ScriptWorker() {
@@ -529,6 +531,24 @@ private:
         if (!user) return;
         static_cast<ScriptWorker*>(user)->Request(
             CppWorkerRequest::SetVelocity, entity, nullptr, velocity);
+    }
+
+    static bool SetCameraMode(void* user, int mode) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetCameraMode,
+                      static_cast<uint32_t>(mode))
+            .valid != 0;
+    }
+
+    static int GetCameraMode(void* user) {
+        if (!user) return GALESHI_CAMERA_THIRD_PERSON;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetCameraMode, UINT32_MAX);
+        return response.valid
+            ? static_cast<int>(response.entity)
+            : static_cast<int>(GALESHI_CAMERA_THIRD_PERSON);
     }
 
     int m_protocolOut = STDOUT_FILENO;

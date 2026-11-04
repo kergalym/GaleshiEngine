@@ -31,8 +31,17 @@ extern "C" void GaleshiScriptUpdate(float dt) {
 ```
 
 The API provides logging, input, entity lookup/validation, position and physics
-velocity access, plus `FInterp` and `VInterp`. Scripts are intentionally
-compiled with a stable C ABI so the engine can be rebuilt independently.
+velocity access, gameplay camera mode switching, plus `FInterp` and `VInterp`.
+Scripts are intentionally compiled with a stable C ABI so the engine can be
+rebuilt independently.
+
+```cpp
+g_api->set_camera_mode(g_api->user, GALESHI_CAMERA_FIRST_PERSON);
+const int mode = g_api->get_camera_mode(g_api->user);
+```
+
+Camera mode changes apply to the current player camera. Hosts without a
+gameplay camera leave the mode flag at `GALESHI_CAMERA_THIRD_PERSON`.
 
 Compilation uses `g++` by default; set `CXX` to override the compiler. The
 compiler runs in a child process and is stopped after 30 seconds. Compile
