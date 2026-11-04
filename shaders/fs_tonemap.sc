@@ -25,8 +25,7 @@ void main() {
     float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
     color = clamp(mix(vec3(luma), color, u_colorParams.z), 0.0, 1.0);
 
-    // The backbuffer is not an sRGB framebuffer, so convert manually.
-    color = pow(color, vec3(1.0 / 2.2));
-
+    // Keep the result linear. The sRGB backbuffer performs the transfer
+    // function in hardware during presentation.
     gl_FragColor = vec4(color, 1.0);
 }

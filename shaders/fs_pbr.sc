@@ -155,8 +155,8 @@ void main()
 
     vec3 color = ambient + direct + emissive;
 
-    // Tonemapping and Gamma are handled by the post-process pass (RenderTonemap).
-    // Output HDR directly to avoid double gamma.
+    // Tonemapping is handled by the post-process pass; the sRGB backbuffer
+    // performs the final gamma encoding. Output HDR directly.
 
     gl_FragColor = vec4(color, 1.0);
 }

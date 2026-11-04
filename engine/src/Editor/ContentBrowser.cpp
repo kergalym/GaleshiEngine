@@ -751,7 +751,7 @@ std::string ContentBrowser::Draw() {
 
         if (isImage && m_assets) {
             std::string path = e.path.string();
-            auto tex = m_assets->LoadTexture(path);
+            auto tex = m_assets->LoadTexture(path, true);
             if (tex && bgfx::isValid(tex->Handle())) {
                 ImTextureID texId = static_cast<ImTextureID>(tex->Handle().idx);
                 // Texture uploads use the bottom-left V origin; ImGui uses

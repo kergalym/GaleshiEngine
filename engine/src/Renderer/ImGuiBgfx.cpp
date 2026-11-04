@@ -49,8 +49,8 @@ void ImGuiBgfx::Init() {
     g_fontTexture = bgfx::createTexture2D(
         static_cast<uint16_t>(width),
         static_cast<uint16_t>(height),
-        false, 1, bgfx::TextureFormat::RGBA8, 
-        BGFX_TEXTURE_NONE,
+        false, 1, bgfx::TextureFormat::RGBA8,
+        BGFX_TEXTURE_SRGB,
         bgfx::copy(pixels, static_cast<uint32_t>(width * height * 4))
     );
 

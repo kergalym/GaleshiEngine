@@ -424,7 +424,8 @@ protected:
     // -------------------------------------------------------------------
     void OnStart() override {
         m_logoTexture.reset(
-            Galeshi::Texture::LoadFromFile("assets/icons/galeshi_logo_round.png"));
+            Galeshi::Texture::LoadFromFile(
+                "assets/icons/galeshi_logo_round.png", true));
         if (!m_logoTexture) {
             spdlog::warn("[Editor] Missing logo asset: assets/icons/galeshi_logo_round.png");
         }
