@@ -12,6 +12,18 @@ struct GaleshiScriptVec3 {
     float z = 0.0f;
 };
 
+struct GaleshiScriptVec2 {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+struct GaleshiScriptQuat {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float w = 1.0f;
+};
+
 enum GaleshiScriptCameraMode : int {
     GALESHI_CAMERA_THIRD_PERSON = 0,
     GALESHI_CAMERA_FIRST_PERSON = 1,
@@ -61,9 +73,88 @@ struct GaleshiScriptApi {
     // compiled against a previous layout simply never read these fields.
     uint32_t abi_version = 0;
     uint32_t struct_size = 0;
+
+    // World / ECS. Appended after the original ABI fields.
+    uint32_t (*create_entity)(void* user, const char* name) = nullptr;
+    bool (*destroy_entity)(void* user, uint32_t entity) = nullptr;
+    const char* (*get_name)(void* user, uint32_t entity) = nullptr;
+    bool (*set_name)(void* user, uint32_t entity, const char* name) = nullptr;
+    GaleshiScriptQuat (*get_rotation)(void* user, uint32_t entity) = nullptr;
+    void (*set_rotation)(void* user, uint32_t entity,
+                         GaleshiScriptQuat rotation) = nullptr;
+    GaleshiScriptVec3 (*get_scale)(void* user, uint32_t entity) = nullptr;
+    void (*set_scale)(void* user, uint32_t entity,
+                      GaleshiScriptVec3 scale) = nullptr;
+    uint32_t (*get_parent)(void* user, uint32_t entity) = nullptr;
+    bool (*set_parent)(void* user, uint32_t entity,
+                       uint32_t parent) = nullptr;
+    bool (*has_component)(void* user, uint32_t entity,
+                          const char* component) = nullptr;
+
+    // Input and camera helpers.
+    float (*get_axis_raw)(void* user, const char* axis) = nullptr;
+    bool (*is_mouse_button_down)(void* user, const char* button) = nullptr;
+    GaleshiScriptVec2 (*get_mouse_position)(void* user) = nullptr;
+    GaleshiScriptVec2 (*get_mouse_delta)(void* user) = nullptr;
+    float (*get_mouse_wheel)(void* user) = nullptr;
+
+    // Physics. Shape attachment uses the entity's current local transform and
+    // replaces any existing body/components on that entity.
+    bool (*attach_box)(void* user, uint32_t entity,
+                       GaleshiScriptVec3 halfExtents,
+                       bool isStatic) = nullptr;
+    bool (*attach_sphere)(void* user, uint32_t entity, float radius,
+                          bool isStatic) = nullptr;
+    bool (*attach_capsule)(void* user, uint32_t entity, float halfHeight,
+                           float radius, bool isStatic) = nullptr;
+    bool (*destroy_body)(void* user, uint32_t entity) = nullptr;
+    bool (*apply_impulse)(void* user, uint32_t entity,
+                          GaleshiScriptVec3 impulse) = nullptr;
+
+    // Navigation. FindPath stores the result in the host; query it with
+    // PathPointCount/PathPoint before issuing another navigation request.
+    bool (*build_navmesh)(void* user) = nullptr;
+    bool (*find_path)(void* user, GaleshiScriptVec3 start,
+                      GaleshiScriptVec3 end) = nullptr;
+    uint32_t (*path_point_count)(void* user) = nullptr;
+    GaleshiScriptVec3 (*path_point)(void* user, uint32_t index) = nullptr;
+
+    // Audio. Source playback uses AudioSourceComponent attached to an entity;
+    // the host owns listener selection and mixer bus application.
+    bool (*play_sound)(void* user, const char* path, bool loop) = nullptr;
+    bool (*stop_sound)(void* user, const char* path) = nullptr;
+    bool (*is_sound_playing)(void* user, const char* path) = nullptr;
+    void (*stop_all_sounds)(void* user) = nullptr;
+    bool (*attach_audio_source)(void* user, uint32_t entity,
+                                const char* path, bool loop,
+                                bool spatial, int bus) = nullptr;
+    bool (*play_source)(void* user, uint32_t entity) = nullptr;
+    bool (*stop_source)(void* user, uint32_t entity) = nullptr;
+    bool (*is_source_playing)(void* user, uint32_t entity) = nullptr;
+
+    // Scene-wide post-process settings. Names are stable snake_case keys such
+    // as "bloom", "exposure", "ssao_radius" and "fog_color".
+    bool (*set_post_process_flag)(void* user, const char* name,
+                                  bool value) = nullptr;
+    bool (*get_post_process_flag)(void* user, const char* name,
+                                  bool* value) = nullptr;
+    bool (*set_post_process_float)(void* user, const char* name,
+                                   float value) = nullptr;
+    bool (*get_post_process_float)(void* user, const char* name,
+                                   float* value) = nullptr;
+    bool (*set_post_process_int)(void* user, const char* name,
+                                 int value) = nullptr;
+    bool (*get_post_process_int)(void* user, const char* name,
+                                 int* value) = nullptr;
+    bool (*set_post_process_vec3)(void* user, const char* name,
+                                  GaleshiScriptVec3 value) = nullptr;
+    bool (*get_post_process_vec3)(void* user, const char* name,
+                                  GaleshiScriptVec3* value) = nullptr;
+    bool (*set_post_process_enabled)(void* user, bool value) = nullptr;
+    bool (*get_post_process_enabled)(void* user) = nullptr;
 };
 
-inline constexpr uint32_t kGaleshiScriptApiVersion = 1;
+inline constexpr uint32_t kGaleshiScriptApiVersion = 7;
 
 inline float GaleshiInterpFactor(float deltaTime, float speed) {
     if (speed <= 0.0f) return 1.0f;

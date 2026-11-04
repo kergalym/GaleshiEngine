@@ -327,6 +327,51 @@ public:
         m_api.set_player_strafing = &ScriptWorker::SetPlayerStrafing;
         m_api.compile_shader = &ScriptWorker::CompileShader;
         m_api.get_shader_error = &ScriptWorker::GetShaderError;
+        m_api.create_entity = &ScriptWorker::CreateEntity;
+        m_api.destroy_entity = &ScriptWorker::DestroyEntity;
+        m_api.get_name = &ScriptWorker::GetName;
+        m_api.set_name = &ScriptWorker::SetName;
+        m_api.get_rotation = &ScriptWorker::GetRotation;
+        m_api.set_rotation = &ScriptWorker::SetRotation;
+        m_api.get_scale = &ScriptWorker::GetScale;
+        m_api.set_scale = &ScriptWorker::SetScale;
+        m_api.get_parent = &ScriptWorker::GetParent;
+        m_api.set_parent = &ScriptWorker::SetParent;
+        m_api.has_component = &ScriptWorker::HasComponent;
+        m_api.get_axis_raw = &ScriptWorker::GetAxisRaw;
+        m_api.is_mouse_button_down = &ScriptWorker::MouseButtonDown;
+        m_api.get_mouse_position = &ScriptWorker::GetMousePosition;
+        m_api.get_mouse_delta = &ScriptWorker::GetMouseDelta;
+        m_api.get_mouse_wheel = &ScriptWorker::GetMouseWheel;
+        m_api.attach_box = &ScriptWorker::AttachBox;
+        m_api.attach_sphere = &ScriptWorker::AttachSphere;
+        m_api.attach_capsule = &ScriptWorker::AttachCapsule;
+        m_api.destroy_body = &ScriptWorker::DestroyBody;
+        m_api.apply_impulse = &ScriptWorker::ApplyImpulse;
+        m_api.build_navmesh = &ScriptWorker::BuildNavMesh;
+        m_api.find_path = &ScriptWorker::FindPath;
+        m_api.path_point_count = &ScriptWorker::PathPointCount;
+        m_api.path_point = &ScriptWorker::PathPoint;
+        m_api.play_sound = &ScriptWorker::PlaySound;
+        m_api.stop_sound = &ScriptWorker::StopSound;
+        m_api.is_sound_playing = &ScriptWorker::IsSoundPlaying;
+        m_api.stop_all_sounds = &ScriptWorker::StopAllSounds;
+        m_api.attach_audio_source = &ScriptWorker::AttachAudioSource;
+        m_api.play_source = &ScriptWorker::PlaySource;
+        m_api.stop_source = &ScriptWorker::StopSource;
+        m_api.is_source_playing = &ScriptWorker::IsSourcePlaying;
+        m_api.set_post_process_flag = &ScriptWorker::SetPostProcessFlag;
+        m_api.get_post_process_flag = &ScriptWorker::GetPostProcessFlag;
+        m_api.set_post_process_float = &ScriptWorker::SetPostProcessFloat;
+        m_api.get_post_process_float = &ScriptWorker::GetPostProcessFloat;
+        m_api.set_post_process_int = &ScriptWorker::SetPostProcessInt;
+        m_api.get_post_process_int = &ScriptWorker::GetPostProcessInt;
+        m_api.set_post_process_vec3 = &ScriptWorker::SetPostProcessVec3;
+        m_api.get_post_process_vec3 = &ScriptWorker::GetPostProcessVec3;
+        m_api.set_post_process_enabled =
+            &ScriptWorker::SetPostProcessEnabled;
+        m_api.get_post_process_enabled =
+            &ScriptWorker::GetPostProcessEnabled;
         m_api.abi_version = kGaleshiScriptApiVersion;
         m_api.struct_size = static_cast<uint32_t>(sizeof(GaleshiScriptApi));
     }
@@ -393,7 +438,11 @@ private:
 
     CppWorkerPacket Request(CppWorkerRequest kind, uint32_t entity,
                             const char* text = nullptr,
-                            GaleshiScriptVec3 value = {}) {
+                            GaleshiScriptVec3 value = {},
+                            float w = 0.0f,
+                            uint32_t other = UINT32_MAX,
+                            uint32_t valid = 0,
+                            GaleshiScriptVec3 value2 = {}) {
         CppWorkerPacket request;
         request.type = static_cast<uint32_t>(CppWorkerMessage::Request);
         request.id = m_nextRequestId++;
@@ -402,6 +451,12 @@ private:
         request.x = value.x;
         request.y = value.y;
         request.z = value.z;
+        request.w = w;
+        request.x2 = value2.x;
+        request.y2 = value2.y;
+        request.z2 = value2.z;
+        request.other = other;
+        request.valid = valid;
         if (text) {
             std::snprintf(request.text, sizeof(request.text), "%s", text);
         }
@@ -497,6 +552,373 @@ private:
         return static_cast<ScriptWorker*>(user)
             ->Request(CppWorkerRequest::Axis, UINT32_MAX, axis)
             .x;
+    }
+
+    static float GetAxisRaw(void* user, const char* axis) {
+        if (!user || !axis) return 0.0f;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::GetAxisRaw, UINT32_MAX, axis)
+            .x;
+    }
+
+    static bool MouseButtonDown(void* user, const char* button) {
+        if (!user || !button) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::MouseButtonDown, UINT32_MAX,
+                      button)
+            .valid != 0;
+    }
+
+    static GaleshiScriptVec2 GetMousePosition(void* user) {
+        if (!user) return {};
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetMousePosition, UINT32_MAX);
+        return {response.x, response.y};
+    }
+
+    static GaleshiScriptVec2 GetMouseDelta(void* user) {
+        if (!user) return {};
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetMouseDelta, UINT32_MAX);
+        return {response.x, response.y};
+    }
+
+    static float GetMouseWheel(void* user) {
+        if (!user) return 0.0f;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::GetMouseWheel, UINT32_MAX)
+            .x;
+    }
+
+    static uint32_t CreateEntity(void* user, const char* name) {
+        if (!user) return UINT32_MAX;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::CreateEntity, UINT32_MAX,
+                      name ? name : "Entity")
+            .entity;
+    }
+
+    static bool DestroyEntity(void* user, uint32_t entity) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::DestroyEntity, entity)
+            .valid != 0;
+    }
+
+    static const char* GetName(void* user, uint32_t entity) {
+        if (!user) return "";
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetName, entity);
+        s_name = response.valid ? std::string(response.text) : std::string{};
+        return s_name.c_str();
+    }
+
+    static bool SetName(void* user, uint32_t entity, const char* name) {
+        if (!user || !name) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetName, entity, name)
+            .valid != 0;
+    }
+
+    static GaleshiScriptQuat GetRotation(void* user, uint32_t entity) {
+        if (!user) return {};
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetRotation, entity);
+        return response.valid
+            ? GaleshiScriptQuat{response.x, response.y, response.z,
+                                response.w}
+            : GaleshiScriptQuat{};
+    }
+
+    static void SetRotation(void* user, uint32_t entity,
+                            GaleshiScriptQuat rotation) {
+        if (!user) return;
+        static_cast<ScriptWorker*>(user)->Request(
+            CppWorkerRequest::SetRotation, entity, nullptr,
+            GaleshiScriptVec3{rotation.x, rotation.y, rotation.z},
+            rotation.w, UINT32_MAX);
+    }
+
+    static GaleshiScriptVec3 GetScale(void* user, uint32_t entity) {
+        if (!user) return {};
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetScale, entity);
+        return response.valid
+            ? GaleshiScriptVec3{response.x, response.y, response.z}
+            : GaleshiScriptVec3{1.0f, 1.0f, 1.0f};
+    }
+
+    static void SetScale(void* user, uint32_t entity,
+                         GaleshiScriptVec3 scale) {
+        if (!user) return;
+        static_cast<ScriptWorker*>(user)->Request(
+            CppWorkerRequest::SetScale, entity, nullptr, scale);
+    }
+
+    static uint32_t GetParent(void* user, uint32_t entity) {
+        if (!user) return UINT32_MAX;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::GetParent, entity)
+            .entity;
+    }
+
+    static bool SetParent(void* user, uint32_t entity, uint32_t parent) {
+        if (!user) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::SetParent, entity, nullptr, {},
+                0.0f, parent);
+        return response.valid != 0;
+    }
+
+    static bool HasComponent(void* user, uint32_t entity,
+                             const char* component) {
+        if (!user || !component) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::HasComponent, entity, component)
+            .valid != 0;
+    }
+
+    static bool AttachBox(void* user, uint32_t entity,
+                          GaleshiScriptVec3 halfExtents, bool isStatic) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::AttachBox, entity, nullptr,
+                      halfExtents, 0.0f, UINT32_MAX,
+                      isStatic ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static bool AttachSphere(void* user, uint32_t entity, float radius,
+                             bool isStatic) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::AttachSphere, entity, nullptr,
+                      GaleshiScriptVec3{radius, 0.0f, 0.0f}, 0.0f,
+                      UINT32_MAX, isStatic ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static bool AttachCapsule(void* user, uint32_t entity, float halfHeight,
+                              float radius, bool isStatic) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::AttachCapsule, entity, nullptr,
+                      GaleshiScriptVec3{halfHeight, radius, 0.0f}, 0.0f,
+                      UINT32_MAX, isStatic ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static bool DestroyBody(void* user, uint32_t entity) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::DestroyBody, entity)
+            .valid != 0;
+    }
+
+    static bool ApplyImpulse(void* user, uint32_t entity,
+                             GaleshiScriptVec3 impulse) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::ApplyImpulse, entity, nullptr,
+                      impulse)
+            .valid != 0;
+    }
+
+    static bool BuildNavMesh(void* user) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::BuildNavMesh, UINT32_MAX)
+            .valid != 0;
+    }
+
+    static bool FindPath(void* user, GaleshiScriptVec3 start,
+                         GaleshiScriptVec3 end) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::FindPath, UINT32_MAX, nullptr,
+                      start, 0.0f, UINT32_MAX, 0, end)
+            .valid != 0;
+    }
+
+    static uint32_t PathPointCount(void* user) {
+        if (!user) return 0;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::PathPointCount, UINT32_MAX)
+            .entity;
+    }
+
+    static GaleshiScriptVec3 PathPoint(void* user, uint32_t index) {
+        if (!user) return {};
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::PathPoint, index);
+        return response.valid
+            ? GaleshiScriptVec3{response.x, response.y, response.z}
+            : GaleshiScriptVec3{};
+    }
+
+    static bool PlaySound(void* user, const char* path, bool loop) {
+        if (!user || !path) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::PlaySound, UINT32_MAX, path,
+                      {}, 0.0f, UINT32_MAX, loop ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static bool StopSound(void* user, const char* path) {
+        if (!user || !path) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::StopSound, UINT32_MAX, path)
+            .valid != 0;
+    }
+
+    static bool IsSoundPlaying(void* user, const char* path) {
+        if (!user || !path) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::IsSoundPlaying, UINT32_MAX, path)
+            .valid != 0;
+    }
+
+    static void StopAllSounds(void* user) {
+        if (!user) return;
+        static_cast<ScriptWorker*>(user)->Request(
+            CppWorkerRequest::StopAllSounds, UINT32_MAX);
+    }
+
+    static bool AttachAudioSource(void* user, uint32_t entity,
+                                  const char* path, bool loop,
+                                  bool spatial, int bus) {
+        if (!user || !path) return false;
+        const uint32_t flags =
+            (loop ? 1u : 0u) | (spatial ? 2u : 0u);
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::AttachAudioSource, entity, path,
+                      {}, 0.0f, static_cast<uint32_t>(bus), flags)
+            .valid != 0;
+    }
+
+    static bool PlaySource(void* user, uint32_t entity) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::PlaySource, entity)
+            .valid != 0;
+    }
+
+    static bool StopSource(void* user, uint32_t entity) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::StopSource, entity)
+            .valid != 0;
+    }
+
+    static bool IsSourcePlaying(void* user, uint32_t entity) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::IsSourcePlaying, entity)
+            .valid != 0;
+    }
+
+    static bool SetPostProcessFlag(void* user, const char* name,
+                                   bool value) {
+        if (!user || !name) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetPostProcessFlag, UINT32_MAX,
+                      name, {}, 0.0f, UINT32_MAX, value ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static bool GetPostProcessFlag(void* user, const char* name,
+                                   bool* value) {
+        if (!user || !name || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetPostProcessFlag, UINT32_MAX, name);
+        if (!response.valid) return false;
+        *value = response.entity != 0;
+        return true;
+    }
+
+    static bool SetPostProcessFloat(void* user, const char* name,
+                                    float value) {
+        if (!user || !name) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetPostProcessFloat, UINT32_MAX,
+                      name, GaleshiScriptVec3{value, 0.0f, 0.0f})
+            .valid != 0;
+    }
+
+    static bool GetPostProcessFloat(void* user, const char* name,
+                                    float* value) {
+        if (!user || !name || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetPostProcessFloat, UINT32_MAX, name);
+        if (!response.valid) return false;
+        *value = response.x;
+        return true;
+    }
+
+    static bool SetPostProcessInt(void* user, const char* name,
+                                  int value) {
+        if (!user || !name) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetPostProcessInt, UINT32_MAX,
+                      name, {}, 0.0f, UINT32_MAX,
+                      static_cast<uint32_t>(value))
+            .valid != 0;
+    }
+
+    static bool GetPostProcessInt(void* user, const char* name,
+                                  int* value) {
+        if (!user || !name || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetPostProcessInt, UINT32_MAX, name);
+        if (!response.valid) return false;
+        *value = static_cast<int>(response.entity);
+        return true;
+    }
+
+    static bool SetPostProcessVec3(void* user, const char* name,
+                                   GaleshiScriptVec3 value) {
+        if (!user || !name) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetPostProcessVec3, UINT32_MAX,
+                      name, value)
+            .valid != 0;
+    }
+
+    static bool GetPostProcessVec3(void* user, const char* name,
+                                   GaleshiScriptVec3* value) {
+        if (!user || !name || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetPostProcessVec3, UINT32_MAX, name);
+        if (!response.valid) return false;
+        *value = {response.x, response.y, response.z};
+        return true;
+    }
+
+    static bool SetPostProcessEnabled(void* user, bool value) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetPostProcessEnabled, UINT32_MAX,
+                      nullptr, {}, 0.0f, UINT32_MAX,
+                      value ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static bool GetPostProcessEnabled(void* user) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::GetPostProcessEnabled, UINT32_MAX)
+            .valid != 0;
     }
 
     static uint32_t FindEntity(void* user, const char* name) {
@@ -632,6 +1054,7 @@ private:
     }
 
     inline static std::string s_shaderError;
+    inline static std::string s_name;
 
     int m_protocolOut = STDOUT_FILENO;
     uint32_t m_nextRequestId = 1;

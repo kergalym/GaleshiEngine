@@ -1203,6 +1203,47 @@ protected:
                 return m_audio.IsSoundPlaying(path);
             },
             [this]() { m_audio.StopAll(); });
+        m_scripts.BindAudio3D(
+            [this](uint32_t entityId) {
+                auto& registry = m_scene.Registry();
+                const entt::entity entity =
+                    static_cast<entt::entity>(entityId);
+                if (!registry.valid(entity) ||
+                    !registry.all_of<Galeshi::AudioSourceComponent>(entity)) {
+                    return false;
+                }
+                auto& source =
+                    registry.get<Galeshi::AudioSourceComponent>(entity);
+                glm::vec3 position(0.0f);
+                if (registry.all_of<Galeshi::TransformComponent>(entity)) {
+                    const glm::mat4 world = EntityWorldMatrix(entity);
+                    glm::vec3 scale, translation, skew;
+                    glm::vec4 perspective;
+                    glm::quat rotation;
+                    glm::decompose(world, scale, rotation, translation,
+                                   skew, perspective);
+                    position = translation + rotation * source.offset;
+                }
+                const bool playing = m_audio.PlaySource(
+                    entity, source, position);
+                source.playing = playing;
+                return playing;
+            },
+            [this](uint32_t entityId) {
+                const entt::entity entity =
+                    static_cast<entt::entity>(entityId);
+                m_audio.StopSource(entity);
+                auto& registry = m_scene.Registry();
+                if (registry.valid(entity) &&
+                    registry.all_of<Galeshi::AudioSourceComponent>(entity)) {
+                    registry.get<Galeshi::AudioSourceComponent>(entity)
+                        .playing = false;
+                }
+            },
+            [this](uint32_t entityId) {
+                return m_audio.IsSourcePlaying(
+                    static_cast<entt::entity>(entityId));
+            });
         m_scripts.BindAI();
         Galeshi::ScriptEngine::PhysicsBindings scriptPhysics;
         scriptPhysics.createBox =

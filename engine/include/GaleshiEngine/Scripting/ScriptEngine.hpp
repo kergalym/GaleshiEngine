@@ -72,6 +72,12 @@ public:
         std::function<void()> stopAllSounds = {});
     // Backwards-compatible non-looping playback binding.
     void BindAudio(std::function<void(const std::string&)> playSound);
+    // Entity-based 3D audio. The host resolves the AudioSourceComponent and
+    // world position; the scripting API only carries entity ids.
+    void BindAudio3D(
+        std::function<bool(uint32_t)> playSource,
+        std::function<void(uint32_t)> stopSource,
+        std::function<bool(uint32_t)> isPlayingSource);
     void BindPhysics(const PhysicsBindings& bindings);
     // Backwards-compatible box-only binding.
     void BindPhysics(
@@ -133,7 +139,7 @@ private:
     bool StartCppWorker();
     void StopCppWorker(const std::string& reason = {});
     bool HandleWorkerPacket(CppWorkerPacket& packet);
-    CppWorkerPacket MakeWorkerResponse(const CppWorkerPacket& request) const;
+    CppWorkerPacket MakeWorkerResponse(const CppWorkerPacket& request);
     void DestroyEntity(entt::entity entity);
     bool HasPhysicsBody(uint32_t entityId) const;
 
@@ -160,6 +166,9 @@ private:
     std::function<void(const std::string&)> m_stopSound;
     std::function<bool(const std::string&)> m_isSoundPlaying;
     std::function<void()> m_stopAllSounds;
+    std::function<bool(uint32_t)> m_playAudioSource;
+    std::function<void(uint32_t)> m_stopAudioSource;
+    std::function<bool(uint32_t)> m_isAudioSourcePlaying;
     PhysicsBindings m_physics;
     std::function<bool(const glm::vec3&, const glm::vec3&,
                        std::vector<glm::vec3>&)> m_findPath;
@@ -201,6 +210,7 @@ private:
     std::unordered_map<std::string, CppScriptModule> m_cppModules;
     std::unordered_map<std::string, std::filesystem::file_time_type>
         m_cppFailures;
+    std::vector<glm::vec3> m_cppNavigationPath;
     std::chrono::steady_clock::time_point m_nextCppScan{};
     std::string m_cppBuildOutput;
     std::string m_cppBuildErrors;

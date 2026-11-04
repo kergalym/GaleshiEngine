@@ -89,13 +89,19 @@ extern "C" void GaleshiScriptUpdate(float dt) {
 }
 ```
 
-Current class wrappers cover the existing stable calls:
+Current class wrappers cover:
 
-- `World` — find, validity, position, velocity
-- `Input` — key state and named axes
-- `Physics` — linear velocity
+- `World` — create/destroy/find/valid, names, local position/rotation/scale,
+  parent/detach, component presence, velocity
+- `Input` — key state, dead-zoned/raw axes, mouse buttons, position, delta,
+  wheel
+- `Physics` — linear velocity, attach box/sphere/capsule, destroy body,
+  impulse
+- `Navigation` — navmesh build, path query and path points
+- `Audio` — 2D play/stop/state, stop-all, entity 3D source attach/play/stop
 - `Camera` — mode, basis and camera-relative movement
 - `Player` — strafing
+- `PostProcess` — scene-wide post-process flags, floats, ints and colors by name
 - `Shader` — compile and error text
 
 Every worker request is a `CppWorkerPacket`; the host answers in
@@ -120,7 +126,7 @@ Every worker request is a `CppWorkerPacket`; the host answers in
 - Forward-declared Jolt's `JobSystem` in the public physics header.
 - Compile-check translation unit (`PublicApi.cpp`).
 
-### 2. World and ECS
+### 2. World and ECS — done
 
 Native surface: already available through `Scene`, `Entity`, `entt` and
 components.
@@ -134,7 +140,7 @@ Script surface:
 - transform interpolation helpers;
 - entity lifetime guards and generation-safe handles.
 
-### 3. Input, camera and player
+### 3. Input, camera and player — done
 
 Native surface: `InputAxisSystem`, `Camera`, player/camera components.
 
@@ -146,7 +152,7 @@ Script surface:
 - player strafing and gameplay-camera binding;
 - action rebinding where the host allows it.
 
-### 4. Physics
+### 4. Physics — done (rigid bodies)
 
 Native surface: `EnginePhysicsSystem`.
 
@@ -159,7 +165,7 @@ Script surface:
 - cloth creation/update;
 - entity-to-body and body-to-entity mapping.
 
-### 5. Navigation and AI
+### 5. Navigation and AI — navigation done
 
 Native surface: `NavigationSystem`, `AISystem`, behavior trees and perception.
 
@@ -171,7 +177,7 @@ Script surface:
 - perception queries and target selection;
 - AI controller lifecycle.
 
-### 6. Audio, including 3D
+### 6. Audio, including 3D — basic 2D/3D done
 
 Native surface: `AudioSystem`, `AudioSourceComponent`,
 `AudioListenerComponent` and scene mixer buses.
@@ -185,7 +191,7 @@ Script surface:
 - one-shot and looping playback;
 - entity-attached source controls.
 
-### 7. Rendering and post-processing
+### 7. Rendering and post-processing — scene post-process done
 
 Native surface: `Renderer`, `RenderSystem`, `PostProcessManager`,
 `PostProcessSettings` and material/texture classes.

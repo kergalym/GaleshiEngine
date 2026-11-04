@@ -60,6 +60,33 @@ New modules can check `g_api->AbiVersion()` / `Compatible()`. The C++ API
 surface and subsystem expansion plan are documented in
 [CPP_API.md](CPP_API.md).
 
+World, input, physics, navigation and audio examples:
+
+```cpp
+extern "C" void GaleshiScriptUpdate(float dt) {
+    (void)dt;
+
+    const uint32_t crate = g_api->world.Create("Crate");
+    g_api->world.SetPosition(crate, {0.0f, 4.0f, 0.0f});
+    g_api->physics.AttachBox(crate, {0.5f, 0.5f, 0.5f});
+    g_api->physics.ApplyImpulse(crate, {0.0f, 2.0f, 0.0f});
+
+    const float side = g_api->input.AxisRaw("Horizontal");
+    g_api->camera.Movement(side, 0.0f);
+
+    if (g_api->navigation.FindPath({0.0f, 0.0f, 0.0f},
+                                   {10.0f, 0.0f, 10.0f})) {
+        for (uint32_t i = 0; i < g_api->navigation.PathPointCount(); ++i) {
+            const auto point = g_api->navigation.PathPoint(i);
+            (void)point;
+        }
+    }
+
+    g_api->audio.AttachSource(crate, "assets/sounds/hit.wav");
+    g_api->audio.PlaySource(crate);
+}
+```
+
 ```cpp
 g_api->set_camera_mode(g_api->user, GALESHI_CAMERA_FIRST_PERSON);
 const int mode = g_api->get_camera_mode(g_api->user);

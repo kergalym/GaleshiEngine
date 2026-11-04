@@ -47,6 +47,126 @@ std::string NormalizeKey(std::string value) {
     return out;
 }
 
+struct PostProcessBoolField {
+    const char* name;
+    bool PostProcessSettings::* member;
+};
+struct PostProcessFloatField {
+    const char* name;
+    float PostProcessSettings::* member;
+};
+struct PostProcessIntField {
+    const char* name;
+    int PostProcessSettings::* member;
+};
+struct PostProcessVec3Field {
+    const char* name;
+    glm::vec3 PostProcessSettings::* member;
+};
+
+constexpr PostProcessBoolField kPostProcessBools[] = {
+    {"bloom", &PostProcessSettings::bloomEnabled},
+    {"dof", &PostProcessSettings::dofEnabled},
+    {"dof_auto_focus", &PostProcessSettings::dofAutoFocus},
+    {"motion_blur", &PostProcessSettings::motionBlurEnabled},
+    {"environment_palette",
+     &PostProcessSettings::environmentPaletteEnabled},
+    {"ssao", &PostProcessSettings::ssaoEnabled},
+    {"ssr", &PostProcessSettings::ssrEnabled},
+    {"ssgi", &PostProcessSettings::ssgiEnabled},
+    {"fxaa", &PostProcessSettings::fxaaEnabled},
+    {"smaa", &PostProcessSettings::smaaEnabled},
+    {"taa", &PostProcessSettings::taaEnabled},
+    {"god_rays", &PostProcessSettings::godRaysEnabled},
+    {"atmosphere", &PostProcessSettings::atmosphereEnabled},
+    {"fog", &PostProcessSettings::fogEnabled},
+    {"fog_volumetric", &PostProcessSettings::fogVolumetric},
+    {"invert", &PostProcessSettings::invertEnabled},
+};
+
+constexpr PostProcessFloatField kPostProcessFloats[] = {
+    {"bloom_threshold", &PostProcessSettings::bloomThreshold},
+    {"bloom_intensity", &PostProcessSettings::bloomIntensity},
+    {"bloom_radius", &PostProcessSettings::bloomRadius},
+    {"dof_focus_distance", &PostProcessSettings::dofFocusDistance},
+    {"dof_blur", &PostProcessSettings::dofBlur},
+    {"motion_blur_amount", &PostProcessSettings::motionBlurAmount},
+    {"motion_blur_max_velocity",
+     &PostProcessSettings::motionBlurMaxVelocity},
+    {"exposure", &PostProcessSettings::exposure},
+    {"contrast", &PostProcessSettings::contrast},
+    {"saturation", &PostProcessSettings::saturation},
+    {"color_exposure", &PostProcessSettings::colorExposure},
+    {"color_contrast", &PostProcessSettings::colorContrast},
+    {"color_saturation", &PostProcessSettings::colorSaturation},
+    {"environment_palette_amount",
+     &PostProcessSettings::environmentPaletteAmount},
+    {"vignette_intensity", &PostProcessSettings::vignetteIntensity},
+    {"vignette_smoothness", &PostProcessSettings::vignetteSmoothness},
+    {"chromatic_aberration",
+     &PostProcessSettings::chromaticAberration},
+    {"ssao_radius", &PostProcessSettings::ssaoRadius},
+    {"ssao_bias", &PostProcessSettings::ssaoBias},
+    {"ssao_max_distance", &PostProcessSettings::ssaoMaxDistance},
+    {"ssao_strength", &PostProcessSettings::ssaoStrength},
+    {"ao_resolution_scale",
+     &PostProcessSettings::aoResolutionScale},
+    {"ao_radius", &PostProcessSettings::aoRadius},
+    {"ao_bias", &PostProcessSettings::aoBias},
+    {"ao_thickness", &PostProcessSettings::aoThickness},
+    {"ao_max_distance", &PostProcessSettings::aoMaxDistance},
+    {"ao_strength", &PostProcessSettings::aoStrength},
+    {"ssr_intensity", &PostProcessSettings::ssrIntensity},
+    {"ssgi_intensity", &PostProcessSettings::ssgiIntensity},
+    {"ssgi_radius", &PostProcessSettings::ssgiRadius},
+    {"ssgi_thickness", &PostProcessSettings::ssgiThickness},
+    {"taa_blend", &PostProcessSettings::taaBlend},
+    {"god_rays_intensity",
+     &PostProcessSettings::godRaysIntensity},
+    {"god_rays_decay", &PostProcessSettings::godRaysDecay},
+    {"god_rays_density", &PostProcessSettings::godRaysDensity},
+    {"god_rays_weight", &PostProcessSettings::godRaysWeight},
+    {"atmosphere_intensity",
+     &PostProcessSettings::atmosphereIntensity},
+    {"fog_density", &PostProcessSettings::fogDensity},
+    {"fog_height_falloff",
+     &PostProcessSettings::fogHeightFalloff},
+    {"fog_base_height", &PostProcessSettings::fogBaseHeight},
+    {"fog_start_distance",
+     &PostProcessSettings::fogStartDistance},
+    {"fog_max_distance", &PostProcessSettings::fogMaxDistance},
+    {"fog_sun_scattering",
+     &PostProcessSettings::fogSunScattering},
+    {"fog_anisotropy", &PostProcessSettings::fogAnisotropy},
+};
+
+constexpr PostProcessIntField kPostProcessInts[] = {
+    {"ao_directions", &PostProcessSettings::aoDirections},
+    {"ao_steps", &PostProcessSettings::aoSteps},
+    {"ssgi_rays", &PostProcessSettings::ssgiRays},
+    {"ssgi_steps", &PostProcessSettings::ssgiSteps},
+    {"fog_steps", &PostProcessSettings::fogSteps},
+};
+
+constexpr PostProcessVec3Field kPostProcessVec3s[] = {
+    {"environment_palette_shadow",
+     &PostProcessSettings::environmentPaletteShadow},
+    {"environment_palette_mid",
+     &PostProcessSettings::environmentPaletteMid},
+    {"environment_palette_highlight",
+     &PostProcessSettings::environmentPaletteHighlight},
+    {"fog_color", &PostProcessSettings::fogColor},
+};
+
+template <typename T, std::size_t N>
+const T* FindPostProcessField(const T (&fields)[N],
+                              const std::string& name) {
+    for (const T& field : fields) {
+        if (name == field.name) return &field;
+    }
+    return nullptr;
+}
+
 std::string LuaValueToString(const sol::object& value) {
     switch (value.get_type()) {
         case sol::type::nil:
@@ -2250,7 +2370,7 @@ void ScriptEngine::BuildApi() {
 }
 
 CppWorkerPacket ScriptEngine::MakeWorkerResponse(
-    const CppWorkerPacket& request) const {
+    const CppWorkerPacket& request) {
     CppWorkerPacket response;
     response.type = static_cast<uint32_t>(CppWorkerMessage::Response);
     response.id = request.id;
@@ -2382,6 +2502,600 @@ CppWorkerPacket ScriptEngine::MakeWorkerResponse(
                 m_compileShader(request.text, error) ? 1u : 0u;
             std::snprintf(response.text, sizeof(response.text), "%s",
                           error.c_str());
+        }
+        break;
+    case CppWorkerRequest::CreateEntity:
+        if (m_scene) {
+            const std::string name =
+                request.text[0] ? request.text : "Entity";
+            const Entity entity = m_scene->CreateEntity(name);
+            response.entity =
+                static_cast<uint32_t>(entity.Handle());
+            response.valid = entity.Handle() != entt::null ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::DestroyEntity:
+        if (m_scene) {
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (m_scene->Registry().valid(entity)) {
+                DestroyEntity(entity);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetName:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<NameComponent>(entity)) {
+                std::snprintf(
+                    response.text, sizeof(response.text), "%s",
+                    registry.get<NameComponent>(entity).name.c_str());
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetName:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity)) {
+                if (registry.all_of<NameComponent>(entity)) {
+                    registry.get<NameComponent>(entity).name =
+                        request.text;
+                } else {
+                    registry.emplace<NameComponent>(
+                        entity, NameComponent{request.text});
+                }
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetRotation:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<TransformComponent>(entity)) {
+                const glm::quat rotation =
+                    registry.get<TransformComponent>(entity).rotation;
+                response.x = rotation.x;
+                response.y = rotation.y;
+                response.z = rotation.z;
+                response.w = rotation.w;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetRotation:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<TransformComponent>(entity)) {
+                glm::quat rotation(
+                    request.w, request.x, request.y, request.z);
+                if (glm::length(rotation) > 1e-6f) {
+                    rotation = glm::normalize(rotation);
+                } else {
+                    rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+                }
+                registry.get<TransformComponent>(entity).rotation =
+                    rotation;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetScale:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<TransformComponent>(entity)) {
+                const glm::vec3 scale =
+                    registry.get<TransformComponent>(entity).scale;
+                response.x = scale.x;
+                response.y = scale.y;
+                response.z = scale.z;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetScale:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<TransformComponent>(entity)) {
+                registry.get<TransformComponent>(entity).scale =
+                    glm::vec3(request.x, request.y, request.z);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetParent:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity)) {
+                response.valid = 1;
+                response.entity = UINT32_MAX;
+                if (registry.all_of<ParentComponent>(entity)) {
+                    const entt::entity parent =
+                        registry.get<ParentComponent>(entity).parent;
+                    if (parent != entt::null) {
+                        response.entity =
+                            static_cast<uint32_t>(parent);
+                    }
+                }
+            }
+        }
+        break;
+    case CppWorkerRequest::SetParent:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (!registry.valid(entity)) break;
+            if (request.other == UINT32_MAX) {
+                registry.remove<ParentComponent>(entity);
+                response.valid = 1;
+                break;
+            }
+            const entt::entity parent =
+                static_cast<entt::entity>(request.other);
+            if (!registry.valid(parent) || parent == entity) break;
+            // Reject cycles: the requested parent cannot already be a
+            // descendant of this entity.
+            entt::entity cursor = parent;
+            bool cycle = false;
+            for (int depth = 0; depth < 256 && cursor != entt::null;
+                 ++depth) {
+                if (cursor == entity) {
+                    cycle = true;
+                    break;
+                }
+                if (!registry.all_of<ParentComponent>(cursor)) break;
+                cursor = registry.get<ParentComponent>(cursor).parent;
+            }
+            if (cycle) break;
+            registry.emplace_or_replace<ParentComponent>(
+                entity, ParentComponent{parent});
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::HasComponent:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (!registry.valid(entity)) break;
+            const std::string key = NormalizeKey(request.text);
+            response.valid =
+                (key == "name" &&
+                 registry.all_of<NameComponent>(entity)) ||
+                (key == "transform" &&
+                 registry.all_of<TransformComponent>(entity)) ||
+                (key == "parent" &&
+                 registry.all_of<ParentComponent>(entity)) ||
+                (key == "mesh" &&
+                 registry.all_of<MeshComponent>(entity)) ||
+                (key == "material" &&
+                 registry.all_of<MaterialComponent>(entity)) ||
+                (key == "model" &&
+                 registry.all_of<ModelComponent>(entity)) ||
+                (key == "skeletal" &&
+                 registry.all_of<SkeletalComponent>(entity)) ||
+                (key == "camera" &&
+                 registry.all_of<CameraComponent>(entity)) ||
+                (key == "directional_light" &&
+                 registry.all_of<DirectionalLightComponent>(entity)) ||
+                (key == "point_light" &&
+                 registry.all_of<PointLightComponent>(entity)) ||
+                (key == "spot_light" &&
+                 registry.all_of<SpotLightComponent>(entity)) ||
+                (key == "rigid_body" &&
+                 registry.all_of<RigidBodyComponent>(entity)) ||
+                (key == "rigidbody" &&
+                 registry.all_of<RigidBodyComponent>(entity)) ||
+                (key == "collider" &&
+                 registry.all_of<ColliderComponent>(entity)) ||
+                (key == "landscape" &&
+                 registry.all_of<LandscapeComponent>(entity)) ||
+                (key == "vegetation" &&
+                 registry.all_of<VegetationComponent>(entity)) ||
+                (key == "nav_agent" &&
+                 registry.all_of<NavAgentComponent>(entity)) ||
+                (key == "soft_body" &&
+                 registry.all_of<SoftBodyComponent>(entity)) ||
+                (key == "ai_controller" &&
+                 registry.all_of<AIControllerComponent>(entity)) ||
+                (key == "player_tag" &&
+                 registry.all_of<PlayerTagComponent>(entity)) ||
+                (key == "perception" &&
+                 registry.all_of<PerceptionComponent>(entity)) ||
+                (key == "behavior_tree" &&
+                 registry.all_of<BehaviorTreeComponent>(entity)) ||
+                (key == "audio_source" &&
+                 registry.all_of<AudioSourceComponent>(entity)) ||
+                (key == "audio_listener" &&
+                 registry.all_of<AudioListenerComponent>(entity)) ||
+                (key == "post_process_volume" &&
+                 registry.all_of<PostProcessVolumeComponent>(entity)) ||
+                (key == "particle_emitter" &&
+                 registry.all_of<ParticleEmitterComponent>(entity)) ||
+                (key == "water" &&
+                 registry.all_of<WaterComponent>(entity)) ||
+                (key == "groom" &&
+                 registry.all_of<GroomComponent>(entity)) ||
+                (key == "groom_hair" &&
+                 registry.all_of<GroomComponent>(entity)) ||
+                (key == "ui_canvas" &&
+                 registry.all_of<UICanvasComponent>(entity)) ||
+                (key == "animation_state_machine" &&
+                 registry.all_of<AnimationStateMachineComponent>(entity))
+                ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::GetAxisRaw:
+        response.x = m_getAxisRaw ? m_getAxisRaw(request.text) : 0.0f;
+        break;
+    case CppWorkerRequest::MouseButtonDown:
+        response.valid = m_isMouseButtonDown &&
+            m_isMouseButtonDown(request.text) ? 1u : 0u;
+        break;
+    case CppWorkerRequest::GetMousePosition:
+        if (m_getMousePosition) {
+            const glm::vec2 value = m_getMousePosition();
+            response.x = value.x;
+            response.y = value.y;
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::GetMouseDelta:
+        if (m_getMouseDelta) {
+            const glm::vec2 value = m_getMouseDelta();
+            response.x = value.x;
+            response.y = value.y;
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::GetMouseWheel:
+        if (m_getMouseWheel) {
+            response.x = m_getMouseWheel();
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::AttachBox:
+    case CppWorkerRequest::AttachSphere:
+    case CppWorkerRequest::AttachCapsule:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<TransformComponent>(entity)) {
+                auto& transform =
+                    registry.get<TransformComponent>(entity);
+                if (registry.all_of<RigidBodyComponent>(entity)) {
+                    auto& oldBody =
+                        registry.get<RigidBodyComponent>(entity);
+                    if (oldBody.bodyId != 0xFFFFFFFFu &&
+                        m_physics.destroyBody) {
+                        m_physics.destroyBody(oldBody.bodyId);
+                    }
+                }
+                auto& body = registry.emplace_or_replace<
+                    RigidBodyComponent>(entity);
+                body.motionType = request.valid
+                    ? RigidBodyComponent::MotionType::Static
+                    : RigidBodyComponent::MotionType::Dynamic;
+                body.mass = request.valid ? 0.0f : 1.0f;
+                body.useGravity = request.valid == 0;
+                auto& collider = registry.emplace_or_replace<
+                    ColliderComponent>(entity);
+                collider.friction = 0.5f;
+
+                if (kind == CppWorkerRequest::AttachBox) {
+                    const glm::vec3 halfExtents(
+                        request.x, request.y, request.z);
+                    transform.scale = halfExtents * 2.0f;
+                    collider.shapeType = ColliderShapeType::Box;
+                    collider.halfExtents = halfExtents;
+                    if (m_physics.createBox) {
+                        body.bodyId = m_physics.createBox(
+                            halfExtents, transform.position, entity,
+                            request.valid != 0);
+                    }
+                } else if (kind == CppWorkerRequest::AttachSphere) {
+                    const float radius = request.x;
+                    transform.scale =
+                        glm::vec3(radius * 2.0f);
+                    collider.shapeType =
+                        ColliderShapeType::Sphere;
+                    collider.radius = radius;
+                    if (m_physics.createSphere) {
+                        body.bodyId = m_physics.createSphere(
+                            radius, transform.position, entity,
+                            request.valid != 0);
+                    }
+                } else {
+                    const float halfHeight = request.x;
+                    const float radius = request.y;
+                    transform.scale = glm::vec3(
+                        radius * 2.0f,
+                        (halfHeight + radius) * 2.0f,
+                        radius * 2.0f);
+                    collider.shapeType =
+                        ColliderShapeType::Capsule;
+                    collider.radius = radius;
+                    collider.halfHeight = halfHeight;
+                    if (m_physics.createCapsule) {
+                        body.bodyId = m_physics.createCapsule(
+                            halfHeight, radius, transform.position,
+                            entity, request.valid != 0);
+                    }
+                }
+                response.valid =
+                    body.bodyId != 0xFFFFFFFFu ? 1u : 0u;
+            }
+        }
+        break;
+    case CppWorkerRequest::DestroyBody:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<RigidBodyComponent>(entity)) {
+                auto& body = registry.get<RigidBodyComponent>(entity);
+                if (body.bodyId != 0xFFFFFFFFu) {
+                    if (m_physics.destroyBody) {
+                        m_physics.destroyBody(body.bodyId);
+                    }
+                    body.bodyId = 0xFFFFFFFFu;
+                    response.valid = 1;
+                }
+            }
+        }
+        break;
+    case CppWorkerRequest::ApplyImpulse:
+        if (m_applyImpulse && HasPhysicsBody(request.entity)) {
+            m_applyImpulse(
+                request.entity,
+                FromScriptVec3({request.x, request.y, request.z}));
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::BuildNavMesh:
+        if (m_buildNavMesh) {
+            response.valid = m_buildNavMesh() ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::FindPath:
+        if (m_findPath) {
+            m_cppNavigationPath.clear();
+            const glm::vec3 start(request.x, request.y, request.z);
+            const glm::vec3 end(request.x2, request.y2, request.z2);
+            response.valid = m_findPath(
+                start, end, m_cppNavigationPath) ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::PathPointCount:
+        response.entity = static_cast<uint32_t>(
+            m_cppNavigationPath.size());
+        response.valid = 1;
+        break;
+    case CppWorkerRequest::PathPoint:
+        if (request.entity < m_cppNavigationPath.size()) {
+            const glm::vec3& point =
+                m_cppNavigationPath[request.entity];
+            response.x = point.x;
+            response.y = point.y;
+            response.z = point.z;
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::PlaySound:
+        if (m_playSound) {
+            m_playSound(request.text, request.valid != 0);
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::StopSound:
+        if (m_stopSound) {
+            m_stopSound(request.text);
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::IsSoundPlaying:
+        if (m_isSoundPlaying) {
+            response.valid =
+                m_isSoundPlaying(request.text) ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::StopAllSounds:
+        if (m_stopAllSounds) {
+            m_stopAllSounds();
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::AttachAudioSource:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity)) {
+                if (m_stopAudioSource) {
+                    m_stopAudioSource(request.entity);
+                }
+                auto& source = registry.emplace_or_replace<
+                    AudioSourceComponent>(entity);
+                source.soundPath = request.text;
+                source.loop = (request.valid & 1u) != 0;
+                source.spatial = (request.valid & 2u) != 0;
+                source.autoplay = false;
+                source.playing = false;
+                const int bus = static_cast<int>(request.other);
+                source.bus = static_cast<AudioBus>(
+                    std::clamp(bus, 0, kAudioBusCount - 1));
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::PlaySource:
+        if (m_playAudioSource) {
+            response.valid =
+                m_playAudioSource(request.entity) ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::StopSource:
+        if (m_stopAudioSource) {
+            m_stopAudioSource(request.entity);
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::IsSourcePlaying:
+        if (m_isAudioSourcePlaying) {
+            response.valid =
+                m_isAudioSourcePlaying(request.entity) ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::SetPostProcessFlag:
+        if (m_scene) {
+            PostProcessSettings& settings =
+                m_scene->GlobalPostProcess();
+            const std::string key = NormalizeKey(request.text);
+            if (const auto* field = FindPostProcessField(
+                    kPostProcessBools, key)) {
+                settings.*(field->member) = request.valid != 0;
+                m_scene->SetHasGlobalPostProcess(true);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetPostProcessFlag:
+        if (m_scene) {
+            PostProcessSettings& settings =
+                m_scene->GlobalPostProcess();
+            const std::string key = NormalizeKey(request.text);
+            if (const auto* field = FindPostProcessField(
+                    kPostProcessBools, key)) {
+                response.entity =
+                    settings.*(field->member) ? 1u : 0u;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetPostProcessFloat:
+        if (m_scene) {
+            PostProcessSettings& settings =
+                m_scene->GlobalPostProcess();
+            const std::string key = NormalizeKey(request.text);
+            if (const auto* field = FindPostProcessField(
+                    kPostProcessFloats, key)) {
+                settings.*(field->member) = request.x;
+                m_scene->SetHasGlobalPostProcess(true);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetPostProcessFloat:
+        if (m_scene) {
+            PostProcessSettings& settings =
+                m_scene->GlobalPostProcess();
+            const std::string key = NormalizeKey(request.text);
+            if (const auto* field = FindPostProcessField(
+                    kPostProcessFloats, key)) {
+                response.x = settings.*(field->member);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetPostProcessInt:
+        if (m_scene) {
+            PostProcessSettings& settings =
+                m_scene->GlobalPostProcess();
+            const std::string key = NormalizeKey(request.text);
+            const int value = static_cast<int>(request.valid);
+            if (key == "ao_mode") {
+                settings.aoMode = static_cast<AmbientOcclusionMode>(
+                    std::clamp(value, 0, 2));
+                m_scene->SetHasGlobalPostProcess(true);
+                response.valid = 1;
+            } else if (const auto* field = FindPostProcessField(
+                           kPostProcessInts, key)) {
+                settings.*(field->member) = value;
+                m_scene->SetHasGlobalPostProcess(true);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetPostProcessInt:
+        if (m_scene) {
+            PostProcessSettings& settings =
+                m_scene->GlobalPostProcess();
+            const std::string key = NormalizeKey(request.text);
+            if (key == "ao_mode") {
+                response.entity = static_cast<uint32_t>(
+                    settings.aoMode);
+                response.valid = 1;
+            } else if (const auto* field = FindPostProcessField(
+                           kPostProcessInts, key)) {
+                response.entity = static_cast<uint32_t>(
+                    settings.*(field->member));
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetPostProcessVec3:
+        if (m_scene) {
+            PostProcessSettings& settings =
+                m_scene->GlobalPostProcess();
+            const std::string key = NormalizeKey(request.text);
+            if (const auto* field = FindPostProcessField(
+                    kPostProcessVec3s, key)) {
+                settings.*(field->member) =
+                    glm::vec3(request.x, request.y, request.z);
+                m_scene->SetHasGlobalPostProcess(true);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetPostProcessVec3:
+        if (m_scene) {
+            PostProcessSettings& settings =
+                m_scene->GlobalPostProcess();
+            const std::string key = NormalizeKey(request.text);
+            if (const auto* field = FindPostProcessField(
+                    kPostProcessVec3s, key)) {
+                const glm::vec3 value = settings.*(field->member);
+                response.x = value.x;
+                response.y = value.y;
+                response.z = value.z;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetPostProcessEnabled:
+        if (m_scene) {
+            m_scene->SetHasGlobalPostProcess(request.valid != 0);
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::GetPostProcessEnabled:
+        if (m_scene) {
+            response.valid =
+                m_scene->HasGlobalPostProcess() ? 1u : 0u;
         }
         break;
     }
@@ -2661,6 +3375,16 @@ void ScriptEngine::BindAudio(std::function<void(const std::string&)> playSound) 
     m_playSound = [play = std::move(playSound)](const std::string& path, bool) {
         if (play) play(path);
     };
+}
+
+void ScriptEngine::BindAudio3D(
+    std::function<bool(uint32_t)> playSource,
+    std::function<void(uint32_t)> stopSource,
+    std::function<bool(uint32_t)> isPlayingSource) {
+    BuildApi();
+    m_playAudioSource = std::move(playSource);
+    m_stopAudioSource = std::move(stopSource);
+    m_isAudioSourcePlaying = std::move(isPlayingSource);
 }
 
 void ScriptEngine::BindPhysics(const PhysicsBindings& bindings) {
