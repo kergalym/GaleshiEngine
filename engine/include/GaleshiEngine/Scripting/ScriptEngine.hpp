@@ -97,6 +97,12 @@ public:
     const std::string& GetCppBuildOutput() const { return m_cppBuildOutput; }
     const std::string& GetCppBuildErrors() const { return m_cppBuildErrors; }
     bool HasCppBuildErrors() const { return !m_cppBuildErrors.empty(); }
+    // Live checks used by the Code Editor while the buffer is being edited.
+    // C++ checks only compile one translation unit (no module is loaded).
+    bool CheckCppSyntax(const std::string& source, const std::string& sourcePath,
+                        std::string& diagnostics);
+    bool CheckLuaSyntax(const std::string& source, const std::string& sourcePath,
+                        std::string& error);
     void Update(float dt);
 
     sol::state& GetState() { return m_lua; }

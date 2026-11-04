@@ -38,7 +38,9 @@ Compilation uses `g++` by default; set `CXX` to override the compiler. The
 compiler runs in a child process and is stopped after 30 seconds. Compile
 diagnostics appear in the Code Editor **Output** and **Errors** tabs; invalid
 modules are never loaded, and the last successfully loaded module keeps
-running.
+running. While a `.cpp`, `.h` or `.lua` file is being edited, the Errors tab
+runs a debounced live syntax check and shows the offending source line before
+the compiler/Lua diagnostic.
 
 On Linux, the worker additionally installs a seccomp deny-list for process
 creation, signalling, networking and kernel-management syscalls, and attempts

@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <set>
@@ -166,7 +167,9 @@ bool CompileCppScript(const std::filesystem::path& source,
                       const std::filesystem::path& output,
                       const std::string& includeRoot,
                       const std::string& projectRoot,
-                      std::string& compilerOutput) {
+                      std::string& compilerOutput,
+                      const std::string& extraInclude = {},
+                      bool syntaxOnly = false) {
     const char* envCompiler = std::getenv("CXX");
     const std::string compiler =
         envCompiler && *envCompiler ? envCompiler : "g++";
@@ -174,16 +177,23 @@ bool CompileCppScript(const std::filesystem::path& source,
     std::vector<std::string> arguments = {
         compiler,
         "-std=c++20",
-        "-shared",
-        "-fPIC",
         "-O1",
         "-I" + includeRoot,
         "-I" + projectRoot,
         "-I" + source.parent_path().string(),
-        "-o",
-        output.string(),
-        source.string(),
     };
+    if (!extraInclude.empty()) {
+        arguments.push_back("-I" + extraInclude);
+    }
+    if (syntaxOnly) {
+        arguments.push_back("-fsyntax-only");
+    } else {
+        arguments.push_back("-shared");
+        arguments.push_back("-fPIC");
+        arguments.push_back("-o");
+        arguments.push_back(output.string());
+    }
+    arguments.push_back(source.string());
     std::vector<char*> argv;
     argv.reserve(arguments.size() + 1);
     for (auto& argument : arguments) argv.push_back(argument.data());
@@ -2480,6 +2490,82 @@ void ScriptEngine::BindNavigation(
 void ScriptEngine::BindEngine(std::function<void()> requestExit) {
     BuildApi();
     m_requestExit = std::move(requestExit);
+}
+
+bool ScriptEngine::CheckCppSyntax(const std::string& source,
+                                  const std::string& sourcePath,
+                                  std::string& diagnostics) {
+    if (source.empty()) {
+        diagnostics.clear();
+        return true;
+    }
+#if !defined(__unix__) && !defined(__APPLE__)
+    diagnostics = "C++ syntax checking is only supported on Unix.";
+    return false;
+#else
+    namespace fs = std::filesystem;
+    std::error_code pathEc;
+    const fs::path sourceFile =
+        fs::absolute(sourcePath, pathEc).lexically_normal();
+    const fs::path parent = sourceFile.parent_path();
+    const fs::path syntaxRoot =
+        fs::temp_directory_path() / "galeshi_cpp_syntax";
+    std::error_code ec;
+    fs::create_directories(syntaxRoot, ec);
+    if (ec) {
+        diagnostics = "Could not create syntax-check directory: " +
+                      ec.message();
+        return false;
+    }
+
+    const std::string hash = std::to_string(
+        std::hash<std::string>{}(sourcePath + ":" + source));
+    const fs::path temporarySource =
+        syntaxRoot / (sourceFile.stem().string() + "_" + hash + ".cpp");
+    const fs::path temporaryOutput =
+        syntaxRoot / (sourceFile.stem().string() + "_" + hash + ".so");
+    std::ofstream out(temporarySource, std::ios::binary);
+    if (!out.is_open()) {
+        diagnostics = "Could not write syntax-check source.";
+        return false;
+    }
+    out << source;
+    out.close();
+
+    std::string projectRoot = ProjectManager::GetProjectPath();
+    if (projectRoot.empty()) projectRoot = fs::current_path().string();
+    const std::string includeRoot =
+#ifdef GALESHI_SCRIPT_INCLUDE_DIR
+        GALESHI_SCRIPT_INCLUDE_DIR;
+#else
+        "engine/include";
+#endif
+    const bool success = CompileCppScript(
+        temporarySource, temporaryOutput, includeRoot, projectRoot,
+        diagnostics, parent.string(), true);
+    std::error_code removeEc;
+    fs::remove(temporarySource, removeEc);
+    fs::remove(temporaryOutput, removeEc);
+    if (success) diagnostics.clear();
+    return success;
+#endif
+}
+
+bool ScriptEngine::CheckLuaSyntax(const std::string& source,
+                                  const std::string& sourcePath,
+                                  std::string& error) {
+    lua_State* state = m_lua.lua_state();
+    const int status = luaL_loadbuffer(
+        state, source.data(), source.size(), sourcePath.c_str());
+    if (status == LUA_OK) {
+        lua_pop(state, 1);
+        error.clear();
+        return true;
+    }
+    const char* message = lua_tostring(state, -1);
+    error = message ? message : "Lua syntax error";
+    lua_pop(state, 1);
+    return false;
 }
 
 bool ScriptEngine::ReloadCppScripts(bool force) {

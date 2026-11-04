@@ -11481,7 +11481,81 @@ void DrawDetails() {
             ss << in.rdbuf();
             m_codeEditor.SetText(ss.str());
         }
+        m_codeEditorSyntaxErrors.clear();
+        m_codeEditorLastSyntaxSource.clear();
+        m_codeEditorSyntaxDirty = true;
+        m_codeEditorLastEditTime = ImGui::GetTime();
         ImGui::SetWindowFocus("Code Editor");
+    }
+
+    static int DiagnosticLineNumber(const std::string& line) {
+        for (size_t i = 0; i + 1 < line.size(); ++i) {
+            if (line[i] != ':') continue;
+            size_t cursor = i + 1;
+            int value = 0;
+            bool hasDigits = false;
+            while (cursor < line.size() &&
+                   std::isdigit(static_cast<unsigned char>(line[cursor]))) {
+                value = value * 10 + (line[cursor] - '0');
+                cursor++;
+                hasDigits = true;
+            }
+            if (hasDigits && cursor < line.size() && line[cursor] == ':') {
+                return value;
+            }
+        }
+        return -1;
+    }
+
+    std::string FormatSyntaxDiagnostics(const std::string& diagnostics,
+                                        bool cpp) {
+        const std::vector<std::string> lines = m_codeEditor.GetTextLines();
+        std::istringstream input(diagnostics);
+        std::string line;
+        std::string formatted;
+        while (std::getline(input, line)) {
+            const bool diagnosticLine =
+                cpp ? (line.find("error:") != std::string::npos ||
+                       line.find("fatal error:") != std::string::npos ||
+                       line.find("warning:") != std::string::npos)
+                    : true;
+            if (diagnosticLine) {
+                const int lineNumber = DiagnosticLineNumber(line);
+                if (lineNumber > 0 &&
+                    lineNumber <= static_cast<int>(lines.size())) {
+                    formatted += "Line " + std::to_string(lineNumber) + ": " +
+                                 lines[static_cast<size_t>(lineNumber - 1)] +
+                                 "\n";
+                }
+            }
+            formatted += line + "\n";
+        }
+        return formatted;
+    }
+
+    void CheckCodeSyntax() {
+        if (m_currentCodeFile.empty()) return;
+        const std::string source = m_codeEditor.GetText();
+        if (source == m_codeEditorLastSyntaxSource) {
+            m_codeEditorSyntaxDirty = false;
+            return;
+        }
+        m_codeEditorLastSyntaxSource = source;
+        const bool cpp = IsCppCodeAssetPath(m_currentCodeFile);
+        std::string diagnostics;
+        const bool ok = cpp
+            ? m_scripts.CheckCppSyntax(source, m_currentCodeFile, diagnostics)
+            : m_scripts.CheckLuaSyntax(source, m_currentCodeFile, diagnostics);
+        if (ok) {
+            m_codeEditorSyntaxErrors.clear();
+        } else if (diagnostics.empty()) {
+            m_codeEditorSyntaxErrors =
+                "Syntax check failed without diagnostics.\n";
+        } else {
+            m_codeEditorSyntaxErrors =
+                FormatSyntaxDiagnostics(diagnostics, cpp);
+        }
+        m_codeEditorSyntaxDirty = false;
     }
 
     void DrawCodeEditor() {
@@ -11603,6 +11677,14 @@ void DrawDetails() {
                     ImGui::TextDisabled("%s", m_currentCodeFile.c_str());
                     ImGui::Separator();
                     m_codeEditor.Render("CodeEditor");
+                    if (m_codeEditor.IsTextChanged()) {
+                        m_codeEditorSyntaxDirty = true;
+                        m_codeEditorLastEditTime = ImGui::GetTime();
+                    }
+                    if (m_codeEditorSyntaxDirty &&
+                        ImGui::GetTime() - m_codeEditorLastEditTime >= 0.6) {
+                        CheckCodeSyntax();
+                    }
                 }
                 ImGui::EndTabItem();
             }
@@ -11614,8 +11696,17 @@ void DrawDetails() {
             }
             if (ImGui::BeginTabItem("Errors", nullptr, selectFlag(2))) {
                 m_codeEditorTabRequest = -1;
-                drawDiagnostics("CodeEditorErrors",
-                                m_scripts.GetCppBuildErrors(), true);
+                std::string errors = m_codeEditorSyntaxErrors;
+                const std::string& buildErrors = m_scripts.GetCppBuildErrors();
+                if (!buildErrors.empty() &&
+                    (m_currentCodeFile.empty() ||
+                     IsCppCodeAssetPath(m_currentCodeFile))) {
+                    if (!errors.empty()) {
+                        errors += "\n--- C++ build ---\n";
+                    }
+                    errors += buildErrors;
+                }
+                drawDiagnostics("CodeEditorErrors", errors, true);
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
@@ -13065,6 +13156,10 @@ void DrawDetails() {
     bool m_codeEditorInitialized = false;
     bool m_codeEditorCppMode = false;
     int  m_codeEditorTabRequest = -1;
+    std::string m_codeEditorSyntaxErrors;
+    std::string m_codeEditorLastSyntaxSource;
+    double m_codeEditorLastEditTime = 0.0;
+    bool m_codeEditorSyntaxDirty = false;
 
     std::vector<std::string> m_history;
     int  m_historyIndex = -1;
