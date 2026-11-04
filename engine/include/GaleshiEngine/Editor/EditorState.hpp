@@ -17,6 +17,8 @@ public:
         Smooth,
         Flatten,
         Noise,
+        Terrace,
+        Sharpen,
         PaintTrees,
         PaintGrass
     };
@@ -59,6 +61,7 @@ public:
     float brushFalloff = 0.65f;
     float flattenHeight = 0.0f;
     float noiseFrequency = 0.15f;
+    float terraceStep = 1.0f;
 
     // --- Play Mode ---
     bool isPlaying = false;

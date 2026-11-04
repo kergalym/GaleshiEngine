@@ -53,6 +53,12 @@ enum class UICanvasScaleMode : uint8_t {
     ConstantPixelSize,
 };
 
+enum class UITextAlign : uint8_t {
+    Left = 0,
+    Center,
+    Right,
+};
+
 struct UIWidget {
     // Identity
     std::string id    = "widget";
@@ -95,8 +101,20 @@ struct UIWidget {
     // Checkbox / Toggle
     bool checked = false;
 
+    // Text
+    float fontSize = 0.0f;  // 0 = automatic from widget height
+    UITextAlign textAlign = UITextAlign::Left;
+    float textWrapWidth = 0.0f;  // 0 = widget width
+
     // Input
     int maxChars = 128;
+
+    // Slider
+    float sliderStep = 0.0f;
+
+    // Dropdown
+    std::vector<std::string> options;
+    int selectedOption = 0;
 
     // Image
     std::string imagePath;
@@ -104,8 +122,13 @@ struct UIWidget {
     // Style
     bool      useColor = false;
     glm::vec4 color{1.0f};   // RGBA 0..1
+    bool      useBorderColor = false;
+    glm::vec4 borderColor{0.35f, 0.55f, 0.78f, 0.63f};
     float     radius = 0.0f;
     float     border = 0.0f;
+
+    // Interaction
+    std::string tooltip;
 
     // Lua event handlers
     std::string onShow;

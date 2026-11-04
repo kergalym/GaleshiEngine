@@ -35,6 +35,14 @@ ImU32 WidgetColor(const UIWidget& widget, float alpha) {
         ImVec4(c.r, c.g, c.b, std::clamp(c.a * alpha, 0.0f, 1.0f)));
 }
 
+ImU32 WidgetBorderColor(const UIWidget& widget, float alpha,
+                        ImU32 fallback) {
+    if (!widget.useBorderColor) return fallback;
+    const glm::vec4& c = widget.borderColor;
+    return ImGui::ColorConvertFloat4ToU32(
+        ImVec4(c.r, c.g, c.b, std::clamp(c.a * alpha, 0.0f, 1.0f)));
+}
+
 } // namespace
 
 std::string& UIRuntime::TextBuffer(const std::string& key) {
@@ -189,8 +197,17 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
         const float alpha = std::clamp(widget.opacity, 0.0f, 1.0f);
         const float radiusPx = widget.radius * scale;
         const float borderPx = widget.border * scale;
+        const bool interactive =
+            widget.type == UIWidgetType::Button ||
+            widget.type == UIWidgetType::CheckBox ||
+            widget.type == UIWidgetType::Toggle ||
+            widget.type == UIWidgetType::Slider ||
+            widget.type == UIWidgetType::Input ||
+            widget.type == UIWidgetType::Dropdown ||
+            widget.type == UIWidgetType::ScrollList;
 
-        ImGui::BeginDisabled(!widget.enabled);
+        ImGui::BeginDisabled(!widget.enabled ||
+                             (!widget.interactable && interactive));
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha * ImGui::GetStyle().Alpha);
         if (widget.useColor) {
             const ImVec4 tint(widget.color.r, widget.color.g, widget.color.b,
@@ -217,9 +234,11 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
             if (widget.border > 0.0f) {
                 drawList->AddRect(pos,
                                   ImVec2(pos.x + size.x, pos.y + size.y),
-                                  widget.useColor
-                                      ? WidgetColor(widget, alpha)
-                                      : IM_COL32(90, 140, 200, 160),
+                                  WidgetBorderColor(
+                                      widget, alpha,
+                                      widget.useColor
+                                          ? WidgetColor(widget, alpha)
+                                          : IM_COL32(90, 140, 200, 160)),
                                   radiusPx, 0, borderPx);
             }
             ImGui::Dummy(size);
@@ -230,14 +249,34 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
             const float heightPx = widget.size.y > 0.0f
                                        ? widget.size.y * scale
                                        : ImGui::GetTextLineHeight();
-            const float fontSize =
-                std::clamp(widget.size.y * scale * 0.62f, 9.0f, 48.0f);
+            const float fontSize = std::clamp(
+                widget.fontSize > 0.0f ? widget.fontSize * scale
+                                       : heightPx * 0.62f,
+                6.0f, 160.0f);
             const ImU32 color =
                 widget.useColor ? WidgetColor(widget, alpha)
                                 : IM_COL32(225, 233, 245, 255);
-            drawList->AddText(ImGui::GetFont(), fontSize, pos, color,
-                              widget.label.c_str());
-            ImGui::Dummy(ImVec2(widthPx, heightPx));
+            const float wrapWidth = widget.textWrapWidth > 0.0f
+                                        ? widget.textWrapWidth * scale
+                                        : widthPx;
+            const float fontScale =
+                fontSize / std::max(1.0f, ImGui::GetFontSize());
+            ImVec2 textSize = ImGui::CalcTextSize(
+                widget.label.c_str(), nullptr, false,
+                wrapWidth / std::max(0.01f, fontScale));
+            textSize.x *= fontScale;
+            textSize.y *= fontScale;
+            float textX = pos.x;
+            if (widget.textAlign == UITextAlign::Center) {
+                textX += (widthPx - textSize.x) * 0.5f;
+            } else if (widget.textAlign == UITextAlign::Right) {
+                textX += widthPx - textSize.x;
+            }
+            drawList->AddText(ImGui::GetFont(), fontSize,
+                              ImVec2(textX, pos.y), color,
+                              widget.label.c_str(), nullptr, wrapWidth);
+            ImGui::Dummy(
+                ImVec2(widthPx, std::max(heightPx, textSize.y)));
             break;
         }
 
@@ -271,6 +310,14 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
             ImGui::SetNextItemWidth(widthPx);
             if (ImGui::SliderFloat("##value", &widget.sliderValue,
                                    widget.sliderMin, widget.sliderMax)) {
+                if (widget.sliderStep > 0.0f) {
+                    widget.sliderValue =
+                        std::round(widget.sliderValue / widget.sliderStep) *
+                        widget.sliderStep;
+                    widget.sliderValue = std::clamp(
+                        widget.sliderValue, widget.sliderMin,
+                        widget.sliderMax);
+                }
                 Emit({UIEvent::Type::ValueChanged, canvasEntity, canvas.canvasId,
                       widget.id, widget.sliderValue, false});
             }
@@ -321,9 +368,32 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
                                   IM_COL32(220, 226, 236, 255),
                                   widget.label.c_str());
             }
+            const int selected = std::clamp(
+                widget.selectedOption, 0,
+                std::max(0, static_cast<int>(widget.options.size()) - 1));
+            const char* preview = widget.label.c_str();
+            if (!widget.options.empty()) {
+                preview = widget.options[static_cast<size_t>(selected)].c_str();
+            }
             ImGui::SetNextItemWidth(widthPx);
-            if (ImGui::BeginCombo("##combo", widget.label.c_str())) {
-                ImGui::Selectable(widget.label.c_str(), true);
+            if (ImGui::BeginCombo("##combo", preview)) {
+                if (widget.options.empty()) {
+                    ImGui::TextDisabled("No options");
+                } else {
+                    for (int i = 0;
+                         i < static_cast<int>(widget.options.size()); ++i) {
+                        const bool itemSelected = i == selected;
+                        if (ImGui::Selectable(
+                                widget.options[static_cast<size_t>(i)].c_str(),
+                                itemSelected)) {
+                            widget.selectedOption = i;
+                            Emit({UIEvent::Type::ValueChanged,
+                                  canvasEntity, canvas.canvasId, widget.id,
+                                  static_cast<float>(i), false});
+                        }
+                        if (itemSelected) ImGui::SetItemDefaultFocus();
+                    }
+                }
                 ImGui::EndCombo();
             }
             break;
@@ -346,10 +416,11 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
                                     ImVec2(pos.x + size.x, pos.y + size.y),
                                     IM_COL32(30, 30, 30, 200), radiusPx);
             if (widget.border > 0.0f) {
-                drawList->AddRect(pos,
-                                  ImVec2(pos.x + size.x, pos.y + size.y),
-                                  IM_COL32(80, 80, 80, 220), radiusPx, 0,
-                                  borderPx);
+                drawList->AddRect(
+                    pos, ImVec2(pos.x + size.x, pos.y + size.y),
+                    WidgetBorderColor(widget, alpha,
+                                      IM_COL32(80, 80, 80, 220)),
+                    radiusPx, 0, borderPx);
             }
             const char* caption =
                 !widget.imagePath.empty()
@@ -374,14 +445,10 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
             break;
         }
 
-        const bool interactive =
-            widget.type == UIWidgetType::Button ||
-            widget.type == UIWidgetType::CheckBox ||
-            widget.type == UIWidgetType::Toggle ||
-            widget.type == UIWidgetType::Slider ||
-            widget.type == UIWidgetType::Input ||
-            widget.type == UIWidgetType::Dropdown ||
-            widget.type == UIWidgetType::ScrollList;
+        if (!widget.tooltip.empty() && ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", widget.tooltip.c_str());
+        }
+
         if (interactive) {
             const std::string hoverKey = canvas.canvasId + "/" + widget.id;
             if (ImGui::IsItemHovered()) {

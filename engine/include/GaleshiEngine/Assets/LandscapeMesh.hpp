@@ -12,7 +12,9 @@ enum class LandscapeBrush {
     Lower,
     Smooth,
     Flatten,
-    Noise
+    Noise,
+    Terrace,
+    Sharpen
 };
 
 struct LandscapeBrushSettings {
@@ -22,6 +24,7 @@ struct LandscapeBrushSettings {
     float falloff = 0.65f;
     float flattenHeight = 0.0f;
     float noiseFrequency = 0.15f;
+    float terraceStep = 1.0f;
 };
 
 struct LandscapeRaycastHit {

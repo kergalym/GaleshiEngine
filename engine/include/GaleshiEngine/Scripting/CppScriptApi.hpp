@@ -53,6 +53,9 @@ struct GaleshiScriptApi {
 
     bool (*get_player_strafing)(void* user) = nullptr;
     void (*set_player_strafing)(void* user, bool enabled) = nullptr;
+
+    bool (*compile_shader)(void* user, const char* path) = nullptr;
+    const char* (*get_shader_error)(void* user) = nullptr;
 };
 
 inline float GaleshiInterpFactor(float deltaTime, float speed) {

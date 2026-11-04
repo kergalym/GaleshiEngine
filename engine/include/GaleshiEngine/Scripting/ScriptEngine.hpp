@@ -90,6 +90,8 @@ public:
                     std::function<glm::vec3()> getRight = {});
     void BindPlayer(std::function<bool()> getStrafing,
                     std::function<void(bool)> setStrafing);
+    void BindShader(
+        std::function<bool(const std::string&, std::string&)> compileShader);
 
     void RunAIScripts(Scene& scene, float dt);
     void ClearLuaEntities();
@@ -169,6 +171,8 @@ private:
     std::function<glm::vec3()> m_getCameraRight;
     std::function<bool()> m_getPlayerStrafing;
     std::function<void(bool)> m_setPlayerStrafing;
+    std::function<bool(const std::string&, std::string&)> m_compileShader;
+    std::string m_shaderError;
 
     std::unordered_map<std::string, sol::protected_function> m_uiHandlers;
 

@@ -31,6 +31,7 @@
 #include "GaleshiEngine/UI/UIRuntime.hpp"
 #include "TextEditor/TextEditor.h"
 #include "GaleshiEngine/Renderer/PostProcessManager.hpp"
+#include "GaleshiEngine/Renderer/ShaderManager.hpp"
 #include "GaleshiEngine/Renderer/ImGuiBgfx.hpp"
 
 #include <SDL3/SDL.h>
@@ -163,8 +164,14 @@ static bool IsCppCodeAssetPath(const std::string& path) {
            extension == ".h";
 }
 
+static bool IsShaderAssetPath(const std::string& path) {
+    const std::string extension = AssetExtensionLower(path);
+    return extension == ".glsl" || extension == ".hlsl";
+}
+
 static bool IsCodeAssetPath(const std::string& path) {
-    return AssetExtensionLower(path) == ".lua" || IsCppCodeAssetPath(path);
+    return AssetExtensionLower(path) == ".lua" || IsCppCodeAssetPath(path) ||
+           IsShaderAssetPath(path);
 }
 
 inline float ProfileElapsedMs(ProfileClock::time_point begin,
@@ -337,6 +344,7 @@ class GaleshiEditorApp final : public Galeshi::Application {
     };
     PreferencesSection m_preferencesSection = PreferencesSection::General;
     bool m_showPreferences = false;
+    bool m_showHistoryModal = false;
     bool m_showAudioMixer = false;
     bool m_showEnvironmentPalette = false;
     bool m_showStateMachineEditor = false;
@@ -1212,6 +1220,12 @@ protected:
         m_scripts.BindPlayer(
             [this]() { return m_playerStrafing; },
             [this](bool enabled) { m_playerStrafing = enabled; });
+        m_scripts.BindShader(
+            [this](const std::string& path, std::string& error) {
+                CompileShaderPreview(path);
+                error = m_shaderPreviewError;
+                return error.empty();
+            });
         // Project-local key bindings override the built-in axis defaults
         // before scripts start reading input.
         LoadInputBindings();
@@ -1620,6 +1634,7 @@ protected:
         DrawEnvironmentPaletteWindow();
         DrawStateMachineEditor();
         DrawPreferencesWindow();
+        DrawHistoryModal();
 
         // Play mode draws the authored canvases inside the viewport image.
         if (m_editor.isPlaying && !m_uiPreview) {
@@ -1743,6 +1758,7 @@ protected:
 
         // Never leave the OS cursor captured when the process exits.
         EndEditorMouseLook();
+        EndGameMouseLook();
 
         // Never let the loader touch bgfx/SDL after they have been shut down.
         if (m_loadingState.loaderThread.joinable()) {
@@ -1760,6 +1776,7 @@ protected:
         if (m_particles) m_particles->Shutdown();
         if (m_debug) m_debug->Shutdown();
         if (m_render) m_render->Shutdown();
+        ShutdownShaderPreview();
         m_postProcess.Shutdown();
         if (m_framebuffer) m_framebuffer->Destroy();
         for (auto& fbo : m_shadowFbos) {
@@ -2058,6 +2075,52 @@ private:
     // -------------------------------------------------------------------
     // Preferences
     // -------------------------------------------------------------------
+    void DrawHistoryModal() {
+        if (m_showHistoryModal) {
+            ImGui::OpenPopup("Undo History");
+            m_showHistoryModal = false;
+        }
+        if (!ImGui::BeginPopupModal(
+                "Undo History", nullptr,
+                ImGuiWindowFlags_AlwaysAutoResize)) {
+            return;
+        }
+
+        ImGui::Text("Undo / Redo History");
+        ImGui::TextDisabled("Current snapshot: %d / %d",
+                            m_historyIndex + 1,
+                            static_cast<int>(m_history.size()));
+        ImGui::Separator();
+        ImGui::BeginChild("history_snapshots", ImVec2(520.0f, 260.0f),
+                          true);
+        if (m_history.empty()) {
+            ImGui::TextDisabled("No scene snapshots yet.");
+        } else {
+            for (int i = 0; i < static_cast<int>(m_history.size()); ++i) {
+                char label[64];
+                std::snprintf(label, sizeof(label), "Snapshot %d%s", i + 1,
+                              i == m_historyIndex ? "   (current)" : "");
+                ImGui::Selectable(label, i == m_historyIndex);
+            }
+        }
+        ImGui::EndChild();
+        ImGui::Separator();
+
+        ImGui::BeginDisabled(m_historyIndex <= 0);
+        if (ImGui::Button("Undo", ImVec2(110.0f, 0.0f))) Undo();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(
+            m_historyIndex + 1 >= static_cast<int>(m_history.size()));
+        if (ImGui::Button("Redo", ImVec2(110.0f, 0.0f))) Redo();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Close", ImVec2(110.0f, 0.0f))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
     void DrawPreferencesWindow() {
         if (!m_showPreferences) return;
 
@@ -3013,6 +3076,7 @@ if (ImGui::BeginMenu("File")) {
         if (ImGui::BeginMenu("Edit")) {
             if (ImGui::MenuItem("Undo", "Ctrl+Z")) Undo();
             if (ImGui::MenuItem("Redo", "Ctrl+Y")) Redo();
+            if (ImGui::MenuItem("History...")) m_showHistoryModal = true;
             ImGui::Separator();
             if (ImGui::MenuItem("Translate", "W")) m_editor.SetMode(Galeshi::GizmoMode::Translate);
             if (ImGui::MenuItem("Rotate",    "E")) m_editor.SetMode(Galeshi::GizmoMode::Rotate);
@@ -4443,23 +4507,56 @@ if (ImGui::BeginMenu("File")) {
         ImGui::SliderFloat("Opacity", &widget.opacity, 0.0f, 1.0f, "%.2f");
         ImGui::DragFloat("Radius", &widget.radius, 0.5f, 0.0f, 64.0f);
         ImGui::DragFloat("Border", &widget.border, 0.1f, 0.0f, 16.0f);
+        ImGui::Checkbox("Override Border Color", &widget.useBorderColor);
+        if (!widget.useBorderColor) ImGui::BeginDisabled();
+        ImGui::ColorEdit4("Border Color", glm::value_ptr(widget.borderColor),
+                          ImGuiColorEditFlags_Uint8 |
+                              ImGuiColorEditFlags_AlphaBar);
+        if (!widget.useBorderColor) ImGui::EndDisabled();
 
         ImGui::Checkbox("Visible##widget", &widget.visible);
         ImGui::SameLine();
         ImGui::Checkbox("Interactable", &widget.interactable);
         ImGui::SameLine();
         ImGui::Checkbox("Block Input", &widget.blockInput);
+        UIEventInput("Tooltip", widget.tooltip);
 
         switch (widget.type) {
         case Galeshi::UIWidgetType::Button:
             ImGui::DragFloat("Height", &widget.buttonHeight, 0.5f, 0.0f, 400.0f);
             break;
+        case Galeshi::UIWidgetType::Text: {
+            ImGui::DragFloat("Font Size", &widget.fontSize, 0.5f, 0.0f,
+                             160.0f);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("0 uses the widget height.");
+            }
+            const char* alignLabels[] = {"Left", "Center", "Right"};
+            int align = static_cast<int>(widget.textAlign);
+            if (ImGui::Combo("Text Align", &align, alignLabels, 3)) {
+                widget.textAlign = static_cast<Galeshi::UITextAlign>(
+                    std::clamp(align, 0, 2));
+            }
+            ImGui::DragFloat("Wrap Width", &widget.textWrapWidth, 1.0f,
+                             0.0f, 10000.0f);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("0 wraps at the widget width.");
+            }
+            break;
+        }
         case Galeshi::UIWidgetType::Slider:
         case Galeshi::UIWidgetType::Progress: {
             ImGui::DragFloatRange2("Range", &widget.sliderMin, &widget.sliderMax,
                                    0.01f, -10000.0f, 10000.0f);
             ImGui::SliderFloat("Value", &widget.sliderValue, widget.sliderMin,
                                widget.sliderMax);
+            if (widget.type == Galeshi::UIWidgetType::Slider) {
+                ImGui::DragFloat("Step", &widget.sliderStep, 0.01f, 0.0f,
+                                 1000.0f);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("0 = continuous slider.");
+                }
+            }
             break;
         }
         case Galeshi::UIWidgetType::CheckBox:
@@ -4469,6 +4566,37 @@ if (ImGui::BeginMenu("File")) {
         case Galeshi::UIWidgetType::Input:
             ImGui::DragInt("Max Chars", &widget.maxChars, 1.0f, 1, 4096);
             break;
+        case Galeshi::UIWidgetType::Dropdown: {
+            for (int optionIndex = 0;
+                 optionIndex < static_cast<int>(widget.options.size());
+                 ++optionIndex) {
+                ImGui::PushID(optionIndex);
+                const std::string label =
+                    "Option " + std::to_string(optionIndex + 1);
+                UIEventInput(label.c_str(),
+                             widget.options[static_cast<size_t>(optionIndex)]);
+                ImGui::PopID();
+            }
+            if (ImGui::Button("Add Option")) {
+                widget.options.push_back(
+                    "Option " + std::to_string(widget.options.size() + 1));
+            }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(widget.options.empty());
+            if (ImGui::Button("Remove Last Option")) {
+                widget.options.pop_back();
+            }
+            ImGui::EndDisabled();
+            if (!widget.options.empty()) {
+                widget.selectedOption = std::clamp(
+                    widget.selectedOption, 0,
+                    static_cast<int>(widget.options.size()) - 1);
+                ImGui::SliderInt("Selected Option",
+                                 &widget.selectedOption, 0,
+                                 static_cast<int>(widget.options.size()) - 1);
+            }
+            break;
+        }
         case Galeshi::UIWidgetType::Image:
             UIEventInput("Image Path", widget.imagePath);
             break;
@@ -4590,6 +4718,8 @@ if (ImGui::BeginMenu("File")) {
             const ImVec2 wmax(wmin.x + size.x * scale, wmin.y + size.y * scale);
             const ImU32 accent = widget.useColor ? toU32(widget.color)
                                                  : IM_COL32(37, 99, 170, 255);
+            const ImU32 borderAccent =
+                widget.useBorderColor ? toU32(widget.borderColor) : kBorder;
 
             switch (widget.type) {
             case Galeshi::UIWidgetType::Panel:
@@ -4598,9 +4728,13 @@ if (ImGui::BeginMenu("File")) {
                                                     : IM_COL32(18, 30, 48, 222),
                                     widget.radius * scale);
                 if (widget.border > 0.0f) {
-                    draw->AddRect(wmin, wmax, IM_COL32(90, 140, 200, 160),
-                                  widget.radius * scale, 0,
-                                  std::max(1.0f, widget.border * scale * 0.5f));
+                    draw->AddRect(
+                        wmin, wmax,
+                        widget.useBorderColor
+                            ? borderAccent
+                            : IM_COL32(90, 140, 200, 160),
+                        widget.radius * scale, 0,
+                        std::max(1.0f, widget.border * scale * 0.5f));
                 }
                 break;
             case Galeshi::UIWidgetType::Button: {
@@ -4613,16 +4747,29 @@ if (ImGui::BeginMenu("File")) {
                 break;
             }
             case Galeshi::UIWidgetType::Text: {
-                const float fontSize =
-                    std::clamp(size.y * scale * 0.62f, 9.0f, 30.0f);
-                draw->AddText(ImGui::GetFont(), fontSize, wmin, kText,
+                const float fontSize = std::clamp(
+                    widget.fontSize > 0.0f
+                        ? widget.fontSize * scale
+                        : size.y * scale * 0.62f,
+                    6.0f, 160.0f);
+                const ImVec2 textSize =
+                    scaledTextSize(widget.label.c_str(), fontSize);
+                float textX = wmin.x;
+                if (widget.textAlign == Galeshi::UITextAlign::Center) {
+                    textX += (wmax.x - wmin.x - textSize.x) * 0.5f;
+                } else if (widget.textAlign == Galeshi::UITextAlign::Right) {
+                    textX += wmax.x - wmin.x - textSize.x;
+                }
+                draw->AddText(ImGui::GetFont(), fontSize,
+                              ImVec2(textX, wmin.y), kText,
                               widget.label.c_str());
                 break;
             }
             case Galeshi::UIWidgetType::Image: {
                 draw->AddRectFilled(wmin, wmax, IM_COL32(30, 30, 30, 210),
                                     widget.radius * scale);
-                draw->AddRect(wmin, wmax, kBorder, widget.radius * scale);
+                draw->AddRect(wmin, wmax, borderAccent,
+                              widget.radius * scale);
                 const char* caption =
                     !widget.imagePath.empty()
                         ? widget.imagePath.c_str()
@@ -4690,14 +4837,24 @@ if (ImGui::BeginMenu("File")) {
             case Galeshi::UIWidgetType::Input:
             case Galeshi::UIWidgetType::Dropdown:
             case Galeshi::UIWidgetType::ScrollList:
-            case Galeshi::UIWidgetType::LayoutGroup:
+            case Galeshi::UIWidgetType::LayoutGroup: {
                 draw->AddRectFilled(wmin, wmax, IM_COL32(25, 25, 25, 220),
                                     widget.radius * scale);
-                draw->AddRect(wmin, wmax, kBorder, widget.radius * scale);
+                draw->AddRect(wmin, wmax, borderAccent,
+                              widget.radius * scale);
+                const char* preview = widget.label.c_str();
+                if (widget.type == Galeshi::UIWidgetType::Dropdown &&
+                    !widget.options.empty()) {
+                    const int selected = std::clamp(
+                        widget.selectedOption, 0,
+                        static_cast<int>(widget.options.size()) - 1);
+                    preview =
+                        widget.options[static_cast<size_t>(selected)].c_str();
+                }
                 draw->AddText(ImVec2(wmin.x + 4.0f, wmin.y + 4.0f),
-                              IM_COL32(160, 160, 160, 255),
-                              widget.label.c_str());
+                              IM_COL32(160, 160, 160, 255), preview);
                 break;
+            }
             default:
                 draw->AddRect(wmin, wmax, kBorder);
                 break;
@@ -8007,6 +8164,10 @@ if (ImGui::BeginMenu("File")) {
                                 settings.tool = Galeshi::LandscapeBrush::Flatten; break;
                             case Galeshi::EditorState::ToolMode::Noise:
                                 settings.tool = Galeshi::LandscapeBrush::Noise; break;
+                            case Galeshi::EditorState::ToolMode::Terrace:
+                                settings.tool = Galeshi::LandscapeBrush::Terrace; break;
+                            case Galeshi::EditorState::ToolMode::Sharpen:
+                                settings.tool = Galeshi::LandscapeBrush::Sharpen; break;
                             default: break;
                         }
                         settings.radius = m_editor.brushRadius;
@@ -8014,6 +8175,7 @@ if (ImGui::BeginMenu("File")) {
                         settings.falloff = m_editor.brushFalloff;
                         settings.flattenHeight = m_editor.flattenHeight;
                         settings.noiseFrequency = m_editor.noiseFrequency;
+                        settings.terraceStep = m_editor.terraceStep;
                         if (Galeshi::LandscapeMesh::ApplyBrush(
                                 landscape, settings,
                                 hit.localPosition.x,
@@ -10624,12 +10786,12 @@ void DrawDetails() {
         if (selected[0].HasComponent<Galeshi::LandscapeComponent>() &&
             beginDetailsSection(
                 "Landscape (Sculpting)", ImGuiTreeNodeFlags_DefaultOpen,
-                "landscape sculpt brush raise lower smooth flatten noise trees "
-                "grass radius strength falloff height terrain")) {
+                "landscape sculpt brush raise lower smooth flatten noise terrace "
+                "sharpen trees grass radius strength falloff height terrain")) {
             auto& landscape = selected[0].GetComponent<Galeshi::LandscapeComponent>();
             const char* toolNames[] = {
                 "Select", "Raise", "Lower", "Smooth", "Flatten", "Noise",
-                "Paint Trees", "Paint Grass"
+                "Terrace", "Sharpen", "Paint Trees", "Paint Grass"
             };
             int currentTool = static_cast<int>(m_editor.toolMode);
             if (ImGui::Combo("Brush", &currentTool, toolNames, IM_ARRAYSIZE(toolNames))) {
@@ -10647,6 +10809,10 @@ void DrawDetails() {
             }
             if (m_editor.toolMode == Galeshi::EditorState::ToolMode::Noise) {
                 ImGui::DragFloat("Noise Frequency", &m_editor.noiseFrequency, 0.005f, 0.01f, 1.0f);
+            }
+            if (m_editor.toolMode == Galeshi::EditorState::ToolMode::Terrace) {
+                ImGui::DragFloat("Terrace Step", &m_editor.terraceStep,
+                                 0.05f, 0.05f, 100.0f);
             }
             ImGui::TextDisabled("%d x %d vertices, scale %.2f", landscape.sizeX, landscape.sizeZ, landscape.scale);
             if (m_editor.toolMode == Galeshi::EditorState::ToolMode::Select) {
@@ -11793,15 +11959,16 @@ void DrawDetails() {
         m_currentCodeFile = path;
         m_codeEditorCppMode = cppMode;
         m_codeEditorTabRequest = 0;
+        const bool shader = IsShaderAssetPath(path);
         m_codeEditor.SetLanguageDefinition(
-            cppMode ? TextEditor::LanguageDefinition::CPlusPlus()
-                    : TextEditor::LanguageDefinition::Lua());
+            cppMode || shader ? TextEditor::LanguageDefinition::CPlusPlus()
+                              : TextEditor::LanguageDefinition::Lua());
         m_codeEditor.SetPalette(TextEditor::GetDarkPalette());
         m_codeEditor.SetText(text);
         m_codeEditorInitialized = true;
         m_codeEditorSyntaxErrors.clear();
         m_codeEditorLastSyntaxSource.clear();
-        m_codeEditorSyntaxDirty = !path.empty();
+        m_codeEditorSyntaxDirty = !path.empty() && !shader;
         m_codeEditorLastEditTime = ImGui::GetTime();
         // The text input lives in a child window. Focusing only the parent
         // leaves the editor non-editable until it is clicked manually.
@@ -11817,6 +11984,11 @@ void DrawDetails() {
             text = ss.str();
         }
         SetCodeEditorContent(path, text, IsCppCodeAssetPath(path));
+        if (IsShaderAssetPath(path)) {
+            CompileShaderPreview(path);
+        } else {
+            m_shaderPreviewError.clear();
+        }
         ImGui::SetWindowFocus("Code Editor");
     }
 
@@ -11841,6 +12013,9 @@ void DrawDetails() {
             m_serializer->CodeEditorPath(),
             m_serializer->CodeEditorText(),
             m_serializer->CodeEditorCppMode());
+        if (IsShaderAssetPath(m_serializer->CodeEditorPath())) {
+            CompileShaderPreview(m_serializer->CodeEditorPath());
+        }
     }
 
     static int DiagnosticLineNumber(const std::string& line) {
@@ -11897,7 +12072,8 @@ void DrawDetails() {
     };
 
     void StartCodeSyntaxCheck() {
-        if (m_codeEditorSyntaxRunning || m_currentCodeFile.empty()) {
+        if (m_codeEditorSyntaxRunning || m_currentCodeFile.empty() ||
+            IsShaderAssetPath(m_currentCodeFile)) {
             m_codeEditorSyntaxDirty = false;
             return;
         }
@@ -11978,6 +12154,10 @@ void DrawDetails() {
     }
 
     std::string CodeEditorErrorsText() const {
+        if (IsShaderAssetPath(m_currentCodeFile) &&
+            !m_shaderPreviewError.empty()) {
+            return m_shaderPreviewError;
+        }
         std::string errors = m_codeEditorSyntaxErrors;
         const std::string& buildErrors = m_scripts.GetCppBuildErrors();
         if (!buildErrors.empty() &&
@@ -11991,6 +12171,366 @@ void DrawDetails() {
         return errors;
     }
 
+    static std::string ShellQuote(const std::string& value) {
+        std::string quoted = "'";
+        for (char c : value) {
+            if (c == '\'') {
+                quoted += "'\\''";
+            } else {
+                quoted += c;
+            }
+        }
+        quoted += "'";
+        return quoted;
+    }
+
+    std::string FindShadercExecutable() const {
+        std::error_code ec;
+        const auto check = [&ec](const std::filesystem::path& path) {
+            return !path.empty() && std::filesystem::is_regular_file(path, ec)
+                       ? path.string()
+                       : std::string{};
+        };
+        std::string result = check(
+            std::filesystem::current_path() / "shaderc");
+        if (!result.empty()) return result;
+#if defined(__linux__)
+        const auto executable =
+            std::filesystem::read_symlink("/proc/self/exe", ec);
+        if (!ec) {
+            result = check(executable.parent_path() / "shaderc");
+            if (!result.empty()) return result;
+        }
+#endif
+        result = check("/usr/bin/shaderc");
+        if (!result.empty()) return result;
+        return check("/usr/local/bin/shaderc");
+    }
+
+    std::filesystem::path ShaderIncludeDirectory() const {
+        std::error_code ec;
+        const auto valid = [&ec](const std::filesystem::path& path) {
+            return std::filesystem::is_regular_file(
+                       path / "bgfx_shader.sh", ec) &&
+                   std::filesystem::is_regular_file(
+                       path / "varying_fullscreen.def.sc", ec);
+        };
+        std::filesystem::path include =
+            std::filesystem::current_path() / "assets/shaders/include";
+        if (valid(include)) return include;
+        for (const char* relative : {
+                 "../_deps/bgfx-src/bgfx/src",
+                 "../../_deps/bgfx-src/bgfx/src",
+                 "../../../_deps/bgfx-src/bgfx/src",
+             }) {
+            include = std::filesystem::current_path() / relative;
+            if (valid(include)) return include;
+        }
+        return {};
+    }
+
+    void DestroyShaderPreviewProgram() {
+        if (bgfx::isValid(m_shaderPreviewProgram)) {
+            bgfx::destroy(m_shaderPreviewProgram);
+            m_shaderPreviewProgram = BGFX_INVALID_HANDLE;
+        }
+    }
+
+    void ShutdownShaderPreview() {
+        DestroyShaderPreviewProgram();
+        if (bgfx::isValid(m_shaderPreviewFbo)) {
+            bgfx::destroy(m_shaderPreviewFbo);
+            m_shaderPreviewFbo = BGFX_INVALID_HANDLE;
+        }
+        if (bgfx::isValid(m_shaderPreviewTex)) {
+            bgfx::destroy(m_shaderPreviewTex);
+            m_shaderPreviewTex = BGFX_INVALID_HANDLE;
+        }
+        if (bgfx::isValid(m_shaderPreviewVB)) {
+            bgfx::destroy(m_shaderPreviewVB);
+            m_shaderPreviewVB = BGFX_INVALID_HANDLE;
+        }
+        if (bgfx::isValid(m_shaderPreviewIB)) {
+            bgfx::destroy(m_shaderPreviewIB);
+            m_shaderPreviewIB = BGFX_INVALID_HANDLE;
+        }
+        if (bgfx::isValid(m_shaderPreviewSampler)) {
+            bgfx::destroy(m_shaderPreviewSampler);
+            m_shaderPreviewSampler = BGFX_INVALID_HANDLE;
+        }
+        if (bgfx::isValid(m_shaderPreviewTime)) {
+            bgfx::destroy(m_shaderPreviewTime);
+            m_shaderPreviewTime = BGFX_INVALID_HANDLE;
+        }
+        if (bgfx::isValid(m_shaderPreviewResolution)) {
+            bgfx::destroy(m_shaderPreviewResolution);
+            m_shaderPreviewResolution = BGFX_INVALID_HANDLE;
+        }
+        if (bgfx::isValid(m_shaderPreviewFallbackTex)) {
+            bgfx::destroy(m_shaderPreviewFallbackTex);
+            m_shaderPreviewFallbackTex = BGFX_INVALID_HANDLE;
+        }
+    }
+
+    void EnsureShaderPreviewResources() {
+        if (!bgfx::isValid(m_shaderPreviewSampler)) {
+            m_shaderPreviewSampler = bgfx::createUniform(
+                "s_texColor", bgfx::UniformType::Sampler);
+            m_shaderPreviewTime = bgfx::createUniform(
+                "u_shaderTime", bgfx::UniformType::Vec4);
+            m_shaderPreviewResolution = bgfx::createUniform(
+                "u_shaderResolution", bgfx::UniformType::Vec4);
+        }
+        if (!bgfx::isValid(m_shaderPreviewFallbackTex)) {
+            const uint32_t white = 0xffffffffu;
+            m_shaderPreviewFallbackTex = bgfx::createTexture2D(
+                1, 1, false, 1, bgfx::TextureFormat::RGBA8,
+                BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP,
+                bgfx::copy(&white, sizeof(white)));
+        }
+        if (!bgfx::isValid(m_shaderPreviewTex)) {
+            constexpr uint16_t size = 256;
+            m_shaderPreviewTex = bgfx::createTexture2D(
+                size, size, false, 1, bgfx::TextureFormat::RGBA8,
+                BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP |
+                    BGFX_SAMPLER_V_CLAMP);
+        }
+        if (bgfx::isValid(m_shaderPreviewTex) &&
+            !bgfx::isValid(m_shaderPreviewFbo)) {
+            m_shaderPreviewFbo = bgfx::createFrameBuffer(
+                1, &m_shaderPreviewTex, false);
+        }
+        if (!bgfx::isValid(m_shaderPreviewVB)) {
+            struct PreviewVertex {
+                float x, y, z;
+                float u, v;
+            };
+            static const PreviewVertex quad[4] = {
+                {-1.0f, -1.0f, 0.0f, 0.0f, 1.0f},
+                { 1.0f, -1.0f, 0.0f, 1.0f, 1.0f},
+                {-1.0f,  1.0f, 0.0f, 0.0f, 0.0f},
+                { 1.0f,  1.0f, 0.0f, 1.0f, 0.0f},
+            };
+            static const uint16_t indices[6] = {0, 1, 2, 2, 1, 3};
+            bgfx::VertexLayout layout;
+            layout.begin()
+                .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+                .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
+                .end();
+            m_shaderPreviewVB = bgfx::createVertexBuffer(
+                bgfx::makeRef(quad, sizeof(quad)), layout);
+            m_shaderPreviewIB = bgfx::createIndexBuffer(
+                bgfx::makeRef(indices, sizeof(indices)));
+        }
+    }
+
+    std::filesystem::path ResolveShaderSourcePath(
+        const std::string& path) const {
+        std::filesystem::path source(path);
+        std::error_code ec;
+        if (source.is_absolute() ||
+            std::filesystem::is_regular_file(source, ec)) {
+            return source;
+        }
+        const std::string project = Galeshi::ProjectManager::GetProjectPath();
+        if (!project.empty()) {
+            const std::filesystem::path projectPath(project);
+            const std::filesystem::path candidates[] = {
+                projectPath / source,
+                projectPath / "assets" / source,
+                projectPath / "assets/scripts" / source.filename(),
+            };
+            for (const auto& candidate : candidates) {
+                ec.clear();
+                if (std::filesystem::is_regular_file(candidate, ec)) {
+                    return candidate;
+                }
+            }
+        }
+        return source;
+    }
+
+    void CompileShaderPreview(const std::string& path,
+                              const std::string& sourceOverride = {}) {
+        DestroyShaderPreviewProgram();
+        m_shaderPreviewPath = path;
+        m_shaderPreviewError.clear();
+        if (!IsShaderAssetPath(path)) {
+            m_shaderPreviewError = "Not a shader file: " + path;
+            return;
+        }
+
+        std::string source = sourceOverride;
+        if (source.empty()) {
+            const std::filesystem::path resolved =
+                ResolveShaderSourcePath(path);
+            std::ifstream in(resolved, std::ios::binary);
+            if (!in.is_open()) {
+                m_shaderPreviewError =
+                    "Cannot open shader file: " + path;
+                return;
+            }
+            std::stringstream buffer;
+            buffer << in.rdbuf();
+            source = buffer.str();
+        }
+        if (source.empty()) {
+            m_shaderPreviewError = "Shader file is empty.";
+            return;
+        }
+
+        const std::string shaderc = FindShadercExecutable();
+        if (shaderc.empty()) {
+            m_shaderPreviewError =
+                "shaderc executable was not found. Build or install shaderc.";
+            return;
+        }
+        const std::filesystem::path include = ShaderIncludeDirectory();
+        if (include.empty()) {
+            m_shaderPreviewError =
+                "Shader include directory with bgfx_shader.sh was not found.";
+            return;
+        }
+
+        std::error_code ec;
+        const std::filesystem::path temp =
+            std::filesystem::temp_directory_path(ec);
+        const std::filesystem::path root =
+            ec ? std::filesystem::current_path() : temp;
+        const std::filesystem::path sourcePath =
+            root / ("galeshi_shader_preview" +
+                    std::filesystem::path(path).extension().string());
+        const std::filesystem::path binaryPath =
+            root / "galeshi_shader_preview.bin";
+        const std::filesystem::path logPath =
+            root / "galeshi_shader_preview.log";
+        {
+            std::ofstream out(sourcePath, std::ios::binary);
+            if (!out.is_open()) {
+                m_shaderPreviewError =
+                    "Cannot write temporary shader source.";
+                return;
+            }
+            out << source;
+        }
+        std::filesystem::remove(binaryPath, ec);
+        ec.clear();
+        std::filesystem::remove(logPath, ec);
+
+#if defined(__linux__)
+        const char* platform = "linux";
+#elif defined(__APPLE__)
+        const char* platform = "osx";
+#else
+        const char* platform = "windows";
+#endif
+        const std::string command =
+            ShellQuote(shaderc) + " -f " + ShellQuote(sourcePath.string()) +
+            " -o " + ShellQuote(binaryPath.string()) +
+            " --type fragment --platform " + platform +
+            " --profile spirv -i " + ShellQuote(include.string()) +
+            " --varyingdef " +
+            ShellQuote((include / "varying_fullscreen.def.sc").string()) +
+            " > " + ShellQuote(logPath.string()) + " 2>&1";
+        const int status = std::system(command.c_str());
+
+        std::string diagnostics;
+        {
+            std::ifstream log(logPath);
+            if (log.is_open()) {
+                std::stringstream buffer;
+                buffer << log.rdbuf();
+                diagnostics = buffer.str();
+            }
+        }
+        if (status != 0 ||
+            !std::filesystem::is_regular_file(binaryPath, ec)) {
+            m_shaderPreviewError = "Shader compilation failed.";
+            if (!diagnostics.empty()) {
+                m_shaderPreviewError += "\n" + diagnostics;
+            }
+            return;
+        }
+
+        m_shaderPreviewProgram = Galeshi::ShaderManager::LoadProgram(
+            "shaders/vs_fullscreen.bin", binaryPath.string());
+        if (!bgfx::isValid(m_shaderPreviewProgram)) {
+            m_shaderPreviewError =
+                "Compiled shader could not be loaded by bgfx.";
+            return;
+        }
+
+        EnsureShaderPreviewResources();
+        if (!bgfx::isValid(m_shaderPreviewFbo)) {
+            m_shaderPreviewError =
+                "Could not create the shader preview framebuffer.";
+            DestroyShaderPreviewProgram();
+            return;
+        }
+        spdlog::info("[Shader] Compiled preview: {}", path);
+    }
+
+    void RenderShaderPreview() {
+        if (!bgfx::isValid(m_shaderPreviewProgram) ||
+            !bgfx::isValid(m_shaderPreviewFbo) ||
+            !bgfx::isValid(m_shaderPreviewSampler)) {
+            return;
+        }
+        constexpr uint16_t size = 256;
+        bgfx::setViewFrameBuffer(m_shaderPreviewView, m_shaderPreviewFbo);
+        bgfx::setViewRect(m_shaderPreviewView, 0, 0, size, size);
+        bgfx::setViewClear(m_shaderPreviewView, BGFX_CLEAR_COLOR,
+                           0x0b1220ff);
+        const bgfx::TextureHandle input =
+            m_logoTexture && m_logoTexture->Valid()
+                ? m_logoTexture->Handle()
+                : m_shaderPreviewFallbackTex;
+        bgfx::setTexture(0, m_shaderPreviewSampler, input);
+        const float time[4] = {
+            static_cast<float>(ImGui::GetTime()), 0.0f, 0.0f, 0.0f};
+        const float resolution[4] = {
+            static_cast<float>(size), static_cast<float>(size),
+            1.0f / static_cast<float>(size),
+            1.0f / static_cast<float>(size)};
+        bgfx::setUniform(m_shaderPreviewTime, time);
+        bgfx::setUniform(m_shaderPreviewResolution, resolution);
+        bgfx::setVertexBuffer(0, m_shaderPreviewVB);
+        bgfx::setIndexBuffer(m_shaderPreviewIB);
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+        bgfx::submit(m_shaderPreviewView, m_shaderPreviewProgram);
+    }
+
+    void DrawShaderPreviewPane() {
+        if (!m_shaderPreviewPath.empty()) {
+            ImGui::TextDisabled("%s",
+                                std::filesystem::path(m_shaderPreviewPath)
+                                    .filename()
+                                    .string()
+                                    .c_str());
+        }
+        if (!m_shaderPreviewError.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text,
+                                  ImVec4(1.0f, 0.45f, 0.42f, 1.0f));
+            ImGui::TextWrapped("%s", m_shaderPreviewError.c_str());
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+        }
+        if (!bgfx::isValid(m_shaderPreviewProgram) ||
+            !bgfx::isValid(m_shaderPreviewTex)) {
+            ImGui::TextDisabled(
+                "Compile a GLSL/HLSL fragment shader to see its effect.");
+            return;
+        }
+        RenderShaderPreview();
+        const ImVec2 available = ImGui::GetContentRegionAvail();
+        const float size =
+            std::max(32.0f, std::min(available.x, available.y));
+        ImGui::Image(static_cast<ImTextureID>(m_shaderPreviewTex.idx),
+                     ImVec2(size, size), ImVec2(0.0f, 0.0f),
+                     ImVec2(1.0f, 1.0f));
+        ImGui::TextDisabled("256 x 256 live preview");
+    }
+
     void DrawCodeEditor() {
         ImGui::Begin("Code Editor");
         const std::string chosenCodeFile = m_codeFilePicker.Draw();
@@ -12002,7 +12542,7 @@ void DrawDetails() {
                     : TextEditor::LanguageDefinition::Lua());
             m_codeEditor.SetPalette(TextEditor::GetDarkPalette());
             m_codeEditor.SetText(
-                "-- Select a .lua or .cpp file from Content Browser");
+                "-- Select a .lua, .cpp, .glsl or .hlsl file from Content Browser");
             m_codeEditorInitialized = true;
         }
 
@@ -12051,17 +12591,23 @@ void DrawDetails() {
                     }
                     m_codeFilePicker.Open(
                         start.string(), "Open Code File",
-                        {".lua", ".cpp", ".cc", ".cxx", ".hpp", ".h"});
+                        {".lua", ".cpp", ".cc", ".cxx", ".hpp", ".h",
+                         ".glsl", ".hlsl"});
                 }
                 ImGui::SameLine();
                 if (m_currentCodeFile.empty()) {
                     ImGui::TextDisabled(
-                        "No file opened. Double-click a .lua or .cpp file in "
-                        "Content Browser, or use Open...");
+                        "No file opened. Double-click a .lua, .cpp, .glsl or "
+                        ".hlsl file in Content Browser, or use Open...");
                 } else {
                     const bool cppFile =
                         IsCppCodeAssetPath(m_currentCodeFile);
-                    if (ImGui::Checkbox("C++ mode", &m_codeEditorCppMode)) {
+                    const bool shaderFile =
+                        IsShaderAssetPath(m_currentCodeFile);
+                    if (shaderFile) {
+                        ImGui::TextDisabled("Shader");
+                    } else if (ImGui::Checkbox("C++ mode",
+                                               &m_codeEditorCppMode)) {
                         m_codeEditor.SetLanguageDefinition(
                             m_codeEditorCppMode
                                 ? TextEditor::LanguageDefinition::CPlusPlus()
@@ -12082,6 +12628,14 @@ void DrawDetails() {
                                 m_codeEditorTabRequest = 2;
                                 saved = false;
                             }
+                            if (shaderFile) {
+                                CompileShaderPreview(
+                                    m_currentCodeFile,
+                                    m_codeEditor.GetText());
+                                if (!m_shaderPreviewError.empty()) {
+                                    m_codeEditorTabRequest = 2;
+                                }
+                            }
                             if (saved) m_focusCodeEditor = true;
                         } else {
                             spdlog::error(
@@ -12091,7 +12645,9 @@ void DrawDetails() {
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Reload")) {
-                        if (cppFile) {
+                        if (shaderFile) {
+                            OpenCodeFile(m_currentCodeFile);
+                        } else if (cppFile) {
                             if (!m_scripts.ReloadCppScripts(true)) {
                                 m_codeEditorTabRequest = 2;
                             } else {
@@ -12112,64 +12668,102 @@ void DrawDetails() {
                                 m_focusCodeEditor = true;
                             }
                         }
+                    } else if (shaderFile) {
+                        ImGui::SameLine();
+                        if (ImGui::Button("Compile Shader")) {
+                            CompileShaderPreview(
+                                m_currentCodeFile, m_codeEditor.GetText());
+                            if (!m_shaderPreviewError.empty()) {
+                                m_codeEditorTabRequest = 2;
+                            } else {
+                                m_focusCodeEditor = true;
+                            }
+                        }
                     }
                     ImGui::SameLine();
                     ImGui::TextDisabled("%s", m_currentCodeFile.c_str());
                     ImGui::Separator();
-                    if (m_focusCodeEditor) {
-                        m_codeEditor.RequestEditorFocus();
-                        m_focusCodeEditor = false;
-                    }
-                    m_codeEditor.Render("CodeEditor");
 
-                    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
-                        ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-                        ImGui::OpenPopup("Code Editor Context");
-                    }
-                    if (ImGui::BeginPopup("Code Editor Context")) {
-                        const bool readOnly = m_codeEditor.IsReadOnly();
-                        if (ImGui::MenuItem("Copy", "Ctrl+C")) {
-                            m_codeEditor.Copy();
-                            m_focusCodeEditor = true;
+                    const auto drawEditorSurface = [&]() {
+                        if (m_focusCodeEditor) {
+                            m_codeEditor.RequestEditorFocus();
+                            m_focusCodeEditor = false;
                         }
-                        if (ImGui::MenuItem("Cut", "Ctrl+X", false,
-                                            !readOnly &&
-                                                m_codeEditor.HasSelection())) {
-                            m_codeEditor.Cut();
-                            m_focusCodeEditor = true;
-                        }
-                        if (ImGui::MenuItem("Paste", "Ctrl+V", false,
-                                            !readOnly)) {
-                            m_codeEditor.Paste();
-                            m_focusCodeEditor = true;
-                        }
-                        ImGui::Separator();
-                        if (ImGui::MenuItem("Select All", "Ctrl+A")) {
-                            m_codeEditor.SelectAll();
-                            m_focusCodeEditor = true;
-                        }
-                        if (ImGui::MenuItem("Undo", "Ctrl+Z", false,
-                                            m_codeEditor.CanUndo())) {
-                            m_codeEditor.Undo();
-                            m_focusCodeEditor = true;
-                        }
-                        if (ImGui::MenuItem("Redo", "Ctrl+Y", false,
-                                            m_codeEditor.CanRedo())) {
-                            m_codeEditor.Redo();
-                            m_focusCodeEditor = true;
-                        }
-                        ImGui::EndPopup();
-                    }
+                        m_codeEditor.Render("CodeEditor");
 
-                    if (m_codeEditor.IsTextChanged()) {
-                        m_codeEditorSyntaxDirty = true;
-                        m_codeEditorLastEditTime = ImGui::GetTime();
-                    }
-                    PollCodeSyntaxCheck();
-                    if (m_codeEditorSyntaxDirty &&
-                        !m_codeEditorSyntaxRunning &&
-                        ImGui::GetTime() - m_codeEditorLastEditTime >= 0.6) {
-                        StartCodeSyntaxCheck();
+                        if (ImGui::IsWindowHovered(
+                                ImGuiHoveredFlags_ChildWindows) &&
+                            ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                            ImGui::OpenPopup("Code Editor Context");
+                        }
+                        if (ImGui::BeginPopup("Code Editor Context")) {
+                            const bool readOnly = m_codeEditor.IsReadOnly();
+                            if (ImGui::MenuItem("Copy", "Ctrl+C")) {
+                                m_codeEditor.Copy();
+                                m_focusCodeEditor = true;
+                            }
+                            if (ImGui::MenuItem(
+                                    "Cut", "Ctrl+X", false,
+                                    !readOnly && m_codeEditor.HasSelection())) {
+                                m_codeEditor.Cut();
+                                m_focusCodeEditor = true;
+                            }
+                            if (ImGui::MenuItem("Paste", "Ctrl+V", false,
+                                                !readOnly)) {
+                                m_codeEditor.Paste();
+                                m_focusCodeEditor = true;
+                            }
+                            ImGui::Separator();
+                            if (ImGui::MenuItem("Select All", "Ctrl+A")) {
+                                m_codeEditor.SelectAll();
+                                m_focusCodeEditor = true;
+                            }
+                            if (ImGui::MenuItem("Undo", "Ctrl+Z", false,
+                                                m_codeEditor.CanUndo())) {
+                                m_codeEditor.Undo();
+                                m_focusCodeEditor = true;
+                            }
+                            if (ImGui::MenuItem("Redo", "Ctrl+Y", false,
+                                                m_codeEditor.CanRedo())) {
+                                m_codeEditor.Redo();
+                                m_focusCodeEditor = true;
+                            }
+                            ImGui::EndPopup();
+                        }
+
+                        if (m_codeEditor.IsTextChanged()) {
+                            m_codeEditorSyntaxDirty = true;
+                            m_codeEditorLastEditTime = ImGui::GetTime();
+                        }
+                        PollCodeSyntaxCheck();
+                        if (m_codeEditorSyntaxDirty &&
+                            !m_codeEditorSyntaxRunning &&
+                            ImGui::GetTime() - m_codeEditorLastEditTime >=
+                                0.6) {
+                            StartCodeSyntaxCheck();
+                        }
+                    };
+
+                    if (shaderFile) {
+                        const ImVec2 available =
+                            ImGui::GetContentRegionAvail();
+                        const float previewWidth = std::clamp(
+                            available.x * 0.34f, 220.0f, 460.0f);
+                        ImGui::BeginChild(
+                            "CodeEditorSurface",
+                            ImVec2(std::max(
+                                       120.0f,
+                                       available.x - previewWidth - 8.0f),
+                                   0.0f),
+                            false);
+                        drawEditorSurface();
+                        ImGui::EndChild();
+                        ImGui::SameLine();
+                        ImGui::BeginChild("ShaderPreview", ImVec2(0, 0), true);
+                        DrawShaderPreviewPane();
+                        ImGui::EndChild();
+                    } else {
+                        drawEditorSurface();
                     }
                 }
                 ImGui::EndTabItem();
@@ -13664,6 +14258,18 @@ void DrawDetails() {
     int  m_codeEditorTabRequest = -1;
     std::string m_codeEditorSyntaxErrors;
     std::string m_codeEditorLastSyntaxSource;
+    std::string m_shaderPreviewPath;
+    std::string m_shaderPreviewError;
+    static constexpr bgfx::ViewId m_shaderPreviewView = 60;
+    bgfx::ProgramHandle m_shaderPreviewProgram = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_shaderPreviewFbo = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_shaderPreviewTex = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_shaderPreviewFallbackTex = BGFX_INVALID_HANDLE;
+    bgfx::VertexBufferHandle m_shaderPreviewVB = BGFX_INVALID_HANDLE;
+    bgfx::IndexBufferHandle m_shaderPreviewIB = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle m_shaderPreviewSampler = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle m_shaderPreviewTime = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle m_shaderPreviewResolution = BGFX_INVALID_HANDLE;
     std::string m_codeEditorSyntaxPendingSource;
     std::string m_codeEditorSyntaxPendingPath;
     std::future<CodeSyntaxResult> m_codeEditorSyntaxFuture;

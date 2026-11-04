@@ -132,6 +132,17 @@ Galeshi.player.set_strafing(true)
 When strafing is disabled, A/D turns the player; W/S faces the player along
 the camera direction. The Camera inspector exposes the same toggle.
 
+### `Galeshi.shader`
+
+```lua
+local ok = Galeshi.shader.compile("assets/scripts/my_effect.glsl")
+print(Galeshi.shader.error())
+```
+
+Compiles a GLSL/HLSL fragment shader using the same fullscreen interface as
+the Code Editor preview. The Content Browser can create shader templates in
+`scripts/`; opening one shows a live preview in the Code Editor.
+
 ### `Galeshi.physics`
 
 Physics objects are ECS entities.  The host application creates the native
@@ -256,7 +267,17 @@ Galeshi.ui.set_widget("HUD", "start", {
     visible = true,
     value = 0.5,
     checked = true,
+    font_size = 28,
+    text_align = "center",
+    wrap_width = 640,
+    slider_step = 0.1,
+    tooltip = "Start the game",
     color = {1.0, 0.8, 0.2, 1.0},
+    use_color = true,
+    border_color = {0.4, 0.7, 1.0, 1.0},
+    use_border_color = true,
+    options = {"Low", "Medium", "High"},
+    selected_option = 2,
     on_click = "on_start",
 })
 

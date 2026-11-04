@@ -552,6 +552,7 @@ void ScriptEngine::BuildApi() {
     sol::table engine = m_lua.create_table();
     sol::table camera = m_lua.create_table();
     sol::table player = m_lua.create_table();
+    sol::table shader = m_lua.create_table();
     m_api["world"] = world;
     m_api["input"] = input;
     m_api["physics"] = physics;
@@ -564,6 +565,7 @@ void ScriptEngine::BuildApi() {
     m_api["engine"] = engine;
     m_api["camera"] = camera;
     m_api["player"] = player;
+    m_api["shader"] = shader;
 
     // ------------------------------------------------------------------
     // Entity handle helpers.  Handles are lightweight Lua tables with an
@@ -1829,9 +1831,26 @@ void ScriptEngine::BuildApi() {
         table["position"] = makeVec2(widget.position);
         table["size"] = makeVec2(widget.size);
         table["value"] = widget.sliderValue;
+        table["slider_step"] = widget.sliderStep;
         table["checked"] = widget.checked;
+        table["font_size"] = widget.fontSize;
+        table["wrap_width"] = widget.textWrapWidth;
+        table["text_align"] =
+            widget.textAlign == UITextAlign::Center ? "center"
+            : widget.textAlign == UITextAlign::Right ? "right"
+                                                     : "left";
+        table["use_color"] = widget.useColor;
         table["color"] = makeVec4(widget.color);
+        table["use_border_color"] = widget.useBorderColor;
+        table["border_color"] = makeVec4(widget.borderColor);
+        table["tooltip"] = widget.tooltip;
         table["image"] = widget.imagePath;
+        table["selected_option"] = widget.selectedOption;
+        sol::table options = m_lua.create_table();
+        for (size_t i = 0; i < widget.options.size(); ++i) {
+            options[i + 1] = widget.options[i];
+        }
+        table["options"] = options;
         table["on_click"] = widget.onClick;
         table["on_hover"] = widget.onHover;
         table["on_show"] = widget.onShow;
@@ -1857,11 +1876,52 @@ void ScriptEngine::BuildApi() {
             widget.opacity = std::clamp(number, 0.0f, 1.0f);
         }
         if (readNumber(props.get<sol::object>("value"), number)) widget.sliderValue = number;
+        if (readNumber(props.get<sol::object>("slider_step"), number)) {
+            widget.sliderStep = std::max(0.0f, number);
+        }
         if (readBool(props.get<sol::object>("checked"), boolean)) widget.checked = boolean;
+        if (readNumber(props.get<sol::object>("font_size"), number)) {
+            widget.fontSize = std::max(0.0f, number);
+        }
+        if (readNumber(props.get<sol::object>("wrap_width"), number)) {
+            widget.textWrapWidth = std::max(0.0f, number);
+        }
+        if (readString(props.get<sol::object>("text_align"), text)) {
+            if (text == "center") widget.textAlign = UITextAlign::Center;
+            else if (text == "right") widget.textAlign = UITextAlign::Right;
+            else widget.textAlign = UITextAlign::Left;
+        }
+        if (readNumber(props.get<sol::object>("selected_option"), number)) {
+            widget.selectedOption = static_cast<int>(number);
+        }
+        if (readString(props.get<sol::object>("tooltip"), text)) {
+            widget.tooltip = text;
+        }
         if (readString(props.get<sol::object>("image"), text)) widget.imagePath = text;
         if (readString(props.get<sol::object>("on_click"), text)) widget.onClick = text;
         if (readString(props.get<sol::object>("on_hover"), text)) widget.onHover = text;
         if (readString(props.get<sol::object>("on_show"), text)) widget.onShow = text;
+        const sol::object options =
+            props.get<sol::object>("options");
+        if (options.get_type() == sol::type::table) {
+            widget.options.clear();
+            const sol::table table = options.as<sol::table>();
+            for (size_t i = 1; i <= table.size(); ++i) {
+                const sol::object value = table[i];
+                if (value.get_type() == sol::type::string) {
+                    widget.options.push_back(value.as<std::string>());
+                }
+            }
+        }
+        if (readBool(props.get<sol::object>("use_color"), boolean)) {
+            widget.useColor = boolean;
+        }
+        if (readBool(props.get<sol::object>("use_border_color"), boolean)) {
+            widget.useBorderColor = boolean;
+        }
+        if (readVec4(props.get<sol::object>("border_color"), color)) {
+            widget.borderColor = color;
+        }
         if (readNumber(props.get<sol::object>("z_order"), number)) {
             widget.zOrder = static_cast<int>(number);
         }
@@ -2156,6 +2216,22 @@ void ScriptEngine::BuildApi() {
     m_lua.set_function("is_player_strafing", playerStrafing);
     m_lua.set_function("set_player_strafing", setPlayerStrafing);
 
+    const auto compileShader = [this](const std::string& path) {
+        if (!m_compileShader) {
+            m_shaderError = "No shader compiler is bound by the host.";
+            return false;
+        }
+        std::string error;
+        const bool ok = m_compileShader(path, error);
+        m_shaderError = ok ? std::string{} : error;
+        return ok;
+    };
+    const auto shaderError = [this]() { return m_shaderError; };
+    shader["compile"] = compileShader;
+    shader["error"] = shaderError;
+    m_lua.set_function("compile_shader", compileShader);
+    m_lua.set_function("get_shader_error", shaderError);
+
     // Explicitly release the temporary tables; all bound functions are owned
     // by the Lua state / m_api now.
     (void)world;
@@ -2170,6 +2246,7 @@ void ScriptEngine::BuildApi() {
     (void)engine;
     (void)camera;
     (void)player;
+    (void)shader;
 }
 
 CppWorkerPacket ScriptEngine::MakeWorkerResponse(
@@ -2296,6 +2373,15 @@ CppWorkerPacket ScriptEngine::MakeWorkerResponse(
         if (m_setPlayerStrafing) {
             m_setPlayerStrafing(request.entity != 0);
             response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::CompileShader:
+        if (m_compileShader) {
+            std::string error;
+            response.valid =
+                m_compileShader(request.text, error) ? 1u : 0u;
+            std::snprintf(response.text, sizeof(response.text), "%s",
+                          error.c_str());
         }
         break;
     }
@@ -2639,6 +2725,12 @@ void ScriptEngine::BindPlayer(std::function<bool()> getStrafing,
     BuildApi();
     m_getPlayerStrafing = std::move(getStrafing);
     m_setPlayerStrafing = std::move(setStrafing);
+}
+
+void ScriptEngine::BindShader(
+    std::function<bool(const std::string&, std::string&)> compileShader) {
+    BuildApi();
+    m_compileShader = std::move(compileShader);
 }
 
 bool ScriptEngine::CheckCppSyntax(const std::string& source,

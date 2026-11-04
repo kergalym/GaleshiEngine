@@ -72,6 +72,50 @@ end
 )LUA"
     },
     {
+        "shader_glsl",
+        "Fragment Shader (GLSL)",
+        "GLSL fragment shader with a live Code Editor preview.",
+        "new_shader.glsl",
+        R"GLSL($input v_texcoord0
+#include <bgfx_shader.sh>
+
+SAMPLER2D(s_texColor, 0);
+uniform vec4 u_shaderTime;
+uniform vec4 u_shaderResolution;
+
+void main()
+{
+    vec2 uv = v_texcoord0;
+    vec4 color = texture2D(s_texColor, uv);
+    float pulse = 0.5 + 0.5 * sin(u_shaderTime.x * 2.0);
+    color.rgb *= mix(1.0, pulse, 0.3);
+    gl_FragColor = color;
+}
+)GLSL"
+    },
+    {
+        "shader_hlsl",
+        "Fragment Shader (HLSL)",
+        "HLSL fragment shader with a live Code Editor preview.",
+        "new_shader.hlsl",
+        R"HLSL($input v_texcoord0
+#include <bgfx_shader.sh>
+
+SAMPLER2D(s_texColor, 0);
+uniform vec4 u_shaderTime;
+uniform vec4 u_shaderResolution;
+
+void main()
+{
+    vec2 uv = v_texcoord0;
+    vec4 color = texture2D(s_texColor, uv);
+    float pulse = 0.5 + 0.5 * sin(u_shaderTime.x * 2.0);
+    color.rgb *= mix(1.0, pulse, 0.3);
+    gl_FragColor = color;
+}
+)HLSL"
+    },
+    {
         "player_controller",
         "Player Controller",
         "Physics movement and jumping for an entity named Player.",
@@ -313,6 +357,11 @@ void ContentBrowser::Refresh() {
         e.path = p.path();
         e.isDirectory = p.is_directory();
         e.name = p.path().filename().string();
+        if (!e.isDirectory) {
+            std::error_code sizeEc;
+            e.size = p.file_size(sizeEc);
+            if (sizeEc) e.size = 0;
+        }
         m_entries.push_back(e);
     }
     std::sort(m_entries.begin(), m_entries.end(),
@@ -763,6 +812,18 @@ std::string ContentBrowser::Draw() {
                           "removed or renamed in the assets folder.");
     }
     ImGui::SameLine();
+    const char* viewModeNames[] = {
+        "Icon View", "Compact View", "Thumbnail View", "Detailed List"};
+    int viewMode = static_cast<int>(m_viewMode);
+    ImGui::SetNextItemWidth(140.0f);
+    if (ImGui::Combo("##content_view_mode", &viewMode, viewModeNames,
+                     IM_ARRAYSIZE(viewModeNames))) {
+        m_viewMode = static_cast<ViewMode>(viewMode);
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Folder view mode");
+    }
+    ImGui::SameLine();
     ImGui::TextDisabled("| Drop files here to import");
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
@@ -784,90 +845,209 @@ std::string ContentBrowser::Draw() {
     }
 
     ImGui::BeginChild("content_list", ImVec2(0, 0), true);
-    for (const auto& e : m_entries) {
-        ImGui::PushID(e.path.string().c_str());
 
+    const auto entryExtension = [](const Entry& entry) {
         std::string ext;
-        if (!e.isDirectory) {
-            auto dotPos = e.name.find_last_of('.');
+        if (!entry.isDirectory) {
+            const auto dotPos = entry.name.find_last_of('.');
             if (dotPos != std::string::npos) {
-                ext = e.name.substr(dotPos);
-                for (auto& c : ext) c = static_cast<char>(std::tolower(c));
-            }
-        }
-
-        // Image thumbnail.
-        bool isImage = (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-                        ext == ".bmp" || ext == ".tga" || ext == ".dds" ||
-                        ext == ".ktx");
-
-        if (isImage && m_assets) {
-            std::string path = e.path.string();
-            auto tex = m_assets->LoadTexture(path, true);
-            if (tex && bgfx::isValid(tex->Handle())) {
-                ImTextureID texId = static_cast<ImTextureID>(tex->Handle().idx);
-                // Texture uploads use the bottom-left V origin; ImGui uses
-                // top-left, so flip the thumbnail UVs to match Blender.
-                ImGui::Image(texId, ImVec2(32, 32),
-                             ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
-                ImGui::SameLine();
-            }
-        }
-
-        const char* icon = e.isDirectory ? "[D]" : "[F]";
-        const std::string label = std::string(icon) + " " + e.name;
-
-        if (ImGui::Selectable(label.c_str(), false,
-                              ImGuiSelectableFlags_AllowDoubleClick)) {
-            if (ImGui::IsMouseDoubleClicked(0)) {
-                if (e.isDirectory) {
-                    m_current = e.path;
-                    Refresh();
-                } else {
-                    clicked = e.path.string();
+                ext = entry.name.substr(dotPos);
+                for (char& c : ext) {
+                    c = static_cast<char>(
+                        std::tolower(static_cast<unsigned char>(c)));
                 }
             }
         }
+        return ext;
+    };
+    const auto isImage = [&entryExtension](const Entry& entry) {
+        const std::string ext = entryExtension(entry);
+        return ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+               ext == ".bmp" || ext == ".tga" || ext == ".dds" ||
+               ext == ".ktx";
+    };
+    const auto drawThumbnail = [this, &entryExtension, &isImage](
+                                   const Entry& entry, float size) {
+        const std::string ext = entryExtension(entry);
+        if (!entry.isDirectory && isImage(entry) && m_assets) {
+            auto texture = m_assets->LoadTexture(entry.path.string(), true);
+            if (texture && bgfx::isValid(texture->Handle())) {
+                ImGui::Image(
+                    static_cast<ImTextureID>(texture->Handle().idx),
+                    ImVec2(size, size), ImVec2(0.0f, 1.0f),
+                    ImVec2(1.0f, 0.0f));
+                return;
+            }
+        }
+        if (entry.isDirectory) {
+            ImGui::TextDisabled("[D]");
+        } else if (isImage(entry)) {
+            ImGui::TextDisabled("[IMG]");
+        } else if (!ext.empty()) {
+            ImGui::TextDisabled("[%s]", ext.substr(1).c_str());
+        } else {
+            ImGui::TextDisabled("[F]");
+        }
+    };
+    const auto entryType = [&entryExtension](const Entry& entry) {
+        if (entry.isDirectory) return std::string("Folder");
+        const std::string ext = entryExtension(entry);
+        if (ext.empty()) return std::string("File");
+        std::string type = ext.substr(1);
+        for (char& c : type) {
+            c = static_cast<char>(
+                std::toupper(static_cast<unsigned char>(c)));
+        }
+        return type + " File";
+    };
+    const auto formatSize = [](const Entry& entry) {
+        if (entry.isDirectory) return std::string("-");
+        const double size = static_cast<double>(entry.size);
+        char buffer[32];
+        if (size < 1024.0) {
+            std::snprintf(buffer, sizeof(buffer), "%.0f B", size);
+        } else if (size < 1024.0 * 1024.0) {
+            std::snprintf(buffer, sizeof(buffer), "%.1f KB",
+                          size / 1024.0);
+        } else if (size < 1024.0 * 1024.0 * 1024.0) {
+            std::snprintf(buffer, sizeof(buffer), "%.1f MB",
+                          size / (1024.0 * 1024.0));
+        } else {
+            std::snprintf(buffer, sizeof(buffer), "%.1f GB",
+                          size / (1024.0 * 1024.0 * 1024.0));
+        }
+        return std::string(buffer);
+    };
 
-        if (ImGui::BeginPopupContextItem("entry_context")) {
-            ImGui::TextDisabled("%s", e.name.c_str());
+    const auto activateEntry = [this, &clicked](const Entry& entry) {
+        if (!ImGui::IsMouseDoubleClicked(0)) return;
+        if (entry.isDirectory) {
+            m_current = entry.path;
+            Refresh();
+        } else {
+            clicked = entry.path.string();
+        }
+    };
+    const auto drawEntryPopup = [this](const Entry& entry) {
+        if (!ImGui::BeginPopupContextItem("entry_context")) return;
+        ImGui::TextDisabled("%s", entry.name.c_str());
+        ImGui::Separator();
+        if (entry.isDirectory) {
+            if (ImGui::MenuItem("Open")) {
+                m_current = entry.path;
+                Refresh();
+                ImGui::CloseCurrentPopup();
+            }
             ImGui::Separator();
-            if (e.isDirectory) {
-                if (ImGui::MenuItem("Open")) {
-                    m_current = e.path;
-                    Refresh();
-                    ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Rename...")) {
+            OpenDialog(Dialog::Rename, entry.path, entry.name);
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Move to...")) {
+            m_moveSource = entry.path;
+            m_movePicker.PickFolder(m_current.string(), "Move to Folder");
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::MenuItem("Delete")) {
+            OpenDialog(Dialog::Delete, entry.path);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    };
+    const auto drawEntryDragSource = [](const Entry& entry) {
+        if (entry.isDirectory) return;
+        if (!ImGui::BeginDragDropSource(
+                ImGuiDragDropFlags_SourceAllowNullID)) {
+            return;
+        }
+        const std::string path = entry.path.string();
+        ImGui::SetDragDropPayload("GALESHI_ASSET_PATH", path.c_str(),
+                                  path.size() + 1);
+        ImGui::Text("%s", entry.name.c_str());
+        ImGui::EndDragDropSource();
+    };
+
+    if (m_viewMode == ViewMode::Icon ||
+        m_viewMode == ViewMode::Thumbnail) {
+        const bool thumbnails = m_viewMode == ViewMode::Thumbnail;
+        const int columns = thumbnails ? 3 : 4;
+        const float iconSize = thumbnails ? 96.0f : 40.0f;
+        if (ImGui::BeginTable(
+                thumbnails ? "content_thumbnails" : "content_icons",
+                columns,
+                ImGuiTableFlags_SizingStretchSame |
+                    ImGuiTableFlags_NoSavedSettings)) {
+            for (const auto& e : m_entries) {
+                ImGui::TableNextColumn();
+                ImGui::PushID(e.path.string().c_str());
+                ImGui::BeginGroup();
+                drawThumbnail(e, iconSize);
+                if (ImGui::Selectable(
+                        e.name.c_str(), false,
+                        ImGuiSelectableFlags_AllowDoubleClick)) {
+                    activateEntry(e);
                 }
-                ImGui::Separator();
+                drawEntryPopup(e);
+                drawEntryDragSource(e);
+                ImGui::EndGroup();
+                ImGui::PopID();
             }
-            if (ImGui::MenuItem("Rename...")) {
-                OpenDialog(Dialog::Rename, e.path, e.name);
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("Move to...")) {
-                m_moveSource = e.path;
-                m_movePicker.PickFolder(m_current.string(),
-                                        "Move to Folder");
-                ImGui::CloseCurrentPopup();
-            }
-            if (ImGui::MenuItem("Delete")) {
-                OpenDialog(Dialog::Delete, e.path);
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndPopup();
+            ImGui::EndTable();
         }
+    } else if (m_viewMode == ViewMode::Details) {
+        const ImGuiTableFlags flags =
+            ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
+            ImGuiTableFlags_Resizable | ImGuiTableFlags_NoSavedSettings;
+        if (ImGui::BeginTable("content_details", 3, flags)) {
+            ImGui::TableSetupColumn(
+                "Name", ImGuiTableColumnFlags_WidthStretch, 3.0f);
+            ImGui::TableSetupColumn(
+                "Type", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn(
+                "Size", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+            ImGui::TableHeadersRow();
+            for (const auto& e : m_entries) {
+                ImGui::TableNextRow();
+                ImGui::PushID(e.path.string().c_str());
 
-        // Drag source: files only, not folders.
-        if (!e.isDirectory &&
-            ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-            const std::string p = e.path.string();
-            ImGui::SetDragDropPayload("GALESHI_ASSET_PATH",
-                                      p.c_str(), p.size() + 1);
-            ImGui::Text("%s", e.name.c_str());
-            ImGui::EndDragDropSource();
+                ImGui::TableSetColumnIndex(0);
+                drawThumbnail(e, 16.0f);
+                ImGui::SameLine();
+                if (ImGui::Selectable(
+                        e.name.c_str(), false,
+                        ImGuiSelectableFlags_AllowDoubleClick)) {
+                    activateEntry(e);
+                }
+                drawEntryPopup(e);
+                drawEntryDragSource(e);
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(entryType(e).c_str());
+
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextUnformatted(formatSize(e).c_str());
+
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
         }
-
-        ImGui::PopID();
+    } else {
+        for (const auto& e : m_entries) {
+            ImGui::PushID(e.path.string().c_str());
+            ImGui::BeginGroup();
+            drawThumbnail(e, 16.0f);
+            ImGui::SameLine();
+            if (ImGui::Selectable(
+                    e.name.c_str(), false,
+                    ImGuiSelectableFlags_AllowDoubleClick)) {
+                activateEntry(e);
+            }
+            drawEntryPopup(e);
+            drawEntryDragSource(e);
+            ImGui::EndGroup();
+            ImGui::PopID();
+        }
     }
 
     // Right-click empty space in the file list for creation operations.

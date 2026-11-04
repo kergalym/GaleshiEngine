@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include "GaleshiEngine/Editor/FilePickerDialog.hpp"
 #include <string>
@@ -40,6 +41,14 @@ private:
         std::filesystem::path path;
         bool                  isDirectory;
         std::string           name;
+        std::uintmax_t        size = 0;
+    };
+
+    enum class ViewMode {
+        Icon,
+        Compact,
+        Thumbnail,
+        Details,
     };
 
     void DrawDirectory(const std::filesystem::path& dir);
@@ -77,6 +86,7 @@ private:
     AssetManager*         m_assets = nullptr;
     std::filesystem::path m_current;
     std::vector<Entry>    m_entries;
+    ViewMode              m_viewMode = ViewMode::Compact;
     FilePickerDialog m_importPicker;
     FilePickerDialog m_movePicker;
     std::filesystem::path m_moveSource;

@@ -325,6 +325,8 @@ public:
         m_api.get_camera_movement = &ScriptWorker::GetCameraMovement;
         m_api.get_player_strafing = &ScriptWorker::GetPlayerStrafing;
         m_api.set_player_strafing = &ScriptWorker::SetPlayerStrafing;
+        m_api.compile_shader = &ScriptWorker::CompileShader;
+        m_api.get_shader_error = &ScriptWorker::GetShaderError;
     }
 
     ~ScriptWorker() {
@@ -612,6 +614,22 @@ private:
             CppWorkerRequest::SetPlayerStrafing,
             enabled ? 1u : 0u);
     }
+
+    static bool CompileShader(void* user, const char* path) {
+        if (!user || !path) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::CompileShader, UINT32_MAX, path);
+        s_shaderError = response.valid ? std::string{} : response.text;
+        return response.valid != 0;
+    }
+
+    static const char* GetShaderError(void* user) {
+        (void)user;
+        return s_shaderError.c_str();
+    }
+
+    inline static std::string s_shaderError;
 
     int m_protocolOut = STDOUT_FILENO;
     uint32_t m_nextRequestId = 1;

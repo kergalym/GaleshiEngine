@@ -44,6 +44,10 @@ const GaleshiScriptVec3 move =
 
 g_api->set_player_strafing(g_api->user, true);
 const bool strafing = g_api->get_player_strafing(g_api->user);
+
+const bool shaderOk = g_api->compile_shader(
+    g_api->user, "scripts/my_effect.glsl");
+const char* shaderError = g_api->get_shader_error(g_api->user);
 ```
 
 Camera mode changes apply to the current player camera.

@@ -299,6 +299,31 @@ int LandscapeMesh::ApplyBrush(LandscapeComponent& lc,
             const size_t index = static_cast<size_t>(z) * lc.sizeX + x;
             float& height = lc.heights[index];
             const float before = height;
+            const float blend = Clamp01(
+                strength * dt * 2.0f /
+                std::max(0.25f, settings.radius * 0.3f));
+
+            float neighborhoodAverage = before;
+            if (settings.tool == LandscapeBrush::Smooth ||
+                settings.tool == LandscapeBrush::Sharpen) {
+                const int x0 = std::max(0, x - 1);
+                const int x1 = std::min(lc.sizeX - 1, x + 1);
+                const int z0 = std::max(0, z - 1);
+                const int z1 = std::min(lc.sizeZ - 1, z + 1);
+                float sum = 0.0f;
+                int count = 0;
+                for (int sz = z0; sz <= z1; ++sz) {
+                    for (int sx = x0; sx <= x1; ++sx) {
+                        sum += original[
+                            static_cast<size_t>(sz) * lc.sizeX + sx];
+                        ++count;
+                    }
+                }
+                if (count > 0) {
+                    neighborhoodAverage =
+                        sum / static_cast<float>(count);
+                }
+            }
 
             switch (settings.tool) {
                 case LandscapeBrush::Raise:
@@ -307,29 +332,14 @@ int LandscapeMesh::ApplyBrush(LandscapeComponent& lc,
                 case LandscapeBrush::Lower:
                     height -= strength * dt * weight;
                     break;
-                case LandscapeBrush::Smooth: {
-                    const int x0 = std::max(0, x - 1);
-                    const int x1 = std::min(lc.sizeX - 1, x + 1);
-                    const int z0 = std::max(0, z - 1);
-                    const int z1 = std::min(lc.sizeZ - 1, z + 1);
-                    float sum = 0.0f;
-                    int count = 0;
-                    for (int sz = z0; sz <= z1; ++sz) {
-                        for (int sx = x0; sx <= x1; ++sx) {
-                            sum += original[static_cast<size_t>(sz) * lc.sizeX + sx];
-                            ++count;
-                        }
-                    }
-                    const float average = count > 0 ? sum / static_cast<float>(count) : before;
-                    const float blend = Clamp01(strength * dt * 2.0f / std::max(0.25f, settings.radius * 0.3f));
-                    height = glm::mix(before, average, blend * weight);
+                case LandscapeBrush::Smooth:
+                    height = glm::mix(
+                        before, neighborhoodAverage, blend * weight);
                     break;
-                }
-                case LandscapeBrush::Flatten: {
-                    const float blend = Clamp01(strength * dt * 2.0f / std::max(0.25f, settings.radius * 0.3f));
-                    height = glm::mix(before, settings.flattenHeight, blend * weight);
+                case LandscapeBrush::Flatten:
+                    height = glm::mix(
+                        before, settings.flattenHeight, blend * weight);
                     break;
-                }
                 case LandscapeBrush::Noise: {
                     const float n = ValueNoise(
                         static_cast<float>(x) * settings.noiseFrequency,
@@ -338,6 +348,19 @@ int LandscapeMesh::ApplyBrush(LandscapeComponent& lc,
                     height += n * strength * dt * weight;
                     break;
                 }
+                case LandscapeBrush::Terrace: {
+                    const float step =
+                        std::max(0.01f, settings.terraceStep);
+                    const float target =
+                        std::round(before / step) * step;
+                    height = glm::mix(before, target, blend * weight);
+                    break;
+                }
+                case LandscapeBrush::Sharpen:
+                    height = before +
+                             (before - neighborhoodAverage) *
+                                 blend * weight;
+                    break;
             }
 
             if (std::abs(height - before) > 1e-7f) ++changed;

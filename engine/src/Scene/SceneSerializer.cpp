@@ -973,11 +973,20 @@ std::string SceneSerializer::SaveToString(bool includeEditorState) const {
                     {"sliderValue", widget.sliderValue},
                     {"checked", widget.checked},
                     {"maxChars", widget.maxChars},
+                    {"fontSize", widget.fontSize},
+                    {"textAlign", static_cast<int>(widget.textAlign)},
+                    {"textWrapWidth", widget.textWrapWidth},
+                    {"sliderStep", widget.sliderStep},
+                    {"options", widget.options},
+                    {"selectedOption", widget.selectedOption},
                     {"imagePath", widget.imagePath},
                     {"useColor", widget.useColor},
                     {"color", Vec4ToJson(widget.color)},
+                    {"useBorderColor", widget.useBorderColor},
+                    {"borderColor", Vec4ToJson(widget.borderColor)},
                     {"radius", widget.radius},
                     {"border", widget.border},
+                    {"tooltip", widget.tooltip},
                     {"onShow", widget.onShow},
                     {"onHover", widget.onHover},
                     {"onClick", widget.onClick}
@@ -1864,11 +1873,30 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                     widget.sliderValue = jw.value("sliderValue", 0.5f);
                     widget.checked = jw.value("checked", false);
                     widget.maxChars = jw.value("maxChars", 128);
+                    widget.fontSize = jw.value("fontSize", 0.0f);
+                    widget.textAlign = static_cast<UITextAlign>(
+                        std::clamp(jw.value("textAlign", 0), 0, 2));
+                    widget.textWrapWidth =
+                        jw.value("textWrapWidth", 0.0f);
+                    widget.sliderStep = jw.value("sliderStep", 0.0f);
+                    if (jw.contains("options") && jw["options"].is_array()) {
+                        widget.options = jw["options"].get<
+                            std::vector<std::string>>();
+                    }
+                    widget.selectedOption =
+                        jw.value("selectedOption", 0);
                     widget.imagePath = jw.value("imagePath", std::string{});
                     widget.useColor = jw.value("useColor", false);
                     if (jw.contains("color")) widget.color = Vec4FromJson(jw.at("color"));
+                    widget.useBorderColor =
+                        jw.value("useBorderColor", false);
+                    if (jw.contains("borderColor")) {
+                        widget.borderColor = Vec4FromJson(
+                            jw.at("borderColor"));
+                    }
                     widget.radius = jw.value("radius", 0.0f);
                     widget.border = jw.value("border", 0.0f);
+                    widget.tooltip = jw.value("tooltip", std::string{});
                     widget.onShow = jw.value("onShow", std::string{});
                     widget.onHover = jw.value("onHover", std::string{});
                     widget.onClick = jw.value("onClick", std::string{});
