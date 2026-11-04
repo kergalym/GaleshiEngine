@@ -65,6 +65,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <thread>
+#include <future>
 #include <atomic>
 #include <chrono>
 #include <mutex>
@@ -11570,29 +11571,93 @@ void DrawDetails() {
         return formatted;
     }
 
-    void CheckCodeSyntax() {
-        if (m_currentCodeFile.empty()) return;
-        const std::string source = m_codeEditor.GetText();
-        if (source == m_codeEditorLastSyntaxSource) {
+    struct CodeSyntaxResult {
+        bool ok = false;
+        bool cpp = false;
+        std::string source;
+        std::string path;
+        std::string diagnostics;
+    };
+
+    void StartCodeSyntaxCheck() {
+        if (m_codeEditorSyntaxRunning || m_currentCodeFile.empty()) {
             m_codeEditorSyntaxDirty = false;
             return;
         }
-        m_codeEditorLastSyntaxSource = source;
+        const std::string source = m_codeEditor.GetText();
+        if (source == m_codeEditorLastSyntaxSource &&
+            m_currentCodeFile == m_codeEditorSyntaxPendingPath) {
+            m_codeEditorSyntaxDirty = false;
+            return;
+        }
+        m_codeEditorSyntaxPendingSource = source;
+        m_codeEditorSyntaxPendingPath = m_currentCodeFile;
         const bool cpp = IsCppCodeAssetPath(m_currentCodeFile);
-        std::string diagnostics;
-        const bool ok = cpp
-            ? m_scripts.CheckCppSyntax(source, m_currentCodeFile, diagnostics)
-            : m_scripts.CheckLuaSyntax(source, m_currentCodeFile, diagnostics);
-        if (ok) {
+        m_codeEditorSyntaxRunning = true;
+        m_codeEditorSyntaxDirty = false;
+        Galeshi::ScriptEngine* scripts = &m_scripts;
+        try {
+            m_codeEditorSyntaxFuture = std::async(
+                std::launch::async,
+                [scripts, source, path = m_currentCodeFile, cpp]() {
+                    CodeSyntaxResult result;
+                    result.cpp = cpp;
+                    result.source = source;
+                    result.path = path;
+                    result.ok = cpp
+                        ? scripts->CheckCppSyntax(
+                              source, path, result.diagnostics)
+                        : scripts->CheckLuaSyntax(
+                              source, path, result.diagnostics);
+                    return result;
+                });
+        } catch (const std::exception& error) {
+            m_codeEditorSyntaxRunning = false;
+            m_codeEditorSyntaxErrors =
+                std::string("Could not start syntax watcher: ") +
+                error.what() + "\n";
+        }
+    }
+
+    void PollCodeSyntaxCheck() {
+        if (!m_codeEditorSyntaxRunning ||
+            !m_codeEditorSyntaxFuture.valid()) {
+            return;
+        }
+        if (m_codeEditorSyntaxFuture.wait_for(
+                std::chrono::seconds(0)) != std::future_status::ready) {
+            return;
+        }
+        CodeSyntaxResult result;
+        try {
+            result = m_codeEditorSyntaxFuture.get();
+        } catch (const std::exception& error) {
+            m_codeEditorSyntaxRunning = false;
+            m_codeEditorSyntaxErrors =
+                std::string("Syntax watcher failed: ") + error.what() + "\n";
+            return;
+        } catch (...) {
+            m_codeEditorSyntaxRunning = false;
+            m_codeEditorSyntaxErrors =
+                "Syntax watcher failed with an unknown exception.\n";
+            return;
+        }
+        m_codeEditorSyntaxRunning = false;
+        if (result.path != m_currentCodeFile ||
+            result.source != m_codeEditor.GetText()) {
+            m_codeEditorSyntaxDirty = true;
+            return;
+        }
+        m_codeEditorLastSyntaxSource = result.source;
+        if (result.ok) {
             m_codeEditorSyntaxErrors.clear();
-        } else if (diagnostics.empty()) {
+        } else if (result.diagnostics.empty()) {
             m_codeEditorSyntaxErrors =
                 "Syntax check failed without diagnostics.\n";
         } else {
-            m_codeEditorSyntaxErrors =
-                FormatSyntaxDiagnostics(diagnostics, cpp);
+            m_codeEditorSyntaxErrors = FormatSyntaxDiagnostics(
+                result.diagnostics, result.cpp);
         }
-        m_codeEditorSyntaxDirty = false;
     }
 
     std::string CodeEditorErrorsText() const {
@@ -11734,6 +11799,10 @@ void DrawDetails() {
                     ImGui::SameLine();
                     ImGui::TextDisabled("%s", m_currentCodeFile.c_str());
                     ImGui::Separator();
+                    if (m_focusCodeEditor) {
+                        m_codeEditor.RequestEditorFocus();
+                        m_focusCodeEditor = false;
+                    }
                     m_codeEditor.Render("CodeEditor");
 
                     if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
@@ -11775,19 +11844,15 @@ void DrawDetails() {
                         ImGui::EndPopup();
                     }
 
-                    if (m_focusCodeEditor &&
-                        !ImGui::IsPopupOpen("Code Editor Context")) {
-                        ImGui::SetWindowFocus("CodeEditor");
-                        m_focusCodeEditor = false;
-                    }
-
                     if (m_codeEditor.IsTextChanged()) {
                         m_codeEditorSyntaxDirty = true;
                         m_codeEditorLastEditTime = ImGui::GetTime();
                     }
+                    PollCodeSyntaxCheck();
                     if (m_codeEditorSyntaxDirty &&
+                        !m_codeEditorSyntaxRunning &&
                         ImGui::GetTime() - m_codeEditorLastEditTime >= 0.6) {
-                        CheckCodeSyntax();
+                        StartCodeSyntaxCheck();
                     }
                 }
                 ImGui::EndTabItem();
@@ -13271,6 +13336,10 @@ void DrawDetails() {
     int  m_codeEditorTabRequest = -1;
     std::string m_codeEditorSyntaxErrors;
     std::string m_codeEditorLastSyntaxSource;
+    std::string m_codeEditorSyntaxPendingSource;
+    std::string m_codeEditorSyntaxPendingPath;
+    std::future<CodeSyntaxResult> m_codeEditorSyntaxFuture;
+    bool m_codeEditorSyntaxRunning = false;
     double m_codeEditorLastEditTime = 0.0;
     bool m_codeEditorSyntaxDirty = false;
     bool m_focusCodeEditor = false;

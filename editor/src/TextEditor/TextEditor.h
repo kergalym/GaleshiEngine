@@ -187,6 +187,9 @@ public:
 
 	void SetLanguageDefinition(const LanguageDefinition& aLanguageDef);
 	const LanguageDefinition& GetLanguageDefinition() const { return mLanguageDefinition; }
+	// Requests keyboard focus for the editor's child window on its next
+	// Render call. Focusing by window name is unreliable for docked children.
+	void RequestEditorFocus() { mEditorFocusRequested = true; }
 
 	const Palette& GetPalette() const { return mPaletteBase; }
 	void SetPalette(const Palette& aValue);
@@ -361,6 +364,7 @@ private:
 	bool mScrollToCursor;
 	bool mScrollToTop;
 	bool mTextChanged;
+	bool mEditorFocusRequested = false;
 	bool mColorizerEnabled;
 	float mTextStart;                   // position (in pixels) where a code line starts relative to the left of the TextEditor.
 	int  mLeftMargin;

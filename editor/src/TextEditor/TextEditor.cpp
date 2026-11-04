@@ -786,6 +786,11 @@ void TextEditor::HandleMouseInputs()
 
 	if (ImGui::IsWindowHovered())
 	{
+		// Explicitly focus the editor child on a click in the editable area.
+		// This keeps keyboard input reliable after toolbar/popup interactions.
+		if (ImGui::IsMouseClicked(0))
+			ImGui::SetWindowFocus();
+
 		if (!shift && !alt)
 		{
 			auto click = ImGui::IsMouseClicked(0);
@@ -1130,6 +1135,16 @@ void TextEditor::Render(const char* aTitle, const ImVec2& aSize, bool aBorder)
 	ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
 	if (!mIgnoreImGuiChild)
 		ImGui::BeginChild(aTitle, aSize, aBorder, ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_AlwaysHorizontalScrollbar | ImGuiWindowFlags_NoMove);
+
+	if (mEditorFocusRequested && ImGui::IsWindowFocused() == false)
+	{
+		ImGui::SetWindowFocus();
+		mEditorFocusRequested = false;
+	}
+	else if (mEditorFocusRequested)
+	{
+		mEditorFocusRequested = false;
+	}
 
 	if (mHandleKeyboardInputs)
 	{

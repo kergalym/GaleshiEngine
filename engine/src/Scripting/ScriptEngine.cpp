@@ -2554,17 +2554,25 @@ bool ScriptEngine::CheckCppSyntax(const std::string& source,
 bool ScriptEngine::CheckLuaSyntax(const std::string& source,
                                   const std::string& sourcePath,
                                   std::string& error) {
-    lua_State* state = m_lua.lua_state();
+    // Use a private Lua state: the live state is not safe to compile from a
+    // background syntax-check thread.
+    lua_State* state = luaL_newstate();
+    if (!state) {
+        error = "Could not create Lua syntax-check state";
+        return false;
+    }
     const int status = luaL_loadbuffer(
         state, source.data(), source.size(), sourcePath.c_str());
     if (status == LUA_OK) {
         lua_pop(state, 1);
+        lua_close(state);
         error.clear();
         return true;
     }
     const char* message = lua_tostring(state, -1);
     error = message ? message : "Lua syntax error";
     lua_pop(state, 1);
+    lua_close(state);
     return false;
 }
 
