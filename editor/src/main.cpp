@@ -8597,6 +8597,31 @@ if (ImGui::BeginMenu("File")) {
         ImGui::PushID(label);
         ImGui::Text("%s", label);
 
+        const auto acceptTextureDrop = [&]() {
+            if (!ImGui::BeginDragDropTarget()) return;
+            if (const ImGuiPayload* payload =
+                    ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
+                const char* path = static_cast<const char*>(payload->Data);
+                std::string p = path;
+                auto dotPos = p.find_last_of('.');
+                std::string ext =
+                    (dotPos != std::string::npos) ? p.substr(dotPos) : "";
+                for (auto& c : ext) {
+                    c = static_cast<char>(
+                        std::tolower(static_cast<unsigned char>(c)));
+                }
+                if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
+                    ext == ".bmp" || ext == ".tga" || ext == ".dds" ||
+                    ext == ".ktx") {
+                    if (changed) *changed = true;
+                    PushHistory();
+                    slot = m_assets->LoadTexture(
+                        p, srgbFlag ? *srgbFlag : srgb);
+                }
+            }
+            ImGui::EndDragDropTarget();
+        };
+
         if (slot && bgfx::isValid(slot->Handle())) {
             ImTextureID texId = static_cast<ImTextureID>(slot->Handle().idx);
             // Engine textures are uploaded with a bottom-left V origin (the
@@ -8604,6 +8629,7 @@ if (ImGui::BeginMenu("File")) {
             // the preview quad.
             ImGui::Image(texId, ImVec2(64, 64),
                          ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+            acceptTextureDrop();
             ImGui::SameLine();
             ImGui::BeginGroup();
             std::string path = slot->Path();
@@ -8618,6 +8644,7 @@ if (ImGui::BeginMenu("File")) {
             ImGui::EndGroup();
         } else {
             ImGui::Button("Empty (drop texture here)", ImVec2(200, 64));
+            acceptTextureDrop();
         }
 
         // Every material map exposes its color space. Albedo starts enabled
@@ -8646,25 +8673,6 @@ if (ImGui::BeginMenu("File")) {
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
             ImGui::SetTooltip(
                 "Decode this texture as sRGB. Disable for linear data maps.");
-        }
-
-        if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
-                const char* path = static_cast<const char*>(payload->Data);
-                std::string p = path;
-                auto dotPos = p.find_last_of('.');
-                std::string ext = (dotPos != std::string::npos) ? p.substr(dotPos) : "";
-                for (auto& c : ext) c = static_cast<char>(std::tolower(c));
-                if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
-                    ext == ".bmp" || ext == ".tga" ||
-                    ext == ".dds" || ext == ".ktx") {
-                    if (changed) *changed = true;
-                    PushHistory();
-                    slot = m_assets->LoadTexture(
-                        p, srgbFlag ? *srgbFlag : srgb);
-                }
-            }
-            ImGui::EndDragDropTarget();
         }
 
         ImGui::PopID();

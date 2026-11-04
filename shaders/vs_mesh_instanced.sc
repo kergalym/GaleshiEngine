@@ -1,5 +1,5 @@
 $input a_position, a_normal, a_tangent, a_texcoord0, i_data0, i_data1, i_data2, i_data3
-$output v_worldPos, v_normal, v_tangent, v_uv, v_motion
+$output v_worldPos, v_normal, v_tangent, v_uv, v_motion, v_landscapeBlend
 
 #include <bgfx_shader.sh>
 
@@ -25,6 +25,7 @@ void main()
     v_normal   = mul(model, vec4(a_normal, 0.0)).xyz;
     v_tangent  = mul(model, vec4(a_tangent, 0.0)).xyz;
     v_uv       = a_texcoord0;
+    v_landscapeBlend = 0.0;
 
     // Instanced scene meshes are static; moving rigid objects are submitted
     // through the non-instanced path so their previous model matrix is used.
