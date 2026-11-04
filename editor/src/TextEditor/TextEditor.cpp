@@ -173,11 +173,20 @@ static inline int ImTextCharToUtf8(char* buf, int buf_size, unsigned int c)
 		buf[1] = (char)(0x80 + (c & 0x3f));
 		return 2;
 	}
-	if (c >= 0xdc00 && c < 0xe000)
+	if (c >= 0xd800 && c <= 0xdfff)
 	{
+		// Lone UTF-16 surrogates are not valid Unicode scalar values.
 		return 0;
 	}
-	if (c >= 0xd800 && c < 0xdc00)
+	if (c < 0x10000)
+	{
+		if (buf_size < 3) return 0;
+		buf[0] = (char)(0xe0 + (c >> 12));
+		buf[1] = (char)(0x80 + ((c >> 6) & 0x3f));
+		buf[2] = (char)(0x80 + ((c) & 0x3f));
+		return 3;
+	}
+	if (c <= 0x10ffff)
 	{
 		if (buf_size < 4) return 0;
 		buf[0] = (char)(0xf0 + (c >> 18));
@@ -186,14 +195,7 @@ static inline int ImTextCharToUtf8(char* buf, int buf_size, unsigned int c)
 		buf[3] = (char)(0x80 + ((c) & 0x3f));
 		return 4;
 	}
-	//else if (c < 0x10000)
-	{
-		if (buf_size < 3) return 0;
-		buf[0] = (char)(0xe0 + (c >> 12));
-		buf[1] = (char)(0x80 + ((c >> 6) & 0x3f));
-		buf[2] = (char)(0x80 + ((c) & 0x3f));
-		return 3;
-	}
+	return 0;
 }
 
 void TextEditor::Advance(Coordinates & aCoordinates) const

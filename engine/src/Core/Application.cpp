@@ -293,12 +293,45 @@ Application::Application(const ApplicationSpec& spec)
     for (const char* fp : fontPaths) {
         if (std::filesystem::exists(fp)) {
             {
-                static const ImWchar ranges[] = {
-                    0x0020, 0x00FF, // Basic Latin + Latin Supplement
-                    0x0400, 0x044F, // Cyrillic
-                    0,
-                };
-                io.Fonts->AddFontFromFileTTF(fp, 32.0f, &font_cfg, ranges);
+                // Build a broad Unicode range set once and keep it alive until
+                // ImGui builds the atlas. Cyrillic/Greek are explicit; the
+                // extra ranges cover common punctuation, symbols and extended
+                // Latin used by file names and source comments.
+                static ImVector<ImWchar> ranges;
+                static bool rangesBuilt = false;
+                if (!rangesBuilt) {
+                    static const ImWchar extraRanges[] = {
+                        0x0100, 0x024F, // Latin Extended-A/B
+                        0x0300, 0x036F, // Combining marks
+                        0x0370, 0x03FF, // Greek
+                        0x0400, 0x052F, // Cyrillic + Supplement
+                        0x0530, 0x058F, // Armenian
+                        0x0590, 0x05FF, // Hebrew
+                        0x0600, 0x06FF, // Arabic
+                        0x0750, 0x077F, // Arabic Supplement
+                        0x1E00, 0x1EFF, // Latin Extended Additional
+                        0x1F00, 0x1FFF, // Greek Extended
+                        0x2000, 0x206F, // General punctuation
+                        0x20A0, 0x20CF, // Currency symbols
+                        0x2100, 0x214F, // Letterlike symbols
+                        0x2190, 0x21FF, // Arrows
+                        0x2200, 0x22FF, // Mathematical operators
+                        0x2500, 0x257F, // Box drawing
+                        0x25A0, 0x25FF, // Geometric shapes
+                        0x2600, 0x26FF, // Miscellaneous symbols
+                        0x2700, 0x27BF, // Dingbats
+                        0,
+                    };
+                    ImFontGlyphRangesBuilder builder;
+                    builder.AddRanges(io.Fonts->GetGlyphRangesDefault());
+                    builder.AddRanges(io.Fonts->GetGlyphRangesCyrillic());
+                    builder.AddRanges(io.Fonts->GetGlyphRangesGreek());
+                    builder.AddRanges(extraRanges);
+                    builder.BuildRanges(&ranges);
+                    rangesBuilt = true;
+                }
+                io.Fonts->AddFontFromFileTTF(fp, 32.0f, &font_cfg,
+                                              ranges.Data);
             }
             io.FontGlobalScale = 0.5f; // 32 px source rendered at 16 px for supersampling.
             spdlog::info("[Galeshi] Font loaded: {}", fp);
