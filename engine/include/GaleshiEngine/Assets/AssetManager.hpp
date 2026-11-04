@@ -125,11 +125,22 @@ public:
     std::string MakeRelativePath(const std::string& path) const;
 
 private:
+    // Encoded (or BGRA8) source retained so an embedded texture can be
+    // re-uploaded when its sRGB checkbox changes.
+    struct EmbeddedTextureSource {
+        std::string displayPath;
+        std::vector<unsigned char> data;
+        int width = 0;
+        int height = 0;
+    };
+
     std::unordered_map<std::string, std::shared_ptr<Texture>> m_textures;
     // Cached UV layouts for packed UDIM atlases, keyed like m_textures.
     std::unordered_map<std::string, Texture::UdimInfo>        m_udimInfo;
     // Embedded FBX/glTF textures indexed by normalized lowercase path and basename.
     std::unordered_map<std::string, std::shared_ptr<Texture>> m_embeddedTextures;
+    std::unordered_map<std::string, std::shared_ptr<EmbeddedTextureSource>>
+                                                              m_embeddedSources;
     std::unordered_map<std::string, LoadedModel>              m_models;
 
     std::shared_ptr<Mesh>    m_cubeMesh;

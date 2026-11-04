@@ -64,6 +64,26 @@ namespace {
             FindRootEntity(scene, handle));
     }
 
+    // Cast Shadows is a model-level toggle. Older scenes without a
+    // ModelComponent fall back to the legacy per-material flag.
+    bool ModelCastsShadow(Scene& scene, entt::entity handle) {
+        auto& registry = scene.Registry();
+        entt::entity current = handle;
+        for (int depth = 0; registry.valid(current) && depth < 128; ++depth) {
+            if (registry.all_of<ModelComponent>(current)) {
+                return registry.get<ModelComponent>(current).castsShadow;
+            }
+            if (!registry.all_of<ParentComponent>(current)) break;
+            current = registry.get<ParentComponent>(current).parent;
+        }
+        if (registry.all_of<MaterialComponent>(handle)) {
+            const auto& material =
+                registry.get<MaterialComponent>(handle).material;
+            if (material) return material->castsShadow;
+        }
+        return true;
+    }
+
     glm::mat4 EntityWorldMatrix(Scene& scene, entt::entity handle) {
         glm::mat4 model(1.0f);
         entt::entity current = handle;
@@ -140,6 +160,7 @@ namespace {
         float alphaCutoff = 0.5f;
         bool alphaTest = false;
         bool twoSided = false;
+        bool backfaceCulling = true;
         std::array<const Texture*, 9> textures{};
 
         bool operator==(const MeshMaterialKey& other) const {
@@ -159,6 +180,7 @@ namespace {
                    alphaCutoff == other.alphaCutoff &&
                    alphaTest == other.alphaTest &&
                    twoSided == other.twoSided &&
+                   backfaceCulling == other.backfaceCulling &&
                    textures == other.textures;
         }
     };
@@ -191,6 +213,7 @@ namespace {
             HashCombine(seed, HashFloat(key.alphaCutoff));
             HashCombine(seed, std::hash<bool>{}(key.alphaTest));
             HashCombine(seed, std::hash<bool>{}(key.twoSided));
+            HashCombine(seed, std::hash<bool>{}(key.backfaceCulling));
             for (const Texture* texture : key.textures) {
                 HashCombine(seed, std::hash<const void*>{}(texture));
             }
@@ -212,6 +235,7 @@ namespace {
         key.alphaCutoff = mat.alphaCutoff;
         key.alphaTest = mat.alphaTest;
         key.twoSided = mat.twoSided;
+        key.backfaceCulling = mat.backfaceCulling;
         key.textures = {
             mat.albedoMap.get(),
             mat.metallicRoughnessMap.get(),
@@ -706,7 +730,7 @@ void RenderSystem::RenderOcclusion(Scene& scene, const Camera& camera,
             OccluderItem item;
             item.mesh = mc.mesh;
             item.model = model;
-            item.twoSided = matc.material->twoSided;
+            item.twoSided = !matc.material->backfaceCulling;
             occluders.push_back(std::move(item));
             state.visible = true;
             continue;
@@ -974,7 +998,7 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         // flip the normals for those fragments.
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
                        BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA |
-                       FaceState(matc.material->twoSided));
+                       FaceState(!matc.material->backfaceCulling));
         if (m_deferred && bgfx::isValid(m_gbufferProg)) {
             bgfx::submit(viewId, m_gbufferProg);
         } else {
@@ -993,7 +1017,8 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
             if (!batch.mesh || !batch.material) continue;
             BindMaterial(*batch.material);
             SubmitInstancedMesh(viewId, program, *batch.mesh, entry.first.lod,
-                                batch.instances, entry.first.twoSided, state);
+                                batch.instances,
+                                !entry.first.backfaceCulling, state);
         }
     }
 
@@ -1040,8 +1065,8 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
         bgfx::setVertexBuffer(0, mesh.VB());
         bgfx::setIndexBuffer(mesh.IB());
         const uint64_t face = reflectionView
-            ? (material.twoSided ? 0 : BGFX_STATE_CULL_CCW)
-            : FaceState(material.twoSided);
+            ? (material.backfaceCulling ? BGFX_STATE_CULL_CCW : 0)
+            : FaceState(!material.backfaceCulling);
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
                        BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
                        BGFX_STATE_MSAA | face);
@@ -1289,11 +1314,13 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
                     if (materialIndex >= 0 &&
                         materialIndex < static_cast<int>(treeModel.materials.size()) &&
                         treeModel.materials[static_cast<size_t>(materialIndex)]) {
-                        twoSided = treeModel.materials[
-                            static_cast<size_t>(materialIndex)]->twoSided;
+                        twoSided = !treeModel.materials[
+                            static_cast<size_t>(materialIndex)]->backfaceCulling;
                     }
                 }
-                if (useOverride) twoSided = overrideMaterial->twoSided;
+                if (useOverride) {
+                    twoSided = !overrideMaterial->backfaceCulling;
+                }
                 draws.push_back({treeModel.meshes[i], twoSided});
             }
             return draws;
@@ -1393,16 +1420,16 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
     for (auto h : viewIter) {
         const auto& mc = viewIter.get<MeshComponent>(h);
         if (!mc.mesh || !mc.mesh->Valid()) continue;
+        if (!ModelCastsShadow(scene, h)) continue;
         bool twoSided = false;
         float shadowDepthOffset = 0.0f;
         if (scene.Registry().all_of<MaterialComponent>(h)) {
             const auto& matc = scene.Registry().get<MaterialComponent>(h);
             if (matc.material) {
-                if (matc.material->isGlass || matc.material->alphaBlend ||
-                    !matc.material->castsShadow) {
+                if (matc.material->isGlass || matc.material->alphaBlend) {
                     continue;
                 }
-                twoSided = matc.material->twoSided;
+                twoSided = !matc.material->backfaceCulling;
                 shadowDepthOffset = matc.material->shadowDepthOffset;
             }
         }
@@ -1524,16 +1551,16 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
     for (auto h : viewIter) {
         const auto& mc = viewIter.get<MeshComponent>(h);
         if (!mc.mesh || !mc.mesh->Valid()) continue;
+        if (!ModelCastsShadow(scene, h)) continue;
         bool twoSided = false;
         float shadowDepthOffset = 0.0f;
         if (scene.Registry().all_of<MaterialComponent>(h)) {
             const auto& matc = scene.Registry().get<MaterialComponent>(h);
             if (matc.material) {
-                if (matc.material->isGlass || matc.material->alphaBlend ||
-                    !matc.material->castsShadow) {
+                if (matc.material->isGlass || matc.material->alphaBlend) {
                     continue;
                 }
-                twoSided = matc.material->twoSided;
+                twoSided = !matc.material->backfaceCulling;
                 shadowDepthOffset = matc.material->shadowDepthOffset;
             }
         }
@@ -1914,8 +1941,8 @@ bool RenderSystem::RenderPlanarReflection(Scene& scene, const Camera& camera,
         const uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
                                BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
                                BGFX_STATE_MSAA |
-                               (materialComponent.material->twoSided
-                                    ? 0 : BGFX_STATE_CULL_CCW);
+                               (materialComponent.material->backfaceCulling
+                                    ? BGFX_STATE_CULL_CCW : 0);
         bgfx::setState(state);
         bgfx::submit(viewId, m_program);
     }
@@ -2294,7 +2321,7 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
         // fragments do not occlude each other incorrectly.
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
                        BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_ALPHA |
-                       BGFX_STATE_MSAA | FaceState(mat.twoSided));
+                       BGFX_STATE_MSAA | FaceState(!mat.backfaceCulling));
         bgfx::submit(viewId, m_glassProg);
     }
 }
@@ -2537,7 +2564,7 @@ void RenderSystem::RenderTranslucency(Scene& scene, const Camera& camera,
         // the copied opaque depth and never writes depth.
         bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
                        BGFX_STATE_BLEND_ALPHA | BGFX_STATE_MSAA |
-                       FaceState(mat.twoSided));
+                       FaceState(!mat.backfaceCulling));
         bgfx::submit(viewId, m_translucentProg);
     }
 }

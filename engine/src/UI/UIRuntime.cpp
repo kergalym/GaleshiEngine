@@ -58,6 +58,7 @@ void UIRuntime::Render(Scene& scene) {
 void UIRuntime::RenderInRect(Scene& scene, float x, float y, float width,
                              float height) {
     m_events.clear();
+    m_pointerOverUI = false;
 
     auto& registry = scene.Registry();
     auto view = registry.view<UICanvasComponent>();
@@ -177,6 +178,14 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
                                   ? widget.size.x * scale
                                   : std::max(80.0f, ImGui::GetContentRegionAvail().x -
                                                         widget.position.x * scale - style.WindowPadding.x);
+        const float heightPx = widget.size.y > 0.0f ? widget.size.y * scale
+                                                    : 18.0f * scale;
+        if (widget.blockInput && ImGui::IsWindowHovered(
+                                     ImGuiHoveredFlags_ChildWindows) &&
+            ImGui::IsMouseHoveringRect(
+                pos, ImVec2(pos.x + widthPx, pos.y + heightPx))) {
+            m_pointerOverUI = true;
+        }
         const float alpha = std::clamp(widget.opacity, 0.0f, 1.0f);
         const float radiusPx = widget.radius * scale;
         const float borderPx = widget.border * scale;

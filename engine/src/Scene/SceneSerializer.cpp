@@ -282,7 +282,7 @@ std::string TexturePath(const std::shared_ptr<Texture>& texture) {
 
 json MaterialToJson(const Material& m, const AssetManager& assets) {
     auto relPath = [&](const std::shared_ptr<Texture>& tex) {
-        if (!tex) return std::string{};
+        if (!tex || tex->Path() == "<white>") return std::string{};
         return assets.MakeRelativePath(tex->Path());
     };
     auto relStr = [&](const std::string& s) {
@@ -294,11 +294,20 @@ json MaterialToJson(const Material& m, const AssetManager& assets) {
         {"sceneOverride", m.sceneOverride},
         {"albedoFactor", Vec4ToJson(m.albedoFactor)},
         {"albedoSrgb", m.albedoSrgb},
+        {"metallicRoughnessSrgb", m.metallicRoughnessSrgb},
+        {"metallicSrgb", m.metallicSrgb},
+        {"roughnessSrgb", m.roughnessSrgb},
+        {"normalSrgb", m.normalSrgb},
+        {"emissiveSrgb", m.emissiveSrgb},
+        {"occlusionSrgb", m.occlusionSrgb},
+        {"opacitySrgb", m.opacitySrgb},
+        {"specularSrgb", m.specularSrgb},
         {"metallicFactor", m.metallicFactor},
         {"roughnessFactor", m.roughnessFactor},
         {"emissiveFactor", Vec3ToJson(m.emissiveFactor)},
         {"isGlass", m.isGlass},
         {"twoSided", m.twoSided},
+        {"backfaceCulling", m.backfaceCulling},
         {"glassOpacity", m.glassOpacity},
         {"normalStrength", m.normalStrength},
         {"occlusionStrength", m.occlusionStrength},
@@ -342,15 +351,33 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     material->sceneOverride = jm.value("sceneOverride", true);
     material->albedoFactor = jm.contains("albedoFactor")
         ? Vec4FromJson(jm.at("albedoFactor")) : glm::vec4(1.0f);
-    material->albedoSrgb = jm.value("albedoSrgb", true);
+    // Scenes written before per-map color-space flags could contain the old
+    // albedoSrgb=false left by the texture-reload bug. Migrate those to the
+    // safe albedo default; new scenes preserve every explicit checkbox.
+    const bool hasPerMapSrgb = jm.contains("metallicRoughnessSrgb") ||
+                               jm.contains("normalSrgb") ||
+                               jm.contains("emissiveSrgb");
+    material->albedoSrgb = hasPerMapSrgb
+        ? jm.value("albedoSrgb", true) : true;
+    material->metallicRoughnessSrgb =
+        jm.value("metallicRoughnessSrgb", false);
+    material->metallicSrgb = jm.value("metallicSrgb", false);
+    material->roughnessSrgb = jm.value("roughnessSrgb", false);
+    material->normalSrgb = jm.value("normalSrgb", false);
+    material->emissiveSrgb = jm.value("emissiveSrgb", true);
+    material->occlusionSrgb = jm.value("occlusionSrgb", false);
+    material->opacitySrgb = jm.value("opacitySrgb", false);
+    material->specularSrgb = jm.value("specularSrgb", false);
     material->metallicFactor = jm.value("metallicFactor", 0.0f);
     material->roughnessFactor = jm.value("roughnessFactor", 1.0f);
     material->emissiveFactor = jm.contains("emissiveFactor")
         ? Vec3FromJson(jm.at("emissiveFactor")) : glm::vec3(0.0f);
     material->isGlass = jm.value("isGlass", false);
-    // Backface culling is off by default; render both faces unless the
-    // material explicitly enables culling.
-    material->twoSided = jm.value("twoSided", true);
+    material->twoSided = jm.value("twoSided", false);
+    // Older scenes stored only twoSided; keep their previous effective
+    // culling state while new scenes save the independent checkbox.
+    material->backfaceCulling =
+        jm.value("backfaceCulling", !material->twoSided);
     material->glassOpacity = jm.value("glassOpacity", 0.35f);
     material->normalStrength = jm.value("normalStrength", 1.0f);
     material->occlusionStrength = jm.value("occlusionStrength", 1.0f);
@@ -389,7 +416,7 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
 
     auto loadMap = [&](const char* key, bool srgb) -> std::shared_ptr<Texture> {
         const std::string path = jm.value(key, std::string{});
-        if (path.empty()) return nullptr;
+        if (path.empty() || path == "<white>") return nullptr;
 
         auto load = [&](const std::string& candidate) -> std::shared_ptr<Texture> {
             if (candidate.empty()) return nullptr;
@@ -410,14 +437,31 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     };
 
     material->albedoMap = loadMap("albedoMapPath", material->albedoSrgb);
-    material->normalMap = loadMap("normalMapPath", false);
-    material->metallicRoughnessMap = loadMap("mrMapPath", false);
-    material->metallicMap = loadMap("metallicMapPath", false);
-    material->roughnessMap = loadMap("roughnessMapPath", false);
-    material->emissiveMap = loadMap("emissiveMapPath", true);
-    material->occlusionMap = loadMap("occlusionMapPath", false);
-    material->opacityMap = loadMap("opacityMapPath", false);
-    material->specularMap = loadMap("specularMapPath", false);
+    material->normalMap = loadMap("normalMapPath", material->normalSrgb);
+    material->metallicRoughnessMap =
+        loadMap("mrMapPath", material->metallicRoughnessSrgb);
+    material->metallicMap = loadMap("metallicMapPath", material->metallicSrgb);
+    material->roughnessMap = loadMap("roughnessMapPath", material->roughnessSrgb);
+    material->emissiveMap = loadMap("emissiveMapPath", material->emissiveSrgb);
+    material->occlusionMap =
+        loadMap("occlusionMapPath", material->occlusionSrgb);
+    material->opacityMap = loadMap("opacityMapPath", material->opacitySrgb);
+    material->specularMap =
+        loadMap("specularMapPath", material->specularSrgb);
+
+    // Older saves could write the white fallback path after an sRGB toggle.
+    // Recover the authored albedo from the source model by material name.
+    if (jm.value("albedoMapPath", std::string{}) == "<white>" &&
+        !modelSource.empty()) {
+        auto sourceModel = assets.LoadModel(modelSource);
+        for (const auto& sourceMaterial : sourceModel.materials) {
+            if (sourceMaterial && sourceMaterial->name == material->name) {
+                material->albedoMap = sourceMaterial->albedoMap;
+                material->albedoSrgb = sourceMaterial->albedoSrgb;
+                break;
+            }
+        }
+    }
     return material;
 }
 
@@ -677,6 +721,12 @@ std::string SceneSerializer::SaveToString() const {
                 // scene files and tools that predate the material table.
                 je["material"] = MaterialToJson(*matc.material, m_assets);
             }
+        }
+        if (reg.all_of<ModelComponent>(handle)) {
+            const auto& model = reg.get<ModelComponent>(handle);
+            je["model"] = {
+                {"castsShadow", model.castsShadow}
+            };
         }
         if (reg.all_of<SkeletalComponent>(handle)) {
             const auto& skel = reg.get<SkeletalComponent>(handle);
@@ -1460,6 +1510,11 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             materialComponent.isGlass = material->isGlass;
         }
 
+        if (je.contains("model") && je["model"].is_object()) {
+            auto& model = e.AddComponent<ModelComponent>();
+            model.castsShadow = je["model"].value("castsShadow", true);
+        }
+
         if (je.contains("skeletal")) {
             const auto& js = je["skeletal"];
             const std::string source = js.value("sourcePath", std::string{});
@@ -1985,6 +2040,15 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
         }
     }
 
+    // Migrate old skeletal characters to model-level render settings so the
+    // global Cast Shadows checkbox is available in existing scenes.
+    for (entt::entity handle :
+         m_scene.Registry().view<SkeletalComponent>()) {
+        if (!m_scene.Registry().all_of<ModelComponent>(handle)) {
+            m_scene.Registry().emplace<ModelComponent>(handle);
+        }
+    }
+
     // Legacy scenes contain material values copied from the old FBX import
     // (for example metallic=1 and twoSided=true). For imported glTF meshes,
     // refresh the material from the source file so Details shows the values
@@ -2036,11 +2100,13 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                 continue;
             }
             const bool savedTwoSided = matc.material->twoSided;
+            const bool savedBackfaceCulling = matc.material->backfaceCulling;
             *matc.material =
                 *model.materials[static_cast<size_t>(materialIndex)];
-            // The Backface Culling checkbox is a scene override. Keep it
-            // across reloads while the remaining values come from the file.
+            // The Two Sided and Backface Culling checkboxes are scene
+            // overrides. Keep both across reloads while file values refresh.
             matc.material->twoSided = savedTwoSided;
+            matc.material->backfaceCulling = savedBackfaceCulling;
             matc.isGlass = matc.material->isGlass;
         }
     }

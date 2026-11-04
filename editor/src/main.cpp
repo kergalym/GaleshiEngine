@@ -1072,6 +1072,10 @@ protected:
         ImGui::End();
     }
 
+    bool PlayerInputActive() const {
+        return m_isGameMode || m_editor.isPlaying;
+    }
+
     void InitializeEditor() {
         // Scene loading must stay fast: keep BC7 texture compression off by
         // default. It can be enabled from Details -> Texture Settings.
@@ -1094,21 +1098,32 @@ protected:
         else spdlog::info("[Subsystem] m_physics->Init() done");
         m_scripts.BindFunctions();
         m_scripts.BindECS(m_scene);
+        // Gameplay scripts may only read player input while playing. The
+        // editor still reads the same devices directly for its own controls.
         m_scripts.BindInput([this](const std::string& key) -> bool {
-            return GetInput().IsKeyDown(key);
+            return PlayerInputActive() && GetInput().IsKeyDown(key);
         });
         m_scripts.BindInputAxes(
             [this](const std::string& axis) {
-                return GetInput().GetAxis(axis);
+                return PlayerInputActive() ? GetInput().GetAxis(axis) : 0.0f;
             },
             [this](const std::string& axis) {
-                return GetInput().GetAxisRaw(axis);
+                return PlayerInputActive() ? GetInput().GetAxisRaw(axis) : 0.0f;
             },
-            [this]() { return GetInput().MousePosition(); },
-            [this]() { return GetInput().MouseDelta(); },
-            [this]() { return GetInput().MouseWheel(); },
+            [this]() {
+                return PlayerInputActive() ? GetInput().MousePosition()
+                                           : glm::vec2(0.0f);
+            },
+            [this]() {
+                return PlayerInputActive() ? GetInput().MouseDelta()
+                                           : glm::vec2(0.0f);
+            },
+            [this]() {
+                return PlayerInputActive() ? GetInput().MouseWheel() : 0.0f;
+            },
             [this](const std::string& button) {
-                return GetInput().IsMouseButtonDown(button);
+                return PlayerInputActive() &&
+                       GetInput().IsMouseButtonDown(button);
             });
         m_scripts.BindImpulse([this](uint32_t eid, const glm::vec3& impulse) {
             entt::entity e = static_cast<entt::entity>(eid);
@@ -5071,6 +5086,7 @@ if (ImGui::BeginMenu("File")) {
         const bool gameLookInput =
             (m_editor.isPlaying || m_isGameMode) &&
             (m_viewportHovered || m_isGameMode) &&
+            !m_uiRuntime.IsPointerOverUI() &&
             !ImGui::GetIO().WantTextInput &&
             ImGui::IsMouseDown(ImGuiMouseButton_Right);
         if (gameLookInput) {
@@ -7576,7 +7592,8 @@ if (ImGui::BeginMenu("File")) {
                 !m_isGameMode && selHasTf &&
                 sel.HasComponent<Galeshi::LandscapeComponent>() &&
                 m_editor.toolMode != Galeshi::EditorState::ToolMode::Select &&
-                !uiOverlayConsumed;
+                !uiOverlayConsumed &&
+                (!m_editor.isPlaying || !m_uiRuntime.IsPointerOverUI());
 
             // Landscape sculpting uses the same camera ray as picking, then
             // raycasts the actual height field instead of entity AABBs.
@@ -7840,8 +7857,8 @@ if (ImGui::BeginMenu("File")) {
                 std::hypot(mouse.x - selScreen.x, mouse.y - selScreen.y) < centerRadiusPx;
 
             // Begin drag on LMB down over center
-            if (!landscapeSculptActive && !selectedIsUICanvas && !uiOverlayConsumed &&
-                !m_editor.isPlaying &&
+            if (!landscapeSculptActive && !selectedIsUICanvas &&
+                !uiOverlayConsumed && !m_editor.isPlaying &&
                 ImGui::IsItemHovered() && !m_isDragging &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left) && overCenter &&
                 !ImGuizmo::IsOver() && !ImGuizmo::IsUsing()) {
@@ -8096,29 +8113,32 @@ if (ImGui::BeginMenu("File")) {
             ImGui::Button("Empty (drop texture here)", ImVec2(200, 64));
         }
 
-        if (srgbFlag) {
-            bool value = *srgbFlag;
-            if (ImGui::Checkbox("sRGB", &value)) {
-                if (changed) *changed = true;
-                PushHistory();
-                *srgbFlag = value;
-                if (slot) {
-                    const std::string texturePath = slot->Path();
-                    if (!texturePath.empty()) {
-                        auto reloaded = m_assets->LoadTexture(
-                            texturePath, value, nullptr,
-                            slot->FlippedVertically());
-                        // Embedded glTF textures have no standalone file path;
-                        // keep the existing upload instead of clearing the slot.
-                        if (reloaded) slot = reloaded;
+        // Every material map exposes its color space. Albedo starts enabled
+        // and data maps start linear; the user can override any of them.
+        bool value = srgbFlag ? *srgbFlag : srgb;
+        if (!srgbFlag) ImGui::BeginDisabled();
+        if (ImGui::Checkbox("sRGB", &value) && srgbFlag) {
+            if (changed) *changed = true;
+            PushHistory();
+            *srgbFlag = value;
+            if (slot) {
+                const std::string texturePath = slot->Path();
+                if (!texturePath.empty()) {
+                    auto reloaded = m_assets->LoadTexture(
+                        texturePath, value, nullptr,
+                        slot->FlippedVertically());
+                    // Keep the current upload if the requested variant cannot
+                    // be produced (for example a missing external file).
+                    if (reloaded && reloaded != m_assets->WhiteTexture()) {
+                        slot = reloaded;
                     }
                 }
             }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip(
-                    "Decode this albedo texture as sRGB.\n"
-                    "Disable only for linear color textures.");
-            }
+        }
+        if (!srgbFlag) ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            ImGui::SetTooltip(
+                "Decode this texture as sRGB. Disable for linear data maps.");
         }
 
         if (ImGui::BeginDragDropTarget()) {
@@ -9746,6 +9766,35 @@ void DrawDetails() {
             }
         }
 
+        // Cast Shadows is shared by the whole imported model. Find the
+        // nearest model root above the current selection.
+        entt::entity modelRoot = entt::null;
+        for (entt::entity cursor = selectedHandle;
+             reg.valid(cursor);) {
+            if (reg.all_of<Galeshi::ModelComponent>(cursor)) {
+                modelRoot = cursor;
+                break;
+            }
+            if (!reg.all_of<Galeshi::ParentComponent>(cursor)) break;
+            cursor = reg.get<Galeshi::ParentComponent>(cursor).parent;
+        }
+        if (modelRoot != entt::null) {
+            auto& model = reg.get<Galeshi::ModelComponent>(modelRoot);
+            if (beginDetailsSection(
+                    "Model", ImGuiTreeNodeFlags_DefaultOpen,
+                    "cast shadows shadow model renderer")) {
+                bool castsShadow = model.castsShadow;
+                if (ImGui::Checkbox("Cast Shadows", &castsShadow)) {
+                    PushHistory();
+                    model.castsShadow = castsShadow;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Controls shadow casting for every mesh in this model.");
+                }
+            }
+        }
+
         // Mesh LOD controls apply to the selected mesh and all mesh children.
         // This is especially useful for imported static models, which default
         // to LOD0; users can opt into generated LODs per model/sub-mesh.
@@ -10468,22 +10517,30 @@ void DrawDetails() {
                                         type.material->albedoMap, true,
                                         &type.material->albedoSrgb);
                         DrawTextureSlot("Normal Map",
-                                        type.material->normalMap, false);
+                                        type.material->normalMap, false,
+                                        &type.material->normalSrgb);
                         DrawTextureSlot("Metallic/Roughness",
                                         type.material->metallicRoughnessMap,
-                                        false);
+                                        false,
+                                        &type.material->metallicRoughnessSrgb);
                         DrawTextureSlot("Metallic Map",
-                                        type.material->metallicMap, false);
+                                        type.material->metallicMap, false,
+                                        &type.material->metallicSrgb);
                         DrawTextureSlot("Roughness Map",
-                                        type.material->roughnessMap, false);
+                                        type.material->roughnessMap, false,
+                                        &type.material->roughnessSrgb);
                         DrawTextureSlot("Emissive Map",
-                                        type.material->emissiveMap, true);
+                                        type.material->emissiveMap, true,
+                                        &type.material->emissiveSrgb);
                         DrawTextureSlot("Occlusion Map",
-                                        type.material->occlusionMap, false);
+                                        type.material->occlusionMap, false,
+                                        &type.material->occlusionSrgb);
                         DrawTextureSlot("Opacity Map",
-                                        type.material->opacityMap, false);
+                                        type.material->opacityMap, false,
+                                        &type.material->opacitySrgb);
                         DrawTextureSlot("Specular Map",
-                                        type.material->specularMap, false);
+                                        type.material->specularMap, false,
+                                        &type.material->specularSrgb);
                     }
                     ImGui::TreePop();
                 }
@@ -10648,11 +10705,20 @@ void DrawDetails() {
             addHash(std::hash<std::string>{}(mat.sourcePath));
             addVec4(mat.albedoFactor);
             addHash(mat.albedoSrgb);
+            addHash(mat.metallicRoughnessSrgb);
+            addHash(mat.metallicSrgb);
+            addHash(mat.roughnessSrgb);
+            addHash(mat.normalSrgb);
+            addHash(mat.emissiveSrgb);
+            addHash(mat.occlusionSrgb);
+            addHash(mat.opacitySrgb);
+            addHash(mat.specularSrgb);
             addFloat(mat.metallicFactor);
             addFloat(mat.roughnessFactor);
             addVec3(mat.emissiveFactor);
             addHash(mat.isGlass);
             addHash(mat.twoSided);
+            addHash(mat.backfaceCulling);
             addFloat(mat.glassOpacity);
             addFloat(mat.normalStrength);
             addFloat(mat.occlusionStrength);
@@ -10694,8 +10760,8 @@ void DrawDetails() {
             const size_t materialStateBefore = materialStateHash(m);
             ImGui::PushID(eid);
             const std::string materialKeywords =
-                std::string("material instance base used preset metal plastic "
-                            "rubber gold skin leaf albedo factor albedo sRGB color "
+                std::string("material instance base used "
+                            "albedo factor albedo sRGB color "
                             "space metallic factor roughness factor normal "
                             "strength occlusion strength "
                             "alpha cutoff alpha test albedo alpha mask alpha blend transparency hair "
@@ -10731,19 +10797,20 @@ void DrawDetails() {
                     return showAllMaterialFields || showMaterialField(title, members);
                 };
 
-                // Backface culling is a per-material render state and must be
-                // available for every material slot. Keep it outside the
-                // searchable parameter groups so slots never appear to be
-                // missing this control.
-                bool backfaceCulling = !m.twoSided;
-                if (ImGui::Checkbox("Backface Culling", &backfaceCulling)) {
-                    m.twoSided = !backfaceCulling;
-                }
+                // Two Sided and Backface Culling are independent per-material
+                // settings; editing one must never change the other.
+                ImGui::Checkbox("Two Sided", &m.twoSided);
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip(
-                        "Cull faces pointing away from the camera.\n"
-                        "Off (default) renders both sides and flips the "
-                        "normal on back-facing fragments.");
+                        "Flip normals on back-facing fragments for two-sided "
+                        "shading.");
+                }
+                ImGui::SameLine();
+                ImGui::Checkbox("Backface Culling", &m.backfaceCulling);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Cull faces pointing away from the camera. This is "
+                        "independent of Two Sided.");
                 }
                 ImGui::Separator();
 
@@ -10796,59 +10863,6 @@ void DrawDetails() {
                 std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", m.name.c_str());
                 if (ImGui::InputText("Material Name", nameBuffer, sizeof(nameBuffer))) {
                     m.name = nameBuffer;
-                }
-                }
-
-                if (showMaterialGroup(
-                        "Presets",
-                        "preset metal plastic rubber gold skin leaf")) {
-                ImGui::Separator();
-
-                ImGui::Text("Presets:");
-                auto applyPreset = [&](const char* label, auto&& apply) {
-                    if (!ImGui::Button(label)) return;
-                    PushHistory();
-                    m.sceneOverride = true;
-                    apply();
-                };
-                applyPreset("Metal", [&] {
-                    m.metallicFactor = 1.0f; m.roughnessFactor = 0.1f;
-                    m.albedoFactor = glm::vec4(0.8f, 0.8f, 0.8f, 1.0f);
-                });
-                ImGui::SameLine();
-                applyPreset("Plastic", [&] {
-                    m.metallicFactor = 0.0f; m.roughnessFactor = 0.5f;
-                });
-                ImGui::SameLine();
-                applyPreset("Rubber", [&] {
-                    m.metallicFactor = 0.0f; m.roughnessFactor = 0.9f;
-                });
-                ImGui::SameLine();
-                applyPreset("Gold", [&] {
-                    m.metallicFactor = 1.0f; m.roughnessFactor = 0.2f;
-                    m.albedoFactor = glm::vec4(1.0f, 0.766f, 0.336f, 1.0f);
-                });
-                ImGui::SameLine();
-                applyPreset("Skin", [&] {
-                    m.metallicFactor = 0.0f; m.roughnessFactor = 0.52f;
-                    m.subsurfaceEnabled = true;
-                    m.subsurfaceColor = {0.82f, 0.28f, 0.18f};
-                    m.subsurfaceStrength = 0.55f;
-                    m.subsurfaceRadius = 0.85f;
-                });
-                ImGui::SameLine();
-                if (ImGui::Button("Leaf")) {
-                    PushHistory();
-                    m.sceneOverride = true;
-                    m.metallicFactor = 0.0f; m.roughnessFactor = 0.72f;
-                    m.twoSided = true;
-                    m.translucencyEnabled = true;
-                    m.translucencyColor = {0.72f, 0.92f, 0.30f};
-                    m.translucencyOpacity = 0.82f;
-                    m.translucencyStrength = 1.2f;
-                    m.translucencyThickness = 0.22f;
-                    m.translucencyDistortion = 0.3f;
-                    m.castsShadow = true;
                 }
                 }
 
@@ -10942,13 +10956,9 @@ void DrawDetails() {
 
                 if (showMaterialGroup(
                         "Shadows",
-                        "shadows shadow cast sharpness pssm depth offset bias")) {
+                        "shadows shadow sharpness pssm depth offset bias")) {
                 ImGui::Separator();
                 ImGui::Text("Shadows");
-                ImGui::Checkbox("Cast Shadows", &m.castsShadow);
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Include this material's geometry in the shadow-depth passes.");
-                }
                 ImGui::SliderFloat("Shadow Sharpness (Global)",
                                    &m_pssmShadowSharpness,
                                    0.0f, 1.0f, "%.2f");
@@ -10970,18 +10980,18 @@ void DrawDetails() {
                 ImGui::Separator();
                 ImGui::Text("Texture Maps (drag from Content Browser):");
 
-                if (showMaterialField("Albedo Map", "texture map color srgb"))
+                if (showMaterialField("Albedo Map", "texture map color"))
                 DrawTextureSlot("Albedo Map",           m.albedoMap,           true,
                                 &m.albedoSrgb, &materialChanged);
                 if (showMaterialField("Normal Map", "texture map normal bump"))
                 DrawTextureSlot("Normal Map",           m.normalMap,           false,
-                                nullptr, &materialChanged);
+                                &m.normalSrgb, &materialChanged);
                 if (showMaterialField("Metallic/Roughness/Occlusion",
                                       "texture map orm mr metallic roughness occlusion ao")) {
                     auto* previousOrm = m.metallicRoughnessMap.get();
                     DrawTextureSlot("Metallic/Roughness/Occlusion (ORM)",
                                     m.metallicRoughnessMap, false,
-                                    nullptr, &materialChanged);
+                                    &m.metallicRoughnessSrgb, &materialChanged);
                     if (m.metallicRoughnessMap.get() != previousOrm) {
                         // ORM layout: R = occlusion, G = roughness,
                         // B = metallic. Keep the dedicated AO slot in sync
@@ -10995,28 +11005,28 @@ void DrawDetails() {
                 }
                 if (showMaterialField("Metallic Map", "texture map metal"))
                 DrawTextureSlot("Metallic Map",         m.metallicMap,         false,
-                                nullptr, &materialChanged);
+                                &m.metallicSrgb, &materialChanged);
                 if (showMaterialField("Roughness Map", "texture map rough"))
                 DrawTextureSlot("Roughness Map",        m.roughnessMap,        false,
-                                nullptr, &materialChanged);
+                                &m.roughnessSrgb, &materialChanged);
                 if (showMaterialField("Emissive Map", "texture map emission"))
                 DrawTextureSlot("Emissive Map",         m.emissiveMap,         true,
-                                nullptr, &materialChanged);
+                                &m.emissiveSrgb, &materialChanged);
                 if (showMaterialField("Occlusion Map", "texture map ao"))
                 DrawTextureSlot("Occlusion Map",        m.occlusionMap,        false,
-                                nullptr, &materialChanged);
+                                &m.occlusionSrgb, &materialChanged);
                 if (showMaterialField("Opacity Map", "texture map alpha"))
                 DrawTextureSlot("Opacity Map",          m.opacityMap,          false,
-                                nullptr, &materialChanged);
+                                &m.opacitySrgb, &materialChanged);
                 if (showMaterialField("Specular Map", "texture map specular"))
                 DrawTextureSlot("Specular Map",         m.specularMap,         false,
-                                nullptr, &materialChanged);
+                                &m.specularSrgb, &materialChanged);
                 }
             }
 
             // Compare the complete editable material state. This catches
-            // sliders, checkboxes, presets and texture drops even when no
-            // ImGui item remains active on the release frame.
+            // sliders, checkboxes and texture drops even when no ImGui item
+            // remains active on the release frame.
             if (materialStateHash(m) != materialStateBefore) {
                 m.sceneOverride = true;
                 PushHistory();
@@ -11729,6 +11739,7 @@ void DrawDetails() {
         type.material->name = "Tree Type " + std::to_string(typeIndex + 1) +
                               " Textures";
         type.material->twoSided = true;
+        type.material->backfaceCulling = false;
         type.material->castsShadow = true;
     }
 
@@ -12311,6 +12322,9 @@ void DrawDetails() {
             }
         }
 
+        if (!reg.all_of<Galeshi::ModelComponent>(skeletonEntity.Handle())) {
+            reg.emplace<Galeshi::ModelComponent>(skeletonEntity.Handle());
+        }
         m_editor.Select(skeletonEntity);
         m_stateMachineEditorEntity = skeletonEntity.Handle();
         m_showStateMachineEditor = true;
@@ -12443,6 +12457,7 @@ void DrawDetails() {
         const auto stem = fs::path(path).stem().string();
 
         auto root = m_scene.CreateEntity(stem);
+        root.AddComponent<Galeshi::ModelComponent>();
         auto& rootTf = root.GetComponent<Galeshi::TransformComponent>();
         
         // Model imports are normally created at the origin. A viewport drop

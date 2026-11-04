@@ -171,6 +171,7 @@ void AssetManager::Clear() {
     m_textures.clear();
     m_udimInfo.clear();
     m_embeddedTextures.clear();
+    m_embeddedSources.clear();
     m_cubeMesh.reset();
     m_sphereMesh.reset();
     m_waterMesh.reset();
@@ -280,6 +281,37 @@ std::shared_ptr<Texture> AssetManager::LoadTexture(
         TextureCacheKey(LowerAssetPath(AssetBaseName(normalized)), srgb,
                         flipVertically));
     if (embedded != m_embeddedTextures.end()) return embedded->second;
+
+    // The requested embedded variant has not been uploaded yet (for example
+    // after the user toggled sRGB). Re-upload it from the retained source.
+    auto loadEmbeddedVariant =
+        [&](const std::string& lookup) -> std::shared_ptr<Texture> {
+        const auto found = m_embeddedSources.find(lookup);
+        if (found == m_embeddedSources.end() || !found->second ||
+            found->second->data.empty()) {
+            return nullptr;
+        }
+        const EmbeddedTextureSource& source = *found->second;
+        Texture* raw = source.height == 0
+            ? Texture::LoadFromMemory(source.data.data(), source.data.size(),
+                                      source.displayPath, srgb, flipVertically)
+            : Texture::CreateFromBgra8(source.data.data(), source.width,
+                                       source.height, source.displayPath, srgb,
+                                       flipVertically);
+        if (!raw) return nullptr;
+        std::shared_ptr<Texture> tex(raw);
+        m_textures[key] = tex;
+        m_textures[normKey] = tex;
+        m_embeddedTextures[TextureCacheKey(lower, srgb, flipVertically)] = tex;
+        m_embeddedTextures[TextureCacheKey(
+            LowerAssetPath(AssetBaseName(normalized)), srgb, flipVertically)] = tex;
+        return tex;
+    };
+    if (auto tex = loadEmbeddedVariant(lower)) return tex;
+    if (auto tex = loadEmbeddedVariant(
+            LowerAssetPath(AssetBaseName(normalized)))) {
+        return tex;
+    }
 
     // Resolve against the project root, not the process working directory.
     // The editor normally runs from build/bin, while scene texture paths are
@@ -803,6 +835,32 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         auto cached = m_textures.find(cacheKey);
         if (cached != m_textures.end()) return cached->second;
 
+        if (embedded->pcData && embedded->mWidth > 0 &&
+            !displayPath.empty() &&
+            m_embeddedSources.find(LowerAssetPath(displayPath)) ==
+                m_embeddedSources.end()) {
+            auto source = std::make_shared<EmbeddedTextureSource>();
+            source->displayPath = displayPath;
+            source->width = static_cast<int>(embedded->mWidth);
+            source->height = static_cast<int>(embedded->mHeight);
+            const std::size_t bytes = embedded->mHeight == 0
+                ? static_cast<std::size_t>(embedded->mWidth)
+                : static_cast<std::size_t>(embedded->mWidth) *
+                      static_cast<std::size_t>(embedded->mHeight) * 4u;
+            source->data.assign(
+                reinterpret_cast<const unsigned char*>(embedded->pcData),
+                reinterpret_cast<const unsigned char*>(embedded->pcData) + bytes);
+            auto remember = [&](const std::string& key) {
+                if (!key.empty()) m_embeddedSources[key] = source;
+            };
+            remember(LowerAssetPath(displayPath));
+            remember(LowerAssetPath(AssetBaseName(displayPath)));
+            if (!embeddedName.empty()) {
+                remember(LowerAssetPath(embeddedName));
+                remember(LowerAssetPath(AssetBaseName(embeddedName)));
+            }
+        }
+
         Texture* raw = nullptr;
         if (embedded->mHeight == 0) {
             raw = Texture::LoadFromMemory(
@@ -994,16 +1052,15 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         // list diverge from the source asset.
         mat->name = name.C_Str();
 
-        // Backface culling is off by default. Assimp's glTF importer always
-        // writes doubleSided=false when the flag is absent, so for glTF keep
-        // the editor default until the artist enables culling explicitly.
-        int twoSided = 1;
-        if (!out.isGltf &&
-            aiMat->Get(AI_MATKEY_TWOSIDED, twoSided) == AI_SUCCESS) {
+        // Two Sided is disabled by default. Assimp writes an explicit false
+        // for glTF materials without doubleSided, which matches this default.
+        int twoSided = 0;
+        if (aiMat->Get(AI_MATKEY_TWOSIDED, twoSided) == AI_SUCCESS) {
             mat->twoSided = twoSided != 0;
         } else {
-            mat->twoSided = true;
+            mat->twoSided = false;
         }
+        mat->backfaceCulling = !mat->twoSided;
 
         spdlog::info("[AssetManager] Material[{}] '{}':", i, mat->name);
 
@@ -1228,16 +1285,27 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         };
 
         // Base-colour and emissive textures carry sRGB-encoded colour. All
-        // other maps are linear data and must not be gamma-decoded.
-        assign(mat->albedoMap, albedoRef, true);
-        assign(mat->normalMap, normalRef, false);
-        assign(mat->metallicRoughnessMap, metallicRoughnessRef, false);
-        assign(mat->metallicMap, metallicRef, false);
-        assign(mat->roughnessMap, roughnessRef, false);
-        assign(mat->emissiveMap, emissiveRef, true);
-        assign(mat->occlusionMap, occlusionRef, false);
-        assign(mat->opacityMap, opacityRef, false);
-        assign(mat->specularMap, specularRef, false);
+        // other maps are linear data and must not be gamma-decoded. The
+        // per-map flags default to these same values and remain user-editable.
+        mat->albedoSrgb = true;
+        mat->normalSrgb = false;
+        mat->metallicRoughnessSrgb = false;
+        mat->metallicSrgb = false;
+        mat->roughnessSrgb = false;
+        mat->emissiveSrgb = true;
+        mat->occlusionSrgb = false;
+        mat->opacitySrgb = false;
+        mat->specularSrgb = false;
+        assign(mat->albedoMap, albedoRef, mat->albedoSrgb);
+        assign(mat->normalMap, normalRef, mat->normalSrgb);
+        assign(mat->metallicRoughnessMap, metallicRoughnessRef,
+               mat->metallicRoughnessSrgb);
+        assign(mat->metallicMap, metallicRef, mat->metallicSrgb);
+        assign(mat->roughnessMap, roughnessRef, mat->roughnessSrgb);
+        assign(mat->emissiveMap, emissiveRef, mat->emissiveSrgb);
+        assign(mat->occlusionMap, occlusionRef, mat->occlusionSrgb);
+        assign(mat->opacityMap, opacityRef, mat->opacitySrgb);
+        assign(mat->specularMap, specularRef, mat->specularSrgb);
 
         // glTF BLEND is declared on the material, but exporters also mark
         // fully opaque skin/body materials as BLEND. Use the base-color alpha

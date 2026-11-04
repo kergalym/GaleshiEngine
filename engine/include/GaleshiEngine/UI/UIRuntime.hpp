@@ -51,6 +51,10 @@ public:
 
     const std::vector<UIEvent>& Events() const { return m_events; }
 
+    // True when the pointer is over a UI canvas/widget rather than the scene.
+    // Updated during RenderInRect and consumed by gameplay camera/picking.
+    bool IsPointerOverUI() const { return m_pointerOverUI; }
+
     // Convenience hook for script bindings.  Called for every event directly
     // after it is produced.
     void SetEventHandler(std::function<void(const UIEvent&)> handler) {
@@ -66,6 +70,7 @@ private:
     // buffer survives frames and does not depend on vector reallocation.
     std::vector<std::pair<std::string, std::string>> m_textBuffers;
     std::string& TextBuffer(const std::string& key);
+    bool m_pointerOverUI = false;
 
     // Visibility/hover tracking used to emit onShow and onHover once per entry.
     std::unordered_map<std::string, bool> m_canvasVisible;

@@ -121,7 +121,7 @@ end
 ### Editor
 
 - Docking ImGui interface.
-- PBR material editing with Metal, Plastic, Rubber, and Gold presets.
+- PBR material editing.
 - Landscape sculpting with brush settings, undo snapshots, and vegetation regeneration.
 - Animation state machine editor with states, clips, parameters, and transitions.
 - Perception and behavior-tree inspectors, plus player-tag and AI debug controls.

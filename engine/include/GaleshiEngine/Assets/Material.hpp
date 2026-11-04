@@ -13,18 +13,25 @@ class Material {
 public:
     bool isGlass = false;
     // Render both faces and flip normals on back-facing fragments.
-    // Backface culling is disabled by default (twoSided = true).
-    bool twoSided = true;
+    bool twoSided = false;
+    // Independent render state: cull faces pointing away from the camera.
+    bool backfaceCulling = true;
 public:
     Material() = default;
     ~Material() = default;
 
     glm::vec4 albedoFactor     {1.0f, 1.0f, 1.0f, 1.0f};
-    // Color textures are normally sRGB. Data textures (normal, roughness,
-    // masks) are linear. This flag is editable for albedo maps so exports from
-    // tools that write linear color by mistake can be corrected without
-    // changing the texture file.
+    // Per-map color space. Albedo defaults to sRGB; the remaining slots
+    // default to linear data. Each flag is user-editable.
     bool      albedoSrgb       = true;
+    bool      metallicRoughnessSrgb = false;
+    bool      metallicSrgb     = false;
+    bool      roughnessSrgb    = false;
+    bool      normalSrgb       = false;
+    bool      emissiveSrgb     = true;
+    bool      occlusionSrgb    = false;
+    bool      opacitySrgb      = false;
+    bool      specularSrgb     = false;
     float     metallicFactor   = 0.0f;
     // Standard opaque-material default.
     float     roughnessFactor  = 1.0f;

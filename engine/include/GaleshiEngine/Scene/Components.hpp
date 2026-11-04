@@ -57,6 +57,13 @@ struct MeshComponent {
           lodEnabled(sourceAssetPath.empty()) {}
 };
 
+// Per-model render settings shared by every imported submesh. Model roots
+// receive this component on spawn/replacement; older scenes without it keep
+// the legacy per-material fallback.
+struct ModelComponent {
+    bool castsShadow = true;
+};
+
 struct SkeletalComponent {
     bool isAnimated = false;
     std::string sourcePath;
