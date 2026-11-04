@@ -5069,6 +5069,24 @@ if (ImGui::BeginMenu("File")) {
         return best;
     }
 
+    bool IsGameplayCameraAttachedToPlayer(entt::entity cameraEntity) {
+        auto& reg = m_scene.Registry();
+        entt::entity current = cameraEntity;
+        for (int depth = 0; depth < 128; ++depth) {
+            if (!reg.all_of<Galeshi::ParentComponent>(current)) break;
+            current = reg.get<Galeshi::ParentComponent>(current).parent;
+            if (current == entt::null) break;
+            if (reg.all_of<Galeshi::PlayerTagComponent>(current)) {
+                return true;
+            }
+            if (reg.all_of<Galeshi::NameComponent>(current) &&
+                reg.get<Galeshi::NameComponent>(current).name == "Player") {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Player-tagged entities are the orbit centre for the gameplay camera.
     // When no player tag exists, a camera parented to a character/model uses
     // that ancestor so authored third-person rigs still orbit the character.
@@ -10129,7 +10147,8 @@ void DrawDetails() {
             if (beginDetailsSection(
                     "Camera", ImGuiTreeNodeFlags_DefaultOpen,
                     "primary game camera priority fov field of view near far "
-                    "clip local offset attached parent distance")) {
+                    "clip local offset attached parent distance view mode third "
+                    "first person")) {
                 ImGui::Checkbox("Primary (Game Camera)", &camera.primary);
                 ImGui::DragInt("Priority", &camera.priority, 1.0f, -100, 100);
                 ImGui::DragFloat("FOV (vertical)", &camera.fovY,
@@ -10148,6 +10167,19 @@ void DrawDetails() {
                         ImGui::SetTooltip(
                             "Local translation from the parent (character). "
                             "Use Z for first/third-person distance.");
+                    }
+                }
+                if (IsGameplayCameraAttachedToPlayer(selectedHandle)) {
+                    int mode = std::clamp(GetGameplayCameraMode(), 0, 1);
+                    const char* modeNames[] = {"Third Person", "First Person"};
+                    if (ImGui::Combo("View Mode", &mode, modeNames,
+                                     IM_ARRAYSIZE(modeNames))) {
+                        SetGameplayCameraMode(mode);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "Switch the player camera between third-person "
+                            "orbit and first-person view.");
                     }
                 }
                 if (selected[0].HasComponent<Galeshi::ParentComponent>()) {
