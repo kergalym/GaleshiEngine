@@ -35,6 +35,12 @@ protected:
         m_scripts.BindUIState([this]() {
             return m_ui.IsPointerOverUI();
         });
+        m_scripts.BindUIText(
+            [this](uint32_t canvasEntity, const std::string& canvasId,
+                   const std::string& widgetId) {
+                return m_ui.TextValue(
+                    static_cast<int>(canvasEntity), canvasId, widgetId);
+            });
 
         Galeshi::Entity entity = m_scene.CreateEntity("MainMenu");
         auto& canvas = entity.AddComponent<Galeshi::UICanvasComponent>().canvas;

@@ -14,7 +14,7 @@ inline constexpr uint32_t kVersionPatch = 0;
 inline constexpr uint32_t kApiVersion = 2;
 
 // The isolated C++ script ABI is versioned separately from the engine library.
-inline constexpr uint32_t kScriptApiVersion = 11;
+inline constexpr uint32_t kScriptApiVersion = 17;
 
 const char* VersionString();
 

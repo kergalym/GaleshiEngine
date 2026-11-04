@@ -53,6 +53,17 @@ std::string& UIRuntime::TextBuffer(const std::string& key) {
     return m_textBuffers.back().second;
 }
 
+std::string UIRuntime::TextValue(int canvasEntity,
+                                 const std::string& canvasId,
+                                 const std::string& widgetId) const {
+    const std::string key = std::to_string(canvasEntity) + "/" +
+                            canvasId + "/" + widgetId;
+    for (const auto& entry : m_textBuffers) {
+        if (entry.first == key) return entry.second;
+    }
+    return {};
+}
+
 void UIRuntime::Emit(UIEvent event) {
     if (m_handler) m_handler(event);
     m_events.push_back(std::move(event));

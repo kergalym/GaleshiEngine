@@ -288,6 +288,20 @@ public:
         }
     }
 
+    bool SetBus(const char* name, float volume, bool muted = false) const {
+        return m_api && m_api->set_audio_bus &&
+               m_api->set_audio_bus(m_api->user, name, volume, muted);
+    }
+    float BusVolume(const char* name) const {
+        return m_api && m_api->get_audio_bus_volume
+            ? m_api->get_audio_bus_volume(m_api->user, name)
+            : 0.0f;
+    }
+    bool BusMuted(const char* name) const {
+        return m_api && m_api->get_audio_bus_muted &&
+               m_api->get_audio_bus_muted(m_api->user, name);
+    }
+
     bool AttachSource(uint32_t entity, const char* path,
                       bool loop = false, bool spatial = true,
                       AudioBus bus = AudioBus::SFX) const {
@@ -589,6 +603,14 @@ public:
                m_api->is_pointer_over_ui(m_api->user);
     }
 
+    const char* TextValue(uint32_t canvasEntity, const char* canvasId,
+                          const char* widgetId) const {
+        return m_api && m_api->get_ui_text
+            ? m_api->get_ui_text(m_api->user, canvasEntity, canvasId,
+                                 widgetId)
+            : "";
+    }
+
 private:
     const GaleshiScriptApi* m_api = nullptr;
 };
@@ -639,6 +661,52 @@ public:
     bool ResetHeights() const {
         return m_api && m_api->landscape_reset_heights &&
                m_api->landscape_reset_heights(m_api->user);
+    }
+
+    uint32_t LayerCount() const {
+        return m_api && m_api->landscape_layer_count
+            ? m_api->landscape_layer_count(m_api->user) : 0;
+    }
+    bool AddLayer() const {
+        return m_api && m_api->landscape_add_layer &&
+               m_api->landscape_add_layer(m_api->user);
+    }
+    bool RemoveLayer(int layer) const {
+        return m_api && m_api->landscape_remove_layer &&
+               m_api->landscape_remove_layer(m_api->user, layer);
+    }
+    int ActiveLayer() const {
+        return m_api && m_api->landscape_active_layer
+            ? m_api->landscape_active_layer(m_api->user) : -1;
+    }
+    bool SetActiveLayer(int layer) const {
+        return m_api && m_api->landscape_set_active_layer &&
+               m_api->landscape_set_active_layer(m_api->user, layer);
+    }
+    bool SetLayerTexture(int layer, const char* slot,
+                         const char* path) const {
+        return m_api && m_api->landscape_set_layer_texture &&
+               m_api->landscape_set_layer_texture(
+                   m_api->user, layer, slot, path);
+    }
+    const char* GetLayerTexture(int layer, const char* slot) const {
+        return m_api && m_api->landscape_get_layer_texture
+            ? m_api->landscape_get_layer_texture(
+                  m_api->user, layer, slot)
+            : "";
+    }
+    bool PaintLayer(int layer, float localX, float localZ,
+                    float radius, float strength = 3.0f,
+                    float falloff = 0.65f, float dt = 0.016f,
+                    bool erase = false) const {
+        return m_api && m_api->landscape_paint_layer &&
+               m_api->landscape_paint_layer(
+                   m_api->user, layer, localX, localZ, radius, strength,
+                   falloff, dt, erase);
+    }
+    bool Bake() const {
+        return m_api && m_api->landscape_bake &&
+               m_api->landscape_bake(m_api->user);
     }
 
 private:
@@ -728,6 +796,239 @@ private:
     const GaleshiScriptApi* m_api = nullptr;
 };
 
+class AI {
+public:
+    explicit AI(const GaleshiScriptApi* api = nullptr) : m_api(api) {}
+
+    uint32_t FindNavAgent() const {
+        return m_api && m_api->find_nav_agent
+            ? m_api->find_nav_agent(m_api->user) : UINT32_MAX;
+    }
+    uint32_t FindPerception() const {
+        return m_api && m_api->find_perception
+            ? m_api->find_perception(m_api->user) : UINT32_MAX;
+    }
+    uint32_t FindBehaviorTree() const {
+        return m_api && m_api->find_behavior_tree
+            ? m_api->find_behavior_tree(m_api->user) : UINT32_MAX;
+    }
+    uint32_t FindController() const {
+        return m_api && m_api->find_ai_controller
+            ? m_api->find_ai_controller(m_api->user) : UINT32_MAX;
+    }
+
+    bool SetFlag(uint32_t entity, const char* component,
+                 const char* property, bool value) const {
+        return m_api && m_api->set_ai_flag &&
+               m_api->set_ai_flag(m_api->user, entity, component,
+                                  property, value);
+    }
+    bool GetFlag(uint32_t entity, const char* component,
+                 const char* property, bool& value) const {
+        return m_api && m_api->get_ai_flag &&
+               m_api->get_ai_flag(m_api->user, entity, component,
+                                  property, &value);
+    }
+    bool SetFloat(uint32_t entity, const char* component,
+                  const char* property, float value) const {
+        return m_api && m_api->set_ai_float &&
+               m_api->set_ai_float(m_api->user, entity, component,
+                                   property, value);
+    }
+    bool GetFloat(uint32_t entity, const char* component,
+                  const char* property, float& value) const {
+        return m_api && m_api->get_ai_float &&
+               m_api->get_ai_float(m_api->user, entity, component,
+                                   property, &value);
+    }
+    bool SetInt(uint32_t entity, const char* component,
+                const char* property, int value) const {
+        return m_api && m_api->set_ai_int &&
+               m_api->set_ai_int(m_api->user, entity, component,
+                                 property, value);
+    }
+    bool GetInt(uint32_t entity, const char* component,
+                const char* property, int& value) const {
+        return m_api && m_api->get_ai_int &&
+               m_api->get_ai_int(m_api->user, entity, component,
+                                 property, &value);
+    }
+    bool SetVec3(uint32_t entity, const char* component,
+                 const char* property, Vec3 value) const {
+        return m_api && m_api->set_ai_vec3 &&
+               m_api->set_ai_vec3(m_api->user, entity, component,
+                                  property, value);
+    }
+    bool GetVec3(uint32_t entity, const char* component,
+                 const char* property, Vec3& value) const {
+        return m_api && m_api->get_ai_vec3 &&
+               m_api->get_ai_vec3(m_api->user, entity, component,
+                                  property, &value);
+    }
+    bool SetString(uint32_t entity, const char* component,
+                   const char* property, const char* value) const {
+        return m_api && m_api->set_ai_string &&
+               m_api->set_ai_string(m_api->user, entity, component,
+                                    property, value);
+    }
+    const char* GetString(uint32_t entity, const char* component,
+                          const char* property) const {
+        return m_api && m_api->get_ai_string
+            ? m_api->get_ai_string(m_api->user, entity, component,
+                                   property)
+            : "";
+    }
+
+    bool CreateDefaultBehaviorTree(uint32_t entity) const {
+        return m_api && m_api->behavior_tree_create_default &&
+               m_api->behavior_tree_create_default(m_api->user, entity);
+    }
+    uint32_t NodeCount(uint32_t entity) const {
+        return m_api && m_api->behavior_tree_node_count
+            ? m_api->behavior_tree_node_count(m_api->user, entity) : 0;
+    }
+    int32_t AddNode(uint32_t entity, const char* name, int type,
+                    int condition, int action) const {
+        return m_api && m_api->behavior_tree_add_node
+            ? m_api->behavior_tree_add_node(
+                  m_api->user, entity, name, type, condition, action)
+            : -1;
+    }
+    bool AddChild(uint32_t entity, int parent, int child) const {
+        return m_api && m_api->behavior_tree_add_child &&
+               m_api->behavior_tree_add_child(
+                   m_api->user, entity, parent, child);
+    }
+    bool SetRoot(uint32_t entity, int root) const {
+        return m_api && m_api->behavior_tree_set_root &&
+               m_api->behavior_tree_set_root(m_api->user, entity, root);
+    }
+    bool SetNodeFloat(uint32_t entity, int index, const char* property,
+                      float value) const {
+        return m_api && m_api->behavior_tree_set_node_float &&
+               m_api->behavior_tree_set_node_float(
+                   m_api->user, entity, index, property, value);
+    }
+    bool SetNodeInt(uint32_t entity, int index, const char* property,
+                    int value) const {
+        return m_api && m_api->behavior_tree_set_node_int &&
+               m_api->behavior_tree_set_node_int(
+                   m_api->user, entity, index, property, value);
+    }
+    bool SetNodeString(uint32_t entity, int index,
+                       const char* property, const char* value) const {
+        return m_api && m_api->behavior_tree_set_node_string &&
+               m_api->behavior_tree_set_node_string(
+                   m_api->user, entity, index, property, value);
+    }
+    const char* Status(uint32_t entity) const {
+        return m_api && m_api->behavior_tree_status
+            ? m_api->behavior_tree_status(m_api->user, entity) : "";
+    }
+
+private:
+    const GaleshiScriptApi* m_api = nullptr;
+};
+
+class MaterialAccess {
+public:
+    explicit MaterialAccess(const GaleshiScriptApi* api = nullptr)
+        : m_api(api) {}
+
+    bool SetFloat(uint32_t entity, const char* property,
+                  float value) const {
+        return m_api && m_api->set_material_float &&
+               m_api->set_material_float(m_api->user, entity, property,
+                                         value);
+    }
+    bool GetFloat(uint32_t entity, const char* property,
+                  float& value) const {
+        return m_api && m_api->get_material_float &&
+               m_api->get_material_float(m_api->user, entity, property,
+                                         &value);
+    }
+    bool SetFlag(uint32_t entity, const char* property,
+                 bool value) const {
+        return m_api && m_api->set_material_flag &&
+               m_api->set_material_flag(m_api->user, entity, property,
+                                        value);
+    }
+    bool GetFlag(uint32_t entity, const char* property,
+                 bool& value) const {
+        return m_api && m_api->get_material_flag &&
+               m_api->get_material_flag(m_api->user, entity, property,
+                                        &value);
+    }
+    bool SetColor(uint32_t entity, const char* property,
+                  Vec4 value) const {
+        return m_api && m_api->set_material_color &&
+               m_api->set_material_color(m_api->user, entity, property,
+                                         value);
+    }
+    bool GetColor(uint32_t entity, const char* property,
+                  Vec4& value) const {
+        return m_api && m_api->get_material_color &&
+               m_api->get_material_color(m_api->user, entity, property,
+                                         &value);
+    }
+    bool SetTexture(uint32_t entity, const char* slot,
+                    const char* path) const {
+        return m_api && m_api->set_material_texture &&
+               m_api->set_material_texture(m_api->user, entity, slot,
+                                           path);
+    }
+    const char* GetTexture(uint32_t entity, const char* slot) const {
+        return m_api && m_api->get_material_texture
+            ? m_api->get_material_texture(m_api->user, entity, slot)
+            : "";
+    }
+
+private:
+    const GaleshiScriptApi* m_api = nullptr;
+};
+
+class Rendering {
+public:
+    explicit Rendering(const GaleshiScriptApi* api = nullptr)
+        : m_api(api) {}
+
+    uint32_t Width() const {
+        return m_api && m_api->renderer_width
+            ? m_api->renderer_width(m_api->user) : 0;
+    }
+    uint32_t Height() const {
+        return m_api && m_api->renderer_height
+            ? m_api->renderer_height(m_api->user) : 0;
+    }
+    bool Deferred() const {
+        return m_api && m_api->renderer_deferred &&
+               m_api->renderer_deferred(m_api->user);
+    }
+    bool SetDeferred(bool value) const {
+        return m_api && m_api->set_renderer_deferred &&
+               m_api->set_renderer_deferred(m_api->user, value);
+    }
+    bool Lod() const {
+        return m_api && m_api->renderer_lod &&
+               m_api->renderer_lod(m_api->user);
+    }
+    bool SetLod(bool value) const {
+        return m_api && m_api->set_renderer_lod &&
+               m_api->set_renderer_lod(m_api->user, value);
+    }
+    bool Occlusion() const {
+        return m_api && m_api->renderer_occlusion &&
+               m_api->renderer_occlusion(m_api->user);
+    }
+    bool SetOcclusion(bool value) const {
+        return m_api && m_api->set_renderer_occlusion &&
+               m_api->set_renderer_occlusion(m_api->user, value);
+    }
+
+private:
+    const GaleshiScriptApi* m_api = nullptr;
+};
+
 class Animation {
 public:
     explicit Animation(const GaleshiScriptApi* api = nullptr)
@@ -794,6 +1095,20 @@ public:
         return m_api && m_api->animation_clip_duration
             ? m_api->animation_clip_duration(m_api->user, entity, index)
             : 0.0f;
+    }
+
+    uint32_t SpawnModel(const char* path, const char* name,
+                        Vec3 position = {}) const {
+        return m_api && m_api->spawn_skeletal_model
+            ? m_api->spawn_skeletal_model(
+                  m_api->user, path, name, position.x, position.y,
+                  position.z)
+            : UINT32_MAX;
+    }
+
+    bool ApplyModel(uint32_t entity, const char* path) const {
+        return m_api && m_api->apply_skeletal_model &&
+               m_api->apply_skeletal_model(m_api->user, entity, path);
     }
 
 private:
@@ -1062,6 +1377,9 @@ public:
           ui(api),
           landscape(api),
           vegetation(api),
+          ai(api),
+          materials(api),
+          rendering(api),
           animation(api),
           assets(api),
           particles(api),
@@ -1099,6 +1417,9 @@ public:
     UI ui;
     Landscape landscape;
     Vegetation vegetation;
+    AI ai;
+    MaterialAccess materials;
+    Rendering rendering;
     Animation animation;
     Assets assets;
     Particles particles;

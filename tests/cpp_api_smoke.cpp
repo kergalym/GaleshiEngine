@@ -33,6 +33,8 @@ static void ExerciseApi(const GaleshiScriptApi* raw) {
     api.audio.AttachSource(entity, "assets/sounds/hit.wav");
     api.audio.PlaySource(entity);
     api.audio.StopSource(entity);
+    api.audio.SetBus("SFX", 0.8f, false);
+    api.audio.SetBus("SFX", 0.8f, false);
 
     api.postProcess.SetFlag("bloom", true);
     api.postProcess.SetFloat("exposure", 1.0f);
@@ -45,20 +47,41 @@ static void ExerciseApi(const GaleshiScriptApi* raw) {
     GaleshiScriptUIEvent event;
     api.ui.PollEvent(event);
 
+    api.materials.SetFloat(entity, "roughness", 0.5f);
+    api.materials.SetFlag(entity, "two_sided", true);
+    api.materials.SetTexture(entity, "albedo",
+                             "assets/textures/wood.png");
+    api.rendering.Width();
+    api.rendering.SetDeferred(true);
+
     const uint32_t landscape = api.landscape.Find();
     api.landscape.SampleHeight(0.0f, 0.0f);
     api.landscape.SetHeight(0.0f, 0.0f, 1.0f);
     api.landscape.ApplyBrush(
         Galeshi::Script::LandscapeTool::Raise,
         0.0f, 0.0f, 4.0f, 3.0f, 0.65f, 0.016f);
+    api.landscape.AddLayer();
+    api.landscape.PaintLayer(0, 0.0f, 0.0f, 4.0f);
+    api.landscape.Bake();
     const uint32_t vegetation = api.vegetation.Find();
     api.vegetation.SetInt(vegetation, "tree_count", 100);
     api.vegetation.Regenerate(vegetation);
 
+    const uint32_t actor = api.animation.SpawnModel(
+        "assets/models/hero.fbx", "Hero", {0.0f, 0.0f, 0.0f});
+    api.animation.ApplyModel(actor, "assets/models/hero.fbx");
     api.animation.SetState(entity, "Idle");
     api.animation.SetParameter(entity, "Speed", 0.0f);
     api.animation.ClipCount(entity);
     api.assets.Exists("assets/models/character.fbx");
+
+    const uint32_t agent = api.ai.FindNavAgent();
+    api.ai.SetFloat(agent, "nav_agent", "speed", 4.0f);
+    const uint32_t perception = api.ai.FindPerception();
+    api.ai.SetFloat(perception, "perception", "sight_radius", 30.0f);
+    const uint32_t tree = api.ai.FindBehaviorTree();
+    api.ai.CreateDefaultBehaviorTree(tree);
+    api.ai.NodeCount(tree);
 
     const uint32_t particles = api.particles.Find();
     api.particles.SetFloat(particles, "emit_rate", 20.0f);

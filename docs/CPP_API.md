@@ -98,14 +98,17 @@ Current class wrappers cover:
 - `Physics` — linear velocity, attach box/sphere/capsule, destroy body,
   impulse
 - `Navigation` — navmesh build, path query and path points
-- `Audio` — 2D play/stop/state, stop-all, entity 3D source attach/play/stop
+- `Audio` — 2D play/stop/state, 3D sources, stop-all and mixer buses
 - `Camera` — mode, basis and camera-relative movement
 - `Player` — strafing
+- `MaterialAccess` — material factors, flags, colors and texture slots
+- `Rendering` — renderer size and deferred/LOD/occlusion toggles
 - `PostProcess` — scene-wide post-process flags, floats, ints and colors by name
 - `UI` — canvas/widget lookup, creation/removal, common properties and event polling
-- `Landscape` — height sampling/setting, brush tools and reset
+- `AI` — nav agent/perception/behavior-tree properties and node editing
+- `Landscape` — height/brush tools, layers, layer textures, paint and bake
 - `Vegetation` — tree/grass settings, regeneration, clear and instance counts
-- `Animation` — state machine parameters/states, clip playback and clip info
+- `Animation` — model spawn/apply, state machine parameters/states, clip playback and clip info
 - `Assets` — existence checks, path resolution and model loading
 - `Particles` / `Groom` — component property editing
 - `Shader` — compile and error text
@@ -171,7 +174,7 @@ Script surface:
 - cloth creation/update;
 - entity-to-body and body-to-entity mapping.
 
-### 5. Navigation and AI — navigation done
+### 5. Navigation and AI — done
 
 Native surface: `NavigationSystem`, `AISystem`, behavior trees and perception.
 
@@ -183,7 +186,7 @@ Script surface:
 - perception queries and target selection;
 - AI controller lifecycle.
 
-### 6. Audio, including 3D — basic 2D/3D done
+### 6. Audio, including 3D — done
 
 Native surface: `AudioSystem`, `AudioSourceComponent`,
 `AudioListenerComponent` and scene mixer buses.
@@ -197,7 +200,7 @@ Script surface:
 - one-shot and looping playback;
 - entity-attached source controls.
 
-### 7. Rendering and post-processing — scene post-process done
+### 7. Rendering and post-processing — done (material/renderer/post-process)
 
 Native surface: `Renderer`, `RenderSystem`, `PostProcessManager`,
 `PostProcessSettings` and material/texture classes.
@@ -211,7 +214,7 @@ Script surface:
 - debug draw primitives;
 - shader compile/error/preview.
 
-### 8. UI and widgets — done (configuration + events)
+### 8. UI and widgets — done (configuration, events, text values)
 
 Native surface: `UIRuntime`, `UICanvas`, `UIWidget`.
 
@@ -223,7 +226,7 @@ Script surface:
 - pointer-over-UI query;
 - runtime text-input values.
 
-### 9. Landscape, vegetation and instancing — done (basic)
+### 9. Landscape, vegetation and instancing — done
 
 Native surface: `LandscapeComponent`, `LandscapeMesh`,
 `VegetationComponent`, `VegetationGenerator`.
@@ -237,7 +240,7 @@ Script surface:
 - regenerate/clear instances;
 - paint trees/grass.
 
-### 10. Animation and assets — done (basic)
+### 10. Animation and assets — done
 
 Native surface: `AnimationSystem`, `AssetManager`, skeletal components.
 
@@ -259,7 +262,7 @@ Script surface:
 - particle counts and alive queries;
 - groom enable/density/length/wind parameters.
 
-### 12. Compatibility, tests and docs — smoke test added
+### 12. Compatibility, tests and docs — done
 
 - Add an API contract test that compiles the umbrella header and a sample
   script module.
@@ -272,5 +275,8 @@ Script surface:
 
 `scripts/check_cpp_api.sh` compiles `tests/cpp_api_smoke.cpp` against the
 public script headers without linking the engine. This catches header,
-wrapper and ABI-layout regressions. Worker round-trip tests still require a
-running host and are not automated yet.
+wrapper and ABI-layout regressions.
+
+`tests/cpp_worker_roundtrip.py` compiles a tiny script module, starts
+`GaleshiScriptWorker`, answers a representative set of worker requests with
+mock host responses, and verifies the protocol and callback payloads.

@@ -400,6 +400,22 @@ public:
         m_api.get_ui_widget_vec4 = &ScriptWorker::GetUIWidgetVec4;
         m_api.poll_ui_event = &ScriptWorker::PollUIEvent;
         m_api.is_pointer_over_ui = &ScriptWorker::IsPointerOverUI;
+        m_api.get_ui_text = &ScriptWorker::GetUIText;
+        m_api.landscape_layer_count = &ScriptWorker::LandscapeLayerCount;
+        m_api.landscape_add_layer = &ScriptWorker::LandscapeAddLayer;
+        m_api.landscape_remove_layer =
+            &ScriptWorker::LandscapeRemoveLayer;
+        m_api.landscape_active_layer =
+            &ScriptWorker::LandscapeActiveLayer;
+        m_api.landscape_set_active_layer =
+            &ScriptWorker::LandscapeSetActiveLayer;
+        m_api.landscape_set_layer_texture =
+            &ScriptWorker::LandscapeSetLayerTexture;
+        m_api.landscape_get_layer_texture =
+            &ScriptWorker::LandscapeGetLayerTexture;
+        m_api.landscape_paint_layer =
+            &ScriptWorker::LandscapePaintLayer;
+        m_api.landscape_bake = &ScriptWorker::LandscapeBake;
         m_api.find_landscape = &ScriptWorker::FindLandscape;
         m_api.landscape_sample_height = &ScriptWorker::LandscapeSampleHeight;
         m_api.landscape_set_height = &ScriptWorker::LandscapeSetHeight;
@@ -458,6 +474,63 @@ public:
         m_api.get_groom_vec3 = &ScriptWorker::GetGroomVec3;
         m_api.set_groom_string = &ScriptWorker::SetGroomString;
         m_api.get_groom_string = &ScriptWorker::GetGroomString;
+        m_api.find_nav_agent = &ScriptWorker::FindNavAgent;
+        m_api.find_perception = &ScriptWorker::FindPerception;
+        m_api.find_behavior_tree = &ScriptWorker::FindBehaviorTree;
+        m_api.find_ai_controller = &ScriptWorker::FindAIController;
+        m_api.set_ai_flag = &ScriptWorker::SetAIFlag;
+        m_api.get_ai_flag = &ScriptWorker::GetAIFlag;
+        m_api.set_ai_float = &ScriptWorker::SetAIFloat;
+        m_api.get_ai_float = &ScriptWorker::GetAIFloat;
+        m_api.set_ai_int = &ScriptWorker::SetAIInt;
+        m_api.get_ai_int = &ScriptWorker::GetAIInt;
+        m_api.set_ai_vec3 = &ScriptWorker::SetAIVec3;
+        m_api.get_ai_vec3 = &ScriptWorker::GetAIVec3;
+        m_api.set_ai_string = &ScriptWorker::SetAIString;
+        m_api.get_ai_string = &ScriptWorker::GetAIString;
+        m_api.behavior_tree_create_default =
+            &ScriptWorker::BehaviorTreeCreateDefault;
+        m_api.behavior_tree_node_count =
+            &ScriptWorker::BehaviorTreeNodeCount;
+        m_api.behavior_tree_add_node =
+            &ScriptWorker::BehaviorTreeAddNode;
+        m_api.behavior_tree_add_child =
+            &ScriptWorker::BehaviorTreeAddChild;
+        m_api.behavior_tree_set_root =
+            &ScriptWorker::BehaviorTreeSetRoot;
+        m_api.behavior_tree_set_node_float =
+            &ScriptWorker::BehaviorTreeSetNodeFloat;
+        m_api.behavior_tree_set_node_int =
+            &ScriptWorker::BehaviorTreeSetNodeInt;
+        m_api.behavior_tree_set_node_string =
+            &ScriptWorker::BehaviorTreeSetNodeString;
+        m_api.behavior_tree_status =
+            &ScriptWorker::BehaviorTreeStatus;
+        m_api.set_material_float = &ScriptWorker::SetMaterialFloat;
+        m_api.get_material_float = &ScriptWorker::GetMaterialFloat;
+        m_api.set_material_flag = &ScriptWorker::SetMaterialFlag;
+        m_api.get_material_flag = &ScriptWorker::GetMaterialFlag;
+        m_api.set_material_color = &ScriptWorker::SetMaterialColor;
+        m_api.get_material_color = &ScriptWorker::GetMaterialColor;
+        m_api.set_material_texture = &ScriptWorker::SetMaterialTexture;
+        m_api.get_material_texture = &ScriptWorker::GetMaterialTexture;
+        m_api.renderer_width = &ScriptWorker::RendererWidth;
+        m_api.renderer_height = &ScriptWorker::RendererHeight;
+        m_api.renderer_deferred = &ScriptWorker::RendererDeferred;
+        m_api.set_renderer_deferred = &ScriptWorker::SetRendererDeferred;
+        m_api.renderer_lod = &ScriptWorker::RendererLod;
+        m_api.set_renderer_lod = &ScriptWorker::SetRendererLod;
+        m_api.renderer_occlusion = &ScriptWorker::RendererOcclusion;
+        m_api.set_renderer_occlusion =
+            &ScriptWorker::SetRendererOcclusion;
+        m_api.spawn_skeletal_model =
+            &ScriptWorker::SpawnSkeletalModel;
+        m_api.apply_skeletal_model =
+            &ScriptWorker::ApplySkeletalModel;
+        m_api.set_audio_bus = &ScriptWorker::SetAudioBus;
+        m_api.get_audio_bus_volume =
+            &ScriptWorker::GetAudioBusVolume;
+        m_api.get_audio_bus_muted = &ScriptWorker::GetAudioBusMuted;
         m_api.abi_version = kGaleshiScriptApiVersion;
         m_api.struct_size = static_cast<uint32_t>(sizeof(GaleshiScriptApi));
     }
@@ -1331,6 +1404,19 @@ private:
             .valid != 0;
     }
 
+    static const char* GetUIText(void* user, uint32_t canvasEntity,
+                                 const char* canvasId,
+                                 const char* widgetId) {
+        if (!user || !canvasId || !widgetId) return "";
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetUIText, canvasEntity, canvasId, {},
+                0.0f, UINT32_MAX, 0, {}, widgetId);
+        s_uiString = response.valid ? std::string(response.text)
+                                    : std::string{};
+        return s_uiString.c_str();
+    }
+
     static uint32_t FindLandscape(void* user) {
         if (!user) return UINT32_MAX;
         return static_cast<ScriptWorker*>(user)
@@ -1815,6 +1901,526 @@ private:
         return s_groomString.c_str();
     }
 
+    static uint32_t FindNavAgent(void* user) {
+        if (!user) return UINT32_MAX;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::FindNavAgent, UINT32_MAX)
+            .entity;
+    }
+
+    static uint32_t FindPerception(void* user) {
+        if (!user) return UINT32_MAX;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::FindPerception, UINT32_MAX)
+            .entity;
+    }
+
+    static uint32_t FindBehaviorTree(void* user) {
+        if (!user) return UINT32_MAX;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::FindBehaviorTree, UINT32_MAX)
+            .entity;
+    }
+
+    static uint32_t FindAIController(void* user) {
+        if (!user) return UINT32_MAX;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::FindAIController, UINT32_MAX)
+            .entity;
+    }
+
+    static bool SetAIFlag(void* user, uint32_t entity,
+                          const char* component, const char* property,
+                          bool value) {
+        if (!user || !component || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetAIFlag, entity, property, {},
+                      0.0f, UINT32_MAX, value ? 1u : 0u, {}, component)
+            .valid != 0;
+    }
+
+    static bool GetAIFlag(void* user, uint32_t entity,
+                          const char* component, const char* property,
+                          bool* value) {
+        if (!user || !component || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetAIFlag, entity, property, {}, 0.0f,
+                UINT32_MAX, 0, {}, component);
+        if (!response.valid) return false;
+        *value = response.entity != 0;
+        return true;
+    }
+
+    static bool SetAIFloat(void* user, uint32_t entity,
+                           const char* component, const char* property,
+                           float value) {
+        if (!user || !component || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetAIFloat, entity, property,
+                      {value, 0.0f, 0.0f}, 0.0f, UINT32_MAX, 0, {},
+                      component)
+            .valid != 0;
+    }
+
+    static bool GetAIFloat(void* user, uint32_t entity,
+                           const char* component, const char* property,
+                           float* value) {
+        if (!user || !component || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetAIFloat, entity, property, {}, 0.0f,
+                UINT32_MAX, 0, {}, component);
+        if (!response.valid) return false;
+        *value = response.x;
+        return true;
+    }
+
+    static bool SetAIInt(void* user, uint32_t entity,
+                         const char* component, const char* property,
+                         int value) {
+        if (!user || !component || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetAIInt, entity, property, {},
+                      0.0f, UINT32_MAX, static_cast<uint32_t>(value), {},
+                      component)
+            .valid != 0;
+    }
+
+    static bool GetAIInt(void* user, uint32_t entity,
+                         const char* component, const char* property,
+                         int* value) {
+        if (!user || !component || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetAIInt, entity, property, {}, 0.0f,
+                UINT32_MAX, 0, {}, component);
+        if (!response.valid) return false;
+        *value = static_cast<int>(response.entity);
+        return true;
+    }
+
+    static bool SetAIVec3(void* user, uint32_t entity,
+                          const char* component, const char* property,
+                          GaleshiScriptVec3 value) {
+        if (!user || !component || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetAIVec3, entity, property,
+                      value, 0.0f, UINT32_MAX, 0, {}, component)
+            .valid != 0;
+    }
+
+    static bool GetAIVec3(void* user, uint32_t entity,
+                          const char* component, const char* property,
+                          GaleshiScriptVec3* value) {
+        if (!user || !component || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetAIVec3, entity, property, {}, 0.0f,
+                UINT32_MAX, 0, {}, component);
+        if (!response.valid) return false;
+        *value = {response.x, response.y, response.z};
+        return true;
+    }
+
+    static bool SetAIString(void* user, uint32_t entity,
+                            const char* component, const char* property,
+                            const char* value) {
+        if (!user || !component || !property || !value) return false;
+        std::string combined(component);
+        combined += '\n';
+        combined += value;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetAIString, entity, property,
+                      {}, 0.0f, UINT32_MAX, 0, {}, combined.c_str())
+            .valid != 0;
+    }
+
+    static const char* GetAIString(void* user, uint32_t entity,
+                                   const char* component,
+                                   const char* property) {
+        if (!user || !component || !property) return "";
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetAIString, entity, property, {}, 0.0f,
+                UINT32_MAX, 0, {}, component);
+        s_aiString = response.valid ? std::string(response.text)
+                                    : std::string{};
+        return s_aiString.c_str();
+    }
+
+    static bool BehaviorTreeCreateDefault(void* user, uint32_t entity) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::BehaviorTreeCreateDefault, entity)
+            .valid != 0;
+    }
+
+    static uint32_t BehaviorTreeNodeCount(void* user, uint32_t entity) {
+        if (!user) return 0;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::BehaviorTreeNodeCount, entity)
+            .entity;
+    }
+
+    static int32_t BehaviorTreeAddNode(void* user, uint32_t entity,
+                                       const char* name, int type,
+                                       int condition, int action) {
+        if (!user || !name) return -1;
+        const uint32_t packed =
+            (static_cast<uint32_t>(type) & 0xFFu) |
+            ((static_cast<uint32_t>(condition) & 0xFFu) << 8) |
+            ((static_cast<uint32_t>(action) & 0xFFu) << 16);
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::BehaviorTreeAddNode, entity, name, {},
+                0.0f, UINT32_MAX, packed);
+        return response.valid
+            ? static_cast<int32_t>(response.entity)
+            : -1;
+    }
+
+    static bool BehaviorTreeAddChild(void* user, uint32_t entity,
+                                     int parent, int child) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::BehaviorTreeAddChild, entity,
+                      nullptr, {}, 0.0f,
+                      static_cast<uint32_t>(child),
+                      static_cast<uint32_t>(parent))
+            .valid != 0;
+    }
+
+    static bool BehaviorTreeSetRoot(void* user, uint32_t entity,
+                                    int root) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::BehaviorTreeSetRoot, entity,
+                      nullptr, {}, 0.0f, UINT32_MAX,
+                      static_cast<uint32_t>(root))
+            .valid != 0;
+    }
+
+    static bool BehaviorTreeSetNodeFloat(void* user, uint32_t entity,
+                                         int index, const char* property,
+                                         float value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::BehaviorTreeSetNodeFloat, entity,
+                      property, {value, 0.0f, 0.0f}, 0.0f,
+                      UINT32_MAX, static_cast<uint32_t>(index))
+            .valid != 0;
+    }
+
+    static bool BehaviorTreeSetNodeInt(void* user, uint32_t entity,
+                                       int index, const char* property,
+                                       int value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::BehaviorTreeSetNodeInt, entity,
+                      property, {}, 0.0f,
+                      static_cast<uint32_t>(index),
+                      static_cast<uint32_t>(value))
+            .valid != 0;
+    }
+
+    static bool BehaviorTreeSetNodeString(void* user, uint32_t entity,
+                                          int index, const char* property,
+                                          const char* value) {
+        if (!user || !property || !value) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::BehaviorTreeSetNodeString, entity,
+                      property, {}, 0.0f, UINT32_MAX,
+                      static_cast<uint32_t>(index), {}, value)
+            .valid != 0;
+    }
+
+    static const char* BehaviorTreeStatus(void* user, uint32_t entity) {
+        if (!user) return "";
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::BehaviorTreeStatus, entity);
+        s_aiString = response.valid ? std::string(response.text)
+                                    : std::string{};
+        return s_aiString.c_str();
+    }
+
+    static bool SetMaterialFloat(void* user, uint32_t entity,
+                                 const char* property, float value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetMaterialFloat, entity,
+                      property, {value, 0.0f, 0.0f})
+            .valid != 0;
+    }
+
+    static bool GetMaterialFloat(void* user, uint32_t entity,
+                                 const char* property, float* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetMaterialFloat, entity, property);
+        if (!response.valid) return false;
+        *value = response.x;
+        return true;
+    }
+
+    static bool SetMaterialFlag(void* user, uint32_t entity,
+                                const char* property, bool value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetMaterialFlag, entity,
+                      property, {}, 0.0f, UINT32_MAX,
+                      value ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static bool GetMaterialFlag(void* user, uint32_t entity,
+                                const char* property, bool* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetMaterialFlag, entity, property);
+        if (!response.valid) return false;
+        *value = response.entity != 0;
+        return true;
+    }
+
+    static bool SetMaterialColor(void* user, uint32_t entity,
+                                 const char* property,
+                                 GaleshiScriptVec4 value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetMaterialColor, entity,
+                      property, {value.x, value.y, value.z}, value.w)
+            .valid != 0;
+    }
+
+    static bool GetMaterialColor(void* user, uint32_t entity,
+                                 const char* property,
+                                 GaleshiScriptVec4* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetMaterialColor, entity, property);
+        if (!response.valid) return false;
+        *value = {response.x, response.y, response.z, response.w};
+        return true;
+    }
+
+    static bool SetMaterialTexture(void* user, uint32_t entity,
+                                   const char* slot,
+                                   const char* path) {
+        if (!user || !slot || !path) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetMaterialTexture, entity, slot,
+                      {}, 0.0f, UINT32_MAX, 0, {}, path)
+            .valid != 0;
+    }
+
+    static const char* GetMaterialTexture(void* user, uint32_t entity,
+                                          const char* slot) {
+        if (!user || !slot) return "";
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetMaterialTexture, entity, slot);
+        s_materialString = response.valid
+            ? std::string(response.text) : std::string{};
+        return s_materialString.c_str();
+    }
+
+    static uint32_t RendererWidth(void* user) {
+        if (!user) return 0;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::RendererWidth, UINT32_MAX)
+            .entity;
+    }
+
+    static uint32_t RendererHeight(void* user) {
+        if (!user) return 0;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::RendererHeight, UINT32_MAX)
+            .entity;
+    }
+
+    static bool RendererDeferred(void* user) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::RendererDeferred, UINT32_MAX)
+            .valid != 0;
+    }
+
+    static bool SetRendererDeferred(void* user, bool value) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetRendererDeferred, UINT32_MAX,
+                      nullptr, {}, 0.0f, UINT32_MAX,
+                      value ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static bool RendererLod(void* user) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::RendererLod, UINT32_MAX)
+            .valid != 0;
+    }
+
+    static bool SetRendererLod(void* user, bool value) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetRendererLod, UINT32_MAX,
+                      nullptr, {}, 0.0f, UINT32_MAX,
+                      value ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static bool RendererOcclusion(void* user) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::RendererOcclusion, UINT32_MAX)
+            .valid != 0;
+    }
+
+    static bool SetRendererOcclusion(void* user, bool value) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetRendererOcclusion, UINT32_MAX,
+                      nullptr, {}, 0.0f, UINT32_MAX,
+                      value ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static uint32_t LandscapeLayerCount(void* user) {
+        if (!user) return 0;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::LandscapeLayerCount, UINT32_MAX)
+            .entity;
+    }
+
+    static bool LandscapeAddLayer(void* user) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::LandscapeAddLayer, UINT32_MAX)
+            .valid != 0;
+    }
+
+    static bool LandscapeRemoveLayer(void* user, int layer) {
+        if (!user || layer < 0) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::LandscapeRemoveLayer, UINT32_MAX,
+                      nullptr, {}, 0.0f, UINT32_MAX,
+                      static_cast<uint32_t>(layer))
+            .valid != 0;
+    }
+
+    static int LandscapeActiveLayer(void* user) {
+        if (!user) return -1;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::LandscapeActiveLayer, UINT32_MAX);
+        return response.valid
+            ? static_cast<int>(response.entity) : -1;
+    }
+
+    static bool LandscapeSetActiveLayer(void* user, int layer) {
+        if (!user || layer < 0) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::LandscapeSetActiveLayer,
+                      UINT32_MAX, nullptr, {}, 0.0f, UINT32_MAX,
+                      static_cast<uint32_t>(layer))
+            .valid != 0;
+    }
+
+    static bool LandscapeSetLayerTexture(void* user, int layer,
+                                         const char* slot,
+                                         const char* path) {
+        if (!user || layer < 0 || !slot || !path) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::LandscapeSetLayerTexture,
+                      UINT32_MAX, slot, {}, 0.0f, UINT32_MAX,
+                      static_cast<uint32_t>(layer), {}, path)
+            .valid != 0;
+    }
+
+    static const char* LandscapeGetLayerTexture(void* user, int layer,
+                                                const char* slot) {
+        if (!user || layer < 0 || !slot) return "";
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::LandscapeGetLayerTexture, UINT32_MAX,
+                slot, {}, 0.0f, UINT32_MAX,
+                static_cast<uint32_t>(layer));
+        s_landscapeString = response.valid
+            ? std::string(response.text) : std::string{};
+        return s_landscapeString.c_str();
+    }
+
+    static bool LandscapePaintLayer(void* user, int layer, float localX,
+                                    float localZ, float radius,
+                                    float strength, float falloff,
+                                    float dt, bool erase) {
+        if (!user || layer < 0) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::LandscapePaintLayer, UINT32_MAX,
+                      nullptr, {localX, localZ, radius}, strength,
+                      erase ? 1u : 0u, static_cast<uint32_t>(layer),
+                      {falloff, dt, 0.0f})
+            .valid != 0;
+    }
+
+    static bool LandscapeBake(void* user) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::LandscapeBake, UINT32_MAX)
+            .valid != 0;
+    }
+
+    static uint32_t SpawnSkeletalModel(void* user, const char* path,
+                                       const char* name, float x, float y,
+                                       float z) {
+        if (!user || !path) return UINT32_MAX;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SpawnSkeletalModel, UINT32_MAX,
+                      path, {x, y, z}, 0.0f, UINT32_MAX, 0, {},
+                      name ? name : "SkeletalModel")
+            .entity;
+    }
+
+    static bool ApplySkeletalModel(void* user, uint32_t entity,
+                                   const char* path) {
+        if (!user || !path) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::ApplySkeletalModel, entity, path)
+            .valid != 0;
+    }
+
+    static bool SetAudioBus(void* user, const char* name, float volume,
+                            bool muted) {
+        if (!user || !name) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetAudioBus, UINT32_MAX, name,
+                      {volume, 0.0f, 0.0f}, 0.0f, UINT32_MAX,
+                      muted ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static float GetAudioBusVolume(void* user, const char* name) {
+        if (!user || !name) return 0.0f;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::GetAudioBusVolume, UINT32_MAX,
+                      name)
+            .x;
+    }
+
+    static bool GetAudioBusMuted(void* user, const char* name) {
+        if (!user || !name) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::GetAudioBusMuted, UINT32_MAX,
+                      name)
+            .valid != 0;
+    }
+
     static uint32_t FindEntity(void* user, const char* name) {
         if (!user || !name) return UINT32_MAX;
         return static_cast<ScriptWorker*>(user)
@@ -1952,6 +2558,9 @@ private:
     inline static std::string s_uiString;
     inline static std::string s_animationString;
     inline static std::string s_groomString;
+    inline static std::string s_aiString;
+    inline static std::string s_materialString;
+    inline static std::string s_landscapeString;
 
     int m_protocolOut = STDOUT_FILENO;
     uint32_t m_nextRequestId = 1;

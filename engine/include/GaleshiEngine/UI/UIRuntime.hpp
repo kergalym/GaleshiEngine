@@ -55,6 +55,11 @@ public:
     // Updated during RenderInRect and consumed by gameplay camera/picking.
     bool IsPointerOverUI() const { return m_pointerOverUI; }
 
+    // Current Input-widget text buffer for a canvas/widget pair. The key uses
+    // the canvas entity id because canvas ids are not guaranteed unique.
+    std::string TextValue(int canvasEntity, const std::string& canvasId,
+                          const std::string& widgetId) const;
+
     // Convenience hook for script bindings.  Called for every event directly
     // after it is produced.
     void SetEventHandler(std::function<void(const UIEvent&)> handler) {

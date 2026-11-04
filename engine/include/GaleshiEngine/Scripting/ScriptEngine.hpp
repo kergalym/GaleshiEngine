@@ -86,6 +86,23 @@ public:
     void ClearUIEvents() { m_cppUIEvents.clear(); }
     // Optional host query used by the C++ is_pointer_over_ui call.
     void BindUIState(std::function<bool()> pointerOverUI);
+    void BindUIText(
+        std::function<std::string(uint32_t, const std::string&,
+                                  const std::string&)> textValue);
+    struct RenderingBindings {
+        std::function<uint32_t()> width;
+        std::function<uint32_t()> height;
+        std::function<bool()> getDeferred;
+        std::function<void(bool)> setDeferred;
+        std::function<bool()> getLod;
+        std::function<void(bool)> setLod;
+        std::function<bool()> getOcclusion;
+        std::function<void(bool)> setOcclusion;
+    };
+    void BindRendering(const RenderingBindings& bindings);
+    // Optional editor-side landscape bake callback. The runtime host may
+    // leave this unbound; script baking then returns false.
+    void BindLandscapeBake(std::function<bool(uint32_t)> bake);
     void BindPhysics(const PhysicsBindings& bindings);
     // Backwards-compatible box-only binding.
     void BindPhysics(
@@ -178,7 +195,11 @@ private:
     std::function<void(uint32_t)> m_stopAudioSource;
     std::function<bool(uint32_t)> m_isAudioSourcePlaying;
     std::function<bool()> m_isPointerOverUI;
+    std::function<std::string(uint32_t, const std::string&,
+                              const std::string&)> m_uiText;
     std::deque<UIEvent> m_cppUIEvents;
+    RenderingBindings m_rendering;
+    std::function<bool(uint32_t)> m_landscapeBake;
     PhysicsBindings m_physics;
     std::function<bool(const glm::vec3&, const glm::vec3&,
                        std::vector<glm::vec3>&)> m_findPath;

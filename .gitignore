@@ -27,6 +27,7 @@ imgui.ini
 *.bak.*
 *.broken.*
 *.py
+!tests/cpp_worker_roundtrip.py
 *.chroma_db/
 .venv/
 build/**/shaders/*.bin

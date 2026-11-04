@@ -8,3 +8,7 @@ CXX_BIN="${CXX:-c++}"
     -I"${ROOT}/engine/include" \
     "${ROOT}/tests/cpp_api_smoke.cpp"
 echo "C++ API smoke test passed."
+
+if [[ -x "${ROOT}/build/debug/bin/GaleshiScriptWorker" ]]; then
+    python3 "${ROOT}/tests/cpp_worker_roundtrip.py"
+fi

@@ -260,6 +260,9 @@ struct GaleshiScriptApi {
     // empty. Events are queued by the editor's UIRuntime dispatch loop.
     bool (*poll_ui_event)(void* user, GaleshiScriptUIEvent* event) = nullptr;
     bool (*is_pointer_over_ui)(void* user) = nullptr;
+    const char* (*get_ui_text)(void* user, uint32_t canvas_entity,
+                               const char* canvas_id,
+                               const char* widget_id) = nullptr;
 
     // Landscape and instanced vegetation. Landscape coordinates are local to
     // the landscape entity. Vegetation regeneration requires the entity to
@@ -371,9 +374,127 @@ struct GaleshiScriptApi {
                              const char* value) = nullptr;
     const char* (*get_groom_string)(void* user, uint32_t entity,
                                     const char* property) = nullptr;
+
+    // AI components: nav agents, perception, behavior trees, controllers.
+    uint32_t (*find_nav_agent)(void* user) = nullptr;
+    uint32_t (*find_perception)(void* user) = nullptr;
+    uint32_t (*find_behavior_tree)(void* user) = nullptr;
+    uint32_t (*find_ai_controller)(void* user) = nullptr;
+    bool (*set_ai_flag)(void* user, uint32_t entity,
+                        const char* component, const char* property,
+                        bool value) = nullptr;
+    bool (*get_ai_flag)(void* user, uint32_t entity,
+                        const char* component, const char* property,
+                        bool* value) = nullptr;
+    bool (*set_ai_float)(void* user, uint32_t entity,
+                         const char* component, const char* property,
+                         float value) = nullptr;
+    bool (*get_ai_float)(void* user, uint32_t entity,
+                         const char* component, const char* property,
+                         float* value) = nullptr;
+    bool (*set_ai_int)(void* user, uint32_t entity,
+                       const char* component, const char* property,
+                       int value) = nullptr;
+    bool (*get_ai_int)(void* user, uint32_t entity,
+                       const char* component, const char* property,
+                       int* value) = nullptr;
+    bool (*set_ai_vec3)(void* user, uint32_t entity,
+                        const char* component, const char* property,
+                        GaleshiScriptVec3 value) = nullptr;
+    bool (*get_ai_vec3)(void* user, uint32_t entity,
+                        const char* component, const char* property,
+                        GaleshiScriptVec3* value) = nullptr;
+    bool (*set_ai_string)(void* user, uint32_t entity,
+                          const char* component, const char* property,
+                          const char* value) = nullptr;
+    const char* (*get_ai_string)(void* user, uint32_t entity,
+                                 const char* component,
+                                 const char* property) = nullptr;
+
+    bool (*behavior_tree_create_default)(void* user,
+                                         uint32_t entity) = nullptr;
+    uint32_t (*behavior_tree_node_count)(void* user,
+                                         uint32_t entity) = nullptr;
+    int32_t (*behavior_tree_add_node)(void* user, uint32_t entity,
+                                      const char* name, int type,
+                                      int condition, int action) = nullptr;
+    bool (*behavior_tree_add_child)(void* user, uint32_t entity,
+                                    int parent, int child) = nullptr;
+    bool (*behavior_tree_set_root)(void* user, uint32_t entity,
+                                   int root) = nullptr;
+    bool (*behavior_tree_set_node_float)(void* user, uint32_t entity,
+                                         int index, const char* property,
+                                         float value) = nullptr;
+    bool (*behavior_tree_set_node_int)(void* user, uint32_t entity,
+                                       int index, const char* property,
+                                       int value) = nullptr;
+    bool (*behavior_tree_set_node_string)(void* user, uint32_t entity,
+                                          int index, const char* property,
+                                          const char* value) = nullptr;
+    const char* (*behavior_tree_status)(void* user,
+                                        uint32_t entity) = nullptr;
+
+    // Material component and renderer controls.
+    bool (*set_material_float)(void* user, uint32_t entity,
+                               const char* property, float value) = nullptr;
+    bool (*get_material_float)(void* user, uint32_t entity,
+                               const char* property, float* value) = nullptr;
+    bool (*set_material_flag)(void* user, uint32_t entity,
+                              const char* property, bool value) = nullptr;
+    bool (*get_material_flag)(void* user, uint32_t entity,
+                              const char* property, bool* value) = nullptr;
+    bool (*set_material_color)(void* user, uint32_t entity,
+                               const char* property,
+                               GaleshiScriptVec4 value) = nullptr;
+    bool (*get_material_color)(void* user, uint32_t entity,
+                               const char* property,
+                               GaleshiScriptVec4* value) = nullptr;
+    bool (*set_material_texture)(void* user, uint32_t entity,
+                                 const char* slot,
+                                 const char* path) = nullptr;
+    const char* (*get_material_texture)(void* user, uint32_t entity,
+                                        const char* slot) = nullptr;
+
+    uint32_t (*renderer_width)(void* user) = nullptr;
+    uint32_t (*renderer_height)(void* user) = nullptr;
+    bool (*renderer_deferred)(void* user) = nullptr;
+    bool (*set_renderer_deferred)(void* user, bool value) = nullptr;
+    bool (*renderer_lod)(void* user) = nullptr;
+    bool (*set_renderer_lod)(void* user, bool value) = nullptr;
+    bool (*renderer_occlusion)(void* user) = nullptr;
+    bool (*set_renderer_occlusion)(void* user, bool value) = nullptr;
+
+    // Landscape material layers and baking.
+    uint32_t (*landscape_layer_count)(void* user) = nullptr;
+    bool (*landscape_add_layer)(void* user) = nullptr;
+    bool (*landscape_remove_layer)(void* user, int layer) = nullptr;
+    int (*landscape_active_layer)(void* user) = nullptr;
+    bool (*landscape_set_active_layer)(void* user, int layer) = nullptr;
+    bool (*landscape_set_layer_texture)(void* user, int layer,
+                                        const char* slot,
+                                        const char* path) = nullptr;
+    const char* (*landscape_get_layer_texture)(void* user, int layer,
+                                               const char* slot) = nullptr;
+    bool (*landscape_paint_layer)(void* user, int layer, float localX,
+                                  float localZ, float radius,
+                                  float strength, float falloff, float dt,
+                                  bool erase) = nullptr;
+    bool (*landscape_bake)(void* user) = nullptr;
+
+    // Spawn/apply an imported skeletal model. Spawn returns the root entity.
+    uint32_t (*spawn_skeletal_model)(void* user, const char* path,
+                                     const char* name, float x, float y,
+                                     float z) = nullptr;
+    bool (*apply_skeletal_model)(void* user, uint32_t entity,
+                                 const char* path) = nullptr;
+
+    bool (*set_audio_bus)(void* user, const char* name, float volume,
+                          bool muted) = nullptr;
+    float (*get_audio_bus_volume)(void* user, const char* name) = nullptr;
+    bool (*get_audio_bus_muted)(void* user, const char* name) = nullptr;
 };
 
-inline constexpr uint32_t kGaleshiScriptApiVersion = 11;
+inline constexpr uint32_t kGaleshiScriptApiVersion = 17;
 
 inline float GaleshiInterpFactor(float deltaTime, float speed) {
     if (speed <= 0.0f) return 1.0f;

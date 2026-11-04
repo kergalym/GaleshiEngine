@@ -1299,6 +1299,12 @@ protected:
         m_scripts.BindUIState([this]() {
             return m_uiRuntime.IsPointerOverUI();
         });
+        m_scripts.BindUIText(
+            [this](uint32_t canvasEntity, const std::string& canvasId,
+                   const std::string& widgetId) {
+                return m_uiRuntime.TextValue(
+                    static_cast<int>(canvasEntity), canvasId, widgetId);
+            });
 
         m_physics = std::make_unique<Galeshi::EnginePhysicsSystem>();
         m_physics->Init();
@@ -1346,6 +1352,47 @@ protected:
         m_postProcess.Init();
         ConfigureProfilerViewNames();
         m_render->SetDeferredEnabled(true);
+        {
+            Galeshi::ScriptEngine::RenderingBindings rendering;
+            rendering.width = [this]() {
+                const auto* renderer = GetRenderer();
+                return renderer ? renderer->Width() : 0u;
+            };
+            rendering.height = [this]() {
+                const auto* renderer = GetRenderer();
+                return renderer ? renderer->Height() : 0u;
+            };
+            rendering.getDeferred = [this]() {
+                return m_render && m_render->DeferredEnabled();
+            };
+            rendering.setDeferred = [this](bool value) {
+                if (m_render) m_render->SetDeferredEnabled(value);
+            };
+            rendering.getLod = [this]() {
+                return m_render && m_render->LodEnabled();
+            };
+            rendering.setLod = [this](bool value) {
+                if (m_render) m_render->SetLodEnabled(value);
+            };
+            rendering.getOcclusion = [this]() {
+                return m_render && m_render->OcclusionCullingEnabled();
+            };
+            rendering.setOcclusion = [this](bool value) {
+                if (m_render) m_render->SetOcclusionCullingEnabled(value);
+            };
+            m_scripts.BindRendering(rendering);
+        }
+        m_scripts.BindLandscapeBake(
+            [this](uint32_t entityId) {
+                Galeshi::Entity entity(
+                    static_cast<entt::entity>(entityId), &m_scene);
+                if (!entity ||
+                    !entity.HasComponent<
+                        Galeshi::LandscapeComponent>()) {
+                    return false;
+                }
+                return BakeLandscapeTextures(entity);
+            });
         // Enable SSAO/SSR on frame 2 to avoid sampling an uninitialized Vulkan target.
         m_pendingEffectsEnable = true;
         for (int i = 0; i < 3; ++i) {
@@ -8754,9 +8801,9 @@ if (ImGui::BeginMenu("File")) {
         return safe;
     }
 
-    void BakeLandscapeTextures(Galeshi::Entity entity) {
+    bool BakeLandscapeTextures(Galeshi::Entity entity) {
         if (!entity || !entity.HasComponent<Galeshi::LandscapeComponent>()) {
-            return;
+            return false;
         }
         auto& landscape =
             entity.GetComponent<Galeshi::LandscapeComponent>();
@@ -9065,7 +9112,7 @@ if (ImGui::BeginMenu("File")) {
             !SaveLandscapePng(normalPath, outputNormal)) {
             spdlog::error("[Landscape] Failed to write baked textures to {}",
                           texturesDir.string());
-            return;
+            return false;
         }
         auto loadGenerated = [](const std::filesystem::path& path,
                                 bool srgb) {
@@ -9080,7 +9127,7 @@ if (ImGui::BeginMenu("File")) {
                 "[Landscape] Baked files were written but could not be "
                 "loaded from {}",
                 texturesDir.string());
-            return;
+            return false;
         }
         material->albedoMap = std::move(generatedAlbedo);
         material->metallicRoughnessMap = std::move(generatedOrm);
@@ -9104,6 +9151,7 @@ if (ImGui::BeginMenu("File")) {
         landscape.bakedNormalPath = normalPath.string();
         spdlog::info("[Landscape] Baked layer textures to {}",
                      texturesDir.string());
+        return true;
     }
 
     // -------------------------------------------------------------------
