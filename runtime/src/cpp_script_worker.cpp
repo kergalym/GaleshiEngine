@@ -6,10 +6,260 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstddef>
 #include <cstring>
 #include <exception>
 #include <string>
 #include <vector>
+
+#if defined(__linux__)
+#include <cerrno>
+#include <linux/audit.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <sched.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#endif
+
+namespace {
+
+#if defined(__linux__)
+void TryIsolateNamespaces() {
+    // Best-effort: unprivileged network/IPC/UTS isolation. Seccomp below also
+    // blocks network syscalls even when namespaces are unavailable.
+    if (unshare(CLONE_NEWNET | CLONE_NEWIPC | CLONE_NEWUTS) != 0) {
+        std::fprintf(stderr,
+                     "[ScriptWorker] namespace isolation unavailable: %s\n",
+                     std::strerror(errno));
+    }
+}
+
+void BlockSyscall(std::vector<sock_filter>& filter, int syscallNumber) {
+    filter.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                              static_cast<uint32_t>(syscallNumber), 0, 1));
+    filter.push_back(BPF_STMT(
+        BPF_RET | BPF_K,
+        SECCOMP_RET_ERRNO | (EPERM & SECCOMP_RET_DATA)));
+}
+
+void InstallSeccompFilter() {
+    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
+        std::fprintf(stderr,
+                     "[ScriptWorker] no_new_privs failed: %s\n",
+                     std::strerror(errno));
+        return;
+    }
+
+    std::vector<sock_filter> filter;
+    filter.push_back(BPF_STMT(
+        BPF_LD | BPF_W | BPF_ABS,
+        static_cast<uint32_t>(offsetof(struct seccomp_data, arch))));
+#if defined(__x86_64__)
+    constexpr uint32_t kNativeArch = AUDIT_ARCH_X86_64;
+#elif defined(__aarch64__)
+    constexpr uint32_t kNativeArch = AUDIT_ARCH_AARCH64;
+#else
+    constexpr uint32_t kNativeArch = 0;
+#endif
+    filter.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K,
+                              kNativeArch, 1, 0));
+    filter.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
+    filter.push_back(BPF_STMT(
+        BPF_LD | BPF_W | BPF_ABS,
+        static_cast<uint32_t>(offsetof(struct seccomp_data, nr))));
+
+    // Block process creation, signals to the parent, networking and dangerous
+    // kernel attack surface. The script API does not need any of these.
+#define GALESHI_BLOCK(syscall_name) \
+    BlockSyscall(filter, SYS_##syscall_name)
+#if defined(SYS_execve)
+    GALESHI_BLOCK(execve);
+#endif
+#if defined(SYS_execveat)
+    GALESHI_BLOCK(execveat);
+#endif
+#if defined(SYS_fork)
+    GALESHI_BLOCK(fork);
+#endif
+#if defined(SYS_vfork)
+    GALESHI_BLOCK(vfork);
+#endif
+#if defined(SYS_clone)
+    GALESHI_BLOCK(clone);
+#endif
+#if defined(SYS_clone3)
+    GALESHI_BLOCK(clone3);
+#endif
+#if defined(SYS_socket)
+    GALESHI_BLOCK(socket);
+#endif
+#if defined(SYS_socketpair)
+    GALESHI_BLOCK(socketpair);
+#endif
+#if defined(SYS_connect)
+    GALESHI_BLOCK(connect);
+#endif
+#if defined(SYS_bind)
+    GALESHI_BLOCK(bind);
+#endif
+#if defined(SYS_listen)
+    GALESHI_BLOCK(listen);
+#endif
+#if defined(SYS_accept)
+    GALESHI_BLOCK(accept);
+#endif
+#if defined(SYS_accept4)
+    GALESHI_BLOCK(accept4);
+#endif
+#if defined(SYS_sendto)
+    GALESHI_BLOCK(sendto);
+#endif
+#if defined(SYS_sendmsg)
+    GALESHI_BLOCK(sendmsg);
+#endif
+#if defined(SYS_recvfrom)
+    GALESHI_BLOCK(recvfrom);
+#endif
+#if defined(SYS_recvmsg)
+    GALESHI_BLOCK(recvmsg);
+#endif
+#if defined(SYS_sendmmsg)
+    GALESHI_BLOCK(sendmmsg);
+#endif
+#if defined(SYS_recvmmsg)
+    GALESHI_BLOCK(recvmmsg);
+#endif
+#if defined(SYS_ptrace)
+    GALESHI_BLOCK(ptrace);
+#endif
+#if defined(SYS_process_vm_readv)
+    GALESHI_BLOCK(process_vm_readv);
+#endif
+#if defined(SYS_process_vm_writev)
+    GALESHI_BLOCK(process_vm_writev);
+#endif
+#if defined(SYS_mount)
+    GALESHI_BLOCK(mount);
+#endif
+#if defined(SYS_umount2)
+    GALESHI_BLOCK(umount2);
+#endif
+#if defined(SYS_pivot_root)
+    GALESHI_BLOCK(pivot_root);
+#endif
+#if defined(SYS_chroot)
+    GALESHI_BLOCK(chroot);
+#endif
+#if defined(SYS_setns)
+    GALESHI_BLOCK(setns);
+#endif
+#if defined(SYS_unshare)
+    GALESHI_BLOCK(unshare);
+#endif
+#if defined(SYS_bpf)
+    GALESHI_BLOCK(bpf);
+#endif
+#if defined(SYS_perf_event_open)
+    GALESHI_BLOCK(perf_event_open);
+#endif
+#if defined(SYS_userfaultfd)
+    GALESHI_BLOCK(userfaultfd);
+#endif
+#if defined(SYS_keyctl)
+    GALESHI_BLOCK(keyctl);
+#endif
+#if defined(SYS_add_key)
+    GALESHI_BLOCK(add_key);
+#endif
+#if defined(SYS_request_key)
+    GALESHI_BLOCK(request_key);
+#endif
+#if defined(SYS_init_module)
+    GALESHI_BLOCK(init_module);
+#endif
+#if defined(SYS_finit_module)
+    GALESHI_BLOCK(finit_module);
+#endif
+#if defined(SYS_delete_module)
+    GALESHI_BLOCK(delete_module);
+#endif
+#if defined(SYS_reboot)
+    GALESHI_BLOCK(reboot);
+#endif
+#if defined(SYS_swapon)
+    GALESHI_BLOCK(swapon);
+#endif
+#if defined(SYS_swapoff)
+    GALESHI_BLOCK(swapoff);
+#endif
+#if defined(SYS_kexec_load)
+    GALESHI_BLOCK(kexec_load);
+#endif
+#if defined(SYS_kexec_file_load)
+    GALESHI_BLOCK(kexec_file_load);
+#endif
+#if defined(SYS_open_by_handle_at)
+    GALESHI_BLOCK(open_by_handle_at);
+#endif
+#if defined(SYS_name_to_handle_at)
+    GALESHI_BLOCK(name_to_handle_at);
+#endif
+#if defined(SYS_pidfd_open)
+    GALESHI_BLOCK(pidfd_open);
+#endif
+#if defined(SYS_pidfd_getfd)
+    GALESHI_BLOCK(pidfd_getfd);
+#endif
+#if defined(SYS_pidfd_send_signal)
+    GALESHI_BLOCK(pidfd_send_signal);
+#endif
+#if defined(SYS_kill)
+    GALESHI_BLOCK(kill);
+#endif
+#if defined(SYS_tkill)
+    GALESHI_BLOCK(tkill);
+#endif
+#if defined(SYS_tgkill)
+    GALESHI_BLOCK(tgkill);
+#endif
+#if defined(SYS_setuid)
+    GALESHI_BLOCK(setuid);
+#endif
+#if defined(SYS_setgid)
+    GALESHI_BLOCK(setgid);
+#endif
+#if defined(SYS_setreuid)
+    GALESHI_BLOCK(setreuid);
+#endif
+#if defined(SYS_setregid)
+    GALESHI_BLOCK(setregid);
+#endif
+#if defined(SYS_setresuid)
+    GALESHI_BLOCK(setresuid);
+#endif
+#if defined(SYS_setresgid)
+    GALESHI_BLOCK(setresgid);
+#endif
+#if defined(SYS_setgroups)
+    GALESHI_BLOCK(setgroups);
+#endif
+#undef GALESHI_BLOCK
+
+    filter.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
+    sock_fprog program{};
+    program.len = static_cast<unsigned short>(filter.size());
+    program.filter = filter.data();
+    if (syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, 0, &program) != 0) {
+        std::fprintf(stderr,
+                     "[ScriptWorker] seccomp filter failed: %s\n",
+                     std::strerror(errno));
+    }
+}
+#endif
+
+} // namespace
+
 
 namespace {
 
@@ -290,6 +540,10 @@ private:
 } // namespace
 
 int main() {
+#if defined(__linux__)
+    TryIsolateNamespaces();
+    InstallSeccompFilter();
+#endif
     ScriptWorker worker;
     return worker.Run();
 }

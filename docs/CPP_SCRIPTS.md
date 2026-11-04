@@ -39,3 +39,8 @@ compiler runs in a child process and is stopped after 30 seconds. Compile
 diagnostics appear in the Code Editor **Output** and **Errors** tabs; invalid
 modules are never loaded, and the last successfully loaded module keeps
 running.
+
+On Linux, the worker additionally installs a seccomp deny-list for process
+creation, signalling, networking and kernel-management syscalls, and attempts
+network/IPC/UTS namespace isolation. Namespace setup is best-effort; seccomp
+still applies when unprivileged namespaces are unavailable.
