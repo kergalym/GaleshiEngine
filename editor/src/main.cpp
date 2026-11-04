@@ -11558,6 +11558,20 @@ void DrawDetails() {
         m_codeEditorSyntaxDirty = false;
     }
 
+    std::string CodeEditorErrorsText() const {
+        std::string errors = m_codeEditorSyntaxErrors;
+        const std::string& buildErrors = m_scripts.GetCppBuildErrors();
+        if (!buildErrors.empty() &&
+            (m_currentCodeFile.empty() ||
+             IsCppCodeAssetPath(m_currentCodeFile))) {
+            if (!errors.empty()) {
+                errors += "\n--- C++ build ---\n";
+            }
+            errors += buildErrors;
+        }
+        return errors;
+    }
+
     void DrawCodeEditor() {
         ImGui::Begin("Code Editor");
         const std::string chosenCodeFile = m_codeFilePicker.Draw();
@@ -11694,18 +11708,27 @@ void DrawDetails() {
                                 m_scripts.GetCppBuildOutput(), false);
                 ImGui::EndTabItem();
             }
-            if (ImGui::BeginTabItem("Errors", nullptr, selectFlag(2))) {
+            const std::string errors = CodeEditorErrorsText();
+            const bool hasErrors = !errors.empty();
+            if (hasErrors) {
+                ImGui::PushStyleColor(ImGuiCol_Text,
+                                      ImVec4(1.0f, 0.45f, 0.42f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Tab,
+                                      ImVec4(0.35f, 0.06f, 0.06f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_TabHovered,
+                                      ImVec4(0.55f, 0.10f, 0.10f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_TabSelected,
+                                      ImVec4(0.60f, 0.12f, 0.12f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_TabDimmed,
+                                      ImVec4(0.28f, 0.05f, 0.05f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_TabDimmedSelected,
+                                      ImVec4(0.45f, 0.08f, 0.08f, 1.0f));
+            }
+            const bool errorsTabOpen =
+                ImGui::BeginTabItem("Errors", nullptr, selectFlag(2));
+            if (hasErrors) ImGui::PopStyleColor(6);
+            if (errorsTabOpen) {
                 m_codeEditorTabRequest = -1;
-                std::string errors = m_codeEditorSyntaxErrors;
-                const std::string& buildErrors = m_scripts.GetCppBuildErrors();
-                if (!buildErrors.empty() &&
-                    (m_currentCodeFile.empty() ||
-                     IsCppCodeAssetPath(m_currentCodeFile))) {
-                    if (!errors.empty()) {
-                        errors += "\n--- C++ build ---\n";
-                    }
-                    errors += buildErrors;
-                }
                 drawDiagnostics("CodeEditorErrors", errors, true);
                 ImGui::EndTabItem();
             }
