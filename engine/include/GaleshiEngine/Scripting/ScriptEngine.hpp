@@ -90,6 +90,12 @@ public:
     // Scans project scripts/ and assets/scripts/ for .cpp modules, rebuilds
     // changed sources, and swaps loaded libraries in place.
     bool ReloadCppScripts(bool force = false);
+    // Diagnostics for the Code Editor tabs. Errors contain compiler
+    // stderr (syntax, missing includes, link failures); output contains
+    // build/load status.
+    const std::string& GetCppBuildOutput() const { return m_cppBuildOutput; }
+    const std::string& GetCppBuildErrors() const { return m_cppBuildErrors; }
+    bool HasCppBuildErrors() const { return !m_cppBuildErrors.empty(); }
     void Update(float dt);
 
     sol::state& GetState() { return m_lua; }
@@ -173,6 +179,8 @@ private:
     std::unordered_map<std::string, std::filesystem::file_time_type>
         m_cppFailures;
     std::chrono::steady_clock::time_point m_nextCppScan{};
+    std::string m_cppBuildOutput;
+    std::string m_cppBuildErrors;
 
     std::vector<std::string> m_logs;
     bool m_runOnceInvoked = false;

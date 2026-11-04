@@ -11470,6 +11470,7 @@ void DrawDetails() {
     void OpenCodeFile(const std::string& path) {
         m_currentCodeFile = path;
         m_codeEditorCppMode = IsCppCodeAssetPath(path);
+        m_codeEditorTabRequest = 0;
         m_codeEditor.SetLanguageDefinition(
             m_codeEditorCppMode
                 ? TextEditor::LanguageDefinition::CPlusPlus()
@@ -11497,69 +11498,127 @@ void DrawDetails() {
                 "-- Select a .lua or .cpp file from Content Browser");
             m_codeEditorInitialized = true;
         }
-        if (ImGui::Button("Open...")) {
-            std::filesystem::path start =
-                Galeshi::ProjectManager::GetProjectPath();
-            if (start.empty()) start = std::filesystem::current_path();
-            start /= "scripts";
-            if (!std::filesystem::is_directory(start)) {
-                start = std::filesystem::path(
-                    Galeshi::ProjectManager::GetProjectPath()) / "assets/scripts";
+
+        auto drawDiagnostics = [](const char* childId,
+                                  const std::string& text,
+                                  bool errorText) {
+            if (text.empty()) {
+                ImGui::TextDisabled(errorText ? "No C++ errors."
+                                              : "No C++ build output.");
+                return;
             }
-            if (!std::filesystem::is_directory(start)) {
-                start = std::filesystem::current_path() / "assets/scripts";
+            if (errorText) {
+                ImGui::PushStyleColor(ImGuiCol_Text,
+                                      ImVec4(1.0f, 0.52f, 0.48f, 1.0f));
             }
-            m_codeFilePicker.Open(start.string(), "Open Code File",
-                                  {".lua", ".cpp", ".cc", ".cxx",
-                                   ".hpp", ".h"});
-        }
-        ImGui::SameLine();
-        if (m_currentCodeFile.empty()) {
-            ImGui::TextDisabled(
-                "No file opened. Double-click a .lua or .cpp file in "
-                "Content Browser, or use Open...");
-        } else {
-            const bool cppFile = IsCppCodeAssetPath(m_currentCodeFile);
-            if (ImGui::Checkbox("C++ mode", &m_codeEditorCppMode)) {
-                m_codeEditor.SetLanguageDefinition(
-                    m_codeEditorCppMode
-                        ? TextEditor::LanguageDefinition::CPlusPlus()
-                        : TextEditor::LanguageDefinition::Lua());
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Save")) {
-                std::ofstream out(m_currentCodeFile);
-                if (out.is_open()) {
-                    out << m_codeEditor.GetText();
-                    out.close();
-                    spdlog::info("[Editor] Saved code file: {}",
-                                 std::filesystem::absolute(m_currentCodeFile).string());
-                    if (cppFile) {
-                        m_scripts.ReloadCppScripts(true);
+            ImGui::BeginChild(childId, ImVec2(0, 0), false,
+                              ImGuiWindowFlags_HorizontalScrollbar);
+            ImGui::TextUnformatted(text.c_str());
+            ImGui::EndChild();
+            if (errorText) ImGui::PopStyleColor();
+        };
+
+        if (ImGui::BeginTabBar("CodeEditorTabs",
+                               ImGuiTabBarFlags_Reorderable)) {
+            const auto selectFlag = [this](int tab) {
+                return m_codeEditorTabRequest == tab
+                    ? ImGuiTabItemFlags_SetSelected
+                    : ImGuiTabItemFlags_None;
+            };
+            if (ImGui::BeginTabItem("Code", nullptr, selectFlag(0))) {
+                m_codeEditorTabRequest = -1;
+                if (ImGui::Button("Open...")) {
+                    std::filesystem::path start =
+                        Galeshi::ProjectManager::GetProjectPath();
+                    if (start.empty()) start = std::filesystem::current_path();
+                    start /= "scripts";
+                    if (!std::filesystem::is_directory(start)) {
+                        start = std::filesystem::path(
+                            Galeshi::ProjectManager::GetProjectPath()) /
+                            "assets/scripts";
                     }
-                } else {
-                    spdlog::error("[Editor] FAILED to open file for saving: {}",
-                                  m_currentCodeFile);
+                    if (!std::filesystem::is_directory(start)) {
+                        start = std::filesystem::current_path() /
+                                "assets/scripts";
+                    }
+                    m_codeFilePicker.Open(
+                        start.string(), "Open Code File",
+                        {".lua", ".cpp", ".cc", ".cxx", ".hpp", ".h"});
                 }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Reload")) {
-                if (cppFile) {
-                    m_scripts.ReloadCppScripts(true);
-                } else if (m_scripts.HotReload(m_currentCodeFile)) {
-                    spdlog::info("[Editor] Reloaded {}", m_currentCodeFile);
-                }
-            }
-            if (cppFile) {
                 ImGui::SameLine();
-                if (ImGui::Button("Compile C++")) {
-                    m_scripts.ReloadCppScripts(true);
+                if (m_currentCodeFile.empty()) {
+                    ImGui::TextDisabled(
+                        "No file opened. Double-click a .lua or .cpp file in "
+                        "Content Browser, or use Open...");
+                } else {
+                    const bool cppFile =
+                        IsCppCodeAssetPath(m_currentCodeFile);
+                    if (ImGui::Checkbox("C++ mode", &m_codeEditorCppMode)) {
+                        m_codeEditor.SetLanguageDefinition(
+                            m_codeEditorCppMode
+                                ? TextEditor::LanguageDefinition::CPlusPlus()
+                                : TextEditor::LanguageDefinition::Lua());
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Save")) {
+                        std::ofstream out(m_currentCodeFile);
+                        if (out.is_open()) {
+                            out << m_codeEditor.GetText();
+                            out.close();
+                            spdlog::info(
+                                "[Editor] Saved code file: {}",
+                                std::filesystem::absolute(
+                                    m_currentCodeFile).string());
+                            if (cppFile) {
+                                if (!m_scripts.ReloadCppScripts(true)) {
+                                    m_codeEditorTabRequest = 2;
+                                }
+                            }
+                        } else {
+                            spdlog::error(
+                                "[Editor] FAILED to open file for saving: {}",
+                                m_currentCodeFile);
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reload")) {
+                        if (cppFile) {
+                            if (!m_scripts.ReloadCppScripts(true)) {
+                                m_codeEditorTabRequest = 2;
+                            }
+                        } else if (m_scripts.HotReload(m_currentCodeFile)) {
+                            spdlog::info("[Editor] Reloaded {}",
+                                         m_currentCodeFile);
+                        }
+                    }
+                    if (cppFile) {
+                        ImGui::SameLine();
+                        if (ImGui::Button("Compile C++")) {
+                            if (!m_scripts.ReloadCppScripts(true)) {
+                                m_codeEditorTabRequest = 2;
+                            }
+                        }
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%s", m_currentCodeFile.c_str());
+                    ImGui::Separator();
+                    m_codeEditor.Render("CodeEditor");
                 }
+                ImGui::EndTabItem();
             }
-            ImGui::SameLine();
-            ImGui::TextDisabled("%s", m_currentCodeFile.c_str());
-            ImGui::Separator();
-            m_codeEditor.Render("CodeEditor");
+            if (ImGui::BeginTabItem("Output", nullptr, selectFlag(1))) {
+                m_codeEditorTabRequest = -1;
+                drawDiagnostics("CodeEditorOutput",
+                                m_scripts.GetCppBuildOutput(), false);
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Errors", nullptr, selectFlag(2))) {
+                m_codeEditorTabRequest = -1;
+                drawDiagnostics("CodeEditorErrors",
+                                m_scripts.GetCppBuildErrors(), true);
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
         }
         ImGui::End();
     }
@@ -13005,6 +13064,7 @@ void DrawDetails() {
     std::string m_currentCodeFile;
     bool m_codeEditorInitialized = false;
     bool m_codeEditorCppMode = false;
+    int  m_codeEditorTabRequest = -1;
 
     std::vector<std::string> m_history;
     int  m_historyIndex = -1;

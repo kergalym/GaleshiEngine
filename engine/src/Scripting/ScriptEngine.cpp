@@ -12,6 +12,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <limits>
 #include <map>
@@ -21,6 +22,8 @@
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <dlfcn.h>
+#include <poll.h>
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -185,9 +188,24 @@ bool CompileCppScript(const std::filesystem::path& source,
 
     close(pipeFds[1]);
     char buffer[4096];
-    ssize_t count = 0;
-    while ((count = read(pipeFds[0], buffer, sizeof(buffer))) > 0) {
-        compilerOutput.append(buffer, static_cast<std::size_t>(count));
+    bool timedOut = false;
+    while (true) {
+        pollfd descriptor{pipeFds[0], POLLIN, 0};
+        const int ready = poll(&descriptor, 1, 30000);
+        if (ready == 0) {
+            compilerOutput += "\nCompiler timed out after 30 seconds.";
+            kill(pid, SIGKILL);
+            timedOut = true;
+            break;
+        }
+        if (ready < 0) break;
+        if ((descriptor.revents & (POLLIN | POLLHUP)) == 0) break;
+        const ssize_t count = read(pipeFds[0], buffer, sizeof(buffer));
+        if (count > 0) {
+            compilerOutput.append(buffer, static_cast<std::size_t>(count));
+        } else {
+            break;
+        }
     }
     close(pipeFds[0]);
 
@@ -196,7 +214,7 @@ bool CompileCppScript(const std::filesystem::path& source,
         compilerOutput += "\nCould not wait for compiler process";
         return false;
     }
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    return !timedOut && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 #else
 bool CompileCppScript(const std::filesystem::path&,
@@ -2319,7 +2337,24 @@ bool ScriptEngine::ReloadCppScripts(bool force) {
         "engine/include";
 #endif
 
+    if (force) {
+        m_cppBuildOutput.clear();
+        m_cppBuildErrors.clear();
+    }
+    if (force && sources.empty()) {
+        m_cppBuildOutput = "No C++ scripts found in scripts/ or assets/scripts/.";
+    }
+
     bool allSucceeded = true;
+    bool buildStarted = false;
+    auto beginBuild = [&] {
+        if (buildStarted) return;
+        buildStarted = true;
+        if (!force) {
+            m_cppBuildOutput.clear();
+            m_cppBuildErrors.clear();
+        }
+    };
     for (const auto& [pathKey, source] : sources) {
         std::error_code timeEc;
         const auto writeTime = fs::last_write_time(source, timeEc);
@@ -2344,10 +2379,19 @@ bool ScriptEngine::ReloadCppScripts(bool force) {
         std::error_code removeEc;
         fs::remove(output, removeEc);
 
+        beginBuild();
+        m_cppBuildOutput += "Compiling " + pathKey + "\n";
+
         std::string compilerOutput;
         if (!CompileCppScript(source, output, includeRoot, projectRoot,
                               compilerOutput)) {
+            const std::string message = compilerOutput.empty()
+                ? "Compiler exited without diagnostics."
+                : compilerOutput;
+            m_cppBuildErrors += "=== " + pathKey + " ===\n" + message + "\n";
+            m_cppBuildOutput += "FAILED " + pathKey + "\n";
             if (!compilerOutput.empty()) {
+                m_cppBuildOutput += compilerOutput;
                 AddLog("C++ compile error in " + pathKey + ":\n" +
                        compilerOutput);
             } else {
@@ -2360,10 +2404,16 @@ bool ScriptEngine::ReloadCppScripts(bool force) {
             allSucceeded = false;
             continue;
         }
+        if (!compilerOutput.empty()) {
+            m_cppBuildOutput += compilerOutput;
+        }
 
         void* library = dlopen(output.string().c_str(), RTLD_NOW | RTLD_LOCAL);
         if (!library) {
-            AddLog("C++ load error in " + pathKey + ": " + dlerror());
+            const std::string message = dlerror();
+            m_cppBuildErrors += "=== " + pathKey + " ===\n" + message + "\n";
+            m_cppBuildOutput += "FAILED to load " + pathKey + "\n";
+            AddLog("C++ load error in " + pathKey + ": " + message);
             m_cppFailures[pathKey] = writeTime;
             allSucceeded = false;
             continue;
@@ -2373,6 +2423,10 @@ bool ScriptEngine::ReloadCppScripts(bool force) {
         auto updateFn = reinterpret_cast<GaleshiScriptUpdateFn>(
             dlsym(library, "GaleshiScriptUpdate"));
         if (!registerFn || !updateFn) {
+            const std::string message =
+                "Missing GaleshiScriptRegister/GaleshiScriptUpdate exports.";
+            m_cppBuildErrors += "=== " + pathKey + " ===\n" + message + "\n";
+            m_cppBuildOutput += "FAILED " + pathKey + "\n";
             AddLog("C++ script missing exports: " + pathKey +
                    " (expected GaleshiScriptRegister/GaleshiScriptUpdate)");
             dlclose(library);
@@ -2381,7 +2435,26 @@ bool ScriptEngine::ReloadCppScripts(bool force) {
             continue;
         }
 
-        registerFn(&m_cppApi);
+        try {
+            registerFn(&m_cppApi);
+        } catch (const std::exception& error) {
+            const std::string message =
+                std::string("Register exception: ") + error.what();
+            m_cppBuildErrors += "=== " + pathKey + " ===\n" + message + "\n";
+            m_cppBuildOutput += "FAILED " + pathKey + "\n";
+            dlclose(library);
+            m_cppFailures[pathKey] = writeTime;
+            allSucceeded = false;
+            continue;
+        } catch (...) {
+            m_cppBuildErrors += "=== " + pathKey +
+                " ===\nRegister threw an unknown exception.\n";
+            m_cppBuildOutput += "FAILED " + pathKey + "\n";
+            dlclose(library);
+            m_cppFailures[pathKey] = writeTime;
+            allSucceeded = false;
+            continue;
+        }
         if (moduleIt != m_cppModules.end() && moduleIt->second.library) {
             dlclose(moduleIt->second.library);
         }
@@ -2392,6 +2465,7 @@ bool ScriptEngine::ReloadCppScripts(bool force) {
         module.update = updateFn;
         m_cppModules[pathKey] = std::move(module);
         m_cppFailures.erase(pathKey);
+        m_cppBuildOutput += "Loaded " + pathKey + "\n";
         AddLog("Loaded C++ script: " + pathKey);
     }
     return allSucceeded;
@@ -2406,7 +2480,17 @@ void ScriptEngine::UpdateCppScripts(float dt) {
     }
     for (auto& [path, module] : m_cppModules) {
         (void)path;
-        if (module.update) module.update(dt);
+        if (!module.update) continue;
+        try {
+            module.update(dt);
+        } catch (const std::exception& error) {
+            AddLog(std::string("C++ script exception in ") + path + ": " +
+                   error.what());
+            module.update = nullptr;
+        } catch (...) {
+            AddLog("C++ script threw an unknown exception: " + path);
+            module.update = nullptr;
+        }
     }
 }
 

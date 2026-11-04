@@ -33,6 +33,8 @@ The API provides logging, input, entity lookup/validation, position and physics
 velocity access, plus `FInterp` and `VInterp`. Scripts are intentionally
 compiled with a stable C ABI so the engine can be rebuilt independently.
 
-Compilation uses `g++` by default; set `CXX` to override the compiler. Compile
-errors appear in the output log while the last successfully loaded module keeps
+Compilation uses `g++` by default; set `CXX` to override the compiler. The
+compiler runs in a child process and is stopped after 30 seconds. Compile
+diagnostics appear in the Code Editor **Output** and **Errors** tabs; invalid
+modules are never loaded, and the last successfully loaded module keeps
 running.
