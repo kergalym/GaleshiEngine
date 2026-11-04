@@ -323,6 +323,8 @@ public:
         m_api.get_camera_forward = &ScriptWorker::GetCameraForward;
         m_api.get_camera_right = &ScriptWorker::GetCameraRight;
         m_api.get_camera_movement = &ScriptWorker::GetCameraMovement;
+        m_api.get_player_strafing = &ScriptWorker::GetPlayerStrafing;
+        m_api.set_player_strafing = &ScriptWorker::SetPlayerStrafing;
     }
 
     ~ScriptWorker() {
@@ -595,6 +597,20 @@ private:
             movement.z /= length;
         }
         return movement;
+    }
+
+    static bool GetPlayerStrafing(void* user) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::GetPlayerStrafing, UINT32_MAX)
+            .valid != 0;
+    }
+
+    static void SetPlayerStrafing(void* user, bool enabled) {
+        if (!user) return;
+        static_cast<ScriptWorker*>(user)->Request(
+            CppWorkerRequest::SetPlayerStrafing,
+            enabled ? 1u : 0u);
     }
 
     int m_protocolOut = STDOUT_FILENO;

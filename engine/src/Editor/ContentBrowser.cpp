@@ -80,6 +80,7 @@ end
 -- Assign this file in Edit -> Scripts, or use it as the main script.
 local playerName = "Player"
 local moveSpeed = 8.0
+local turnSpeed = 120.0
 local jumpImpulse = 8.0
 local player = nil
 
@@ -98,12 +99,33 @@ function RunAlways(dt)
     end
 
     local velocity = Galeshi.physics.get_velocity(player)
-    -- Movement is relative to the current player camera orientation.
-    local move = Galeshi.camera.movement(
-        Galeshi.input.axis("Horizontal"),
-        Galeshi.input.axis("Vertical"))
-    Galeshi.physics.set_velocity(
-        player, move.x * moveSpeed, velocity.y, move.z * moveSpeed)
+    local horizontal = Galeshi.input.axis("Horizontal")
+    local vertical = Galeshi.input.axis("Vertical")
+    local strafing = Galeshi.player.strafing()
+    local forward = Galeshi.camera.forward()
+    local vx, vz = 0.0, 0.0
+
+    if math.abs(vertical) > 0.001 then
+        -- W/S face the character along the camera direction.
+        player:set_euler(
+            0.0, math.deg(math.atan(forward.x, forward.z)), 0.0)
+        vx = forward.x * vertical * moveSpeed
+        vz = forward.z * vertical * moveSpeed
+    elseif not strafing and math.abs(horizontal) > 0.001 then
+        local rotation = player:rotation()
+        local yaw = math.deg(2.0 * math.atan(rotation.y, rotation.w))
+        player:set_euler(
+            0.0, yaw - horizontal * turnSpeed * dt, 0.0)
+    end
+
+    if strafing then
+        -- A/D move sideways instead of turning.
+        local move = Galeshi.camera.movement(horizontal, vertical)
+        vx = move.x * moveSpeed
+        vz = move.z * moveSpeed
+    end
+
+    Galeshi.physics.set_velocity(player, vx, velocity.y, vz)
 
     if Galeshi.input.axis("Jump") > 0.5 and math.abs(velocity.y) < 0.5 then
         Galeshi.physics.add_impulse(player, 0.0, jumpImpulse, 0.0)

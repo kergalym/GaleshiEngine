@@ -50,6 +50,9 @@ struct GaleshiScriptApi {
     GaleshiScriptVec3 (*get_camera_movement)(void* user,
                                               float horizontal,
                                               float vertical) = nullptr;
+
+    bool (*get_player_strafing)(void* user) = nullptr;
+    void (*set_player_strafing)(void* user, bool enabled) = nullptr;
 };
 
 inline float GaleshiInterpFactor(float deltaTime, float speed) {

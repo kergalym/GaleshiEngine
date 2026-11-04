@@ -551,6 +551,7 @@ void ScriptEngine::BuildApi() {
     sol::table particles = m_lua.create_table();
     sol::table engine = m_lua.create_table();
     sol::table camera = m_lua.create_table();
+    sol::table player = m_lua.create_table();
     m_api["world"] = world;
     m_api["input"] = input;
     m_api["physics"] = physics;
@@ -562,6 +563,7 @@ void ScriptEngine::BuildApi() {
     m_api["particles"] = particles;
     m_api["engine"] = engine;
     m_api["camera"] = camera;
+    m_api["player"] = player;
 
     // ------------------------------------------------------------------
     // Entity handle helpers.  Handles are lightweight Lua tables with an
@@ -2141,6 +2143,19 @@ void ScriptEngine::BuildApi() {
     m_lua.set_function("get_camera_right", cameraRight);
     m_lua.set_function("get_camera_movement", cameraMovement);
 
+    const auto playerStrafing = [this]() {
+        return m_getPlayerStrafing ? m_getPlayerStrafing() : false;
+    };
+    const auto setPlayerStrafing = [this](bool enabled) {
+        if (!m_setPlayerStrafing) return false;
+        m_setPlayerStrafing(enabled);
+        return true;
+    };
+    player["strafing"] = playerStrafing;
+    player["set_strafing"] = setPlayerStrafing;
+    m_lua.set_function("is_player_strafing", playerStrafing);
+    m_lua.set_function("set_player_strafing", setPlayerStrafing);
+
     // Explicitly release the temporary tables; all bound functions are owned
     // by the Lua state / m_api now.
     (void)world;
@@ -2154,6 +2169,7 @@ void ScriptEngine::BuildApi() {
     (void)particles;
     (void)engine;
     (void)camera;
+    (void)player;
 }
 
 CppWorkerPacket ScriptEngine::MakeWorkerResponse(
@@ -2268,6 +2284,17 @@ CppWorkerPacket ScriptEngine::MakeWorkerResponse(
             response.x = value.x;
             response.y = value.y;
             response.z = value.z;
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::GetPlayerStrafing:
+        if (m_getPlayerStrafing) {
+            response.valid = m_getPlayerStrafing() ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::SetPlayerStrafing:
+        if (m_setPlayerStrafing) {
+            m_setPlayerStrafing(request.entity != 0);
             response.valid = 1;
         }
         break;
@@ -2605,6 +2632,13 @@ void ScriptEngine::BindCamera(std::function<bool(int)> setMode,
     m_getCameraMode = std::move(getMode);
     m_getCameraForward = std::move(getForward);
     m_getCameraRight = std::move(getRight);
+}
+
+void ScriptEngine::BindPlayer(std::function<bool()> getStrafing,
+                              std::function<void(bool)> setStrafing) {
+    BuildApi();
+    m_getPlayerStrafing = std::move(getStrafing);
+    m_setPlayerStrafing = std::move(setStrafing);
 }
 
 bool ScriptEngine::CheckCppSyntax(const std::string& source,

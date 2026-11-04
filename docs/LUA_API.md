@@ -122,6 +122,16 @@ The legacy aliases `set_camera_mode(mode)`, `get_camera_mode()`,
 also available. The host must bind a gameplay camera; the editor does this
 automatically.
 
+### `Galeshi.player`
+
+```lua
+Galeshi.player.strafing()        -- A/D moves sideways when true
+Galeshi.player.set_strafing(true)
+```
+
+When strafing is disabled, A/D turns the player; W/S faces the player along
+the camera direction. The Camera inspector exposes the same toggle.
+
 ### `Galeshi.physics`
 
 Physics objects are ECS entities.  The host application creates the native

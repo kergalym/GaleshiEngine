@@ -41,13 +41,17 @@ const int mode = g_api->get_camera_mode(g_api->user);
 
 const GaleshiScriptVec3 move =
     g_api->get_camera_movement(g_api->user, horizontal, vertical);
+
+g_api->set_player_strafing(g_api->user, true);
+const bool strafing = g_api->get_player_strafing(g_api->user);
 ```
 
 Camera mode changes apply to the current player camera.
 `get_camera_forward()` and `get_camera_right()` expose the horizontal camera
 basis; `get_camera_movement()` combines them into a camera-relative direction
 with length at most 1. Hosts without a gameplay camera leave the mode flag at
-`GALESHI_CAMERA_THIRD_PERSON`.
+`GALESHI_CAMERA_THIRD_PERSON`. With strafing disabled, A/D turns the player;
+with it enabled, A/D moves sideways.
 
 Compilation uses `g++` by default; set `CXX` to override the compiler. The
 compiler runs in a child process and is stopped after 30 seconds. Compile

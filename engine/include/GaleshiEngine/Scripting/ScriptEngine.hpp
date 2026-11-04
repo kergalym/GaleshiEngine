@@ -88,6 +88,8 @@ public:
                     std::function<int()> getMode,
                     std::function<glm::vec3()> getForward = {},
                     std::function<glm::vec3()> getRight = {});
+    void BindPlayer(std::function<bool()> getStrafing,
+                    std::function<void(bool)> setStrafing);
 
     void RunAIScripts(Scene& scene, float dt);
     void ClearLuaEntities();
@@ -165,6 +167,8 @@ private:
     std::function<int()> m_getCameraMode;
     std::function<glm::vec3()> m_getCameraForward;
     std::function<glm::vec3()> m_getCameraRight;
+    std::function<bool()> m_getPlayerStrafing;
+    std::function<void(bool)> m_setPlayerStrafing;
 
     std::unordered_map<std::string, sol::protected_function> m_uiHandlers;
 

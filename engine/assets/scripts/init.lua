@@ -35,6 +35,7 @@ function RunAlways(dt)
     end
 
     local speed = 10.0
+    local turn_speed = 120.0
     local jump_force = 8.0
 
     local vel = Galeshi.physics.get_velocity(player)
@@ -42,11 +43,29 @@ function RunAlways(dt)
 
     local horizontal = Galeshi.input.axis("Horizontal")
     local vertical = Galeshi.input.axis("Vertical")
-    -- Horizontal follows A=-1 / D=+1 and vertical W=+1 / S=-1. The camera
-    -- helper turns them into a horizontal camera-relative move direction.
-    local move = Galeshi.camera.movement(horizontal, vertical)
-    local vx = move.x * speed
-    local vz = move.z * speed
+    local strafing = Galeshi.player.strafing()
+    local forward = Galeshi.camera.forward()
+    local vx, vz = 0.0, 0.0
+
+    if math.abs(vertical) > 0.001 then
+        -- W/S face the character along the camera direction.
+        player:set_euler(
+            0.0, math.deg(math.atan(forward.x, forward.z)), 0.0)
+        vx = forward.x * vertical * speed
+        vz = forward.z * vertical * speed
+    elseif not strafing and math.abs(horizontal) > 0.001 then
+        -- Without strafing, A/D turn the character in place.
+        local rotation = player:rotation()
+        local yaw = math.deg(2.0 * math.atan(rotation.y, rotation.w))
+        player:set_euler(
+            0.0, yaw - horizontal * turn_speed * dt, 0.0)
+    end
+
+    if strafing then
+        local move = Galeshi.camera.movement(horizontal, vertical)
+        vx = move.x * speed
+        vz = move.z * speed
+    end
 
     -- Always write the horizontal velocity so the player stops when no key is
     -- held. This also drives the script fallback used by body-less Player roots.
