@@ -11486,6 +11486,9 @@ void DrawDetails() {
         m_codeEditorSyntaxDirty = true;
         m_codeEditorLastEditTime = ImGui::GetTime();
         ImGui::SetWindowFocus("Code Editor");
+        // The text input lives in a child window. Focusing only the parent
+        // leaves the editor non-editable until it is clicked manually.
+        m_focusCodeEditor = true;
     }
 
     static int DiagnosticLineNumber(const std::string& line) {
@@ -11615,6 +11618,7 @@ void DrawDetails() {
             };
             if (ImGui::BeginTabItem("Code", nullptr, selectFlag(0))) {
                 m_codeEditorTabRequest = -1;
+                if (ImGui::IsItemClicked()) m_focusCodeEditor = true;
                 if (ImGui::Button("Open...")) {
                     std::filesystem::path start =
                         Galeshi::ProjectManager::GetProjectPath();
@@ -11657,11 +11661,12 @@ void DrawDetails() {
                                 "[Editor] Saved code file: {}",
                                 std::filesystem::absolute(
                                     m_currentCodeFile).string());
-                            if (cppFile) {
-                                if (!m_scripts.ReloadCppScripts(true)) {
-                                    m_codeEditorTabRequest = 2;
-                                }
+                            bool saved = true;
+                            if (cppFile && !m_scripts.ReloadCppScripts(true)) {
+                                m_codeEditorTabRequest = 2;
+                                saved = false;
                             }
+                            if (saved) m_focusCodeEditor = true;
                         } else {
                             spdlog::error(
                                 "[Editor] FAILED to open file for saving: {}",
@@ -11673,10 +11678,13 @@ void DrawDetails() {
                         if (cppFile) {
                             if (!m_scripts.ReloadCppScripts(true)) {
                                 m_codeEditorTabRequest = 2;
+                            } else {
+                                m_focusCodeEditor = true;
                             }
                         } else if (m_scripts.HotReload(m_currentCodeFile)) {
                             spdlog::info("[Editor] Reloaded {}",
                                          m_currentCodeFile);
+                            m_focusCodeEditor = true;
                         }
                     }
                     if (cppFile) {
@@ -11684,6 +11692,8 @@ void DrawDetails() {
                         if (ImGui::Button("Compile C++")) {
                             if (!m_scripts.ReloadCppScripts(true)) {
                                 m_codeEditorTabRequest = 2;
+                            } else {
+                                m_focusCodeEditor = true;
                             }
                         }
                     }
@@ -11691,6 +11701,52 @@ void DrawDetails() {
                     ImGui::TextDisabled("%s", m_currentCodeFile.c_str());
                     ImGui::Separator();
                     m_codeEditor.Render("CodeEditor");
+
+                    if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+                        ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                        ImGui::OpenPopup("Code Editor Context");
+                    }
+                    if (ImGui::BeginPopup("Code Editor Context")) {
+                        const bool readOnly = m_codeEditor.IsReadOnly();
+                        if (ImGui::MenuItem("Copy", "Ctrl+C")) {
+                            m_codeEditor.Copy();
+                            m_focusCodeEditor = true;
+                        }
+                        if (ImGui::MenuItem("Cut", "Ctrl+X", false,
+                                            !readOnly &&
+                                                m_codeEditor.HasSelection())) {
+                            m_codeEditor.Cut();
+                            m_focusCodeEditor = true;
+                        }
+                        if (ImGui::MenuItem("Paste", "Ctrl+V", false,
+                                            !readOnly)) {
+                            m_codeEditor.Paste();
+                            m_focusCodeEditor = true;
+                        }
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Select All", "Ctrl+A")) {
+                            m_codeEditor.SelectAll();
+                            m_focusCodeEditor = true;
+                        }
+                        if (ImGui::MenuItem("Undo", "Ctrl+Z", false,
+                                            m_codeEditor.CanUndo())) {
+                            m_codeEditor.Undo();
+                            m_focusCodeEditor = true;
+                        }
+                        if (ImGui::MenuItem("Redo", "Ctrl+Y", false,
+                                            m_codeEditor.CanRedo())) {
+                            m_codeEditor.Redo();
+                            m_focusCodeEditor = true;
+                        }
+                        ImGui::EndPopup();
+                    }
+
+                    if (m_focusCodeEditor &&
+                        !ImGui::IsPopupOpen("Code Editor Context")) {
+                        ImGui::SetWindowFocus("CodeEditor");
+                        m_focusCodeEditor = false;
+                    }
+
                     if (m_codeEditor.IsTextChanged()) {
                         m_codeEditorSyntaxDirty = true;
                         m_codeEditorLastEditTime = ImGui::GetTime();
@@ -13183,6 +13239,7 @@ void DrawDetails() {
     std::string m_codeEditorLastSyntaxSource;
     double m_codeEditorLastEditTime = 0.0;
     bool m_codeEditorSyntaxDirty = false;
+    bool m_focusCodeEditor = false;
 
     std::vector<std::string> m_history;
     int  m_historyIndex = -1;
