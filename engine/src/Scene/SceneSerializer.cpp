@@ -291,6 +291,7 @@ json MaterialToJson(const Material& m, const AssetManager& assets) {
     return {
         {"name", m.name},
         {"sourcePath", relStr(m.sourcePath)},
+        {"sceneOverride", m.sceneOverride},
         {"albedoFactor", Vec4ToJson(m.albedoFactor)},
         {"albedoSrgb", m.albedoSrgb},
         {"metallicFactor", m.metallicFactor},
@@ -335,6 +336,10 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     auto material = std::make_shared<Material>();
     material->name = jm.value("name", std::string("Material"));
     material->sourcePath = jm.value("sourcePath", std::string{});
+    // Materials read from a scene file are scene state. Treat older files,
+    // which have no flag, as overrides so loading never silently replaces
+    // edits made in the editor.
+    material->sceneOverride = jm.value("sceneOverride", true);
     material->albedoFactor = jm.contains("albedoFactor")
         ? Vec4FromJson(jm.at("albedoFactor")) : glm::vec4(1.0f);
     material->albedoSrgb = jm.value("albedoSrgb", true);
@@ -1992,7 +1997,7 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             const auto& mesh = view.get<MeshComponent>(handle);
             auto& matc = view.get<MaterialComponent>(handle);
             if (mesh.sourceAssetPath.empty() || !matc.material ||
-                matc.material->base) {
+                matc.material->base || matc.material->sceneOverride) {
                 continue;
             }
             const std::string extension = [&] {

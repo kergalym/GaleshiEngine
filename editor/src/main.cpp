@@ -8068,7 +8068,8 @@ if (ImGui::BeginMenu("File")) {
     // Details
     // -------------------------------------------------------------------
     void DrawTextureSlot(const char* label, std::shared_ptr<Galeshi::Texture>& slot,
-                         bool srgb, bool* srgbFlag = nullptr) {
+                         bool srgb, bool* srgbFlag = nullptr,
+                         bool* changed = nullptr) {
         ImGui::PushID(label);
         ImGui::Text("%s", label);
 
@@ -8086,6 +8087,8 @@ if (ImGui::BeginMenu("File")) {
             std::string name = (slash != std::string::npos) ? path.substr(slash + 1) : path;
             ImGui::TextWrapped("%s", name.c_str());
             if (ImGui::Button("Clear")) {
+                if (changed) *changed = true;
+                PushHistory();
                 slot.reset();
             }
             ImGui::EndGroup();
@@ -8096,6 +8099,8 @@ if (ImGui::BeginMenu("File")) {
         if (srgbFlag) {
             bool value = *srgbFlag;
             if (ImGui::Checkbox("sRGB", &value)) {
+                if (changed) *changed = true;
+                PushHistory();
                 *srgbFlag = value;
                 if (slot) {
                     const std::string texturePath = slot->Path();
@@ -8126,6 +8131,8 @@ if (ImGui::BeginMenu("File")) {
                 if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" ||
                     ext == ".bmp" || ext == ".tga" ||
                     ext == ".dds" || ext == ".ktx") {
+                    if (changed) *changed = true;
+                    PushHistory();
                     slot = m_assets->LoadTexture(
                         p, srgbFlag ? *srgbFlag : srgb);
                 }
@@ -10617,12 +10624,74 @@ void DrawDetails() {
                 return slot;
             };
 
+        auto materialStateHash = [](const Galeshi::Material& mat) {
+            size_t h = 1469598103934665603ull;
+            auto addHash = [&](size_t value) {
+                h ^= value + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+                h *= 1099511628211ull;
+            };
+            auto addFloat = [&](float value) {
+                addHash(std::hash<float>{}(value));
+            };
+            auto addVec3 = [&](const glm::vec3& value) {
+                addFloat(value.x); addFloat(value.y); addFloat(value.z);
+            };
+            auto addVec4 = [&](const glm::vec4& value) {
+                addFloat(value.x); addFloat(value.y);
+                addFloat(value.z); addFloat(value.w);
+            };
+            auto addMap = [&](const std::shared_ptr<Galeshi::Texture>& map) {
+                addHash(reinterpret_cast<uintptr_t>(map.get()));
+            };
+
+            addHash(std::hash<std::string>{}(mat.name));
+            addHash(std::hash<std::string>{}(mat.sourcePath));
+            addVec4(mat.albedoFactor);
+            addHash(mat.albedoSrgb);
+            addFloat(mat.metallicFactor);
+            addFloat(mat.roughnessFactor);
+            addVec3(mat.emissiveFactor);
+            addHash(mat.isGlass);
+            addHash(mat.twoSided);
+            addFloat(mat.glassOpacity);
+            addFloat(mat.normalStrength);
+            addFloat(mat.occlusionStrength);
+            addFloat(mat.alphaCutoff);
+            addHash(mat.alphaTest);
+            addHash(mat.alphaBlend);
+            addHash(mat.subsurfaceEnabled);
+            addVec3(mat.subsurfaceColor);
+            addFloat(mat.subsurfaceStrength);
+            addFloat(mat.subsurfaceRadius);
+            addHash(mat.translucencyEnabled);
+            addVec3(mat.translucencyColor);
+            addFloat(mat.translucencyOpacity);
+            addFloat(mat.translucencyStrength);
+            addFloat(mat.translucencyThickness);
+            addFloat(mat.translucencyDistortion);
+            addFloat(mat.translucencyShadowDepth);
+            addHash(mat.castsShadow);
+            addFloat(mat.shadowDepthOffset);
+            addMap(mat.albedoMap);
+            addMap(mat.metallicRoughnessMap);
+            addMap(mat.metallicMap);
+            addMap(mat.roughnessMap);
+            addMap(mat.normalMap);
+            addMap(mat.emissiveMap);
+            addMap(mat.occlusionMap);
+            addMap(mat.opacityMap);
+            addMap(mat.specularMap);
+            addHash(reinterpret_cast<uintptr_t>(mat.base.get()));
+            return h;
+        };
+
         // Helper lambda to draw material UI safely. During a Details search
         // the header stays visible when the material name or any material
         // property matches; inside, only matching parameter groups remain.
         auto DrawMaterialUI = [&](const char* label, Galeshi::MaterialComponent& matc, uint32_t eid) {
             if (!matc.material) return;
             auto& m = *matc.material;
+            const size_t materialStateBefore = materialStateHash(m);
             ImGui::PushID(eid);
             const std::string materialKeywords =
                 std::string("material instance base used preset metal plastic "
@@ -10643,6 +10712,7 @@ void DrawDetails() {
                             "specular map material name") +
                 " " + (label ? label : "") + " " + m.name +
                 (m.base ? " " + m.base->name : std::string{});
+            bool materialChanged = false;
             if (beginDetailsSection(label, ImGuiTreeNodeFlags_DefaultOpen,
                                     materialKeywords.c_str())) {
                 const bool showAllMaterialFields =
@@ -10690,6 +10760,7 @@ void DrawDetails() {
                         m = *base;
                         m.base = base;
                         m.name = instanceName;
+                        m.sceneOverride = true;
                         matc.isGlass = m.isGlass;
                         PushHistory();
                         ImGui::PopID();
@@ -10709,6 +10780,7 @@ void DrawDetails() {
                             ? std::string("Material Instance")
                             : base->name + " Instance";
                         matc.material = instance;
+                        matc.material->sceneOverride = true;
                         matc.isGlass = instance->isGlass;
                         PushHistory();
                         ImGui::PopID();
@@ -10733,33 +10805,41 @@ void DrawDetails() {
                 ImGui::Separator();
 
                 ImGui::Text("Presets:");
-                if (ImGui::Button("Metal")) {
+                auto applyPreset = [&](const char* label, auto&& apply) {
+                    if (!ImGui::Button(label)) return;
+                    PushHistory();
+                    m.sceneOverride = true;
+                    apply();
+                };
+                applyPreset("Metal", [&] {
                     m.metallicFactor = 1.0f; m.roughnessFactor = 0.1f;
                     m.albedoFactor = glm::vec4(0.8f, 0.8f, 0.8f, 1.0f);
-                }
+                });
                 ImGui::SameLine();
-                if (ImGui::Button("Plastic")) {
+                applyPreset("Plastic", [&] {
                     m.metallicFactor = 0.0f; m.roughnessFactor = 0.5f;
-                }
+                });
                 ImGui::SameLine();
-                if (ImGui::Button("Rubber")) {
+                applyPreset("Rubber", [&] {
                     m.metallicFactor = 0.0f; m.roughnessFactor = 0.9f;
-                }
+                });
                 ImGui::SameLine();
-                if (ImGui::Button("Gold")) {
+                applyPreset("Gold", [&] {
                     m.metallicFactor = 1.0f; m.roughnessFactor = 0.2f;
                     m.albedoFactor = glm::vec4(1.0f, 0.766f, 0.336f, 1.0f);
-                }
+                });
                 ImGui::SameLine();
-                if (ImGui::Button("Skin")) {
+                applyPreset("Skin", [&] {
                     m.metallicFactor = 0.0f; m.roughnessFactor = 0.52f;
                     m.subsurfaceEnabled = true;
                     m.subsurfaceColor = {0.82f, 0.28f, 0.18f};
                     m.subsurfaceStrength = 0.55f;
                     m.subsurfaceRadius = 0.85f;
-                }
+                });
                 ImGui::SameLine();
                 if (ImGui::Button("Leaf")) {
+                    PushHistory();
+                    m.sceneOverride = true;
                     m.metallicFactor = 0.0f; m.roughnessFactor = 0.72f;
                     m.twoSided = true;
                     m.translucencyEnabled = true;
@@ -10892,14 +10972,16 @@ void DrawDetails() {
 
                 if (showMaterialField("Albedo Map", "texture map color srgb"))
                 DrawTextureSlot("Albedo Map",           m.albedoMap,           true,
-                                &m.albedoSrgb);
+                                &m.albedoSrgb, &materialChanged);
                 if (showMaterialField("Normal Map", "texture map normal bump"))
-                DrawTextureSlot("Normal Map",           m.normalMap,           false);
+                DrawTextureSlot("Normal Map",           m.normalMap,           false,
+                                nullptr, &materialChanged);
                 if (showMaterialField("Metallic/Roughness/Occlusion",
                                       "texture map orm mr metallic roughness occlusion ao")) {
                     auto* previousOrm = m.metallicRoughnessMap.get();
                     DrawTextureSlot("Metallic/Roughness/Occlusion (ORM)",
-                                    m.metallicRoughnessMap, false);
+                                    m.metallicRoughnessMap, false,
+                                    nullptr, &materialChanged);
                     if (m.metallicRoughnessMap.get() != previousOrm) {
                         // ORM layout: R = occlusion, G = roughness,
                         // B = metallic. Keep the dedicated AO slot in sync
@@ -10912,18 +10994,34 @@ void DrawDetails() {
                     }
                 }
                 if (showMaterialField("Metallic Map", "texture map metal"))
-                DrawTextureSlot("Metallic Map",         m.metallicMap,         false);
+                DrawTextureSlot("Metallic Map",         m.metallicMap,         false,
+                                nullptr, &materialChanged);
                 if (showMaterialField("Roughness Map", "texture map rough"))
-                DrawTextureSlot("Roughness Map",        m.roughnessMap,        false);
+                DrawTextureSlot("Roughness Map",        m.roughnessMap,        false,
+                                nullptr, &materialChanged);
                 if (showMaterialField("Emissive Map", "texture map emission"))
-                DrawTextureSlot("Emissive Map",         m.emissiveMap,         true);
+                DrawTextureSlot("Emissive Map",         m.emissiveMap,         true,
+                                nullptr, &materialChanged);
                 if (showMaterialField("Occlusion Map", "texture map ao"))
-                DrawTextureSlot("Occlusion Map",        m.occlusionMap,        false);
+                DrawTextureSlot("Occlusion Map",        m.occlusionMap,        false,
+                                nullptr, &materialChanged);
                 if (showMaterialField("Opacity Map", "texture map alpha"))
-                DrawTextureSlot("Opacity Map",          m.opacityMap,          false);
+                DrawTextureSlot("Opacity Map",          m.opacityMap,          false,
+                                nullptr, &materialChanged);
                 if (showMaterialField("Specular Map", "texture map specular"))
-                DrawTextureSlot("Specular Map",         m.specularMap,         false);
+                DrawTextureSlot("Specular Map",         m.specularMap,         false,
+                                nullptr, &materialChanged);
                 }
+            }
+
+            // Compare the complete editable material state. This catches
+            // sliders, checkboxes, presets and texture drops even when no
+            // ImGui item remains active on the release frame.
+            if (materialStateHash(m) != materialStateBefore) {
+                m.sceneOverride = true;
+                PushHistory();
+            } else if (ImGui::IsAnyItemActive()) {
+                m.sceneOverride = true;
             }
             ImGui::PopID();
         };

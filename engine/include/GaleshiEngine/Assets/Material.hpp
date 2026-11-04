@@ -96,6 +96,10 @@ public:
     std::string name = "Material";
     std::string sourcePath;
 
+    // True when this material has been edited in the scene and its values must
+    // survive scene reloads instead of being refreshed from the glTF source.
+    bool sceneOverride = false;
+
     // Optional parent material.  A material with a base is an instance: it
     // owns an independent copy of the parameters and texture slots, while the
     // base link keeps the asset lineage for Reset to Base and for preserving
