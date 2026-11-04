@@ -79,6 +79,12 @@ void LandscapeMesh::Rebuild(LandscapeComponent& lc, Mesh& mesh) {
     if (lc.paintWeights.size() != expected) {
         lc.paintWeights.resize(expected, 0.0f);
     }
+    if (lc.layerWeights.size() != lc.layers.size()) {
+        lc.layerWeights.resize(lc.layers.size());
+    }
+    for (auto& weights : lc.layerWeights) {
+        if (weights.size() != expected) weights.resize(expected, 0.0f);
+    }
 
     std::vector<Vertex> verts;
     verts.reserve(expected);
@@ -378,18 +384,25 @@ int LandscapeMesh::ApplyBrush(LandscapeComponent& lc,
 }
 
 int LandscapeMesh::ApplyPaintBrush(LandscapeComponent& lc,
+                                   int layer,
                                    float localX, float localZ,
                                    float radius, float strength,
                                    float falloff, float dt,
                                    bool erase) {
-    if (lc.sizeX < 2 || lc.sizeZ < 2 || radius <= 0.0f || dt <= 0.0f) {
+    if (lc.sizeX < 2 || lc.sizeZ < 2 || radius <= 0.0f || dt <= 0.0f ||
+        layer < 0 || layer >= static_cast<int>(lc.layers.size())) {
         return 0;
     }
     const size_t expected =
         static_cast<size_t>(lc.sizeX) * static_cast<size_t>(lc.sizeZ);
-    if (lc.paintWeights.size() != expected) {
-        lc.paintWeights.resize(expected, 0.0f);
+    if (lc.layerWeights.size() != lc.layers.size()) {
+        lc.layerWeights.resize(lc.layers.size());
     }
+    if (lc.layerWeights[static_cast<size_t>(layer)].size() != expected) {
+        lc.layerWeights[static_cast<size_t>(layer)].resize(expected, 0.0f);
+    }
+    std::vector<float>& weights =
+        lc.layerWeights[static_cast<size_t>(layer)];
     const float centerX = localX / lc.scale + lc.sizeX * 0.5f;
     const float centerZ = localZ / lc.scale + lc.sizeZ * 0.5f;
     const float radiusCells = radius / lc.scale;
@@ -413,10 +426,10 @@ int LandscapeMesh::ApplyPaintBrush(LandscapeComponent& lc,
             const float t = 1.0f - distance / radius;
             const float weight = std::pow(Clamp01(t), exponent);
             const size_t index = static_cast<size_t>(z) * lc.sizeX + x;
-            const float before = lc.paintWeights[index];
-            lc.paintWeights[index] = Clamp01(
+            const float before = weights[index];
+            weights[index] = Clamp01(
                 before + direction * std::max(0.0f, strength) * dt * weight);
-            if (std::abs(lc.paintWeights[index] - before) > 1e-6f) {
+            if (std::abs(weights[index] - before) > 1e-6f) {
                 ++changed;
             }
         }
@@ -445,6 +458,8 @@ void LandscapeMesh::ResetHeights(LandscapeComponent& lc) {
     const size_t expected = static_cast<size_t>(std::max(2, lc.sizeX)) * static_cast<size_t>(std::max(2, lc.sizeZ));
     lc.heights.assign(expected, 0.0f);
     lc.paintWeights.assign(expected, 0.0f);
+    lc.layerWeights.assign(lc.layers.size(),
+                           std::vector<float>(expected, 0.0f));
 }
 
 } // namespace Galeshi

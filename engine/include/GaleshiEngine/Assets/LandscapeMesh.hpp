@@ -66,6 +66,7 @@ public:
 
     // Paints (or erases) the per-vertex landscape material blend weight.
     static int ApplyPaintBrush(LandscapeComponent& landscape,
+                               int layer,
                                float localX, float localZ,
                                float radius, float strength, float falloff,
                                float dt, bool erase = false);

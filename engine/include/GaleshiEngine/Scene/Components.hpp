@@ -222,13 +222,41 @@ struct ColliderComponent {
 // original box-only collider.
 using BoxColliderComponent = ColliderComponent;
 
+struct LandscapeLayer {
+    std::shared_ptr<Texture> albedoMap;
+    std::shared_ptr<Texture> ormMap;
+    std::shared_ptr<Texture> normalMap;
+    bool albedoSrgb = true;
+    bool ormSrgb = false;
+    bool normalSrgb = false;
+};
+
 struct LandscapeComponent {
     int sizeX = 100;
     int sizeZ = 100;
     float scale = 1.0f;
     std::vector<float> heights;
-    // Per-vertex blend weight for the procedurally painted landscape layer.
+    // Legacy single-layer weights retained for scene migration.
     std::vector<float> paintWeights;
+    // Unlimited painted material layers and their per-vertex weights.
+    std::vector<LandscapeLayer> layers;
+    std::vector<std::vector<float>> layerWeights;
+    int activeLayer = 0;
+    bool legacyLayerMigrated = false;
+    // Source maps used as the unweighted base during texture baking. The
+    // captured flag prevents a second bake from treating the generated maps
+    // as the base.
+    bool baseCaptured = false;
+    std::string baseAlbedoPath;
+    std::string baseOrmPath;
+    std::string baseMetallicPath;
+    std::string baseRoughnessPath;
+    std::string baseOcclusionPath;
+    std::string baseNormalPath;
+    // Last baked textures written under the project's textures directory.
+    std::string bakedAlbedoPath;
+    std::string bakedOrmPath;
+    std::string bakedNormalPath;
 };
 
 // One independently configured tree species used by landscape vegetation.

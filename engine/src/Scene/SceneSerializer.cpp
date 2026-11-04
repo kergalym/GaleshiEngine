@@ -684,12 +684,56 @@ std::string SceneSerializer::SaveToString(bool includeEditorState) const {
             for (auto& value : safePaint) {
                 if (!std::isfinite(value)) value = 0.0f;
             }
+            auto relLayerPath = [&](const std::shared_ptr<Texture>& texture) {
+                return m_assets.MakeRelativePath(TexturePath(texture));
+            };
+            json layers = json::array();
+            for (const auto& layer : lc.layers) {
+                layers.push_back({
+                    {"albedoMapPath", relLayerPath(layer.albedoMap)},
+                    {"ormMapPath", relLayerPath(layer.ormMap)},
+                    {"normalMapPath", relLayerPath(layer.normalMap)},
+                    {"albedoSrgb", layer.albedoSrgb},
+                    {"ormSrgb", layer.ormSrgb},
+                    {"normalSrgb", layer.normalSrgb}
+                });
+            }
+            json layerWeights = json::array();
+            for (const auto& weights : lc.layerWeights) {
+                std::vector<float> safeWeights = weights;
+                for (auto& value : safeWeights) {
+                    if (!std::isfinite(value)) value = 0.0f;
+                }
+                layerWeights.push_back(std::move(safeWeights));
+            }
             je["landscape"] = {
                 {"sizeX", lc.sizeX},
                 {"sizeZ", lc.sizeZ},
                 {"scale", lc.scale},
                 {"heights", safeHeights},
-                {"paintWeights", safePaint}
+                {"paintWeights", safePaint},
+                {"layers", std::move(layers)},
+                {"layerWeights", std::move(layerWeights)},
+                {"activeLayer", lc.activeLayer},
+                {"legacyLayerMigrated", lc.legacyLayerMigrated},
+                {"baseCaptured", lc.baseCaptured},
+                {"baseAlbedoPath",
+                 m_assets.MakeRelativePath(lc.baseAlbedoPath)},
+                {"baseOrmPath", m_assets.MakeRelativePath(lc.baseOrmPath)},
+                {"baseMetallicPath",
+                 m_assets.MakeRelativePath(lc.baseMetallicPath)},
+                {"baseRoughnessPath",
+                 m_assets.MakeRelativePath(lc.baseRoughnessPath)},
+                {"baseOcclusionPath",
+                 m_assets.MakeRelativePath(lc.baseOcclusionPath)},
+                {"baseNormalPath",
+                 m_assets.MakeRelativePath(lc.baseNormalPath)},
+                {"bakedAlbedoPath",
+                 m_assets.MakeRelativePath(lc.bakedAlbedoPath)},
+                {"bakedOrmPath",
+                 m_assets.MakeRelativePath(lc.bakedOrmPath)},
+                {"bakedNormalPath",
+                 m_assets.MakeRelativePath(lc.bakedNormalPath)}
             };
         }
         if (reg.all_of<VegetationComponent>(handle)) {
@@ -1412,6 +1456,90 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             if (landscape.paintWeights.size() != expected) {
                 landscape.paintWeights.resize(expected, 0.0f);
             }
+            if (jl.contains("layers") && jl["layers"].is_array()) {
+                for (const auto& jlayer : jl["layers"]) {
+                    LandscapeLayer layer;
+                    const auto loadLayerMap =
+                        [&](const char* key, bool srgb)
+                        -> std::shared_ptr<Texture> {
+                        const std::string path =
+                            jlayer.value(key, std::string{});
+                        return path.empty()
+                            ? nullptr
+                            : m_assets.LoadTexture(path, srgb);
+                    };
+                    layer.albedoSrgb =
+                        jlayer.value("albedoSrgb", true);
+                    layer.ormSrgb = jlayer.value("ormSrgb", false);
+                    layer.normalSrgb =
+                        jlayer.value("normalSrgb", false);
+                    layer.albedoMap =
+                        loadLayerMap("albedoMapPath", layer.albedoSrgb);
+                    layer.ormMap =
+                        loadLayerMap("ormMapPath", layer.ormSrgb);
+                    layer.normalMap =
+                        loadLayerMap("normalMapPath", layer.normalSrgb);
+                    landscape.layers.push_back(std::move(layer));
+                }
+            }
+            if (jl.contains("layerWeights") &&
+                jl["layerWeights"].is_array()) {
+                for (const auto& jweights : jl["layerWeights"]) {
+                    std::vector<float> weights;
+                    if (jweights.is_array()) {
+                        weights.reserve(jweights.size());
+                        for (const auto& value : jweights) {
+                            const float weight = value.get<float>();
+                            weights.push_back(
+                                std::isfinite(weight)
+                                    ? std::clamp(weight, 0.0f, 1.0f)
+                                    : 0.0f);
+                        }
+                    }
+                    if (weights.size() != expected) {
+                        weights.resize(expected, 0.0f);
+                    }
+                    landscape.layerWeights.push_back(std::move(weights));
+                }
+            }
+            if (landscape.layerWeights.size() !=
+                landscape.layers.size()) {
+                landscape.layerWeights.resize(
+                    landscape.layers.size(),
+                    std::vector<float>(expected, 0.0f));
+            }
+            landscape.activeLayer = std::clamp(
+                jl.value("activeLayer", 0), 0,
+                std::max(0, static_cast<int>(
+                                landscape.layers.size()) - 1));
+            landscape.legacyLayerMigrated =
+                jl.value("legacyLayerMigrated", false);
+            landscape.baseAlbedoPath = m_assets.ResolvePath(
+                jl.value("baseAlbedoPath", std::string{}));
+            landscape.baseOrmPath = m_assets.ResolvePath(
+                jl.value("baseOrmPath", std::string{}));
+            landscape.baseMetallicPath = m_assets.ResolvePath(
+                jl.value("baseMetallicPath", std::string{}));
+            landscape.baseRoughnessPath = m_assets.ResolvePath(
+                jl.value("baseRoughnessPath", std::string{}));
+            landscape.baseOcclusionPath = m_assets.ResolvePath(
+                jl.value("baseOcclusionPath", std::string{}));
+            landscape.baseNormalPath = m_assets.ResolvePath(
+                jl.value("baseNormalPath", std::string{}));
+            landscape.bakedAlbedoPath = m_assets.ResolvePath(
+                jl.value("bakedAlbedoPath", std::string{}));
+            landscape.bakedOrmPath = m_assets.ResolvePath(
+                jl.value("bakedOrmPath", std::string{}));
+            landscape.bakedNormalPath = m_assets.ResolvePath(
+                jl.value("bakedNormalPath", std::string{}));
+            landscape.baseCaptured = jl.value(
+                "baseCaptured",
+                !landscape.baseAlbedoPath.empty() ||
+                    !landscape.baseOrmPath.empty() ||
+                    !landscape.baseMetallicPath.empty() ||
+                    !landscape.baseRoughnessPath.empty() ||
+                    !landscape.baseOcclusionPath.empty() ||
+                    !landscape.baseNormalPath.empty());
         }
         if (je.contains("vegetation")) {
             const auto& jv = je["vegetation"];
