@@ -1629,6 +1629,7 @@ protected:
         if (!chosenSave.empty()) {
             if (m_serializer) {
                 CaptureSceneViewState();
+                SyncCodeEditorStateToSerializer();
                 if (m_serializer->Save(chosenSave)) {
                     m_currentScenePath = std::filesystem::absolute(chosenSave).lexically_normal().string();
                     AddRecentScene(m_currentScenePath);
@@ -1881,6 +1882,7 @@ private:
             ReleaseUnusedSceneAssets();
             if (s.sceneLoaded.exchange(false, std::memory_order_acquire)) {
                 ApplySceneViewState();
+                RestoreCodeEditorStateFromSerializer();
                 // A loaded scene is a new history root; snapshots from the
                 // previous document must never be reachable through Undo.
                 m_history.clear();
@@ -11467,28 +11469,60 @@ void DrawDetails() {
     // -------------------------------------------------------------------
     // Content Browser & Assets
     // -------------------------------------------------------------------
-    void OpenCodeFile(const std::string& path) {
+    void SetCodeEditorContent(const std::string& path,
+                              const std::string& text,
+                              bool cppMode) {
         m_currentCodeFile = path;
-        m_codeEditorCppMode = IsCppCodeAssetPath(path);
+        m_codeEditorCppMode = cppMode;
         m_codeEditorTabRequest = 0;
         m_codeEditor.SetLanguageDefinition(
-            m_codeEditorCppMode
-                ? TextEditor::LanguageDefinition::CPlusPlus()
-                : TextEditor::LanguageDefinition::Lua());
+            cppMode ? TextEditor::LanguageDefinition::CPlusPlus()
+                    : TextEditor::LanguageDefinition::Lua());
+        m_codeEditor.SetPalette(TextEditor::GetDarkPalette());
+        m_codeEditor.SetText(text);
+        m_codeEditorInitialized = true;
+        m_codeEditorSyntaxErrors.clear();
+        m_codeEditorLastSyntaxSource.clear();
+        m_codeEditorSyntaxDirty = !path.empty();
+        m_codeEditorLastEditTime = ImGui::GetTime();
+        // The text input lives in a child window. Focusing only the parent
+        // leaves the editor non-editable until it is clicked manually.
+        m_focusCodeEditor = !path.empty();
+    }
+
+    void OpenCodeFile(const std::string& path) {
+        std::string text;
         std::ifstream in(path);
         if (in.is_open()) {
             std::stringstream ss;
             ss << in.rdbuf();
-            m_codeEditor.SetText(ss.str());
+            text = ss.str();
         }
-        m_codeEditorSyntaxErrors.clear();
-        m_codeEditorLastSyntaxSource.clear();
-        m_codeEditorSyntaxDirty = true;
-        m_codeEditorLastEditTime = ImGui::GetTime();
+        SetCodeEditorContent(path, text, IsCppCodeAssetPath(path));
         ImGui::SetWindowFocus("Code Editor");
-        // The text input lives in a child window. Focusing only the parent
-        // leaves the editor non-editable until it is clicked manually.
-        m_focusCodeEditor = true;
+    }
+
+    void SyncCodeEditorStateToSerializer() {
+        if (!m_serializer) return;
+        if (m_currentCodeFile.empty()) {
+            m_serializer->SetCodeEditorState({}, {}, false);
+        } else {
+            m_serializer->SetCodeEditorState(
+                m_currentCodeFile, m_codeEditor.GetText(),
+                m_codeEditorCppMode);
+        }
+    }
+
+    void RestoreCodeEditorStateFromSerializer() {
+        if (!m_serializer) return;
+        if (m_serializer->CodeEditorPath().empty()) {
+            SetCodeEditorContent({}, "-- Select a code file.", false);
+            return;
+        }
+        SetCodeEditorContent(
+            m_serializer->CodeEditorPath(),
+            m_serializer->CodeEditorText(),
+            m_serializer->CodeEditorCppMode());
     }
 
     static int DiagnosticLineNumber(const std::string& line) {

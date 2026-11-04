@@ -533,10 +533,17 @@ std::shared_ptr<Mesh> BuildClothMesh(const SoftBodyComponent& softBody) {
 
 } // namespace
 
-std::string SceneSerializer::SaveToString() const {
+std::string SceneSerializer::SaveToString(bool includeEditorState) const {
     json root;
     root["version"] = kSceneFormatVersion;
     root["entities"] = json::array();
+    if (includeEditorState) {
+        root["codeEditor"] = {
+            {"path", m_codeEditorPath},
+            {"text", m_codeEditorText},
+            {"cppMode", m_codeEditorCppMode}
+        };
+    }
 
     // Iterate once and assign stable ids.  ParentComponent stores an entt
     // handle which changes after registry.clear(), so the file must never use
@@ -1115,8 +1122,15 @@ std::string SceneSerializer::SaveToString() const {
 bool SceneSerializer::Save(const std::string& path) const {
     std::ofstream out(path);
     if (!out.is_open()) return false;
-    out << SaveToString();
+    out << SaveToString(true);
     return out.good();
+}
+
+void SceneSerializer::SetCodeEditorState(std::string path, std::string text,
+                                         bool cppMode) {
+    m_codeEditorPath = std::move(path);
+    m_codeEditorText = std::move(text);
+    m_codeEditorCppMode = cppMode;
 }
 
 bool SceneSerializer::Load(const std::string& path,
@@ -1152,6 +1166,16 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
 
     const int formatVersion = root.value("version", 1);
     const auto& jsonEntities = root["entities"];
+
+    m_codeEditorPath.clear();
+    m_codeEditorText.clear();
+    m_codeEditorCppMode = false;
+    if (root.contains("codeEditor") && root["codeEditor"].is_object()) {
+        const auto& codeEditor = root["codeEditor"];
+        m_codeEditorPath = codeEditor.value("path", std::string{});
+        m_codeEditorText = codeEditor.value("text", std::string{});
+        m_codeEditorCppMode = codeEditor.value("cppMode", false);
+    }
 
     // Start from defaults so scenes saved before the mixer existed do not
     // inherit bus state from the previously loaded scene.
