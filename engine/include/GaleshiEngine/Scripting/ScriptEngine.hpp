@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <chrono>
 #include <filesystem>
+#include <deque>
 #include <functional>
 #include <vector>
 #include <unordered_map>
@@ -13,6 +14,7 @@
 
 #include "GaleshiEngine/Scripting/CppScriptApi.hpp"
 #include "GaleshiEngine/Scripting/CppScriptWorkerProtocol.hpp"
+#include "GaleshiEngine/UI/UIRuntime.hpp"
 
 namespace Galeshi {
 
@@ -78,6 +80,12 @@ public:
         std::function<bool(uint32_t)> playSource,
         std::function<void(uint32_t)> stopSource,
         std::function<bool(uint32_t)> isPlayingSource);
+    // Queues one UIRuntime event for the C++ script worker. Poll it from the
+    // script with GaleshiScriptApi::poll_ui_event.
+    void PushUIEvent(const UIEvent& event);
+    void ClearUIEvents() { m_cppUIEvents.clear(); }
+    // Optional host query used by the C++ is_pointer_over_ui call.
+    void BindUIState(std::function<bool()> pointerOverUI);
     void BindPhysics(const PhysicsBindings& bindings);
     // Backwards-compatible box-only binding.
     void BindPhysics(
@@ -169,6 +177,8 @@ private:
     std::function<bool(uint32_t)> m_playAudioSource;
     std::function<void(uint32_t)> m_stopAudioSource;
     std::function<bool(uint32_t)> m_isAudioSourcePlaying;
+    std::function<bool()> m_isPointerOverUI;
+    std::deque<UIEvent> m_cppUIEvents;
     PhysicsBindings m_physics;
     std::function<bool(const glm::vec3&, const glm::vec3&,
                        std::vector<glm::vec3>&)> m_findPath;

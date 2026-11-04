@@ -4,8 +4,10 @@
 #include "GaleshiEngine/Scene/Components.hpp"
 #include "GaleshiEngine/Animation/AnimationSystem.hpp"
 #include "GaleshiEngine/Assets/AssetManager.hpp"
+#include "GaleshiEngine/Assets/LandscapeMesh.hpp"
 #include "GaleshiEngine/Assets/Material.hpp"
 #include "GaleshiEngine/Assets/Mesh.hpp"
+#include "GaleshiEngine/Assets/VegetationGenerator.hpp"
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -166,6 +168,291 @@ const T* FindPostProcessField(const T (&fields)[N],
     }
     return nullptr;
 }
+
+UIWidgetType UIWidgetTypeFromName(const std::string& value) {
+    const std::string key = NormalizeKey(value);
+    if (key == "panel") return UIWidgetType::Panel;
+    if (key == "text" || key == "label") return UIWidgetType::Text;
+    if (key == "button") return UIWidgetType::Button;
+    if (key == "image") return UIWidgetType::Image;
+    if (key == "slider") return UIWidgetType::Slider;
+    if (key == "checkbox") return UIWidgetType::CheckBox;
+    if (key == "progress") return UIWidgetType::Progress;
+    if (key == "input" || key == "text_input") return UIWidgetType::Input;
+    if (key == "dropdown") return UIWidgetType::Dropdown;
+    if (key == "scroll_list") return UIWidgetType::ScrollList;
+    if (key == "toggle") return UIWidgetType::Toggle;
+    if (key == "layout_group") return UIWidgetType::LayoutGroup;
+    return UIWidgetType::None;
+}
+
+UICanvas* FindCanvasById(Scene& scene, const std::string& id) {
+    auto view = scene.Registry().view<UICanvasComponent>();
+    for (entt::entity entity : view) {
+        auto& canvas = view.get<UICanvasComponent>(entity).canvas;
+        if (canvas.canvasId == id) return &canvas;
+    }
+    return nullptr;
+}
+
+UIWidget* FindWidgetById(UICanvas& canvas, const std::string& id) {
+    for (UIWidget& widget : canvas.widgets) {
+        if (widget.id == id) return &widget;
+    }
+    return nullptr;
+}
+
+struct UIBoolField {
+    const char* name;
+    bool UIWidget::* member;
+};
+struct UIFloatField {
+    const char* name;
+    float UIWidget::* member;
+};
+struct UIIntField {
+    const char* name;
+    int UIWidget::* member;
+};
+struct UIStringField {
+    const char* name;
+    std::string UIWidget::* member;
+};
+struct UIVec2Field {
+    const char* name;
+    glm::vec2 UIWidget::* member;
+};
+struct UIVec4Field {
+    const char* name;
+    glm::vec4 UIWidget::* member;
+};
+
+constexpr UIBoolField kUIBools[] = {
+    {"visible", &UIWidget::visible},
+    {"enabled", &UIWidget::enabled},
+    {"interactable", &UIWidget::interactable},
+    {"block_input", &UIWidget::blockInput},
+    {"checked", &UIWidget::checked},
+    {"use_color", &UIWidget::useColor},
+    {"use_border_color", &UIWidget::useBorderColor},
+};
+constexpr UIFloatField kUIFloats[] = {
+    {"opacity", &UIWidget::opacity},
+    {"button_height", &UIWidget::buttonHeight},
+    {"slider_min", &UIWidget::sliderMin},
+    {"slider_max", &UIWidget::sliderMax},
+    {"value", &UIWidget::sliderValue},
+    {"slider_step", &UIWidget::sliderStep},
+    {"font_size", &UIWidget::fontSize},
+    {"text_wrap_width", &UIWidget::textWrapWidth},
+    {"radius", &UIWidget::radius},
+    {"border", &UIWidget::border},
+};
+constexpr UIIntField kUIInts[] = {
+    {"parent", &UIWidget::parent},
+    {"z_order", &UIWidget::zOrder},
+    {"selected_option", &UIWidget::selectedOption},
+    {"max_chars", &UIWidget::maxChars},
+};
+constexpr UIStringField kUIStrings[] = {
+    {"label", &UIWidget::label},
+    {"tooltip", &UIWidget::tooltip},
+    {"image", &UIWidget::imagePath},
+    {"on_click", &UIWidget::onClick},
+    {"on_hover", &UIWidget::onHover},
+    {"on_show", &UIWidget::onShow},
+};
+constexpr UIVec2Field kUIVec2s[] = {
+    {"position", &UIWidget::position},
+    {"size", &UIWidget::size},
+    {"pivot", &UIWidget::pivot},
+    {"anchor_min", &UIWidget::anchorMin},
+    {"anchor_max", &UIWidget::anchorMax},
+};
+constexpr UIVec4Field kUIVec4s[] = {
+    {"color", &UIWidget::color},
+    {"border_color", &UIWidget::borderColor},
+};
+
+struct CanvasBoolField {
+    const char* name;
+    bool UICanvas::* member;
+};
+struct CanvasFloatField {
+    const char* name;
+    float UICanvas::* member;
+};
+struct CanvasStringField {
+    const char* name;
+    std::string UICanvas::* member;
+};
+struct CanvasVec2Field {
+    const char* name;
+    glm::vec2 UICanvas::* member;
+};
+constexpr CanvasBoolField kCanvasBools[] = {
+    {"visible", &UICanvas::visible},
+    {"resizable", &UICanvas::resizable},
+    {"movable", &UICanvas::movable},
+    {"closeable", &UICanvas::closeable},
+};
+constexpr CanvasFloatField kCanvasFloats[] = {
+    {"background_alpha", &UICanvas::backgroundAlpha},
+    {"match_width_or_height", &UICanvas::matchWidthOrHeight},
+};
+constexpr CanvasStringField kCanvasStrings[] = {
+    {"title", &UICanvas::title},
+    {"on_menu_open", &UICanvas::onMenuOpen},
+    {"on_menu_hover", &UICanvas::onMenuHover},
+    {"on_menu_click", &UICanvas::onMenuClick},
+};
+constexpr CanvasVec2Field kCanvasVec2s[] = {
+    {"screen_position", &UICanvas::screenPosition},
+    {"screen_size", &UICanvas::screenSize},
+};
+
+struct VegetationBoolField {
+    const char* name;
+    bool VegetationComponent::* member;
+};
+struct VegetationIntField {
+    const char* name;
+    int VegetationComponent::* member;
+};
+struct VegetationFloatField {
+    const char* name;
+    float VegetationComponent::* member;
+};
+constexpr VegetationBoolField kVegetationBools[] = {
+    {"enabled", &VegetationComponent::enabled},
+    {"cast_shadows", &VegetationComponent::castShadows},
+    {"grass_cast_shadows", &VegetationComponent::grassCastShadows},
+    {"hide_default_instances",
+     &VegetationComponent::hideDefaultInstances},
+};
+constexpr VegetationIntField kVegetationInts[] = {
+    {"tree_count", &VegetationComponent::treeCount},
+    {"grass_count", &VegetationComponent::grassCount},
+};
+constexpr VegetationFloatField kVegetationFloats[] = {
+    {"tree_min_scale", &VegetationComponent::treeMinScale},
+    {"tree_max_scale", &VegetationComponent::treeMaxScale},
+    {"grass_min_scale", &VegetationComponent::grassMinScale},
+    {"grass_max_scale", &VegetationComponent::grassMaxScale},
+    {"slope_limit", &VegetationComponent::slopeLimit},
+    {"paint_density", &VegetationComponent::paintDensity},
+    {"paint_size", &VegetationComponent::paintSize},
+};
+
+struct ParticleBoolField {
+    const char* name;
+    bool ParticleEmitterComponent::* member;
+};
+struct ParticleIntField {
+    const char* name;
+    uint32_t ParticleEmitterComponent::* member;
+};
+struct ParticleFloatField {
+    const char* name;
+    float ParticleEmitterComponent::* member;
+};
+struct ParticleVec3Field {
+    const char* name;
+    glm::vec3 ParticleEmitterComponent::* member;
+};
+struct ParticleVec4Field {
+    const char* name;
+    glm::vec4 ParticleEmitterComponent::* member;
+};
+constexpr ParticleBoolField kParticleBools[] = {
+    {"enabled", &ParticleEmitterComponent::enabled},
+};
+constexpr ParticleIntField kParticleInts[] = {
+    {"max_particles", &ParticleEmitterComponent::maxParticles},
+};
+constexpr ParticleFloatField kParticleFloats[] = {
+    {"emit_rate", &ParticleEmitterComponent::emitRate},
+    {"lifetime", &ParticleEmitterComponent::lifetime},
+    {"lifetime_variance", &ParticleEmitterComponent::lifetimeVariance},
+    {"start_size", &ParticleEmitterComponent::startSize},
+    {"end_size", &ParticleEmitterComponent::endSize},
+    {"velocity_variance", &ParticleEmitterComponent::velocityVariance},
+    {"spawn_radius", &ParticleEmitterComponent::spawnRadius},
+    {"drag", &ParticleEmitterComponent::drag},
+};
+constexpr ParticleVec3Field kParticleVec3s[] = {
+    {"velocity", &ParticleEmitterComponent::velocity},
+    {"spawn_box_size", &ParticleEmitterComponent::spawnBoxSize},
+    {"gravity", &ParticleEmitterComponent::gravity},
+};
+constexpr ParticleVec4Field kParticleVec4s[] = {
+    {"start_color", &ParticleEmitterComponent::startColor},
+    {"end_color", &ParticleEmitterComponent::endColor},
+};
+
+struct GroomBoolField {
+    const char* name;
+    bool GroomComponent::* member;
+};
+struct GroomIntField {
+    const char* name;
+    int GroomComponent::* member;
+};
+struct GroomFloatField {
+    const char* name;
+    float GroomComponent::* member;
+};
+struct GroomVec3Field {
+    const char* name;
+    glm::vec3 GroomComponent::* member;
+};
+struct GroomStringField {
+    const char* name;
+    std::string GroomComponent::* member;
+};
+constexpr GroomBoolField kGroomBools[] = {
+    {"enabled", &GroomComponent::enabled},
+    {"simulate", &GroomComponent::simulate},
+    {"visible_in_editor", &GroomComponent::visibleInEditor},
+};
+constexpr GroomIntField kGroomInts[] = {
+    {"guide_count", &GroomComponent::guideCount},
+    {"strands_per_guide", &GroomComponent::strandsPerGuide},
+    {"segments", &GroomComponent::segments},
+};
+constexpr GroomFloatField kGroomFloats[] = {
+    {"length", &GroomComponent::length},
+    {"width", &GroomComponent::width},
+    {"root_width", &GroomComponent::rootWidth},
+    {"tip_width", &GroomComponent::tipWidth},
+    {"clump_radius", &GroomComponent::clumpRadius},
+    {"clumping", &GroomComponent::clumping},
+    {"frizz", &GroomComponent::frizz},
+    {"curl", &GroomComponent::curl},
+    {"volume", &GroomComponent::volume},
+    {"scalp_start", &GroomComponent::scalpStart},
+    {"scalp_end", &GroomComponent::scalpEnd},
+    {"normal_threshold", &GroomComponent::normalThreshold},
+    {"gravity", &GroomComponent::gravity},
+    {"stiffness", &GroomComponent::stiffness},
+    {"damping", &GroomComponent::damping},
+    {"wind_strength", &GroomComponent::windStrength},
+    {"wind_frequency", &GroomComponent::windFrequency},
+    {"specular", &GroomComponent::specular},
+    {"shininess", &GroomComponent::shininess},
+    {"ambient", &GroomComponent::ambient},
+    {"opacity", &GroomComponent::opacity},
+    {"random_tint", &GroomComponent::randomTint},
+};
+constexpr GroomVec3Field kGroomVec3s[] = {
+    {"groom_direction", &GroomComponent::groomDirection},
+    {"wind_direction", &GroomComponent::windDirection},
+    {"root_color", &GroomComponent::rootColor},
+    {"tip_color", &GroomComponent::tipColor},
+};
+constexpr GroomStringField kGroomStrings[] = {
+    {"target_mesh_name", &GroomComponent::targetMeshName},
+};
 
 std::string LuaValueToString(const sol::object& value) {
     switch (value.get_type()) {
@@ -2378,6 +2665,23 @@ CppWorkerPacket ScriptEngine::MakeWorkerResponse(
     const auto kind =
         static_cast<CppWorkerRequest>(request.kind);
 
+    auto canvasByEntity = [&](uint32_t handle) -> UICanvas* {
+        if (!m_scene) return nullptr;
+        auto& registry = m_scene->Registry();
+        const entt::entity entity = static_cast<entt::entity>(handle);
+        if (!registry.valid(entity) ||
+            !registry.all_of<UICanvasComponent>(entity)) {
+            return nullptr;
+        }
+        return &registry.get<UICanvasComponent>(entity).canvas;
+    };
+    auto widgetByEntity = [&](uint32_t handle,
+                              const char* widgetId) -> UIWidget* {
+        UICanvas* canvas = canvasByEntity(handle);
+        if (!canvas || !widgetId) return nullptr;
+        return FindWidgetById(*canvas, widgetId);
+    };
+
     switch (kind) {
     case CppWorkerRequest::KeyDown:
         response.valid = m_isKeyDown && m_isKeyDown(request.text)
@@ -3098,6 +3402,1214 @@ CppWorkerPacket ScriptEngine::MakeWorkerResponse(
                 m_scene->HasGlobalPostProcess() ? 1u : 0u;
         }
         break;
+    case CppWorkerRequest::FindUICanvas:
+        if (m_scene) {
+            auto view = m_scene->Registry().view<UICanvasComponent>();
+            for (entt::entity entity : view) {
+                if (view.get<UICanvasComponent>(entity).canvas.canvasId ==
+                    request.text) {
+                    response.entity = static_cast<uint32_t>(entity);
+                    response.valid = 1;
+                    break;
+                }
+            }
+        }
+        break;
+    case CppWorkerRequest::CreateUICanvas:
+        if (m_scene) {
+            UICanvas* existing = FindCanvasById(*m_scene, request.text);
+            if (existing) {
+                auto view =
+                    m_scene->Registry().view<UICanvasComponent>();
+                for (entt::entity entity : view) {
+                    if (&view.get<UICanvasComponent>(entity).canvas ==
+                        existing) {
+                        response.entity =
+                            static_cast<uint32_t>(entity);
+                        response.valid = 1;
+                        break;
+                    }
+                }
+            } else {
+                const std::string canvasId = request.text;
+                const std::string title =
+                    request.text2[0] ? request.text2 : canvasId;
+                Entity entity = m_scene->CreateEntity(title);
+                auto& component =
+                    entity.AddComponent<UICanvasComponent>();
+                component.canvas.canvasId = canvasId;
+                component.canvas.title = title;
+                response.entity =
+                    static_cast<uint32_t>(entity.Handle());
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::RemoveUICanvas:
+        if (m_scene) {
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (m_scene->Registry().valid(entity) &&
+                m_scene->Registry().all_of<UICanvasComponent>(entity)) {
+                DestroyEntity(entity);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetUICanvasFlag:
+        if (UICanvas* canvas = canvasByEntity(request.entity)) {
+            const std::string key = NormalizeKey(request.text);
+            if (const auto* field =
+                    FindPostProcessField(kCanvasBools, key)) {
+                canvas->*(field->member) = request.valid != 0;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetUICanvasFlag:
+        if (UICanvas* canvas = canvasByEntity(request.entity)) {
+            const std::string key = NormalizeKey(request.text);
+            if (const auto* field =
+                    FindPostProcessField(kCanvasBools, key)) {
+                response.entity =
+                    canvas->*(field->member) ? 1u : 0u;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetUICanvasFloat:
+        if (UICanvas* canvas = canvasByEntity(request.entity)) {
+            const std::string key = NormalizeKey(request.text);
+            if (const auto* field =
+                    FindPostProcessField(kCanvasFloats, key)) {
+                canvas->*(field->member) = request.x;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetUICanvasFloat:
+        if (UICanvas* canvas = canvasByEntity(request.entity)) {
+            const std::string key = NormalizeKey(request.text);
+            if (const auto* field =
+                    FindPostProcessField(kCanvasFloats, key)) {
+                response.x = canvas->*(field->member);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetUICanvasString:
+        if (UICanvas* canvas = canvasByEntity(request.entity)) {
+            const std::string key = NormalizeKey(request.text);
+            if (const auto* field =
+                    FindPostProcessField(kCanvasStrings, key)) {
+                canvas->*(field->member) = request.text2;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetUICanvasString:
+        if (UICanvas* canvas = canvasByEntity(request.entity)) {
+            const std::string key = NormalizeKey(request.text);
+            if (const auto* field =
+                    FindPostProcessField(kCanvasStrings, key)) {
+                std::snprintf(
+                    response.text, sizeof(response.text), "%s",
+                    (canvas->*(field->member)).c_str());
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetUICanvasVec2:
+        if (UICanvas* canvas = canvasByEntity(request.entity)) {
+            const std::string key = NormalizeKey(request.text);
+            if (const auto* field =
+                    FindPostProcessField(kCanvasVec2s, key)) {
+                canvas->*(field->member) =
+                    glm::vec2(request.x, request.y);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetUICanvasVec2:
+        if (UICanvas* canvas = canvasByEntity(request.entity)) {
+            const std::string key = NormalizeKey(request.text);
+            if (const auto* field =
+                    FindPostProcessField(kCanvasVec2s, key)) {
+                const glm::vec2 value =
+                    canvas->*(field->member);
+                response.x = value.x;
+                response.y = value.y;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::FindUIWidget:
+        if (UIWidget* widget =
+                widgetByEntity(request.entity, request.text)) {
+            UICanvas* canvas = canvasByEntity(request.entity);
+            response.entity = static_cast<uint32_t>(
+                widget - canvas->widgets.data());
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::AddUIWidget:
+        if (UICanvas* canvas = canvasByEntity(request.entity)) {
+            if (!FindWidgetById(*canvas, request.text)) {
+                UIWidget widget;
+                widget.id = request.text;
+                widget.label = request.text;
+                widget.type = UIWidgetTypeFromName(request.text2);
+                widget.zOrder =
+                    static_cast<int>(canvas->widgets.size());
+                widget.size = {160.0f, 32.0f};
+                canvas->widgets.push_back(std::move(widget));
+                response.entity = static_cast<uint32_t>(
+                    canvas->widgets.size() - 1);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::RemoveUIWidget:
+        if (UICanvas* canvas = canvasByEntity(request.entity)) {
+            for (size_t i = 0; i < canvas->widgets.size(); ++i) {
+                if (canvas->widgets[i].id != request.text) continue;
+                canvas->widgets.erase(
+                    canvas->widgets.begin() +
+                    static_cast<std::ptrdiff_t>(i));
+                for (UIWidget& widget : canvas->widgets) {
+                    if (widget.parent == static_cast<int>(i)) {
+                        widget.parent = -1;
+                    } else if (widget.parent >
+                               static_cast<int>(i)) {
+                        --widget.parent;
+                    }
+                }
+                response.valid = 1;
+                break;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetUIWidgetFlag:
+        if (UIWidget* widget =
+                widgetByEntity(request.entity, request.text)) {
+            const std::string key = NormalizeKey(request.text2);
+            if (const auto* field =
+                    FindPostProcessField(kUIBools, key)) {
+                widget->*(field->member) = request.valid != 0;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetUIWidgetFlag:
+        if (UIWidget* widget =
+                widgetByEntity(request.entity, request.text)) {
+            const std::string key = NormalizeKey(request.text2);
+            if (const auto* field =
+                    FindPostProcessField(kUIBools, key)) {
+                response.entity =
+                    widget->*(field->member) ? 1u : 0u;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetUIWidgetFloat:
+        if (UIWidget* widget =
+                widgetByEntity(request.entity, request.text)) {
+            const std::string key = NormalizeKey(request.text2);
+            if (const auto* field =
+                    FindPostProcessField(kUIFloats, key)) {
+                widget->*(field->member) = request.x;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetUIWidgetFloat:
+        if (UIWidget* widget =
+                widgetByEntity(request.entity, request.text)) {
+            const std::string key = NormalizeKey(request.text2);
+            if (const auto* field =
+                    FindPostProcessField(kUIFloats, key)) {
+                response.x = widget->*(field->member);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetUIWidgetInt:
+        if (UIWidget* widget =
+                widgetByEntity(request.entity, request.text)) {
+            const std::string key = NormalizeKey(request.text2);
+            const int value = static_cast<int>(request.valid);
+            if (key == "text_align") {
+                widget->textAlign = static_cast<UITextAlign>(
+                    std::clamp(value, 0, 2));
+                response.valid = 1;
+            } else if (const auto* field =
+                           FindPostProcessField(kUIInts, key)) {
+                widget->*(field->member) = value;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetUIWidgetInt:
+        if (UIWidget* widget =
+                widgetByEntity(request.entity, request.text)) {
+            const std::string key = NormalizeKey(request.text2);
+            if (key == "text_align") {
+                response.entity = static_cast<uint32_t>(
+                    widget->textAlign);
+                response.valid = 1;
+            } else if (const auto* field =
+                           FindPostProcessField(kUIInts, key)) {
+                response.entity = static_cast<uint32_t>(
+                    widget->*(field->member));
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetUIWidgetString:
+        if (UIWidget* widget =
+                widgetByEntity(request.entity, request.text)) {
+            const std::string combined = request.text2;
+            const std::size_t split = combined.find('\n');
+            const std::string key = NormalizeKey(
+                combined.substr(0, split));
+            const std::string value = split == std::string::npos
+                ? std::string{}
+                : combined.substr(split + 1);
+            if (key == "text_align") {
+                const std::string align = NormalizeKey(value);
+                widget->textAlign = align == "center"
+                    ? UITextAlign::Center
+                    : align == "right" ? UITextAlign::Right
+                                       : UITextAlign::Left;
+                response.valid = 1;
+            } else if (const auto* field =
+                           FindPostProcessField(kUIStrings, key)) {
+                widget->*(field->member) = value;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetUIWidgetString:
+        if (UIWidget* widget =
+                widgetByEntity(request.entity, request.text)) {
+            const std::string key = NormalizeKey(request.text2);
+            if (key == "text_align") {
+                std::snprintf(
+                    response.text, sizeof(response.text), "%s",
+                    widget->textAlign == UITextAlign::Center
+                        ? "center"
+                        : widget->textAlign == UITextAlign::Right
+                              ? "right"
+                              : "left");
+                response.valid = 1;
+            } else if (const auto* field =
+                           FindPostProcessField(kUIStrings, key)) {
+                std::snprintf(
+                    response.text, sizeof(response.text), "%s",
+                    (widget->*(field->member)).c_str());
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetUIWidgetVec2:
+        if (UIWidget* widget =
+                widgetByEntity(request.entity, request.text)) {
+            const std::string key = NormalizeKey(request.text2);
+            if (const auto* field =
+                    FindPostProcessField(kUIVec2s, key)) {
+                widget->*(field->member) =
+                    glm::vec2(request.x, request.y);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetUIWidgetVec2:
+        if (UIWidget* widget =
+                widgetByEntity(request.entity, request.text)) {
+            const std::string key = NormalizeKey(request.text2);
+            if (const auto* field =
+                    FindPostProcessField(kUIVec2s, key)) {
+                const glm::vec2 value =
+                    widget->*(field->member);
+                response.x = value.x;
+                response.y = value.y;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetUIWidgetVec4:
+        if (UIWidget* widget =
+                widgetByEntity(request.entity, request.text)) {
+            const std::string key = NormalizeKey(request.text2);
+            if (const auto* field =
+                    FindPostProcessField(kUIVec4s, key)) {
+                widget->*(field->member) = glm::vec4(
+                    request.x, request.y, request.z, request.w);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetUIWidgetVec4:
+        if (UIWidget* widget =
+                widgetByEntity(request.entity, request.text)) {
+            const std::string key = NormalizeKey(request.text2);
+            if (const auto* field =
+                    FindPostProcessField(kUIVec4s, key)) {
+                const glm::vec4 value =
+                    widget->*(field->member);
+                response.x = value.x;
+                response.y = value.y;
+                response.z = value.z;
+                response.w = value.w;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::PollUIEvent:
+        if (!m_cppUIEvents.empty()) {
+            const UIEvent event = std::move(m_cppUIEvents.front());
+            m_cppUIEvents.pop_front();
+            response.entity = static_cast<uint32_t>(
+                event.canvasEntity);
+            response.other =
+                static_cast<uint32_t>(event.type);
+            response.x = event.value;
+            response.w = event.checked ? 1.0f : 0.0f;
+            std::snprintf(
+                response.text, sizeof(response.text), "%s",
+                event.canvasId.c_str());
+            std::snprintf(
+                response.text2, sizeof(response.text2), "%s",
+                event.widgetId.c_str());
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::IsPointerOverUI:
+        if (m_isPointerOverUI) {
+            response.valid =
+                m_isPointerOverUI() ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::FindLandscape:
+        if (m_scene) {
+            auto view = m_scene->Registry().view<LandscapeComponent>();
+            if (!view.empty()) {
+                response.entity = static_cast<uint32_t>(*view.begin());
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::LandscapeSampleHeight:
+        if (m_scene) {
+            auto view = m_scene->Registry().view<LandscapeComponent>();
+            if (!view.empty()) {
+                const auto& landscape =
+                    view.get<LandscapeComponent>(*view.begin());
+                response.x = LandscapeMesh::SampleHeight(
+                    landscape, request.x, request.y);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::LandscapeSetHeight:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            auto view = registry.view<LandscapeComponent>();
+            if (!view.empty()) {
+                const entt::entity entity = *view.begin();
+                auto& landscape = view.get<LandscapeComponent>(entity);
+                if (landscape.sizeX >= 2 && landscape.sizeZ >= 2) {
+                    const float gx =
+                        request.x / std::max(0.001f, landscape.scale) +
+                        landscape.sizeX * 0.5f;
+                    const float gz =
+                        request.y / std::max(0.001f, landscape.scale) +
+                        landscape.sizeZ * 0.5f;
+                    const int x = std::clamp(
+                        static_cast<int>(std::lround(gx)), 0,
+                        landscape.sizeX - 1);
+                    const int z = std::clamp(
+                        static_cast<int>(std::lround(gz)), 0,
+                        landscape.sizeZ - 1);
+                    const size_t index =
+                        static_cast<size_t>(z) * landscape.sizeX + x;
+                    if (index < landscape.heights.size()) {
+                        landscape.heights[index] = request.z;
+                        if (registry.all_of<MeshComponent>(entity)) {
+                            auto& mesh =
+                                registry.get<MeshComponent>(entity);
+                            if (mesh.mesh) {
+                                LandscapeMesh::UpdateMesh(
+                                    landscape, *mesh.mesh);
+                            }
+                        }
+                        if (registry.all_of<VegetationComponent>(
+                                entity)) {
+                            registry.get<VegetationComponent>(entity)
+                                .dirty = true;
+                        }
+                        response.valid = 1;
+                    }
+                }
+            }
+        }
+        break;
+    case CppWorkerRequest::LandscapeApplyBrush:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            auto view = registry.view<LandscapeComponent>();
+            if (!view.empty()) {
+                const entt::entity entity = *view.begin();
+                auto& landscape = view.get<LandscapeComponent>(entity);
+                LandscapeBrushSettings settings;
+                const int tool = static_cast<int>(request.valid);
+                settings.tool = static_cast<LandscapeBrush>(
+                    std::clamp(tool, 0, 6));
+                settings.radius = request.z;
+                settings.strength = request.w;
+                settings.falloff = request.x2;
+                settings.flattenHeight = 0.0f;
+                settings.noiseFrequency = 0.15f;
+                settings.terraceStep = 1.0f;
+                const int changed = LandscapeMesh::ApplyBrush(
+                    landscape, settings, request.x, request.y,
+                    request.y2);
+                if (changed > 0) {
+                    if (registry.all_of<MeshComponent>(entity)) {
+                        auto& mesh =
+                            registry.get<MeshComponent>(entity);
+                        if (mesh.mesh) {
+                            LandscapeMesh::UpdateMesh(
+                                landscape, *mesh.mesh);
+                        }
+                    }
+                    if (registry.all_of<VegetationComponent>(entity)) {
+                        registry.get<VegetationComponent>(entity)
+                            .dirty = true;
+                    }
+                    response.valid = 1;
+                }
+            }
+        }
+        break;
+    case CppWorkerRequest::LandscapeResetHeights:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            auto view = registry.view<LandscapeComponent>();
+            if (!view.empty()) {
+                const entt::entity entity = *view.begin();
+                auto& landscape = view.get<LandscapeComponent>(entity);
+                LandscapeMesh::ResetHeights(landscape);
+                if (registry.all_of<MeshComponent>(entity)) {
+                    auto& mesh = registry.get<MeshComponent>(entity);
+                    if (mesh.mesh) {
+                        LandscapeMesh::UpdateMesh(landscape, *mesh.mesh);
+                    }
+                }
+                if (registry.all_of<VegetationComponent>(entity)) {
+                    registry.get<VegetationComponent>(entity).dirty =
+                        true;
+                }
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::FindVegetation:
+        if (m_scene) {
+            auto view = m_scene->Registry().view<VegetationComponent>();
+            if (!view.empty()) {
+                response.entity = static_cast<uint32_t>(*view.begin());
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::VegetationRegenerate:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<LandscapeComponent,
+                                VegetationComponent>(entity)) {
+                VegetationGenerator::Generate(
+                    registry.get<LandscapeComponent>(entity),
+                    registry.get<VegetationComponent>(entity));
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::VegetationClear:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<VegetationComponent>(entity)) {
+                VegetationGenerator::Clear(
+                    registry.get<VegetationComponent>(entity));
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::VegetationSetBool:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<VegetationComponent>(entity)) {
+                const std::string key = NormalizeKey(request.text);
+                auto& vegetation =
+                    registry.get<VegetationComponent>(entity);
+                if (const auto* field = FindPostProcessField(
+                        kVegetationBools, key)) {
+                    vegetation.*(field->member) =
+                        request.valid != 0;
+                    vegetation.dirty = true;
+                    response.valid = 1;
+                }
+            }
+        }
+        break;
+    case CppWorkerRequest::VegetationGetBool:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<VegetationComponent>(entity)) {
+                const std::string key = NormalizeKey(request.text);
+                auto& vegetation =
+                    registry.get<VegetationComponent>(entity);
+                if (const auto* field = FindPostProcessField(
+                        kVegetationBools, key)) {
+                    response.entity =
+                        vegetation.*(field->member) ? 1u : 0u;
+                    response.valid = 1;
+                }
+            }
+        }
+        break;
+    case CppWorkerRequest::VegetationSetInt:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<VegetationComponent>(entity)) {
+                const std::string key = NormalizeKey(request.text);
+                auto& vegetation =
+                    registry.get<VegetationComponent>(entity);
+                if (key == "seed") {
+                    vegetation.seed =
+                        static_cast<uint32_t>(request.valid);
+                    vegetation.dirty = true;
+                    response.valid = 1;
+                } else if (const auto* field =
+                               FindPostProcessField(
+                                   kVegetationInts, key)) {
+                    vegetation.*(field->member) =
+                        static_cast<int>(request.valid);
+                    vegetation.dirty = true;
+                    response.valid = 1;
+                }
+            }
+        }
+        break;
+    case CppWorkerRequest::VegetationGetInt:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<VegetationComponent>(entity)) {
+                const std::string key = NormalizeKey(request.text);
+                auto& vegetation =
+                    registry.get<VegetationComponent>(entity);
+                if (key == "seed") {
+                    response.entity = vegetation.seed;
+                    response.valid = 1;
+                } else if (const auto* field =
+                               FindPostProcessField(
+                                   kVegetationInts, key)) {
+                    response.entity = static_cast<uint32_t>(
+                        vegetation.*(field->member));
+                    response.valid = 1;
+                }
+            }
+        }
+        break;
+    case CppWorkerRequest::VegetationSetFloat:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<VegetationComponent>(entity)) {
+                const std::string key = NormalizeKey(request.text);
+                auto& vegetation =
+                    registry.get<VegetationComponent>(entity);
+                if (const auto* field = FindPostProcessField(
+                        kVegetationFloats, key)) {
+                    vegetation.*(field->member) = request.x;
+                    vegetation.dirty = true;
+                    response.valid = 1;
+                }
+            }
+        }
+        break;
+    case CppWorkerRequest::VegetationGetFloat:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<VegetationComponent>(entity)) {
+                const std::string key = NormalizeKey(request.text);
+                auto& vegetation =
+                    registry.get<VegetationComponent>(entity);
+                if (const auto* field = FindPostProcessField(
+                        kVegetationFloats, key)) {
+                    response.x = vegetation.*(field->member);
+                    response.valid = 1;
+                }
+            }
+        }
+        break;
+    case CppWorkerRequest::VegetationInstanceCount:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<VegetationComponent>(entity)) {
+                auto& vegetation =
+                    registry.get<VegetationComponent>(entity);
+                const bool grass = (request.valid & 1u) != 0;
+                const bool painted = (request.valid & 2u) != 0;
+                size_t count = 0;
+                if (grass) {
+                    count = painted
+                        ? vegetation.paintedGrassInstances.size()
+                        : vegetation.grassInstances.size();
+                } else {
+                    count = painted
+                        ? vegetation.paintedTreeInstances.size()
+                        : vegetation.treeInstances.size();
+                    for (const auto& type : vegetation.treeTypes) {
+                        count += painted
+                            ? type.paintedInstances.size()
+                            : type.generatedInstances.size();
+                    }
+                }
+                response.entity = static_cast<uint32_t>(
+                    std::min<size_t>(count, UINT32_MAX));
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetAnimationState:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<AnimationStateMachineComponent>(
+                    entity)) {
+                response.valid = AnimationSystem::SetState(
+                    registry.get<AnimationStateMachineComponent>(entity),
+                    request.text) ? 1u : 0u;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetAnimationParameter:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<AnimationStateMachineComponent>(
+                    entity)) {
+                auto& machine =
+                    registry.get<AnimationStateMachineComponent>(entity);
+                AnimationSystem::SetParameter(
+                    machine, request.text, request.x);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetAnimationParameter:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<AnimationStateMachineComponent>(
+                    entity)) {
+                auto& machine =
+                    registry.get<AnimationStateMachineComponent>(entity);
+                response.x = AnimationSystem::GetParameter(
+                    machine, request.text);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::TriggerAnimationParameter:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<AnimationStateMachineComponent>(
+                    entity)) {
+                auto& machine =
+                    registry.get<AnimationStateMachineComponent>(entity);
+                AnimationSystem::Trigger(machine, request.text);
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::PlayAnimationClip:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<SkeletalComponent>(entity)) {
+                auto& skeletal =
+                    registry.get<SkeletalComponent>(entity);
+                skeletal.activeAnimation =
+                    static_cast<int>(request.valid);
+                skeletal.currentTime = 0.0f;
+                skeletal.isAnimated = true;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::StopAnimation:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<SkeletalComponent>(entity)) {
+                auto& skeletal =
+                    registry.get<SkeletalComponent>(entity);
+                skeletal.isAnimated = false;
+                skeletal.currentTime = 0.0f;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetAnimationSpeed:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity)) {
+                bool applied = false;
+                if (registry.all_of<SkeletalComponent>(entity)) {
+                    registry.get<SkeletalComponent>(entity)
+                        .animationSpeed = request.x;
+                    applied = true;
+                }
+                if (registry.all_of<AnimationStateMachineComponent>(
+                        entity)) {
+                    registry.get<AnimationStateMachineComponent>(entity)
+                        .playbackSpeed = request.x;
+                    applied = true;
+                }
+                response.valid = applied ? 1u : 0u;
+            }
+        }
+        break;
+    case CppWorkerRequest::GetAnimationSpeed:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<SkeletalComponent>(entity)) {
+                response.x =
+                    registry.get<SkeletalComponent>(entity)
+                        .animationSpeed;
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::AnimationClipCount:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity)) {
+                size_t count = 0;
+                if (m_assets &&
+                    registry.all_of<SkeletalComponent>(entity)) {
+                    const auto& skeletal =
+                        registry.get<SkeletalComponent>(entity);
+                    if (!skeletal.sourcePath.empty()) {
+                        const auto model =
+                            m_assets->LoadModel(
+                                skeletal.sourcePath);
+                        count = model.animationNames.size();
+                    }
+                }
+                if (count == 0 &&
+                    registry.all_of<AnimationStateMachineComponent>(
+                        entity)) {
+                    count = registry
+                                .get<AnimationStateMachineComponent>(
+                                    entity)
+                                .states.size();
+                }
+                response.entity = static_cast<uint32_t>(
+                    std::min<size_t>(count, UINT32_MAX));
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::AnimationClipName:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity)) {
+                const uint32_t index = request.valid;
+                std::string name;
+                if (m_assets &&
+                    registry.all_of<SkeletalComponent>(entity)) {
+                    const auto& skeletal =
+                        registry.get<SkeletalComponent>(entity);
+                    if (!skeletal.sourcePath.empty()) {
+                        const auto model =
+                            m_assets->LoadModel(
+                                skeletal.sourcePath);
+                        if (index < model.animationNames.size()) {
+                            name = model.animationNames[index];
+                        }
+                    }
+                }
+                if (name.empty() &&
+                    registry.all_of<AnimationStateMachineComponent>(
+                        entity)) {
+                    const auto& machine =
+                        registry.get<AnimationStateMachineComponent>(
+                            entity);
+                    if (index < machine.states.size()) {
+                        name = machine.states[index].name;
+                    }
+                }
+                if (!name.empty()) {
+                    std::snprintf(
+                        response.text, sizeof(response.text), "%s",
+                        name.c_str());
+                    response.valid = 1;
+                }
+            }
+        }
+        break;
+    case CppWorkerRequest::AnimationClipDuration:
+        if (m_scene && m_assets) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<SkeletalComponent>(entity)) {
+                const auto& skeletal =
+                    registry.get<SkeletalComponent>(entity);
+                if (!skeletal.sourcePath.empty()) {
+                    const auto model =
+                        m_assets->LoadModel(skeletal.sourcePath);
+                    const uint32_t index = request.valid;
+                    if (index < model.animationDurations.size()) {
+                        response.x = model.animationDurations[index];
+                        response.valid = 1;
+                    }
+                }
+            }
+        }
+        break;
+    case CppWorkerRequest::AssetExists:
+        if (m_assets) {
+            const std::string path =
+                m_assets->ResolvePath(request.text);
+            std::error_code ec;
+            response.valid =
+                std::filesystem::exists(path, ec) ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::AssetResolvePath:
+        if (m_assets) {
+            const std::string path =
+                m_assets->ResolvePath(request.text);
+            std::snprintf(response.text, sizeof(response.text), "%s",
+                          path.c_str());
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::AssetLoadModel:
+        if (m_assets) {
+            const auto model = m_assets->LoadModel(request.text);
+            response.valid =
+                !model.meshes.empty() ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::FindParticleEmitter:
+        if (m_scene) {
+            auto view =
+                m_scene->Registry().view<ParticleEmitterComponent>();
+            if (!view.empty()) {
+                response.entity = static_cast<uint32_t>(*view.begin());
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetParticleFlag:
+    case CppWorkerRequest::SetParticleFloat:
+    case CppWorkerRequest::SetParticleInt:
+    case CppWorkerRequest::SetParticleVec3:
+    case CppWorkerRequest::SetParticleVec4:
+    case CppWorkerRequest::GetParticleFlag:
+    case CppWorkerRequest::GetParticleFloat:
+    case CppWorkerRequest::GetParticleInt:
+    case CppWorkerRequest::GetParticleVec3:
+    case CppWorkerRequest::GetParticleVec4:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<ParticleEmitterComponent>(entity)) {
+                auto& particle =
+                    registry.get<ParticleEmitterComponent>(entity);
+                const std::string key = NormalizeKey(request.text);
+                switch (kind) {
+                case CppWorkerRequest::SetParticleFlag:
+                    if (const auto* field =
+                            FindPostProcessField(
+                                kParticleBools, key)) {
+                        particle.*(field->member) =
+                            request.valid != 0;
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::GetParticleFlag:
+                    if (const auto* field =
+                            FindPostProcessField(
+                                kParticleBools, key)) {
+                        response.entity =
+                            particle.*(field->member) ? 1u : 0u;
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::SetParticleFloat:
+                    if (const auto* field =
+                            FindPostProcessField(
+                                kParticleFloats, key)) {
+                        particle.*(field->member) = request.x;
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::GetParticleFloat:
+                    if (const auto* field =
+                            FindPostProcessField(
+                                kParticleFloats, key)) {
+                        response.x = particle.*(field->member);
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::SetParticleInt:
+                    if (const auto* field =
+                            FindPostProcessField(
+                                kParticleInts, key)) {
+                        particle.*(field->member) = request.valid;
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::GetParticleInt:
+                    if (const auto* field =
+                            FindPostProcessField(
+                                kParticleInts, key)) {
+                        response.entity = particle.*(field->member);
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::SetParticleVec3:
+                    if (const auto* field =
+                            FindPostProcessField(
+                                kParticleVec3s, key)) {
+                        particle.*(field->member) =
+                            glm::vec3(request.x, request.y,
+                                      request.z);
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::GetParticleVec3:
+                    if (const auto* field =
+                            FindPostProcessField(
+                                kParticleVec3s, key)) {
+                        const glm::vec3 value =
+                            particle.*(field->member);
+                        response.x = value.x;
+                        response.y = value.y;
+                        response.z = value.z;
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::SetParticleVec4:
+                    if (const auto* field =
+                            FindPostProcessField(
+                                kParticleVec4s, key)) {
+                        particle.*(field->member) = glm::vec4(
+                            request.x, request.y, request.z,
+                            request.w);
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::GetParticleVec4:
+                    if (const auto* field =
+                            FindPostProcessField(
+                                kParticleVec4s, key)) {
+                        const glm::vec4 value =
+                            particle.*(field->member);
+                        response.x = value.x;
+                        response.y = value.y;
+                        response.z = value.z;
+                        response.w = value.w;
+                        response.valid = 1;
+                    }
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+        break;
+    case CppWorkerRequest::FindGroom:
+        if (m_scene) {
+            auto view = m_scene->Registry().view<GroomComponent>();
+            if (!view.empty()) {
+                response.entity = static_cast<uint32_t>(*view.begin());
+                response.valid = 1;
+            }
+        }
+        break;
+    case CppWorkerRequest::SetGroomFlag:
+    case CppWorkerRequest::GetGroomFlag:
+    case CppWorkerRequest::SetGroomFloat:
+    case CppWorkerRequest::GetGroomFloat:
+    case CppWorkerRequest::SetGroomInt:
+    case CppWorkerRequest::GetGroomInt:
+    case CppWorkerRequest::SetGroomVec3:
+    case CppWorkerRequest::GetGroomVec3:
+    case CppWorkerRequest::SetGroomString:
+    case CppWorkerRequest::GetGroomString:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (registry.valid(entity) &&
+                registry.all_of<GroomComponent>(entity)) {
+                auto& groom = registry.get<GroomComponent>(entity);
+                const std::string key = NormalizeKey(request.text);
+                switch (kind) {
+                case CppWorkerRequest::SetGroomFlag:
+                    if (const auto* field =
+                            FindPostProcessField(kGroomBools, key)) {
+                        groom.*(field->member) =
+                            request.valid != 0;
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::GetGroomFlag:
+                    if (const auto* field =
+                            FindPostProcessField(kGroomBools, key)) {
+                        response.entity =
+                            groom.*(field->member) ? 1u : 0u;
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::SetGroomFloat:
+                    if (const auto* field =
+                            FindPostProcessField(kGroomFloats, key)) {
+                        groom.*(field->member) = request.x;
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::GetGroomFloat:
+                    if (const auto* field =
+                            FindPostProcessField(kGroomFloats, key)) {
+                        response.x = groom.*(field->member);
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::SetGroomInt:
+                    if (key == "seed") {
+                        groom.seed = request.valid;
+                        response.valid = 1;
+                    } else if (const auto* field =
+                                   FindPostProcessField(
+                                       kGroomInts, key)) {
+                        groom.*(field->member) =
+                            static_cast<int>(request.valid);
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::GetGroomInt:
+                    if (key == "seed") {
+                        response.entity = groom.seed;
+                        response.valid = 1;
+                    } else if (const auto* field =
+                                   FindPostProcessField(
+                                       kGroomInts, key)) {
+                        response.entity = static_cast<uint32_t>(
+                            groom.*(field->member));
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::SetGroomVec3:
+                    if (const auto* field =
+                            FindPostProcessField(kGroomVec3s, key)) {
+                        groom.*(field->member) = glm::vec3(
+                            request.x, request.y, request.z);
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::GetGroomVec3:
+                    if (const auto* field =
+                            FindPostProcessField(kGroomVec3s, key)) {
+                        const glm::vec3 value =
+                            groom.*(field->member);
+                        response.x = value.x;
+                        response.y = value.y;
+                        response.z = value.z;
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::SetGroomString:
+                    if (const auto* field =
+                            FindPostProcessField(kGroomStrings, key)) {
+                        groom.*(field->member) = request.text2;
+                        response.valid = 1;
+                    }
+                    break;
+                case CppWorkerRequest::GetGroomString:
+                    if (const auto* field =
+                            FindPostProcessField(kGroomStrings, key)) {
+                        std::snprintf(
+                            response.text, sizeof(response.text), "%s",
+                            (groom.*(field->member)).c_str());
+                        response.valid = 1;
+                    }
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+        break;
     }
     return response;
 }
@@ -3385,6 +4897,19 @@ void ScriptEngine::BindAudio3D(
     m_playAudioSource = std::move(playSource);
     m_stopAudioSource = std::move(stopSource);
     m_isAudioSourcePlaying = std::move(isPlayingSource);
+}
+
+void ScriptEngine::PushUIEvent(const UIEvent& event) {
+    constexpr std::size_t kMaxQueuedUIEvents = 256;
+    if (m_cppUIEvents.size() >= kMaxQueuedUIEvents) {
+        m_cppUIEvents.pop_front();
+    }
+    m_cppUIEvents.push_back(event);
+}
+
+void ScriptEngine::BindUIState(std::function<bool()> pointerOverUI) {
+    BuildApi();
+    m_isPointerOverUI = std::move(pointerOverUI);
 }
 
 void ScriptEngine::BindPhysics(const PhysicsBindings& bindings) {

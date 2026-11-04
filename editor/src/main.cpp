@@ -1296,6 +1296,9 @@ protected:
         m_uiRuntime.SetEventHandler([this](const Galeshi::UIEvent& event) {
             DispatchUIEvent(event);
         });
+        m_scripts.BindUIState([this]() {
+            return m_uiRuntime.IsPointerOverUI();
+        });
 
         m_physics = std::make_unique<Galeshi::EnginePhysicsSystem>();
         m_physics->Init();
@@ -2046,6 +2049,7 @@ private:
         m_activeGameCamera = entt::null;
         m_pendingLandscapeBake = entt::null;
         m_wasSculpting = false;
+        m_scripts.ClearUIEvents();
         m_audio.StopAll();
 
         if (m_physics) m_physics->Reset();
@@ -3891,6 +3895,7 @@ if (ImGui::BeginMenu("File")) {
             !registry.all_of<Galeshi::UICanvasComponent>(entity)) {
             return;
         }
+        m_scripts.PushUIEvent(event);
         auto& canvas = registry.get<Galeshi::UICanvasComponent>(entity).canvas;
 
         Galeshi::UIWidget* widget = nullptr;

@@ -372,6 +372,92 @@ public:
             &ScriptWorker::SetPostProcessEnabled;
         m_api.get_post_process_enabled =
             &ScriptWorker::GetPostProcessEnabled;
+        m_api.find_ui_canvas = &ScriptWorker::FindUICanvas;
+        m_api.create_ui_canvas = &ScriptWorker::CreateUICanvas;
+        m_api.remove_ui_canvas = &ScriptWorker::RemoveUICanvas;
+        m_api.set_ui_canvas_flag = &ScriptWorker::SetUICanvasFlag;
+        m_api.get_ui_canvas_flag = &ScriptWorker::GetUICanvasFlag;
+        m_api.set_ui_canvas_float = &ScriptWorker::SetUICanvasFloat;
+        m_api.get_ui_canvas_float = &ScriptWorker::GetUICanvasFloat;
+        m_api.set_ui_canvas_string = &ScriptWorker::SetUICanvasString;
+        m_api.get_ui_canvas_string = &ScriptWorker::GetUICanvasString;
+        m_api.set_ui_canvas_vec2 = &ScriptWorker::SetUICanvasVec2;
+        m_api.get_ui_canvas_vec2 = &ScriptWorker::GetUICanvasVec2;
+        m_api.find_ui_widget = &ScriptWorker::FindUIWidget;
+        m_api.add_ui_widget = &ScriptWorker::AddUIWidget;
+        m_api.remove_ui_widget = &ScriptWorker::RemoveUIWidget;
+        m_api.set_ui_widget_flag = &ScriptWorker::SetUIWidgetFlag;
+        m_api.get_ui_widget_flag = &ScriptWorker::GetUIWidgetFlag;
+        m_api.set_ui_widget_float = &ScriptWorker::SetUIWidgetFloat;
+        m_api.get_ui_widget_float = &ScriptWorker::GetUIWidgetFloat;
+        m_api.set_ui_widget_int = &ScriptWorker::SetUIWidgetInt;
+        m_api.get_ui_widget_int = &ScriptWorker::GetUIWidgetInt;
+        m_api.set_ui_widget_string = &ScriptWorker::SetUIWidgetString;
+        m_api.get_ui_widget_string = &ScriptWorker::GetUIWidgetString;
+        m_api.set_ui_widget_vec2 = &ScriptWorker::SetUIWidgetVec2;
+        m_api.get_ui_widget_vec2 = &ScriptWorker::GetUIWidgetVec2;
+        m_api.set_ui_widget_vec4 = &ScriptWorker::SetUIWidgetVec4;
+        m_api.get_ui_widget_vec4 = &ScriptWorker::GetUIWidgetVec4;
+        m_api.poll_ui_event = &ScriptWorker::PollUIEvent;
+        m_api.is_pointer_over_ui = &ScriptWorker::IsPointerOverUI;
+        m_api.find_landscape = &ScriptWorker::FindLandscape;
+        m_api.landscape_sample_height = &ScriptWorker::LandscapeSampleHeight;
+        m_api.landscape_set_height = &ScriptWorker::LandscapeSetHeight;
+        m_api.landscape_apply_brush = &ScriptWorker::LandscapeApplyBrush;
+        m_api.landscape_reset_heights =
+            &ScriptWorker::LandscapeResetHeights;
+        m_api.find_vegetation = &ScriptWorker::FindVegetation;
+        m_api.vegetation_regenerate =
+            &ScriptWorker::VegetationRegenerate;
+        m_api.vegetation_clear = &ScriptWorker::VegetationClear;
+        m_api.vegetation_set_bool = &ScriptWorker::VegetationSetBool;
+        m_api.vegetation_get_bool = &ScriptWorker::VegetationGetBool;
+        m_api.vegetation_set_int = &ScriptWorker::VegetationSetInt;
+        m_api.vegetation_get_int = &ScriptWorker::VegetationGetInt;
+        m_api.vegetation_set_float = &ScriptWorker::VegetationSetFloat;
+        m_api.vegetation_get_float = &ScriptWorker::VegetationGetFloat;
+        m_api.vegetation_instance_count =
+            &ScriptWorker::VegetationInstanceCount;
+        m_api.set_animation_state = &ScriptWorker::SetAnimationState;
+        m_api.set_animation_parameter =
+            &ScriptWorker::SetAnimationParameter;
+        m_api.get_animation_parameter =
+            &ScriptWorker::GetAnimationParameter;
+        m_api.trigger_animation_parameter =
+            &ScriptWorker::TriggerAnimationParameter;
+        m_api.play_animation_clip = &ScriptWorker::PlayAnimationClip;
+        m_api.stop_animation = &ScriptWorker::StopAnimation;
+        m_api.set_animation_speed = &ScriptWorker::SetAnimationSpeed;
+        m_api.get_animation_speed = &ScriptWorker::GetAnimationSpeed;
+        m_api.animation_clip_count = &ScriptWorker::AnimationClipCount;
+        m_api.animation_clip_name = &ScriptWorker::AnimationClipName;
+        m_api.animation_clip_duration =
+            &ScriptWorker::AnimationClipDuration;
+        m_api.asset_exists = &ScriptWorker::AssetExists;
+        m_api.asset_resolve_path = &ScriptWorker::AssetResolvePath;
+        m_api.asset_load_model = &ScriptWorker::AssetLoadModel;
+        m_api.find_particle_emitter = &ScriptWorker::FindParticleEmitter;
+        m_api.set_particle_flag = &ScriptWorker::SetParticleFlag;
+        m_api.get_particle_flag = &ScriptWorker::GetParticleFlag;
+        m_api.set_particle_float = &ScriptWorker::SetParticleFloat;
+        m_api.get_particle_float = &ScriptWorker::GetParticleFloat;
+        m_api.set_particle_int = &ScriptWorker::SetParticleInt;
+        m_api.get_particle_int = &ScriptWorker::GetParticleInt;
+        m_api.set_particle_vec3 = &ScriptWorker::SetParticleVec3;
+        m_api.get_particle_vec3 = &ScriptWorker::GetParticleVec3;
+        m_api.set_particle_vec4 = &ScriptWorker::SetParticleVec4;
+        m_api.get_particle_vec4 = &ScriptWorker::GetParticleVec4;
+        m_api.find_groom = &ScriptWorker::FindGroom;
+        m_api.set_groom_flag = &ScriptWorker::SetGroomFlag;
+        m_api.get_groom_flag = &ScriptWorker::GetGroomFlag;
+        m_api.set_groom_float = &ScriptWorker::SetGroomFloat;
+        m_api.get_groom_float = &ScriptWorker::GetGroomFloat;
+        m_api.set_groom_int = &ScriptWorker::SetGroomInt;
+        m_api.get_groom_int = &ScriptWorker::GetGroomInt;
+        m_api.set_groom_vec3 = &ScriptWorker::SetGroomVec3;
+        m_api.get_groom_vec3 = &ScriptWorker::GetGroomVec3;
+        m_api.set_groom_string = &ScriptWorker::SetGroomString;
+        m_api.get_groom_string = &ScriptWorker::GetGroomString;
         m_api.abi_version = kGaleshiScriptApiVersion;
         m_api.struct_size = static_cast<uint32_t>(sizeof(GaleshiScriptApi));
     }
@@ -442,7 +528,8 @@ private:
                             float w = 0.0f,
                             uint32_t other = UINT32_MAX,
                             uint32_t valid = 0,
-                            GaleshiScriptVec3 value2 = {}) {
+                            GaleshiScriptVec3 value2 = {},
+                            const char* text2 = nullptr) {
         CppWorkerPacket request;
         request.type = static_cast<uint32_t>(CppWorkerMessage::Request);
         request.id = m_nextRequestId++;
@@ -459,6 +546,10 @@ private:
         request.valid = valid;
         if (text) {
             std::snprintf(request.text, sizeof(request.text), "%s", text);
+        }
+        if (text2) {
+            std::snprintf(request.text2, sizeof(request.text2), "%s",
+                          text2);
         }
         if (!WritePacket(request)) return {};
         CppWorkerPacket response;
@@ -921,6 +1012,809 @@ private:
             .valid != 0;
     }
 
+    static uint32_t FindUICanvas(void* user, const char* canvasId) {
+        if (!user || !canvasId) return UINT32_MAX;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::FindUICanvas, UINT32_MAX,
+                      canvasId)
+            .entity;
+    }
+
+    static uint32_t CreateUICanvas(void* user, const char* canvasId,
+                                   const char* title) {
+        if (!user || !canvasId) return UINT32_MAX;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::CreateUICanvas, UINT32_MAX,
+                      canvasId, {}, 0.0f, UINT32_MAX, 0, {},
+                      title ? title : "UI")
+            .entity;
+    }
+
+    static bool RemoveUICanvas(void* user, uint32_t entity) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::RemoveUICanvas, entity)
+            .valid != 0;
+    }
+
+    static bool SetUICanvasFlag(void* user, uint32_t entity,
+                                const char* flag, bool value) {
+        if (!user || !flag) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetUICanvasFlag, entity, flag,
+                      {}, 0.0f, UINT32_MAX, value ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static bool GetUICanvasFlag(void* user, uint32_t entity,
+                                const char* flag, bool* value) {
+        if (!user || !flag || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetUICanvasFlag, entity, flag);
+        if (!response.valid) return false;
+        *value = response.entity != 0;
+        return true;
+    }
+
+    static bool SetUICanvasFloat(void* user, uint32_t entity,
+                                 const char* property, float value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetUICanvasFloat, entity,
+                      property, {value, 0.0f, 0.0f})
+            .valid != 0;
+    }
+
+    static bool GetUICanvasFloat(void* user, uint32_t entity,
+                                 const char* property, float* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetUICanvasFloat, entity, property);
+        if (!response.valid) return false;
+        *value = response.x;
+        return true;
+    }
+
+    static bool SetUICanvasString(void* user, uint32_t entity,
+                                  const char* property,
+                                  const char* value) {
+        if (!user || !property || !value) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetUICanvasString, entity,
+                      property, {}, 0.0f, UINT32_MAX, 0, {}, value)
+            .valid != 0;
+    }
+
+    static const char* GetUICanvasString(void* user, uint32_t entity,
+                                         const char* property) {
+        if (!user || !property) return "";
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetUICanvasString, entity, property);
+        s_uiString = response.valid ? std::string(response.text)
+                                    : std::string{};
+        return s_uiString.c_str();
+    }
+
+    static bool SetUICanvasVec2(void* user, uint32_t entity,
+                                const char* property,
+                                GaleshiScriptVec2 value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetUICanvasVec2, entity,
+                      property, {value.x, value.y, 0.0f})
+            .valid != 0;
+    }
+
+    static bool GetUICanvasVec2(void* user, uint32_t entity,
+                                const char* property,
+                                GaleshiScriptVec2* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetUICanvasVec2, entity, property);
+        if (!response.valid) return false;
+        *value = {response.x, response.y};
+        return true;
+    }
+
+    static int32_t FindUIWidget(void* user, uint32_t canvasEntity,
+                                const char* widgetId) {
+        if (!user || !widgetId) return -1;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::FindUIWidget, canvasEntity, widgetId);
+        return response.valid
+            ? static_cast<int32_t>(response.entity)
+            : -1;
+    }
+
+    static int32_t AddUIWidget(void* user, uint32_t canvasEntity,
+                               const char* widgetId,
+                               const char* type) {
+        if (!user || !widgetId) return -1;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::AddUIWidget, canvasEntity, widgetId,
+                {}, 0.0f, UINT32_MAX, 0, {},
+                type ? type : "panel");
+        return response.valid
+            ? static_cast<int32_t>(response.entity)
+            : -1;
+    }
+
+    static bool RemoveUIWidget(void* user, uint32_t canvasEntity,
+                               const char* widgetId) {
+        if (!user || !widgetId) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::RemoveUIWidget, canvasEntity,
+                      widgetId)
+            .valid != 0;
+    }
+
+    static bool SetUIWidgetFlag(void* user, uint32_t canvasEntity,
+                                const char* widgetId,
+                                const char* property, bool value) {
+        if (!user || !widgetId || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetUIWidgetFlag, canvasEntity,
+                      widgetId, {}, 0.0f, UINT32_MAX,
+                      value ? 1u : 0u, {}, property)
+            .valid != 0;
+    }
+
+    static bool GetUIWidgetFlag(void* user, uint32_t canvasEntity,
+                                const char* widgetId,
+                                const char* property, bool* value) {
+        if (!user || !widgetId || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetUIWidgetFlag, canvasEntity,
+                widgetId, {}, 0.0f, UINT32_MAX, 0, {}, property);
+        if (!response.valid) return false;
+        *value = response.entity != 0;
+        return true;
+    }
+
+    static bool SetUIWidgetFloat(void* user, uint32_t canvasEntity,
+                                 const char* widgetId,
+                                 const char* property, float value) {
+        if (!user || !widgetId || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetUIWidgetFloat, canvasEntity,
+                      widgetId, {value, 0.0f, 0.0f}, 0.0f,
+                      UINT32_MAX, 0, {}, property)
+            .valid != 0;
+    }
+
+    static bool GetUIWidgetFloat(void* user, uint32_t canvasEntity,
+                                 const char* widgetId,
+                                 const char* property, float* value) {
+        if (!user || !widgetId || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetUIWidgetFloat, canvasEntity,
+                widgetId, {}, 0.0f, UINT32_MAX, 0, {}, property);
+        if (!response.valid) return false;
+        *value = response.x;
+        return true;
+    }
+
+    static bool SetUIWidgetInt(void* user, uint32_t canvasEntity,
+                               const char* widgetId,
+                               const char* property, int value) {
+        if (!user || !widgetId || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetUIWidgetInt, canvasEntity,
+                      widgetId, {}, 0.0f, UINT32_MAX,
+                      static_cast<uint32_t>(value), {}, property)
+            .valid != 0;
+    }
+
+    static bool GetUIWidgetInt(void* user, uint32_t canvasEntity,
+                               const char* widgetId,
+                               const char* property, int* value) {
+        if (!user || !widgetId || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetUIWidgetInt, canvasEntity,
+                widgetId, {}, 0.0f, UINT32_MAX, 0, {}, property);
+        if (!response.valid) return false;
+        *value = static_cast<int>(response.entity);
+        return true;
+    }
+
+    static bool SetUIWidgetString(void* user, uint32_t canvasEntity,
+                                  const char* widgetId,
+                                  const char* property,
+                                  const char* value) {
+        if (!user || !widgetId || !property || !value) return false;
+        std::string combined(property);
+        combined += '\n';
+        combined += value;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetUIWidgetString, canvasEntity,
+                      widgetId, {}, 0.0f, UINT32_MAX, 0, {},
+                      combined.c_str())
+            .valid != 0;
+    }
+
+    static const char* GetUIWidgetString(void* user,
+                                         uint32_t canvasEntity,
+                                         const char* widgetId,
+                                         const char* property) {
+        if (!user || !widgetId || !property) return "";
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetUIWidgetString, canvasEntity,
+                widgetId, {}, 0.0f, UINT32_MAX, 0, {}, property);
+        s_uiString = response.valid ? std::string(response.text)
+                                    : std::string{};
+        return s_uiString.c_str();
+    }
+
+    static bool SetUIWidgetVec2(void* user, uint32_t canvasEntity,
+                                const char* widgetId,
+                                const char* property,
+                                GaleshiScriptVec2 value) {
+        if (!user || !widgetId || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetUIWidgetVec2, canvasEntity,
+                      widgetId, {value.x, value.y, 0.0f}, 0.0f,
+                      UINT32_MAX, 0, {}, property)
+            .valid != 0;
+    }
+
+    static bool GetUIWidgetVec2(void* user, uint32_t canvasEntity,
+                                const char* widgetId,
+                                const char* property,
+                                GaleshiScriptVec2* value) {
+        if (!user || !widgetId || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetUIWidgetVec2, canvasEntity,
+                widgetId, {}, 0.0f, UINT32_MAX, 0, {}, property);
+        if (!response.valid) return false;
+        *value = {response.x, response.y};
+        return true;
+    }
+
+    static bool SetUIWidgetVec4(void* user, uint32_t canvasEntity,
+                                const char* widgetId,
+                                const char* property,
+                                GaleshiScriptVec4 value) {
+        if (!user || !widgetId || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetUIWidgetVec4, canvasEntity,
+                      widgetId, {value.x, value.y, value.z}, value.w,
+                      UINT32_MAX, 0, {}, property)
+            .valid != 0;
+    }
+
+    static bool GetUIWidgetVec4(void* user, uint32_t canvasEntity,
+                                const char* widgetId,
+                                const char* property,
+                                GaleshiScriptVec4* value) {
+        if (!user || !widgetId || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetUIWidgetVec4, canvasEntity,
+                widgetId, {}, 0.0f, UINT32_MAX, 0, {}, property);
+        if (!response.valid) return false;
+        *value = {response.x, response.y, response.z, response.w};
+        return true;
+    }
+
+    static bool PollUIEvent(void* user, GaleshiScriptUIEvent* event) {
+        if (!user || !event) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::PollUIEvent, UINT32_MAX);
+        if (!response.valid) return false;
+        event->canvas_entity = response.entity;
+        event->type = static_cast<int>(response.other);
+        event->value = response.x;
+        event->checked = response.w != 0.0f;
+        std::snprintf(event->canvas_id, sizeof(event->canvas_id), "%s",
+                      response.text);
+        std::snprintf(event->widget_id, sizeof(event->widget_id), "%s",
+                      response.text2);
+        return true;
+    }
+
+    static bool IsPointerOverUI(void* user) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::IsPointerOverUI, UINT32_MAX)
+            .valid != 0;
+    }
+
+    static uint32_t FindLandscape(void* user) {
+        if (!user) return UINT32_MAX;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::FindLandscape, UINT32_MAX)
+            .entity;
+    }
+
+    static float LandscapeSampleHeight(void* user, float localX,
+                                       float localZ) {
+        if (!user) return 0.0f;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::LandscapeSampleHeight, UINT32_MAX,
+                      nullptr, {localX, localZ, 0.0f})
+            .x;
+    }
+
+    static bool LandscapeSetHeight(void* user, float localX, float localZ,
+                                   float height) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::LandscapeSetHeight, UINT32_MAX,
+                      nullptr, {localX, localZ, height})
+            .valid != 0;
+    }
+
+    static bool LandscapeApplyBrush(void* user, int tool, float localX,
+                                    float localZ, float radius,
+                                    float strength, float falloff,
+                                    float dt) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::LandscapeApplyBrush, UINT32_MAX,
+                      nullptr, {localX, localZ, radius}, strength,
+                      UINT32_MAX, static_cast<uint32_t>(tool),
+                      {falloff, dt, 0.0f})
+            .valid != 0;
+    }
+
+    static bool LandscapeResetHeights(void* user) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::LandscapeResetHeights, UINT32_MAX)
+            .valid != 0;
+    }
+
+    static uint32_t FindVegetation(void* user) {
+        if (!user) return UINT32_MAX;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::FindVegetation, UINT32_MAX)
+            .entity;
+    }
+
+    static bool VegetationRegenerate(void* user, uint32_t entity) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::VegetationRegenerate, entity)
+            .valid != 0;
+    }
+
+    static bool VegetationClear(void* user, uint32_t entity) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::VegetationClear, entity)
+            .valid != 0;
+    }
+
+    static bool VegetationSetBool(void* user, uint32_t entity,
+                                  const char* property, bool value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::VegetationSetBool, entity,
+                      property, {}, 0.0f, UINT32_MAX,
+                      value ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static bool VegetationGetBool(void* user, uint32_t entity,
+                                  const char* property, bool* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::VegetationGetBool, entity, property);
+        if (!response.valid) return false;
+        *value = response.entity != 0;
+        return true;
+    }
+
+    static bool VegetationSetInt(void* user, uint32_t entity,
+                                 const char* property, int value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::VegetationSetInt, entity,
+                      property, {}, 0.0f, UINT32_MAX,
+                      static_cast<uint32_t>(value))
+            .valid != 0;
+    }
+
+    static bool VegetationGetInt(void* user, uint32_t entity,
+                                 const char* property, int* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::VegetationGetInt, entity, property);
+        if (!response.valid) return false;
+        *value = static_cast<int>(response.entity);
+        return true;
+    }
+
+    static bool VegetationSetFloat(void* user, uint32_t entity,
+                                   const char* property, float value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::VegetationSetFloat, entity,
+                      property, {value, 0.0f, 0.0f})
+            .valid != 0;
+    }
+
+    static bool VegetationGetFloat(void* user, uint32_t entity,
+                                   const char* property, float* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::VegetationGetFloat, entity, property);
+        if (!response.valid) return false;
+        *value = response.x;
+        return true;
+    }
+
+    static int32_t VegetationInstanceCount(void* user, uint32_t entity,
+                                           bool grass, bool painted) {
+        if (!user) return 0;
+        const uint32_t flags =
+            (grass ? 1u : 0u) | (painted ? 2u : 0u);
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::VegetationInstanceCount, entity,
+                nullptr, {}, 0.0f, UINT32_MAX, flags);
+        return response.valid
+            ? static_cast<int32_t>(response.entity)
+            : 0;
+    }
+
+    static bool SetAnimationState(void* user, uint32_t entity,
+                                  const char* state) {
+        if (!user || !state) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetAnimationState, entity, state)
+            .valid != 0;
+    }
+
+    static bool SetAnimationParameter(void* user, uint32_t entity,
+                                      const char* name, float value) {
+        if (!user || !name) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetAnimationParameter, entity,
+                      name, {value, 0.0f, 0.0f})
+            .valid != 0;
+    }
+
+    static float GetAnimationParameter(void* user, uint32_t entity,
+                                       const char* name) {
+        if (!user || !name) return 0.0f;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::GetAnimationParameter, entity,
+                      name)
+            .x;
+    }
+
+    static bool TriggerAnimationParameter(void* user, uint32_t entity,
+                                          const char* name) {
+        if (!user || !name) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::TriggerAnimationParameter, entity,
+                      name)
+            .valid != 0;
+    }
+
+    static bool PlayAnimationClip(void* user, uint32_t entity, int clip) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::PlayAnimationClip, entity,
+                      nullptr, {}, 0.0f, UINT32_MAX,
+                      static_cast<uint32_t>(clip))
+            .valid != 0;
+    }
+
+    static bool StopAnimation(void* user, uint32_t entity) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::StopAnimation, entity)
+            .valid != 0;
+    }
+
+    static bool SetAnimationSpeed(void* user, uint32_t entity,
+                                  float speed) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetAnimationSpeed, entity,
+                      nullptr, {speed, 0.0f, 0.0f})
+            .valid != 0;
+    }
+
+    static float GetAnimationSpeed(void* user, uint32_t entity) {
+        if (!user) return 1.0f;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::GetAnimationSpeed, entity)
+            .x;
+    }
+
+    static uint32_t AnimationClipCount(void* user, uint32_t entity) {
+        if (!user) return 0;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::AnimationClipCount, entity)
+            .entity;
+    }
+
+    static const char* AnimationClipName(void* user, uint32_t entity,
+                                         uint32_t index) {
+        if (!user) return "";
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::AnimationClipName, entity, nullptr, {},
+                0.0f, UINT32_MAX, index);
+        s_animationString = response.valid
+            ? std::string(response.text) : std::string{};
+        return s_animationString.c_str();
+    }
+
+    static float AnimationClipDuration(void* user, uint32_t entity,
+                                       uint32_t index) {
+        if (!user) return 0.0f;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::AnimationClipDuration, entity,
+                      nullptr, {}, 0.0f, UINT32_MAX, index)
+            .x;
+    }
+
+    static bool AssetExists(void* user, const char* path) {
+        if (!user || !path) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::AssetExists, UINT32_MAX, path)
+            .valid != 0;
+    }
+
+    static const char* AssetResolvePath(void* user, const char* path) {
+        if (!user || !path) return "";
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::AssetResolvePath, UINT32_MAX, path);
+        s_animationString = response.valid
+            ? std::string(response.text) : std::string{};
+        return s_animationString.c_str();
+    }
+
+    static bool AssetLoadModel(void* user, const char* path) {
+        if (!user || !path) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::AssetLoadModel, UINT32_MAX, path)
+            .valid != 0;
+    }
+
+    static uint32_t FindParticleEmitter(void* user) {
+        if (!user) return UINT32_MAX;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::FindParticleEmitter, UINT32_MAX)
+            .entity;
+    }
+
+    static bool SetParticleFlag(void* user, uint32_t entity,
+                                const char* property, bool value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetParticleFlag, entity,
+                      property, {}, 0.0f, UINT32_MAX,
+                      value ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static bool GetParticleFlag(void* user, uint32_t entity,
+                                const char* property, bool* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetParticleFlag, entity, property);
+        if (!response.valid) return false;
+        *value = response.entity != 0;
+        return true;
+    }
+
+    static bool SetParticleFloat(void* user, uint32_t entity,
+                                 const char* property, float value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetParticleFloat, entity,
+                      property, {value, 0.0f, 0.0f})
+            .valid != 0;
+    }
+
+    static bool GetParticleFloat(void* user, uint32_t entity,
+                                 const char* property, float* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetParticleFloat, entity, property);
+        if (!response.valid) return false;
+        *value = response.x;
+        return true;
+    }
+
+    static bool SetParticleInt(void* user, uint32_t entity,
+                               const char* property, int value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetParticleInt, entity,
+                      property, {}, 0.0f, UINT32_MAX,
+                      static_cast<uint32_t>(value))
+            .valid != 0;
+    }
+
+    static bool GetParticleInt(void* user, uint32_t entity,
+                               const char* property, int* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetParticleInt, entity, property);
+        if (!response.valid) return false;
+        *value = static_cast<int>(response.entity);
+        return true;
+    }
+
+    static bool SetParticleVec3(void* user, uint32_t entity,
+                                const char* property,
+                                GaleshiScriptVec3 value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetParticleVec3, entity,
+                      property, value)
+            .valid != 0;
+    }
+
+    static bool GetParticleVec3(void* user, uint32_t entity,
+                                const char* property,
+                                GaleshiScriptVec3* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetParticleVec3, entity, property);
+        if (!response.valid) return false;
+        *value = {response.x, response.y, response.z};
+        return true;
+    }
+
+    static bool SetParticleVec4(void* user, uint32_t entity,
+                                const char* property,
+                                GaleshiScriptVec4 value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetParticleVec4, entity,
+                      property, {value.x, value.y, value.z}, value.w)
+            .valid != 0;
+    }
+
+    static bool GetParticleVec4(void* user, uint32_t entity,
+                                const char* property,
+                                GaleshiScriptVec4* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetParticleVec4, entity, property);
+        if (!response.valid) return false;
+        *value = {response.x, response.y, response.z, response.w};
+        return true;
+    }
+
+    static uint32_t FindGroom(void* user) {
+        if (!user) return UINT32_MAX;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::FindGroom, UINT32_MAX)
+            .entity;
+    }
+
+    static bool SetGroomFlag(void* user, uint32_t entity,
+                             const char* property, bool value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetGroomFlag, entity, property,
+                      {}, 0.0f, UINT32_MAX, value ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static bool GetGroomFlag(void* user, uint32_t entity,
+                             const char* property, bool* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetGroomFlag, entity, property);
+        if (!response.valid) return false;
+        *value = response.entity != 0;
+        return true;
+    }
+
+    static bool SetGroomFloat(void* user, uint32_t entity,
+                              const char* property, float value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetGroomFloat, entity, property,
+                      {value, 0.0f, 0.0f})
+            .valid != 0;
+    }
+
+    static bool GetGroomFloat(void* user, uint32_t entity,
+                              const char* property, float* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetGroomFloat, entity, property);
+        if (!response.valid) return false;
+        *value = response.x;
+        return true;
+    }
+
+    static bool SetGroomInt(void* user, uint32_t entity,
+                            const char* property, int value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetGroomInt, entity, property,
+                      {}, 0.0f, UINT32_MAX,
+                      static_cast<uint32_t>(value))
+            .valid != 0;
+    }
+
+    static bool GetGroomInt(void* user, uint32_t entity,
+                            const char* property, int* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetGroomInt, entity, property);
+        if (!response.valid) return false;
+        *value = static_cast<int>(response.entity);
+        return true;
+    }
+
+    static bool SetGroomVec3(void* user, uint32_t entity,
+                             const char* property,
+                             GaleshiScriptVec3 value) {
+        if (!user || !property) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetGroomVec3, entity, property,
+                      value)
+            .valid != 0;
+    }
+
+    static bool GetGroomVec3(void* user, uint32_t entity,
+                             const char* property,
+                             GaleshiScriptVec3* value) {
+        if (!user || !property || !value) return false;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetGroomVec3, entity, property);
+        if (!response.valid) return false;
+        *value = {response.x, response.y, response.z};
+        return true;
+    }
+
+    static bool SetGroomString(void* user, uint32_t entity,
+                               const char* property, const char* value) {
+        if (!user || !property || !value) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetGroomString, entity, property,
+                      {}, 0.0f, UINT32_MAX, 0, {}, value)
+            .valid != 0;
+    }
+
+    static const char* GetGroomString(void* user, uint32_t entity,
+                                      const char* property) {
+        if (!user || !property) return "";
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetGroomString, entity, property);
+        s_groomString = response.valid ? std::string(response.text)
+                                       : std::string{};
+        return s_groomString.c_str();
+    }
+
     static uint32_t FindEntity(void* user, const char* name) {
         if (!user || !name) return UINT32_MAX;
         return static_cast<ScriptWorker*>(user)
@@ -1055,6 +1949,9 @@ private:
 
     inline static std::string s_shaderError;
     inline static std::string s_name;
+    inline static std::string s_uiString;
+    inline static std::string s_animationString;
+    inline static std::string s_groomString;
 
     int m_protocolOut = STDOUT_FILENO;
     uint32_t m_nextRequestId = 1;

@@ -17,6 +17,13 @@ struct GaleshiScriptVec2 {
     float y = 0.0f;
 };
 
+struct GaleshiScriptVec4 {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float w = 1.0f;
+};
+
 struct GaleshiScriptQuat {
     float x = 0.0f;
     float y = 0.0f;
@@ -27,6 +34,23 @@ struct GaleshiScriptQuat {
 enum GaleshiScriptCameraMode : int {
     GALESHI_CAMERA_THIRD_PERSON = 0,
     GALESHI_CAMERA_FIRST_PERSON = 1,
+};
+
+enum GaleshiScriptUIEventType : int {
+    GALESHI_UI_EVENT_CLICKED = 0,
+    GALESHI_UI_EVENT_VALUE_CHANGED = 1,
+    GALESHI_UI_EVENT_TOGGLED = 2,
+    GALESHI_UI_EVENT_SHOWN = 3,
+    GALESHI_UI_EVENT_HOVER = 4,
+};
+
+struct GaleshiScriptUIEvent {
+    uint32_t canvas_entity = UINT32_MAX;
+    int type = GALESHI_UI_EVENT_CLICKED;
+    float value = 0.0f;
+    bool checked = false;
+    char canvas_id[64] = {};
+    char widget_id[128] = {};
 };
 
 struct GaleshiScriptApi {
@@ -152,9 +176,204 @@ struct GaleshiScriptApi {
                                   GaleshiScriptVec3* value) = nullptr;
     bool (*set_post_process_enabled)(void* user, bool value) = nullptr;
     bool (*get_post_process_enabled)(void* user) = nullptr;
+
+    // UI canvases and widgets. Canvas ids and widget ids are authored strings;
+    // canvas entities are regular ECS entities with UICanvasComponent.
+    uint32_t (*find_ui_canvas)(void* user, const char* canvas_id) = nullptr;
+    uint32_t (*create_ui_canvas)(void* user, const char* canvas_id,
+                                 const char* title) = nullptr;
+    bool (*remove_ui_canvas)(void* user, uint32_t canvas_entity) = nullptr;
+    bool (*set_ui_canvas_flag)(void* user, uint32_t canvas_entity,
+                               const char* flag, bool value) = nullptr;
+    bool (*get_ui_canvas_flag)(void* user, uint32_t canvas_entity,
+                               const char* flag, bool* value) = nullptr;
+    bool (*set_ui_canvas_float)(void* user, uint32_t canvas_entity,
+                                const char* property, float value) = nullptr;
+    bool (*get_ui_canvas_float)(void* user, uint32_t canvas_entity,
+                                const char* property, float* value) = nullptr;
+    bool (*set_ui_canvas_string)(void* user, uint32_t canvas_entity,
+                                 const char* property,
+                                 const char* value) = nullptr;
+    const char* (*get_ui_canvas_string)(void* user,
+                                        uint32_t canvas_entity,
+                                        const char* property) = nullptr;
+    bool (*set_ui_canvas_vec2)(void* user, uint32_t canvas_entity,
+                               const char* property,
+                               GaleshiScriptVec2 value) = nullptr;
+    bool (*get_ui_canvas_vec2)(void* user, uint32_t canvas_entity,
+                               const char* property,
+                               GaleshiScriptVec2* value) = nullptr;
+
+    int32_t (*find_ui_widget)(void* user, uint32_t canvas_entity,
+                              const char* widget_id) = nullptr;
+    int32_t (*add_ui_widget)(void* user, uint32_t canvas_entity,
+                             const char* widget_id,
+                             const char* type) = nullptr;
+    bool (*remove_ui_widget)(void* user, uint32_t canvas_entity,
+                             const char* widget_id) = nullptr;
+
+    bool (*set_ui_widget_flag)(void* user, uint32_t canvas_entity,
+                               const char* widget_id,
+                               const char* property, bool value) = nullptr;
+    bool (*get_ui_widget_flag)(void* user, uint32_t canvas_entity,
+                               const char* widget_id,
+                               const char* property, bool* value) = nullptr;
+    bool (*set_ui_widget_float)(void* user, uint32_t canvas_entity,
+                                const char* widget_id,
+                                const char* property, float value) = nullptr;
+    bool (*get_ui_widget_float)(void* user, uint32_t canvas_entity,
+                                const char* widget_id,
+                                const char* property,
+                                float* value) = nullptr;
+    bool (*set_ui_widget_int)(void* user, uint32_t canvas_entity,
+                              const char* widget_id,
+                              const char* property, int value) = nullptr;
+    bool (*get_ui_widget_int)(void* user, uint32_t canvas_entity,
+                              const char* widget_id,
+                              const char* property, int* value) = nullptr;
+    bool (*set_ui_widget_string)(void* user, uint32_t canvas_entity,
+                                 const char* widget_id,
+                                 const char* property,
+                                 const char* value) = nullptr;
+    const char* (*get_ui_widget_string)(void* user,
+                                        uint32_t canvas_entity,
+                                        const char* widget_id,
+                                        const char* property) = nullptr;
+    bool (*set_ui_widget_vec2)(void* user, uint32_t canvas_entity,
+                               const char* widget_id,
+                               const char* property,
+                               GaleshiScriptVec2 value) = nullptr;
+    bool (*get_ui_widget_vec2)(void* user, uint32_t canvas_entity,
+                               const char* widget_id,
+                               const char* property,
+                               GaleshiScriptVec2* value) = nullptr;
+    bool (*set_ui_widget_vec4)(void* user, uint32_t canvas_entity,
+                               const char* widget_id,
+                               const char* property,
+                               GaleshiScriptVec4 value) = nullptr;
+    bool (*get_ui_widget_vec4)(void* user, uint32_t canvas_entity,
+                               const char* widget_id,
+                               const char* property,
+                               GaleshiScriptVec4* value) = nullptr;
+
+    // Pops one event from the host queue. Returns false when the queue is
+    // empty. Events are queued by the editor's UIRuntime dispatch loop.
+    bool (*poll_ui_event)(void* user, GaleshiScriptUIEvent* event) = nullptr;
+    bool (*is_pointer_over_ui)(void* user) = nullptr;
+
+    // Landscape and instanced vegetation. Landscape coordinates are local to
+    // the landscape entity. Vegetation regeneration requires the entity to
+    // carry both LandscapeComponent and VegetationComponent.
+    uint32_t (*find_landscape)(void* user) = nullptr;
+    float (*landscape_sample_height)(void* user, float localX,
+                                     float localZ) = nullptr;
+    bool (*landscape_set_height)(void* user, float localX, float localZ,
+                                 float height) = nullptr;
+    // tool: 0 raise, 1 lower, 2 smooth, 3 flatten, 4 noise, 5 terrace,
+    // 6 sharpen.
+    bool (*landscape_apply_brush)(void* user, int tool, float localX,
+                                  float localZ, float radius,
+                                  float strength, float falloff,
+                                  float dt) = nullptr;
+    bool (*landscape_reset_heights)(void* user) = nullptr;
+
+    uint32_t (*find_vegetation)(void* user) = nullptr;
+    bool (*vegetation_regenerate)(void* user, uint32_t entity) = nullptr;
+    bool (*vegetation_clear)(void* user, uint32_t entity) = nullptr;
+    bool (*vegetation_set_bool)(void* user, uint32_t entity,
+                                const char* property, bool value) = nullptr;
+    bool (*vegetation_get_bool)(void* user, uint32_t entity,
+                                const char* property, bool* value) = nullptr;
+    bool (*vegetation_set_int)(void* user, uint32_t entity,
+                               const char* property, int value) = nullptr;
+    bool (*vegetation_get_int)(void* user, uint32_t entity,
+                               const char* property, int* value) = nullptr;
+    bool (*vegetation_set_float)(void* user, uint32_t entity,
+                                 const char* property, float value) = nullptr;
+    bool (*vegetation_get_float)(void* user, uint32_t entity,
+                                 const char* property, float* value) = nullptr;
+    int32_t (*vegetation_instance_count)(void* user, uint32_t entity,
+                                         bool grass, bool painted) = nullptr;
+
+    // Animation state machines, skeletal playback and asset lookup.
+    bool (*set_animation_state)(void* user, uint32_t entity,
+                                const char* state) = nullptr;
+    bool (*set_animation_parameter)(void* user, uint32_t entity,
+                                    const char* name, float value) = nullptr;
+    float (*get_animation_parameter)(void* user, uint32_t entity,
+                                     const char* name) = nullptr;
+    bool (*trigger_animation_parameter)(void* user, uint32_t entity,
+                                        const char* name) = nullptr;
+    bool (*play_animation_clip)(void* user, uint32_t entity,
+                                int clip) = nullptr;
+    bool (*stop_animation)(void* user, uint32_t entity) = nullptr;
+    bool (*set_animation_speed)(void* user, uint32_t entity,
+                                float speed) = nullptr;
+    float (*get_animation_speed)(void* user, uint32_t entity) = nullptr;
+    uint32_t (*animation_clip_count)(void* user, uint32_t entity) = nullptr;
+    const char* (*animation_clip_name)(void* user, uint32_t entity,
+                                       uint32_t index) = nullptr;
+    float (*animation_clip_duration)(void* user, uint32_t entity,
+                                     uint32_t index) = nullptr;
+    bool (*asset_exists)(void* user, const char* path) = nullptr;
+    const char* (*asset_resolve_path)(void* user,
+                                      const char* path) = nullptr;
+    bool (*asset_load_model)(void* user, const char* path) = nullptr;
+
+    // Particle emitters and procedural groom.
+    uint32_t (*find_particle_emitter)(void* user) = nullptr;
+    bool (*set_particle_flag)(void* user, uint32_t entity,
+                              const char* property, bool value) = nullptr;
+    bool (*get_particle_flag)(void* user, uint32_t entity,
+                              const char* property, bool* value) = nullptr;
+    bool (*set_particle_float)(void* user, uint32_t entity,
+                               const char* property, float value) = nullptr;
+    bool (*get_particle_float)(void* user, uint32_t entity,
+                               const char* property, float* value) = nullptr;
+    bool (*set_particle_int)(void* user, uint32_t entity,
+                             const char* property, int value) = nullptr;
+    bool (*get_particle_int)(void* user, uint32_t entity,
+                             const char* property, int* value) = nullptr;
+    bool (*set_particle_vec3)(void* user, uint32_t entity,
+                              const char* property,
+                              GaleshiScriptVec3 value) = nullptr;
+    bool (*get_particle_vec3)(void* user, uint32_t entity,
+                              const char* property,
+                              GaleshiScriptVec3* value) = nullptr;
+    bool (*set_particle_vec4)(void* user, uint32_t entity,
+                              const char* property,
+                              GaleshiScriptVec4 value) = nullptr;
+    bool (*get_particle_vec4)(void* user, uint32_t entity,
+                              const char* property,
+                              GaleshiScriptVec4* value) = nullptr;
+
+    uint32_t (*find_groom)(void* user) = nullptr;
+    bool (*set_groom_flag)(void* user, uint32_t entity,
+                           const char* property, bool value) = nullptr;
+    bool (*get_groom_flag)(void* user, uint32_t entity,
+                           const char* property, bool* value) = nullptr;
+    bool (*set_groom_float)(void* user, uint32_t entity,
+                            const char* property, float value) = nullptr;
+    bool (*get_groom_float)(void* user, uint32_t entity,
+                            const char* property, float* value) = nullptr;
+    bool (*set_groom_int)(void* user, uint32_t entity,
+                          const char* property, int value) = nullptr;
+    bool (*get_groom_int)(void* user, uint32_t entity,
+                          const char* property, int* value) = nullptr;
+    bool (*set_groom_vec3)(void* user, uint32_t entity,
+                           const char* property,
+                           GaleshiScriptVec3 value) = nullptr;
+    bool (*get_groom_vec3)(void* user, uint32_t entity,
+                           const char* property,
+                           GaleshiScriptVec3* value) = nullptr;
+    bool (*set_groom_string)(void* user, uint32_t entity,
+                             const char* property,
+                             const char* value) = nullptr;
+    const char* (*get_groom_string)(void* user, uint32_t entity,
+                                    const char* property) = nullptr;
 };
 
-inline constexpr uint32_t kGaleshiScriptApiVersion = 7;
+inline constexpr uint32_t kGaleshiScriptApiVersion = 11;
 
 inline float GaleshiInterpFactor(float deltaTime, float speed) {
     if (speed <= 0.0f) return 1.0f;

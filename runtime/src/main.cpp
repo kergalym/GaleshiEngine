@@ -32,6 +32,9 @@ protected:
         m_ui.SetEventHandler([this](const Galeshi::UIEvent& event) {
             DispatchUIEvent(event);
         });
+        m_scripts.BindUIState([this]() {
+            return m_ui.IsPointerOverUI();
+        });
 
         Galeshi::Entity entity = m_scene.CreateEntity("MainMenu");
         auto& canvas = entity.AddComponent<Galeshi::UICanvasComponent>().canvas;
@@ -117,6 +120,7 @@ private:
             !registry.all_of<Galeshi::UICanvasComponent>(entity)) {
             return;
         }
+        m_scripts.PushUIEvent(event);
         auto& canvas = registry.get<Galeshi::UICanvasComponent>(entity).canvas;
 
         Galeshi::UIWidget* widget = nullptr;

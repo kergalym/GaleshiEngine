@@ -102,6 +102,12 @@ Current class wrappers cover:
 - `Camera` — mode, basis and camera-relative movement
 - `Player` — strafing
 - `PostProcess` — scene-wide post-process flags, floats, ints and colors by name
+- `UI` — canvas/widget lookup, creation/removal, common properties and event polling
+- `Landscape` — height sampling/setting, brush tools and reset
+- `Vegetation` — tree/grass settings, regeneration, clear and instance counts
+- `Animation` — state machine parameters/states, clip playback and clip info
+- `Assets` — existence checks, path resolution and model loading
+- `Particles` / `Groom` — component property editing
 - `Shader` — compile and error text
 
 Every worker request is a `CppWorkerPacket`; the host answers in
@@ -205,7 +211,7 @@ Script surface:
 - debug draw primitives;
 - shader compile/error/preview.
 
-### 8. UI and widgets
+### 8. UI and widgets — done (configuration + events)
 
 Native surface: `UIRuntime`, `UICanvas`, `UIWidget`.
 
@@ -217,7 +223,7 @@ Script surface:
 - pointer-over-UI query;
 - runtime text-input values.
 
-### 9. Landscape, vegetation and instancing
+### 9. Landscape, vegetation and instancing — done (basic)
 
 Native surface: `LandscapeComponent`, `LandscapeMesh`,
 `VegetationComponent`, `VegetationGenerator`.
@@ -231,7 +237,7 @@ Script surface:
 - regenerate/clear instances;
 - paint trees/grass.
 
-### 10. Animation and assets
+### 10. Animation and assets — done (basic)
 
 Native surface: `AnimationSystem`, `AssetManager`, skeletal components.
 
@@ -243,7 +249,7 @@ Script surface:
 - animation state and event queries;
 - asset path resolution and availability checks.
 
-### 11. Particles and groom
+### 11. Particles and groom — done
 
 Native surface: `ParticleSystem`, `GroomSystem`.
 
@@ -253,7 +259,7 @@ Script surface:
 - particle counts and alive queries;
 - groom enable/density/length/wind parameters.
 
-### 12. Compatibility, tests and docs
+### 12. Compatibility, tests and docs — smoke test added
 
 - Add an API contract test that compiles the umbrella header and a sample
   script module.
@@ -261,3 +267,10 @@ Script surface:
 - Keep append-only ABI rules and bump `kScriptApiVersion` when semantics change.
 - Add one runnable example per subsystem under `examples/` and link it from
   this document.
+
+## API smoke test
+
+`scripts/check_cpp_api.sh` compiles `tests/cpp_api_smoke.cpp` against the
+public script headers without linking the engine. This catches header,
+wrapper and ABI-layout regressions. Worker round-trip tests still require a
+running host and are not automated yet.

@@ -13,6 +13,7 @@ namespace Galeshi::Script {
 
 using Vec2 = GaleshiScriptVec2;
 using Vec3 = GaleshiScriptVec3;
+using Vec4 = GaleshiScriptVec4;
 using Quat = GaleshiScriptQuat;
 
 class World {
@@ -374,6 +375,605 @@ private:
     const GaleshiScriptApi* m_api = nullptr;
 };
 
+class UI {
+public:
+    explicit UI(const GaleshiScriptApi* api = nullptr) : m_api(api) {}
+
+    uint32_t FindCanvas(const char* canvasId) const {
+        return m_api && m_api->find_ui_canvas
+            ? m_api->find_ui_canvas(m_api->user, canvasId)
+            : UINT32_MAX;
+    }
+
+    uint32_t CreateCanvas(const char* canvasId,
+                          const char* title = "UI") const {
+        return m_api && m_api->create_ui_canvas
+            ? m_api->create_ui_canvas(m_api->user, canvasId, title)
+            : UINT32_MAX;
+    }
+
+    bool RemoveCanvas(uint32_t canvasEntity) const {
+        return m_api && m_api->remove_ui_canvas &&
+               m_api->remove_ui_canvas(m_api->user, canvasEntity);
+    }
+
+    bool SetCanvasFlag(uint32_t canvasEntity, const char* flag,
+                       bool value) const {
+        return m_api && m_api->set_ui_canvas_flag &&
+               m_api->set_ui_canvas_flag(m_api->user, canvasEntity,
+                                         flag, value);
+    }
+
+    bool GetCanvasFlag(uint32_t canvasEntity, const char* flag,
+                       bool& value) const {
+        return m_api && m_api->get_ui_canvas_flag &&
+               m_api->get_ui_canvas_flag(m_api->user, canvasEntity,
+                                         flag, &value);
+    }
+
+    bool SetCanvasFloat(uint32_t canvasEntity, const char* property,
+                        float value) const {
+        return m_api && m_api->set_ui_canvas_float &&
+               m_api->set_ui_canvas_float(m_api->user, canvasEntity,
+                                          property, value);
+    }
+
+    bool GetCanvasFloat(uint32_t canvasEntity, const char* property,
+                        float& value) const {
+        return m_api && m_api->get_ui_canvas_float &&
+               m_api->get_ui_canvas_float(m_api->user, canvasEntity,
+                                          property, &value);
+    }
+
+    bool SetCanvasString(uint32_t canvasEntity, const char* property,
+                         const char* value) const {
+        return m_api && m_api->set_ui_canvas_string &&
+               m_api->set_ui_canvas_string(m_api->user, canvasEntity,
+                                           property, value);
+    }
+
+    const char* GetCanvasString(uint32_t canvasEntity,
+                                const char* property) const {
+        return m_api && m_api->get_ui_canvas_string
+            ? m_api->get_ui_canvas_string(m_api->user, canvasEntity,
+                                          property)
+            : "";
+    }
+
+    bool SetCanvasVec2(uint32_t canvasEntity, const char* property,
+                       Vec2 value) const {
+        return m_api && m_api->set_ui_canvas_vec2 &&
+               m_api->set_ui_canvas_vec2(m_api->user, canvasEntity,
+                                         property, value);
+    }
+
+    bool GetCanvasVec2(uint32_t canvasEntity, const char* property,
+                       Vec2& value) const {
+        return m_api && m_api->get_ui_canvas_vec2 &&
+               m_api->get_ui_canvas_vec2(m_api->user, canvasEntity,
+                                         property, &value);
+    }
+
+    int32_t FindWidget(uint32_t canvasEntity,
+                       const char* widgetId) const {
+        return m_api && m_api->find_ui_widget
+            ? m_api->find_ui_widget(m_api->user, canvasEntity,
+                                    widgetId)
+            : -1;
+    }
+
+    int32_t AddWidget(uint32_t canvasEntity, const char* widgetId,
+                      const char* type = "panel") const {
+        return m_api && m_api->add_ui_widget
+            ? m_api->add_ui_widget(m_api->user, canvasEntity,
+                                   widgetId, type)
+            : -1;
+    }
+
+    bool RemoveWidget(uint32_t canvasEntity,
+                      const char* widgetId) const {
+        return m_api && m_api->remove_ui_widget &&
+               m_api->remove_ui_widget(m_api->user, canvasEntity,
+                                       widgetId);
+    }
+
+    bool SetWidgetFlag(uint32_t canvasEntity, const char* widgetId,
+                       const char* property, bool value) const {
+        return m_api && m_api->set_ui_widget_flag &&
+               m_api->set_ui_widget_flag(m_api->user, canvasEntity,
+                                         widgetId, property, value);
+    }
+
+    bool GetWidgetFlag(uint32_t canvasEntity, const char* widgetId,
+                       const char* property, bool& value) const {
+        return m_api && m_api->get_ui_widget_flag &&
+               m_api->get_ui_widget_flag(m_api->user, canvasEntity,
+                                         widgetId, property, &value);
+    }
+
+    bool SetWidgetFloat(uint32_t canvasEntity, const char* widgetId,
+                        const char* property, float value) const {
+        return m_api && m_api->set_ui_widget_float &&
+               m_api->set_ui_widget_float(m_api->user, canvasEntity,
+                                          widgetId, property, value);
+    }
+
+    bool GetWidgetFloat(uint32_t canvasEntity, const char* widgetId,
+                        const char* property, float& value) const {
+        return m_api && m_api->get_ui_widget_float &&
+               m_api->get_ui_widget_float(m_api->user, canvasEntity,
+                                          widgetId, property, &value);
+    }
+
+    bool SetWidgetInt(uint32_t canvasEntity, const char* widgetId,
+                      const char* property, int value) const {
+        return m_api && m_api->set_ui_widget_int &&
+               m_api->set_ui_widget_int(m_api->user, canvasEntity,
+                                        widgetId, property, value);
+    }
+
+    bool GetWidgetInt(uint32_t canvasEntity, const char* widgetId,
+                      const char* property, int& value) const {
+        return m_api && m_api->get_ui_widget_int &&
+               m_api->get_ui_widget_int(m_api->user, canvasEntity,
+                                        widgetId, property, &value);
+    }
+
+    bool SetWidgetString(uint32_t canvasEntity, const char* widgetId,
+                         const char* property, const char* value) const {
+        return m_api && m_api->set_ui_widget_string &&
+               m_api->set_ui_widget_string(m_api->user, canvasEntity,
+                                           widgetId, property, value);
+    }
+
+    const char* GetWidgetString(uint32_t canvasEntity,
+                                const char* widgetId,
+                                const char* property) const {
+        return m_api && m_api->get_ui_widget_string
+            ? m_api->get_ui_widget_string(m_api->user, canvasEntity,
+                                          widgetId, property)
+            : "";
+    }
+
+    bool SetWidgetVec2(uint32_t canvasEntity, const char* widgetId,
+                       const char* property, Vec2 value) const {
+        return m_api && m_api->set_ui_widget_vec2 &&
+               m_api->set_ui_widget_vec2(m_api->user, canvasEntity,
+                                         widgetId, property, value);
+    }
+
+    bool GetWidgetVec2(uint32_t canvasEntity, const char* widgetId,
+                       const char* property, Vec2& value) const {
+        return m_api && m_api->get_ui_widget_vec2 &&
+               m_api->get_ui_widget_vec2(m_api->user, canvasEntity,
+                                         widgetId, property, &value);
+    }
+
+    bool SetWidgetVec4(uint32_t canvasEntity, const char* widgetId,
+                       const char* property, Vec4 value) const {
+        return m_api && m_api->set_ui_widget_vec4 &&
+               m_api->set_ui_widget_vec4(m_api->user, canvasEntity,
+                                         widgetId, property, value);
+    }
+
+    bool GetWidgetVec4(uint32_t canvasEntity, const char* widgetId,
+                       const char* property, Vec4& value) const {
+        return m_api && m_api->get_ui_widget_vec4 &&
+               m_api->get_ui_widget_vec4(m_api->user, canvasEntity,
+                                         widgetId, property, &value);
+    }
+
+    // Common convenience aliases.
+    bool SetWidgetVisible(uint32_t canvasEntity, const char* widgetId,
+                          bool value) const {
+        return SetWidgetFlag(canvasEntity, widgetId, "visible", value);
+    }
+
+    bool SetWidgetLabel(uint32_t canvasEntity, const char* widgetId,
+                        const char* value) const {
+        return SetWidgetString(canvasEntity, widgetId, "label", value);
+    }
+
+    bool SetWidgetValue(uint32_t canvasEntity, const char* widgetId,
+                        float value) const {
+        return SetWidgetFloat(canvasEntity, widgetId, "value", value);
+    }
+
+    bool PollEvent(GaleshiScriptUIEvent& event) const {
+        return m_api && m_api->poll_ui_event &&
+               m_api->poll_ui_event(m_api->user, &event);
+    }
+
+    bool PointerOverUI() const {
+        return m_api && m_api->is_pointer_over_ui &&
+               m_api->is_pointer_over_ui(m_api->user);
+    }
+
+private:
+    const GaleshiScriptApi* m_api = nullptr;
+};
+
+enum class LandscapeTool : int {
+    Raise = 0,
+    Lower = 1,
+    Smooth = 2,
+    Flatten = 3,
+    Noise = 4,
+    Terrace = 5,
+    Sharpen = 6,
+};
+
+class Landscape {
+public:
+    explicit Landscape(const GaleshiScriptApi* api = nullptr)
+        : m_api(api) {}
+
+    uint32_t Find() const {
+        return m_api && m_api->find_landscape
+            ? m_api->find_landscape(m_api->user)
+            : UINT32_MAX;
+    }
+
+    float SampleHeight(float localX, float localZ) const {
+        return m_api && m_api->landscape_sample_height
+            ? m_api->landscape_sample_height(
+                  m_api->user, localX, localZ)
+            : 0.0f;
+    }
+
+    bool SetHeight(float localX, float localZ, float height) const {
+        return m_api && m_api->landscape_set_height &&
+               m_api->landscape_set_height(
+                   m_api->user, localX, localZ, height);
+    }
+
+    bool ApplyBrush(LandscapeTool tool, float localX, float localZ,
+                    float radius, float strength = 3.0f,
+                    float falloff = 0.65f, float dt = 1.0f) const {
+        return m_api && m_api->landscape_apply_brush &&
+               m_api->landscape_apply_brush(
+                   m_api->user, static_cast<int>(tool), localX,
+                   localZ, radius, strength, falloff, dt);
+    }
+
+    bool ResetHeights() const {
+        return m_api && m_api->landscape_reset_heights &&
+               m_api->landscape_reset_heights(m_api->user);
+    }
+
+private:
+    const GaleshiScriptApi* m_api = nullptr;
+};
+
+class Vegetation {
+public:
+    explicit Vegetation(const GaleshiScriptApi* api = nullptr)
+        : m_api(api) {}
+
+    uint32_t Find() const {
+        return m_api && m_api->find_vegetation
+            ? m_api->find_vegetation(m_api->user)
+            : UINT32_MAX;
+    }
+
+    bool Regenerate(uint32_t entity) const {
+        return m_api && m_api->vegetation_regenerate &&
+               m_api->vegetation_regenerate(m_api->user, entity);
+    }
+
+    bool Clear(uint32_t entity) const {
+        return m_api && m_api->vegetation_clear &&
+               m_api->vegetation_clear(m_api->user, entity);
+    }
+
+    bool SetBool(uint32_t entity, const char* property,
+                 bool value) const {
+        return m_api && m_api->vegetation_set_bool &&
+               m_api->vegetation_set_bool(
+                   m_api->user, entity, property, value);
+    }
+
+    bool GetBool(uint32_t entity, const char* property,
+                 bool& value) const {
+        return m_api && m_api->vegetation_get_bool &&
+               m_api->vegetation_get_bool(
+                   m_api->user, entity, property, &value);
+    }
+
+    bool SetInt(uint32_t entity, const char* property,
+                int value) const {
+        return m_api && m_api->vegetation_set_int &&
+               m_api->vegetation_set_int(
+                   m_api->user, entity, property, value);
+    }
+
+    bool GetInt(uint32_t entity, const char* property,
+                int& value) const {
+        return m_api && m_api->vegetation_get_int &&
+               m_api->vegetation_get_int(
+                   m_api->user, entity, property, &value);
+    }
+
+    bool SetFloat(uint32_t entity, const char* property,
+                  float value) const {
+        return m_api && m_api->vegetation_set_float &&
+               m_api->vegetation_set_float(
+                   m_api->user, entity, property, value);
+    }
+
+    bool GetFloat(uint32_t entity, const char* property,
+                  float& value) const {
+        return m_api && m_api->vegetation_get_float &&
+               m_api->vegetation_get_float(
+                   m_api->user, entity, property, &value);
+    }
+
+    int32_t Count(uint32_t entity, bool grass = false,
+                  bool painted = false) const {
+        return m_api && m_api->vegetation_instance_count
+            ? m_api->vegetation_instance_count(
+                  m_api->user, entity, grass, painted)
+            : 0;
+    }
+
+    bool SetEnabled(uint32_t entity, bool value) const {
+        return SetBool(entity, "enabled", value);
+    }
+
+    bool SetSeed(uint32_t entity, int value) const {
+        return SetInt(entity, "seed", value);
+    }
+
+private:
+    const GaleshiScriptApi* m_api = nullptr;
+};
+
+class Animation {
+public:
+    explicit Animation(const GaleshiScriptApi* api = nullptr)
+        : m_api(api) {}
+
+    bool SetState(uint32_t entity, const char* state) const {
+        return m_api && m_api->set_animation_state &&
+               m_api->set_animation_state(m_api->user, entity, state);
+    }
+
+    bool SetParameter(uint32_t entity, const char* name,
+                      float value) const {
+        return m_api && m_api->set_animation_parameter &&
+               m_api->set_animation_parameter(
+                   m_api->user, entity, name, value);
+    }
+
+    float GetParameter(uint32_t entity, const char* name) const {
+        return m_api && m_api->get_animation_parameter
+            ? m_api->get_animation_parameter(m_api->user, entity, name)
+            : 0.0f;
+    }
+
+    bool Trigger(uint32_t entity, const char* name) const {
+        return m_api && m_api->trigger_animation_parameter &&
+               m_api->trigger_animation_parameter(
+                   m_api->user, entity, name);
+    }
+
+    bool PlayClip(uint32_t entity, int clip) const {
+        return m_api && m_api->play_animation_clip &&
+               m_api->play_animation_clip(m_api->user, entity, clip);
+    }
+
+    bool Stop(uint32_t entity) const {
+        return m_api && m_api->stop_animation &&
+               m_api->stop_animation(m_api->user, entity);
+    }
+
+    bool SetSpeed(uint32_t entity, float speed) const {
+        return m_api && m_api->set_animation_speed &&
+               m_api->set_animation_speed(m_api->user, entity, speed);
+    }
+
+    float GetSpeed(uint32_t entity) const {
+        return m_api && m_api->get_animation_speed
+            ? m_api->get_animation_speed(m_api->user, entity)
+            : 1.0f;
+    }
+
+    uint32_t ClipCount(uint32_t entity) const {
+        return m_api && m_api->animation_clip_count
+            ? m_api->animation_clip_count(m_api->user, entity)
+            : 0;
+    }
+
+    const char* ClipName(uint32_t entity, uint32_t index) const {
+        return m_api && m_api->animation_clip_name
+            ? m_api->animation_clip_name(m_api->user, entity, index)
+            : "";
+    }
+
+    float ClipDuration(uint32_t entity, uint32_t index) const {
+        return m_api && m_api->animation_clip_duration
+            ? m_api->animation_clip_duration(m_api->user, entity, index)
+            : 0.0f;
+    }
+
+private:
+    const GaleshiScriptApi* m_api = nullptr;
+};
+
+class Assets {
+public:
+    explicit Assets(const GaleshiScriptApi* api = nullptr) : m_api(api) {}
+
+    bool Exists(const char* path) const {
+        return m_api && m_api->asset_exists &&
+               m_api->asset_exists(m_api->user, path);
+    }
+
+    const char* ResolvePath(const char* path) const {
+        return m_api && m_api->asset_resolve_path
+            ? m_api->asset_resolve_path(m_api->user, path)
+            : "";
+    }
+
+    bool LoadModel(const char* path) const {
+        return m_api && m_api->asset_load_model &&
+               m_api->asset_load_model(m_api->user, path);
+    }
+
+private:
+    const GaleshiScriptApi* m_api = nullptr;
+};
+
+class Particles {
+public:
+    explicit Particles(const GaleshiScriptApi* api = nullptr)
+        : m_api(api) {}
+
+    uint32_t Find() const {
+        return m_api && m_api->find_particle_emitter
+            ? m_api->find_particle_emitter(m_api->user)
+            : UINT32_MAX;
+    }
+
+    bool SetFlag(uint32_t entity, const char* property,
+                 bool value) const {
+        return m_api && m_api->set_particle_flag &&
+               m_api->set_particle_flag(m_api->user, entity, property,
+                                        value);
+    }
+    bool GetFlag(uint32_t entity, const char* property,
+                 bool& value) const {
+        return m_api && m_api->get_particle_flag &&
+               m_api->get_particle_flag(m_api->user, entity, property,
+                                        &value);
+    }
+    bool SetFloat(uint32_t entity, const char* property,
+                  float value) const {
+        return m_api && m_api->set_particle_float &&
+               m_api->set_particle_float(m_api->user, entity, property,
+                                         value);
+    }
+    bool GetFloat(uint32_t entity, const char* property,
+                  float& value) const {
+        return m_api && m_api->get_particle_float &&
+               m_api->get_particle_float(m_api->user, entity, property,
+                                         &value);
+    }
+    bool SetInt(uint32_t entity, const char* property,
+                int value) const {
+        return m_api && m_api->set_particle_int &&
+               m_api->set_particle_int(m_api->user, entity, property,
+                                       value);
+    }
+    bool GetInt(uint32_t entity, const char* property,
+                int& value) const {
+        return m_api && m_api->get_particle_int &&
+               m_api->get_particle_int(m_api->user, entity, property,
+                                       &value);
+    }
+    bool SetVec3(uint32_t entity, const char* property,
+                 Vec3 value) const {
+        return m_api && m_api->set_particle_vec3 &&
+               m_api->set_particle_vec3(m_api->user, entity, property,
+                                        value);
+    }
+    bool GetVec3(uint32_t entity, const char* property,
+                 Vec3& value) const {
+        return m_api && m_api->get_particle_vec3 &&
+               m_api->get_particle_vec3(m_api->user, entity, property,
+                                        &value);
+    }
+    bool SetVec4(uint32_t entity, const char* property,
+                 Vec4 value) const {
+        return m_api && m_api->set_particle_vec4 &&
+               m_api->set_particle_vec4(m_api->user, entity, property,
+                                        value);
+    }
+    bool GetVec4(uint32_t entity, const char* property,
+                 Vec4& value) const {
+        return m_api && m_api->get_particle_vec4 &&
+               m_api->get_particle_vec4(m_api->user, entity, property,
+                                        &value);
+    }
+
+private:
+    const GaleshiScriptApi* m_api = nullptr;
+};
+
+class Groom {
+public:
+    explicit Groom(const GaleshiScriptApi* api = nullptr) : m_api(api) {}
+
+    uint32_t Find() const {
+        return m_api && m_api->find_groom
+            ? m_api->find_groom(m_api->user)
+            : UINT32_MAX;
+    }
+
+    bool SetFlag(uint32_t entity, const char* property,
+                 bool value) const {
+        return m_api && m_api->set_groom_flag &&
+               m_api->set_groom_flag(m_api->user, entity, property,
+                                     value);
+    }
+    bool GetFlag(uint32_t entity, const char* property,
+                 bool& value) const {
+        return m_api && m_api->get_groom_flag &&
+               m_api->get_groom_flag(m_api->user, entity, property,
+                                     &value);
+    }
+    bool SetFloat(uint32_t entity, const char* property,
+                  float value) const {
+        return m_api && m_api->set_groom_float &&
+               m_api->set_groom_float(m_api->user, entity, property,
+                                      value);
+    }
+    bool GetFloat(uint32_t entity, const char* property,
+                  float& value) const {
+        return m_api && m_api->get_groom_float &&
+               m_api->get_groom_float(m_api->user, entity, property,
+                                      &value);
+    }
+    bool SetInt(uint32_t entity, const char* property,
+                int value) const {
+        return m_api && m_api->set_groom_int &&
+               m_api->set_groom_int(m_api->user, entity, property,
+                                    value);
+    }
+    bool GetInt(uint32_t entity, const char* property,
+                int& value) const {
+        return m_api && m_api->get_groom_int &&
+               m_api->get_groom_int(m_api->user, entity, property,
+                                    &value);
+    }
+    bool SetVec3(uint32_t entity, const char* property,
+                 Vec3 value) const {
+        return m_api && m_api->set_groom_vec3 &&
+               m_api->set_groom_vec3(m_api->user, entity, property,
+                                     value);
+    }
+    bool GetVec3(uint32_t entity, const char* property,
+                 Vec3& value) const {
+        return m_api && m_api->get_groom_vec3 &&
+               m_api->get_groom_vec3(m_api->user, entity, property,
+                                     &value);
+    }
+    bool SetString(uint32_t entity, const char* property,
+                   const char* value) const {
+        return m_api && m_api->set_groom_string &&
+               m_api->set_groom_string(m_api->user, entity, property,
+                                       value);
+    }
+    const char* GetString(uint32_t entity, const char* property) const {
+        return m_api && m_api->get_groom_string
+            ? m_api->get_groom_string(m_api->user, entity, property)
+            : "";
+    }
+
+private:
+    const GaleshiScriptApi* m_api = nullptr;
+};
+
 class Camera {
 public:
     explicit Camera(const GaleshiScriptApi* api = nullptr) : m_api(api) {}
@@ -459,6 +1059,13 @@ public:
           navigation(api),
           audio(api),
           postProcess(api),
+          ui(api),
+          landscape(api),
+          vegetation(api),
+          animation(api),
+          assets(api),
+          particles(api),
+          groom(api),
           camera(api),
           player(api),
           shader(api) {}
@@ -489,6 +1096,13 @@ public:
     Navigation navigation;
     Audio audio;
     PostProcess postProcess;
+    UI ui;
+    Landscape landscape;
+    Vegetation vegetation;
+    Animation animation;
+    Assets assets;
+    Particles particles;
+    Groom groom;
     Camera camera;
     Player player;
     Shader shader;
