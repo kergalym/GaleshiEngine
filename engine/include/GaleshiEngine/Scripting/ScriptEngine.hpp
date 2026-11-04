@@ -71,7 +71,15 @@ public:
         std::function<void(const std::string&, bool)> playSound,
         std::function<void(const std::string&)> stopSound = {},
         std::function<bool(const std::string&)> isSoundPlaying = {},
-        std::function<void()> stopAllSounds = {});
+        std::function<void()> stopAllSounds = {},
+        std::function<bool(const std::string&)> pauseSound = {},
+        std::function<bool(const std::string&)> resumeSound = {},
+        std::function<bool(const std::string&, float)> setSoundVolume = {},
+        std::function<bool(const std::string&, float)> setSoundPitch = {},
+        std::function<bool(const std::string&, bool)> setSoundLooping = {},
+        std::function<bool(const std::string&, float)> seekSound = {},
+        std::function<float(const std::string&)> soundDuration = {},
+        std::function<float(const std::string&)> soundPosition = {});
     // Backwards-compatible non-looping playback binding.
     void BindAudio(std::function<void(const std::string&)> playSound);
     // Entity-based 3D audio. The host resolves the AudioSourceComponent and
@@ -153,6 +161,13 @@ public:
                        float value,
                        bool checked);
 
+    // Calls the optional Lua globals OnTriggerBeginOverlap/OnTriggerEndOverlap
+    // and queues the same event for hot-reload C++ modules. Entity ids are
+    // passed as plain Lua numbers.
+    void DispatchTriggerBeginOverlap(uint32_t trigger, uint32_t other);
+    void DispatchTriggerEndOverlap(uint32_t trigger, uint32_t other);
+    void ClearTriggerEvents() { m_cppTriggerEvents.clear(); }
+
     // Console logging
     void AddLog(const std::string& msg);
     std::vector<std::string> GetLogs() const { return m_logs; }
@@ -191,6 +206,14 @@ private:
     std::function<void(const std::string&)> m_stopSound;
     std::function<bool(const std::string&)> m_isSoundPlaying;
     std::function<void()> m_stopAllSounds;
+    std::function<bool(const std::string&)> m_pauseSound;
+    std::function<bool(const std::string&)> m_resumeSound;
+    std::function<bool(const std::string&, float)> m_setSoundVolume;
+    std::function<bool(const std::string&, float)> m_setSoundPitch;
+    std::function<bool(const std::string&, bool)> m_setSoundLooping;
+    std::function<bool(const std::string&, float)> m_seekSound;
+    std::function<float(const std::string&)> m_soundDuration;
+    std::function<float(const std::string&)> m_soundPosition;
     std::function<bool(uint32_t)> m_playAudioSource;
     std::function<void(uint32_t)> m_stopAudioSource;
     std::function<bool(uint32_t)> m_isAudioSourcePlaying;
@@ -198,6 +221,12 @@ private:
     std::function<std::string(uint32_t, const std::string&,
                               const std::string&)> m_uiText;
     std::deque<UIEvent> m_cppUIEvents;
+    struct CppTriggerEvent {
+        bool begin = true;
+        uint32_t trigger = UINT32_MAX;
+        uint32_t other = UINT32_MAX;
+    };
+    std::deque<CppTriggerEvent> m_cppTriggerEvents;
     RenderingBindings m_rendering;
     std::function<bool(uint32_t)> m_landscapeBake;
     PhysicsBindings m_physics;

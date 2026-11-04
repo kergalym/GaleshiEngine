@@ -34,10 +34,12 @@
 #include <glm/gtc/quaternion.hpp>
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 #include <unordered_map>
 #include <entt/entt.hpp>
 #include <functional>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -78,7 +80,36 @@ namespace Galeshi {
 class ContactListenerImpl final : public JPH::ContactListener {
 public:
     std::function<void(entt::entity, entt::entity)> onContact;
+    std::function<void(entt::entity, entt::entity)> onTriggerBegin;
+    std::function<void(entt::entity, entt::entity)> onTriggerEnd;
     std::unordered_map<uint32_t, entt::entity>* bodyToEntity = nullptr;
+
+    struct TriggerContact {
+        entt::entity trigger = entt::null;
+        entt::entity other = entt::null;
+        uint32_t contacts = 0;
+    };
+    enum class EventType { Contact, TriggerBegin, TriggerEnd };
+    struct Event {
+        EventType type = EventType::Contact;
+        entt::entity trigger = entt::null;
+        entt::entity other = entt::null;
+    };
+    std::mutex eventMutex;
+    std::unordered_map<uint64_t, TriggerContact> triggerContacts;
+    std::vector<Event> events;
+
+    static uint64_t PairKey(uint32_t a, uint32_t b) {
+        if (a > b) std::swap(a, b);
+        return (static_cast<uint64_t>(a) << 32) | b;
+    }
+
+    std::vector<Event> TakeEvents() {
+        std::lock_guard<std::mutex> lock(eventMutex);
+        std::vector<Event> result;
+        result.swap(events);
+        return result;
+    }
 
     JPH::ValidateResult OnContactValidate(const JPH::Body&, const JPH::Body&,
                                           JPH::RVec3Arg,
@@ -88,18 +119,46 @@ public:
 
     void OnContactAdded(const JPH::Body& b1, const JPH::Body& b2,
                         const JPH::ContactManifold&, JPH::ContactSettings&) override {
-        if (!bodyToEntity || !onContact) return;
-        uint32_t id1 = b1.GetID().GetIndexAndSequenceNumber();
-        uint32_t id2 = b2.GetID().GetIndexAndSequenceNumber();
-        auto it1 = bodyToEntity->find(id1);
-        auto it2 = bodyToEntity->find(id2);
-        if (it1 != bodyToEntity->end() && it2 != bodyToEntity->end())
-            onContact(it1->second, it2->second);
+        if (!bodyToEntity) return;
+        const uint32_t id1 = b1.GetID().GetIndexAndSequenceNumber();
+        const uint32_t id2 = b2.GetID().GetIndexAndSequenceNumber();
+        const auto it1 = bodyToEntity->find(id1);
+        const auto it2 = bodyToEntity->find(id2);
+        if (it1 == bodyToEntity->end() || it2 == bodyToEntity->end()) return;
+
+        std::lock_guard<std::mutex> lock(eventMutex);
+        events.push_back({EventType::Contact, it1->second, it2->second});
+
+        const bool sensor1 = b1.IsSensor();
+        const bool sensor2 = b2.IsSensor();
+        if (!sensor1 && !sensor2) return;
+
+        TriggerContact& contact = triggerContacts[PairKey(id1, id2)];
+        if (contact.contacts++ == 0) {
+            contact.trigger = sensor1 ? it1->second : it2->second;
+            contact.other = sensor1 ? it2->second : it1->second;
+            events.push_back({EventType::TriggerBegin, contact.trigger,
+                              contact.other});
+        }
     }
 
     void OnContactPersisted(const JPH::Body&, const JPH::Body&,
                             const JPH::ContactManifold&, JPH::ContactSettings&) override {}
-    void OnContactRemoved(const JPH::SubShapeIDPair&) override {}
+
+    void OnContactRemoved(const JPH::SubShapeIDPair& pair) override {
+        const uint32_t id1 =
+            pair.GetBody1ID().GetIndexAndSequenceNumber();
+        const uint32_t id2 =
+            pair.GetBody2ID().GetIndexAndSequenceNumber();
+        std::lock_guard<std::mutex> lock(eventMutex);
+        const auto it = triggerContacts.find(PairKey(id1, id2));
+        if (it == triggerContacts.end()) return;
+        if (it->second.contacts > 0) --it->second.contacts;
+        if (it->second.contacts > 0) return;
+        events.push_back({EventType::TriggerEnd, it->second.trigger,
+                          it->second.other});
+        triggerContacts.erase(it);
+    }
 };
 
 struct EnginePhysicsSystem::Impl {
@@ -172,6 +231,12 @@ void EnginePhysicsSystem::Shutdown() {
     m_impl->jobSystem.reset();
     m_impl->tempAllocator.reset();
     m_impl->bodyToEntity.clear();
+    {
+        std::lock_guard<std::mutex> lock(
+            m_impl->contactListener.eventMutex);
+        m_impl->contactListener.triggerContacts.clear();
+        m_impl->contactListener.events.clear();
+    }
     JPH::UnregisterTypes();
     delete JPH::Factory::sInstance;
     JPH::Factory::sInstance = nullptr;
@@ -188,6 +253,30 @@ void EnginePhysicsSystem::Update(Scene& /*scene*/, float dt) {
     constexpr int kCollisionSteps = 1;
     m_impl->physicsSystem->Update(dt, kCollisionSteps,
         m_impl->tempAllocator.get(), m_impl->jobSystem.get());
+
+    // Jolt invokes contact callbacks from worker threads. Deliver queued
+    // events on the caller's thread so script callbacks can touch the scene.
+    for (const auto& event : m_impl->contactListener.TakeEvents()) {
+        switch (event.type) {
+        case ContactListenerImpl::EventType::Contact:
+            if (m_impl->contactListener.onContact) {
+                m_impl->contactListener.onContact(event.trigger, event.other);
+            }
+            break;
+        case ContactListenerImpl::EventType::TriggerBegin:
+            if (m_impl->contactListener.onTriggerBegin) {
+                m_impl->contactListener.onTriggerBegin(event.trigger,
+                                                       event.other);
+            }
+            break;
+        case ContactListenerImpl::EventType::TriggerEnd:
+            if (m_impl->contactListener.onTriggerEnd) {
+                m_impl->contactListener.onTriggerEnd(event.trigger,
+                                                     event.other);
+            }
+            break;
+        }
+    }
 }
 
 uint32_t EnginePhysicsSystem::CreateBox(const glm::vec3& halfExtents, const glm::vec3& position, entt::entity entity, bool isStatic) {
@@ -650,6 +739,16 @@ void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene) {
 
 void EnginePhysicsSystem::SetOnContactCallback(std::function<void(entt::entity, entt::entity)> cb) {
     m_impl->contactListener.onContact = std::move(cb);
+}
+
+void EnginePhysicsSystem::SetOnTriggerBeginOverlap(
+    std::function<void(entt::entity, entt::entity)> cb) {
+    m_impl->contactListener.onTriggerBegin = std::move(cb);
+}
+
+void EnginePhysicsSystem::SetOnTriggerEndOverlap(
+    std::function<void(entt::entity, entt::entity)> cb) {
+    m_impl->contactListener.onTriggerEnd = std::move(cb);
 }
 
 } // namespace Galeshi

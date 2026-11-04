@@ -68,6 +68,28 @@ New modules can check `g_api->AbiVersion()` / `Compatible()`. The C++ API
 surface and subsystem expansion plan are documented in
 [CPP_API.md](CPP_API.md).
 
+### Optional trigger overlap callbacks
+
+A module may also export either function. They are optional, looked up when
+the module loads, and can be omitted independently:
+
+```cpp
+extern "C" void OnTriggerBeginOverlap(uint32_t trigger, uint32_t other) {
+    // trigger is the sensor collider, other is the overlapping entity.
+}
+
+extern "C" void OnTriggerEndOverlap(uint32_t trigger, uint32_t other) {
+    // Fires after the last contact between the pair is removed.
+}
+```
+
+The host dispatches queued physics events on the main thread before the next
+`GaleshiScriptUpdate`, so both entry points can call the regular script API.
+Every loaded module with the matching export receives the event. The hook is
+module-level, not per-entity: inspect the trigger/other ids if one module
+handles several volumes. Entities must have a collider with `Is Trigger`
+enabled in the editor.
+
 World, input, physics, navigation and audio examples:
 
 ```cpp
@@ -92,6 +114,11 @@ extern "C" void GaleshiScriptUpdate(float dt) {
 
     g_api->audio.AttachSource(crate, "assets/sounds/hit.wav");
     g_api->audio.PlaySource(crate);
+
+    // 2D file players support WAV and MP3. Controls are keyed by path.
+    g_api->audio.PlaySound("assets/sounds/theme.mp3", true);
+    g_api->audio.SetSoundVolume("assets/sounds/theme.mp3", 0.5f);
+    g_api->audio.SeekSound("assets/sounds/theme.mp3", 4.0f);
 }
 ```
 

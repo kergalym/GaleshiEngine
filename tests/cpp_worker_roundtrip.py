@@ -36,6 +36,8 @@ RESPONSE = 7
 LOAD_RESULT = 8
 READY = 9
 FRAME_DONE = 10
+TRIGGER_BEGIN = 11
+TRIGGER_END = 12
 
 # CppWorkerRequest values used by the test script.
 CREATE_ENTITY = 16
@@ -50,9 +52,12 @@ SET_MATERIAL_FLOAT = 161
 SET_RENDERER_DEFERRED = 172
 LANDSCAPE_LAYER_COUNT = 178
 POLL_UI_EVENT = 85
+SET_SOUND_VOLUME = 194
 
 SCRIPT_SOURCE = r'''
 #include "GaleshiEngine/Scripting/CppScriptApi.hpp"
+
+#include <cstdio>
 
 static const GaleshiScriptApi* g_api = nullptr;
 
@@ -80,7 +85,22 @@ extern "C" void GaleshiScriptUpdate(float dt) {
     (void)g_api->landscape_layer_count(g_api->user);
     GaleshiScriptUIEvent event{};
     (void)g_api->poll_ui_event(g_api->user, &event);
+    (void)g_api->set_sound_volume(g_api->user, "hit.wav", 0.25f);
     g_api->log(g_api->user, "roundtrip-done");
+}
+
+extern "C" void OnTriggerBeginOverlap(uint32_t trigger, uint32_t other) {
+    char text[128];
+    std::snprintf(text, sizeof(text), "trigger-begin:%u:%u",
+                  trigger, other);
+    g_api->log(g_api->user, text);
+}
+
+extern "C" void OnTriggerEndOverlap(uint32_t trigger, uint32_t other) {
+    char text[128];
+    std::snprintf(text, sizeof(text), "trigger-end:%u:%u",
+                  trigger, other);
+    g_api->log(g_api->user, text);
 }
 '''
 
@@ -88,12 +108,13 @@ extern "C" void GaleshiScriptUpdate(float dt) {
 def packet(type_: int, *, ident: int = 0, kind: int = 0,
            entity: int = UINT32_MAX, valid: int = 0,
            values=(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+           other: int = UINT32_MAX,
            text: str = "", text2: str = "") -> bytes:
     text_b = text.encode("utf-8")[:511]
     text2_b = text2.encode("utf-8")[:511]
     return PACKET.pack(
         type_, ident, kind, entity, valid,
-        *values, UINT32_MAX, text_b, text2_b
+        *values, other, text_b, text2_b
     )
 
 
@@ -145,11 +166,15 @@ def main() -> int:
         require(ready is not None and ready[0] == READY,
                 "worker did not report Ready")
 
+        process.stdin.write(packet(TRIGGER_BEGIN, entity=42, other=7))
+        process.stdin.write(packet(TRIGGER_END, entity=42, other=7))
         process.stdin.write(packet(FRAME, values=(0.016, 0, 0, 0, 0, 0, 0)))
         process.stdin.flush()
 
         seen: set[int] = set()
         log_done = False
+        trigger_begin = False
+        trigger_end = False
         frame_done = False
         while True:
             response = read_packet(process.stdout)
@@ -162,6 +187,10 @@ def main() -> int:
             if type_ == LOG:
                 if text == "roundtrip-done":
                     log_done = True
+                elif text == "trigger-begin:42:7":
+                    trigger_begin = True
+                elif text == "trigger-end:42:7":
+                    trigger_end = True
                 continue
             if type_ == FRAME_DONE:
                 frame_done = True
@@ -206,6 +235,9 @@ def main() -> int:
                 require(valid == 1, "SetRendererDeferred payload mismatch")
             elif kind == LANDSCAPE_LAYER_COUNT:
                 reply_entity = 2
+            elif kind == SET_SOUND_VOLUME:
+                require(text == "hit.wav" and abs(x - 0.25) < 1e-5,
+                        "SetSoundVolume payload mismatch")
             elif kind == POLL_UI_EVENT:
                 reply_valid = 0
             process.stdin.write(
@@ -223,10 +255,13 @@ def main() -> int:
             PLAY_SOUND, SET_POST_PROCESS_FLAG, CREATE_UI_CANVAS,
             BEHAVIOR_TREE_ADD_NODE, SET_MATERIAL_FLOAT,
             SET_RENDERER_DEFERRED, LANDSCAPE_LAYER_COUNT, POLL_UI_EVENT,
+            SET_SOUND_VOLUME,
         }
         missing = expected - seen
         require(not missing, f"missing requests: {sorted(missing)}")
         require(log_done, "script did not reach the end")
+        require(trigger_begin, "worker did not call OnTriggerBeginOverlap")
+        require(trigger_end, "worker did not call OnTriggerEndOverlap")
         require(frame_done, "worker did not finish the frame")
         print("C++ worker round-trip test passed.")
         return 0

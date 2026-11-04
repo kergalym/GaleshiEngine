@@ -33,6 +33,15 @@ static void ExerciseApi(const GaleshiScriptApi* raw) {
     api.audio.AttachSource(entity, "assets/sounds/hit.wav");
     api.audio.PlaySource(entity);
     api.audio.StopSource(entity);
+    api.audio.PlaySound("assets/sounds/hit.wav", false);
+    api.audio.PauseSound("assets/sounds/hit.wav");
+    api.audio.ResumeSound("assets/sounds/hit.wav");
+    api.audio.SetSoundVolume("assets/sounds/hit.wav", 0.5f);
+    api.audio.SetSoundPitch("assets/sounds/hit.wav", 1.0f);
+    api.audio.SetSoundLooping("assets/sounds/hit.wav", true);
+    api.audio.SeekSound("assets/sounds/hit.wav", 0.0f);
+    api.audio.SoundDuration("assets/sounds/hit.wav");
+    api.audio.SoundPosition("assets/sounds/hit.wav");
     api.audio.SetBus("SFX", 0.8f, false);
     api.audio.SetBus("SFX", 0.8f, false);
 
@@ -104,4 +113,14 @@ extern "C" void GaleshiScriptRegister(const GaleshiScriptApi* api) {
 extern "C" void GaleshiScriptUpdate(float dt) {
     (void)dt;
     ExerciseApi(g_api);
+}
+
+extern "C" void OnTriggerBeginOverlap(uint32_t trigger, uint32_t other) {
+    (void)trigger;
+    (void)other;
+}
+
+extern "C" void OnTriggerEndOverlap(uint32_t trigger, uint32_t other) {
+    (void)trigger;
+    (void)other;
 }

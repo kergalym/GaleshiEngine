@@ -16,6 +16,8 @@ enum class CppWorkerMessage : uint32_t {
     LoadResult = 8,
     Ready = 9,
     FrameDone = 10,
+    TriggerBeginOverlap = 11,
+    TriggerEndOverlap = 12,
 };
 
 enum class CppWorkerRequest : uint32_t {
@@ -210,6 +212,14 @@ enum class CppWorkerRequest : uint32_t {
     SetAudioBus = 189,
     GetAudioBusVolume = 190,
     GetAudioBusMuted = 191,
+    PauseSound = 192,
+    ResumeSound = 193,
+    SetSoundVolume = 194,
+    SetSoundPitch = 195,
+    SetSoundLooping = 196,
+    SeekSound = 197,
+    GetSoundDuration = 198,
+    GetSoundPosition = 199,
 };
 
 constexpr std::size_t kCppWorkerTextSize = 512;

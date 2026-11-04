@@ -326,6 +326,48 @@ public:
                m_api->is_source_playing(m_api->user, entity);
     }
 
+    bool PauseSound(const char* path) const {
+        return m_api && m_api->pause_sound &&
+               m_api->pause_sound(m_api->user, path);
+    }
+
+    bool ResumeSound(const char* path) const {
+        return m_api && m_api->resume_sound &&
+               m_api->resume_sound(m_api->user, path);
+    }
+
+    bool SetSoundVolume(const char* path, float volume) const {
+        return m_api && m_api->set_sound_volume &&
+               m_api->set_sound_volume(m_api->user, path, volume);
+    }
+
+    bool SetSoundPitch(const char* path, float pitch) const {
+        return m_api && m_api->set_sound_pitch &&
+               m_api->set_sound_pitch(m_api->user, path, pitch);
+    }
+
+    bool SetSoundLooping(const char* path, bool loop) const {
+        return m_api && m_api->set_sound_looping &&
+               m_api->set_sound_looping(m_api->user, path, loop);
+    }
+
+    bool SeekSound(const char* path, float seconds) const {
+        return m_api && m_api->seek_sound &&
+               m_api->seek_sound(m_api->user, path, seconds);
+    }
+
+    float SoundDuration(const char* path) const {
+        return m_api && m_api->get_sound_duration
+            ? m_api->get_sound_duration(m_api->user, path)
+            : 0.0f;
+    }
+
+    float SoundPosition(const char* path) const {
+        return m_api && m_api->get_sound_position
+            ? m_api->get_sound_position(m_api->user, path)
+            : 0.0f;
+    }
+
 private:
     const GaleshiScriptApi* m_api = nullptr;
 };

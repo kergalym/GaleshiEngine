@@ -47,7 +47,7 @@ The umbrella header includes the public engine classes:
 - `AssetManager`, `Mesh`, `Material`, `Texture`
 - `EnginePhysicsSystem`, `NavigationSystem`, `AISystem`, behavior trees
 - `InputAxisSystem`, `AnimationSystem`
-- `AudioSystem` and audio types
+- `AudioSystem`, `SoundPlayer` and audio types
 - `Renderer`, `RenderSystem`, `PostProcessManager`, cameras, particles,
   groom, debug rendering
 - `UIRuntime` and UI widget data
@@ -150,6 +150,10 @@ A script module exports two C-linkage entry points:
 ```cpp
 extern "C" void GaleshiScriptRegister(const GaleshiScriptApi* api);
 extern "C" void GaleshiScriptUpdate(float dt);
+
+// Optional, found with dlsym when present:
+extern "C" void OnTriggerBeginOverlap(uint32_t trigger, uint32_t other);
+extern "C" void OnTriggerEndOverlap(uint32_t trigger, uint32_t other);
 ```
 
 Example using the class wrappers:

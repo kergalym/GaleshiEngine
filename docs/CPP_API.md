@@ -62,12 +62,59 @@ The public umbrella currently includes:
 - `EnginePhysicsSystem`
 - `NavigationSystem`, `AISystem`, behavior trees
 - `AnimationSystem`
-- `AudioSystem`, audio types and mixer buses
+- `AudioSystem`, `SoundPlayer`, audio types and mixer buses
 - `Renderer`, `RenderSystem`, `PostProcessManager`, camera, framebuffer,
   frustum, debug renderer, groom, particles, shader manager, ImGui bridge
 - `UIRuntime` and UI widget data
 - `ScriptEngine`
 - stable script API and class wrappers
+
+### SoundPlayer
+
+`SoundPlayer` is one independent WAV/MP3 playback instance. It uses the
+`AudioSystem` engine, so the audio system must outlive the player. Unlike the
+path-keyed `AudioSystem::PlaySound()`, several players can play the same file
+independently.
+
+```cpp
+Galeshi::AudioSystem audio;
+audio.Init();
+
+Galeshi::SoundPlayer music(audio);
+if (music.Load("assets/sounds/theme.mp3", Galeshi::AudioBus::Music)) {
+    music.SetVolume(0.7f);
+    music.Play(true);
+    // later: music.Pause(); music.Resume(); music.SeekSeconds(12.0f);
+}
+```
+
+Methods: `Load`, `Unload`, `Play`, `Pause`, `Resume`, `Stop`, `IsPlaying`,
+`SetVolume`, `SetPitch`, `SetLooping`, `SeekSeconds`, `DurationSeconds` and
+`PositionSeconds`. `AudioSystem::StopAll()` also stops registered players.
+
+### Trigger overlap callbacks
+
+`EnginePhysicsSystem` exposes two assignable callbacks. Assigning a new one
+replaces the previous implementation. They are delivered on the physics
+update thread (the thread calling `EnginePhysicsSystem::Update`), not from
+Jolt worker threads.
+
+```cpp
+physics.SetOnTriggerBeginOverlap(
+    [](entt::entity trigger, entt::entity other) {
+        // trigger is the sensor collider.
+    });
+physics.SetOnTriggerEndOverlap(
+    [](entt::entity trigger, entt::entity other) {
+        // The last contact between this pair was removed.
+    });
+```
+
+Create trigger volumes with a `ColliderComponent` whose `isTrigger` is true.
+Dynamic bodies must exist on the entities that should overlap. The Lua
+callbacks `OnTriggerBeginOverlap` / `OnTriggerEndOverlap` and the optional
+hot-reload C++ exports of the same names are documented in
+[CPP_SCRIPTS.md](CPP_SCRIPTS.md) and [LUA_API.md](LUA_API.md).
 
 ## Hot-reload C++ Script API
 
@@ -101,7 +148,8 @@ Current class wrappers cover:
 - `Physics` — linear velocity, attach box/sphere/capsule, destroy body,
   impulse
 - `Navigation` — navmesh build, path query and path points
-- `Audio` — 2D play/stop/state, 3D sources, stop-all and mixer buses
+- `Audio` — 2D play/stop/pause/resume/volume/pitch/loop/seek, 3D sources,
+  stop-all and mixer buses
 - `Camera` — mode, basis and camera-relative movement
 - `Player` — strafing
 - `MaterialAccess` — material factors, flags, colors and texture slots
@@ -174,6 +222,7 @@ Script surface:
 - static/kinematic/dynamic modes, mass, gravity, friction/restitution;
 - impulse, force, linear/angular velocity;
 - sphere/ray casts and contact events;
+- trigger begin/end overlap callbacks and script events;
 - cloth creation/update;
 - entity-to-body and body-to-entity mapping.
 
@@ -191,12 +240,12 @@ Script surface:
 
 ### 6. Audio, including 3D — done
 
-Native surface: `AudioSystem`, `AudioSourceComponent`,
+Native surface: `AudioSystem`, `SoundPlayer`, `AudioSourceComponent`,
 `AudioListenerComponent` and scene mixer buses.
 
 Script surface:
 
-- 2D play/stop/state;
+- 2D play/stop/state, pause/resume, volume, pitch, looping, seek and position;
 - 3D source play/stop/state with attenuation and offset;
 - listener selection (camera or entity);
 - bus volume/mute;

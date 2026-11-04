@@ -1202,7 +1202,31 @@ protected:
             [this](const std::string& path) {
                 return m_audio.IsSoundPlaying(path);
             },
-            [this]() { m_audio.StopAll(); });
+            [this]() { m_audio.StopAll(); },
+            [this](const std::string& path) {
+                return m_audio.PauseSound(path);
+            },
+            [this](const std::string& path) {
+                return m_audio.ResumeSound(path);
+            },
+            [this](const std::string& path, float volume) {
+                return m_audio.SetSoundVolume(path, volume);
+            },
+            [this](const std::string& path, float pitch) {
+                return m_audio.SetSoundPitch(path, pitch);
+            },
+            [this](const std::string& path, bool loop) {
+                return m_audio.SetSoundLooping(path, loop);
+            },
+            [this](const std::string& path, float seconds) {
+                return m_audio.SeekSound(path, seconds);
+            },
+            [this](const std::string& path) {
+                return m_audio.SoundDuration(path);
+            },
+            [this](const std::string& path) {
+                return m_audio.SoundPosition(path);
+            });
         m_scripts.BindAudio3D(
             [this](uint32_t entityId) {
                 auto& registry = m_scene.Registry();
@@ -1331,6 +1355,20 @@ protected:
                 }
             }
         });
+        m_physics->SetOnTriggerBeginOverlap(
+            [this](entt::entity trigger, entt::entity other) {
+                if (!m_editor.isPlaying) return;
+                m_scripts.DispatchTriggerBeginOverlap(
+                    static_cast<uint32_t>(trigger),
+                    static_cast<uint32_t>(other));
+            });
+        m_physics->SetOnTriggerEndOverlap(
+            [this](entt::entity trigger, entt::entity other) {
+                if (!m_editor.isPlaying) return;
+                m_scripts.DispatchTriggerEndOverlap(
+                    static_cast<uint32_t>(trigger),
+                    static_cast<uint32_t>(other));
+            });
         m_navSystem = std::make_unique<Galeshi::NavigationSystem>();
         m_navSystem->Init();
         m_scripts.BindNavigation(
@@ -2097,6 +2135,7 @@ private:
         m_pendingLandscapeBake = entt::null;
         m_wasSculpting = false;
         m_scripts.ClearUIEvents();
+        m_scripts.ClearTriggerEvents();
         m_audio.StopAll();
 
         if (m_physics) m_physics->Reset();
@@ -2557,7 +2596,7 @@ private:
             ImGui::Separator();
             ImGui::Spacing();
             ImGui::Text("GaleshiEngine");
-            ImGui::TextDisabled("Version 0.2.0 - pre-alpha");
+            ImGui::TextDisabled("Version 0.3.0 - alpha");
             ImGui::Separator();
             ImGui::TextWrapped(
                 "A minimalist ECS game engine and editor written in C++20. "
@@ -3591,6 +3630,7 @@ if (ImGui::BeginMenu("File")) {
         EndEditorMouseLook();
         m_lastViewportTexture = BGFX_INVALID_HANDLE;
         m_editor.isPlaying = false;
+        m_scripts.ClearTriggerEvents();
         m_audio.StopAll();
         if (m_physics) m_physics->Reset();
         if (m_particles) m_particles->Reset();
@@ -3608,6 +3648,7 @@ if (ImGui::BeginMenu("File")) {
         m_editor.isPlaying = false;
         if (m_usingGameCamera) DeactivateGameplayCamera();
         if (wasPlaying) {
+            m_scripts.ClearTriggerEvents();
             m_audio.StopAll();
             if (m_physics) m_physics->Reset();
             if (m_particles) m_particles->Reset();

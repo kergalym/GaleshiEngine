@@ -143,8 +143,9 @@ struct GaleshiScriptApi {
     uint32_t (*path_point_count)(void* user) = nullptr;
     GaleshiScriptVec3 (*path_point)(void* user, uint32_t index) = nullptr;
 
-    // Audio. Source playback uses AudioSourceComponent attached to an entity;
-    // the host owns listener selection and mixer bus application.
+    // Audio. 2D playback accepts WAV and MP3 files. Source playback uses
+    // AudioSourceComponent attached to an entity; the host owns listener
+    // selection and mixer bus application.
     bool (*play_sound)(void* user, const char* path, bool loop) = nullptr;
     bool (*stop_sound)(void* user, const char* path) = nullptr;
     bool (*is_sound_playing)(void* user, const char* path) = nullptr;
@@ -492,9 +493,23 @@ struct GaleshiScriptApi {
                           bool muted) = nullptr;
     float (*get_audio_bus_volume)(void* user, const char* name) = nullptr;
     bool (*get_audio_bus_muted)(void* user, const char* name) = nullptr;
+
+    // Per-file 2D playback controls. These operate on sounds started with
+    // play_sound and are append-only additions to the audio surface.
+    bool (*pause_sound)(void* user, const char* path) = nullptr;
+    bool (*resume_sound)(void* user, const char* path) = nullptr;
+    bool (*set_sound_volume)(void* user, const char* path,
+                             float volume) = nullptr;
+    bool (*set_sound_pitch)(void* user, const char* path,
+                            float pitch) = nullptr;
+    bool (*set_sound_looping)(void* user, const char* path,
+                              bool loop) = nullptr;
+    bool (*seek_sound)(void* user, const char* path, float seconds) = nullptr;
+    float (*get_sound_duration)(void* user, const char* path) = nullptr;
+    float (*get_sound_position)(void* user, const char* path) = nullptr;
 };
 
-inline constexpr uint32_t kGaleshiScriptApiVersion = 17;
+inline constexpr uint32_t kGaleshiScriptApiVersion = 18;
 
 inline float GaleshiInterpFactor(float deltaTime, float speed) {
     if (speed <= 0.0f) return 1.0f;
@@ -525,8 +540,17 @@ inline GaleshiScriptVec3 VInterp(GaleshiScriptVec3 current,
 //
 //   extern "C" void GaleshiScriptRegister(const GaleshiScriptApi* api);
 //   extern "C" void GaleshiScriptUpdate(float dt);
+//
+// Modules may also export either trigger callback. They are optional and are
+// looked up when the module is loaded:
+//
+//   extern "C" void OnTriggerBeginOverlap(uint32_t trigger, uint32_t other);
+//   extern "C" void OnTriggerEndOverlap(uint32_t trigger, uint32_t other);
 extern "C" void GaleshiScriptRegister(const GaleshiScriptApi* api);
 extern "C" void GaleshiScriptUpdate(float dt);
+extern "C" void OnTriggerBeginOverlap(uint32_t trigger, uint32_t other);
+extern "C" void OnTriggerEndOverlap(uint32_t trigger, uint32_t other);
 
 using GaleshiScriptRegisterFn = void (*)(const GaleshiScriptApi*);
 using GaleshiScriptUpdateFn = void (*)(float);
+using GaleshiScriptTriggerFn = void (*)(uint32_t, uint32_t);

@@ -57,6 +57,15 @@ public:
     // Callback receives (entityA, entityB) for each ContactAdded event.
     void SetOnContactCallback(std::function<void(entt::entity, entt::entity)> cb);
 
+    // Trigger callbacks receive (triggerEntity, otherEntity). They fire once
+    // when a sensor collider starts overlapping and once when the last
+    // contact between the pair is removed. Assigning a new callback replaces
+    // the previous override.
+    void SetOnTriggerBeginOverlap(
+        std::function<void(entt::entity, entt::entity)> cb);
+    void SetOnTriggerEndOverlap(
+        std::function<void(entt::entity, entt::entity)> cb);
+
 JPH::JobSystem* GetJobSystem() const;
 
 private:

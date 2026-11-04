@@ -1764,6 +1764,30 @@ void ScriptEngine::BuildApi() {
     const auto isSoundPlaying = [this](const std::string& path) {
         return m_isSoundPlaying ? m_isSoundPlaying(path) : false;
     };
+    const auto pauseSound = [this](const std::string& path) {
+        return m_pauseSound ? m_pauseSound(path) : false;
+    };
+    const auto resumeSound = [this](const std::string& path) {
+        return m_resumeSound ? m_resumeSound(path) : false;
+    };
+    const auto setSoundVolume = [this](const std::string& path, float value) {
+        return m_setSoundVolume ? m_setSoundVolume(path, value) : false;
+    };
+    const auto setSoundPitch = [this](const std::string& path, float value) {
+        return m_setSoundPitch ? m_setSoundPitch(path, value) : false;
+    };
+    const auto setSoundLooping = [this](const std::string& path, bool value) {
+        return m_setSoundLooping ? m_setSoundLooping(path, value) : false;
+    };
+    const auto seekSound = [this](const std::string& path, float value) {
+        return m_seekSound ? m_seekSound(path, value) : false;
+    };
+    const auto soundDuration = [this](const std::string& path) {
+        return m_soundDuration ? m_soundDuration(path) : 0.0f;
+    };
+    const auto soundPosition = [this](const std::string& path) {
+        return m_soundPosition ? m_soundPosition(path) : 0.0f;
+    };
     const auto stopAllSounds = [this]() {
         if (m_stopAllSounds) m_stopAllSounds();
     };
@@ -1794,6 +1818,14 @@ void ScriptEngine::BuildApi() {
     audio["play"] = playSound;
     audio["stop"] = stopSound;
     audio["is_playing"] = isSoundPlaying;
+    audio["pause"] = pauseSound;
+    audio["resume"] = resumeSound;
+    audio["set_volume"] = setSoundVolume;
+    audio["set_pitch"] = setSoundPitch;
+    audio["set_looping"] = setSoundLooping;
+    audio["seek"] = seekSound;
+    audio["duration"] = soundDuration;
+    audio["position"] = soundPosition;
     audio["stop_all"] = stopAllSounds;
     audio["set_bus"] = setBus;
     audio["get_bus"] = getBus;
@@ -3360,6 +3392,52 @@ CppWorkerPacket ScriptEngine::MakeWorkerResponse(
     case CppWorkerRequest::StopAllSounds:
         if (m_stopAllSounds) {
             m_stopAllSounds();
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::PauseSound:
+        if (m_pauseSound) {
+            response.valid = m_pauseSound(request.text) ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::ResumeSound:
+        if (m_resumeSound) {
+            response.valid = m_resumeSound(request.text) ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::SetSoundVolume:
+        if (m_setSoundVolume) {
+            response.valid =
+                m_setSoundVolume(request.text, request.x) ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::SetSoundPitch:
+        if (m_setSoundPitch) {
+            response.valid =
+                m_setSoundPitch(request.text, request.x) ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::SetSoundLooping:
+        if (m_setSoundLooping) {
+            response.valid =
+                m_setSoundLooping(request.text, request.valid != 0) ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::SeekSound:
+        if (m_seekSound) {
+            response.valid =
+                m_seekSound(request.text, request.x) ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::GetSoundDuration:
+        if (m_soundDuration) {
+            response.x = m_soundDuration(request.text);
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::GetSoundPosition:
+        if (m_soundPosition) {
+            response.x = m_soundPosition(request.text);
             response.valid = 1;
         }
         break;
@@ -6015,12 +6093,28 @@ void ScriptEngine::BindAudio(
     std::function<void(const std::string&, bool)> playSound,
     std::function<void(const std::string&)> stopSound,
     std::function<bool(const std::string&)> isSoundPlaying,
-    std::function<void()> stopAllSounds) {
+    std::function<void()> stopAllSounds,
+    std::function<bool(const std::string&)> pauseSound,
+    std::function<bool(const std::string&)> resumeSound,
+    std::function<bool(const std::string&, float)> setSoundVolume,
+    std::function<bool(const std::string&, float)> setSoundPitch,
+    std::function<bool(const std::string&, bool)> setSoundLooping,
+    std::function<bool(const std::string&, float)> seekSound,
+    std::function<float(const std::string&)> soundDuration,
+    std::function<float(const std::string&)> soundPosition) {
     BuildApi();
     m_playSound = std::move(playSound);
     m_stopSound = std::move(stopSound);
     m_isSoundPlaying = std::move(isSoundPlaying);
     m_stopAllSounds = std::move(stopAllSounds);
+    m_pauseSound = std::move(pauseSound);
+    m_resumeSound = std::move(resumeSound);
+    m_setSoundVolume = std::move(setSoundVolume);
+    m_setSoundPitch = std::move(setSoundPitch);
+    m_setSoundLooping = std::move(setSoundLooping);
+    m_seekSound = std::move(seekSound);
+    m_soundDuration = std::move(soundDuration);
+    m_soundPosition = std::move(soundPosition);
 }
 
 void ScriptEngine::BindAudio(std::function<void(const std::string&)> playSound) {
@@ -6386,6 +6480,21 @@ void ScriptEngine::UpdateCppScripts(float dt) {
         return;
     }
 
+    while (!m_cppTriggerEvents.empty()) {
+        const CppTriggerEvent event = m_cppTriggerEvents.front();
+        CppWorkerPacket packet;
+        packet.type = static_cast<uint32_t>(
+            event.begin ? CppWorkerMessage::TriggerBeginOverlap
+                        : CppWorkerMessage::TriggerEndOverlap);
+        packet.entity = event.trigger;
+        packet.other = event.other;
+        if (!WriteWorkerPacket(m_cppWorkerWrite, packet)) {
+            StopCppWorker("C++ worker exited while sending trigger event.");
+            return;
+        }
+        m_cppTriggerEvents.pop_front();
+    }
+
     CppWorkerPacket frame;
     frame.type = static_cast<uint32_t>(CppWorkerMessage::Frame);
     frame.x = dt;
@@ -6501,6 +6610,44 @@ bool ScriptEngine::CallUIHandler(const std::string& handler,
         return false;
     }
     return true;
+}
+
+void ScriptEngine::DispatchTriggerBeginOverlap(uint32_t trigger,
+                                               uint32_t other) {
+    constexpr std::size_t kMaxQueuedTriggerEvents = 256;
+    if (m_cppTriggerEvents.size() >= kMaxQueuedTriggerEvents) {
+        m_cppTriggerEvents.pop_front();
+    }
+    m_cppTriggerEvents.push_back({true, trigger, other});
+
+    sol::object object = m_lua["OnTriggerBeginOverlap"];
+    if (!object.valid() || object.get_type() != sol::type::function) return;
+    sol::protected_function function = object;
+    sol::protected_function_result result = function(trigger, other);
+    if (!result.valid()) {
+        sol::error error = result;
+        AddLog(std::string("[TRIGGER ERROR] OnTriggerBeginOverlap: ") +
+               error.what());
+    }
+}
+
+void ScriptEngine::DispatchTriggerEndOverlap(uint32_t trigger,
+                                             uint32_t other) {
+    constexpr std::size_t kMaxQueuedTriggerEvents = 256;
+    if (m_cppTriggerEvents.size() >= kMaxQueuedTriggerEvents) {
+        m_cppTriggerEvents.pop_front();
+    }
+    m_cppTriggerEvents.push_back({false, trigger, other});
+
+    sol::object object = m_lua["OnTriggerEndOverlap"];
+    if (!object.valid() || object.get_type() != sol::type::function) return;
+    sol::protected_function function = object;
+    sol::protected_function_result result = function(trigger, other);
+    if (!result.valid()) {
+        sol::error error = result;
+        AddLog(std::string("[TRIGGER ERROR] OnTriggerEndOverlap: ") +
+               error.what());
+    }
 }
 
 bool ScriptEngine::HotReload(const std::string& path) {

@@ -26,6 +26,7 @@
 
 #include "GaleshiEngine/Audio/AudioSystem.hpp"
 #include "GaleshiEngine/Audio/AudioTypes.hpp"
+#include "GaleshiEngine/Audio/SoundPlayer.hpp"
 
 #include "GaleshiEngine/Core/Application.hpp"
 #include "GaleshiEngine/Core/JobSystem.hpp"

@@ -6,7 +6,19 @@
 
 GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20. It targets Linux/X11 and uses a Vulkan renderer through bgfx. The project is intended as a compact engine for learning, prototyping, and building small games.
 
-> **Status: pre-alpha (0.2.0).** The editor and most engine subsystems are functional, but the renderer is still under active development. The post-processing stack is functional on the tested Vulkan path, and some editor tools are incomplete. The engine can crash or hang the GPU on some drivers. Use at your own risk.
+> **Status: alpha (0.3.0).** The editor and most engine subsystems are functional, but the renderer is still under active development. The post-processing stack is functional on the tested Vulkan path, and some editor tools are incomplete. The engine can crash or hang the GPU on some drivers. Use at your own risk.
+
+## Documentation
+
+- [Lua API](docs/LUA_API.md)
+- [C++ API](docs/CPP_API.md)
+- [Native vs hot-reload C++ API](docs/CPP_API_MODES.md)
+- [C++ gameplay scripts](docs/CPP_SCRIPTS.md)
+
+## Third-person demo game
+
+- [Setup, controls and tuning](docs/THIRD_PERSON_DEMO.md)
+- [Complete gameplay script](docs/third_person_demo.cpp)
 
 ---
 
@@ -92,7 +104,7 @@ Squad coordination and shared blackboards are not implemented.
 - Lua 5.4 with sol2.
 - Hot reload with F5.
 - Unified `Galeshi` API: namespaced gameplay modules (`world`, `input`, `physics`, `audio`, `animation`, `ai`, `navigation`, `ui`, `particles`, `engine`) plus entity handles with methods. The legacy global functions remain available for existing scripts. See [docs/LUA_API.md](docs/LUA_API.md).
-- Native C++ API umbrella (`GaleshiEngine/GaleshiEngine.hpp`) with a non-owning `Api::EngineContext`, plus class wrappers for the isolated hot-reload C++ script ABI. See [docs/CPP_API.md](docs/CPP_API.md).
+- Native C++ API umbrella (`GaleshiEngine/GaleshiEngine.hpp`) with a non-owning `Api::EngineContext`, plus class wrappers for the isolated hot-reload C++ script ABI. See [docs/CPP_API.md](docs/CPP_API.md), [docs/CPP_API_MODES.md](docs/CPP_API_MODES.md) and [docs/CPP_SCRIPTS.md](docs/CPP_SCRIPTS.md).
 
 ```lua
 local player = nil
@@ -112,12 +124,18 @@ end
 ### Audio
 
 - miniaudio.
-- File-based playback, looping, stopping, and playback state checks.
+- WAV/MP3 playback, looping, pause/resume, seek, volume and pitch controls.
+- Independent `SoundPlayer` instances plus path-keyed one-shots.
 - `AudioSourceComponent` in ECS.
 - 3D positional audio with inverse, linear, and exponential attenuation, min/max distance, rolloff, doppler, and a local offset.
 - Listener follows the camera or an entity with `AudioListenerComponent`.
 - Mixer buses: Master, Music, SFX, Voice, and Ambient, with per-source routing and volume/mute controls in the Audio Mixer window.
 - Playback can be triggered from Lua, editor actions, or collision callbacks.
+
+### Gameplay events
+
+- Trigger volumes (`ColliderComponent::isTrigger`) produce begin/end overlap
+  events through native callbacks, Lua globals, or optional C++ script exports.
 
 ### Editor
 
@@ -284,7 +302,7 @@ The ImGuizmo handles are visible, but only the center-marker drag currently modi
 
 ## Known limitations
 
-- The renderer is pre-alpha and may crash or hang the GPU on some drivers.
+- The renderer is still under active development and may crash or hang the GPU on some drivers.
 - Linux/X11 is the only tested platform. Wayland is untested.
 
 ## Roadmap

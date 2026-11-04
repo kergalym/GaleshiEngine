@@ -2,6 +2,7 @@
 #include "miniaudio.h"
 
 #include "GaleshiEngine/Audio/AudioTypes.hpp"
+#include "GaleshiEngine/Audio/SoundPlayer.hpp"
 #include "GaleshiEngine/Scene/Components.hpp"
 
 #include <glm/glm.hpp>
@@ -12,6 +13,7 @@
 #include <cmath>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <spdlog/spdlog.h>
 
@@ -111,19 +113,24 @@ public:
             delete kv.second.sound;
         }
         m_sourceSounds.clear();
+
+        for (SoundPlayer* player : m_players) {
+            if (player) player->Stop();
+        }
         m_hasLastListenerPosition = false;
     }
 
     // ------------------------------------------------------------------
     // Legacy 2D playback (Lua / one-shots). Routed through the SFX bus.
     // ------------------------------------------------------------------
-    void PlaySound(const std::string& filepath, bool loop = false) {
+    void PlaySound(const std::string& filepath, bool loop = false,
+                   AudioBus bus = AudioBus::SFX) {
         if (!m_initialized) return;
         StopSound(filepath);
 
         ma_sound* pSound = new ma_sound();
         ma_result result = ma_sound_init_from_file(
-            &m_engine, filepath.c_str(), 0, BusGroup(AudioBus::SFX), nullptr, pSound);
+            &m_engine, filepath.c_str(), 0, BusGroup(bus), nullptr, pSound);
         if (result != MA_SUCCESS) {
             spdlog::error("[Audio] Failed to play '{}': {}",
                           filepath, static_cast<int>(result));
@@ -150,6 +157,66 @@ public:
         auto it = m_activeSounds.find(filepath);
         if (it == m_activeSounds.end()) return false;
         return ma_sound_is_playing(it->second) == MA_TRUE;
+    }
+
+    bool PauseSound(const std::string& filepath) {
+        auto it = m_activeSounds.find(filepath);
+        if (it == m_activeSounds.end()) return false;
+        return ma_sound_stop(it->second) == MA_SUCCESS;
+    }
+
+    bool ResumeSound(const std::string& filepath) {
+        auto it = m_activeSounds.find(filepath);
+        if (it == m_activeSounds.end()) return false;
+        return ma_sound_start(it->second) == MA_SUCCESS;
+    }
+
+    bool SetSoundVolume(const std::string& filepath, float volume) {
+        auto it = m_activeSounds.find(filepath);
+        if (it == m_activeSounds.end()) return false;
+        ma_sound_set_volume(it->second, std::max(volume, 0.0f));
+        return true;
+    }
+
+    bool SetSoundPitch(const std::string& filepath, float pitch) {
+        auto it = m_activeSounds.find(filepath);
+        if (it == m_activeSounds.end()) return false;
+        ma_sound_set_pitch(it->second, std::max(pitch, 0.01f));
+        return true;
+    }
+
+    bool SetSoundLooping(const std::string& filepath, bool loop) {
+        auto it = m_activeSounds.find(filepath);
+        if (it == m_activeSounds.end()) return false;
+        ma_sound_set_looping(it->second, loop ? MA_TRUE : MA_FALSE);
+        return true;
+    }
+
+    bool SeekSound(const std::string& filepath, float seconds) {
+        auto it = m_activeSounds.find(filepath);
+        if (it == m_activeSounds.end()) return false;
+        return ma_sound_seek_to_second(it->second, std::max(seconds, 0.0f)) ==
+               MA_SUCCESS;
+    }
+
+    float SoundDuration(const std::string& filepath) const {
+        auto it = m_activeSounds.find(filepath);
+        if (it == m_activeSounds.end()) return 0.0f;
+        float duration = 0.0f;
+        return ma_sound_get_length_in_seconds(it->second, &duration) ==
+                       MA_SUCCESS
+            ? duration
+            : 0.0f;
+    }
+
+    float SoundPosition(const std::string& filepath) const {
+        auto it = m_activeSounds.find(filepath);
+        if (it == m_activeSounds.end()) return 0.0f;
+        float position = 0.0f;
+        return ma_sound_get_cursor_in_seconds(it->second, &position) ==
+                       MA_SUCCESS
+            ? position
+            : 0.0f;
     }
 
     // ------------------------------------------------------------------
@@ -304,6 +371,8 @@ public:
     }
 
 private:
+    friend class SoundPlayer;
+
     struct SourceRuntime {
         ma_sound*   sound = nullptr;
         AudioBus    bus = AudioBus::SFX;
@@ -363,6 +432,7 @@ private:
 
     std::unordered_map<std::string, ma_sound*> m_activeSounds;
     std::unordered_map<entt::entity, SourceRuntime> m_sourceSounds;
+    std::unordered_set<SoundPlayer*> m_players;
 
     glm::vec3 m_lastListenerPosition{0.0f};
     bool m_hasLastListenerPosition = false;

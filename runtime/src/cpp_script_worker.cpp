@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstddef>
 #include <cstring>
+#include <deque>
 #include <exception>
 #include <string>
 #include <vector>
@@ -356,6 +357,14 @@ public:
         m_api.stop_sound = &ScriptWorker::StopSound;
         m_api.is_sound_playing = &ScriptWorker::IsSoundPlaying;
         m_api.stop_all_sounds = &ScriptWorker::StopAllSounds;
+        m_api.pause_sound = &ScriptWorker::PauseSound;
+        m_api.resume_sound = &ScriptWorker::ResumeSound;
+        m_api.set_sound_volume = &ScriptWorker::SetSoundVolume;
+        m_api.set_sound_pitch = &ScriptWorker::SetSoundPitch;
+        m_api.set_sound_looping = &ScriptWorker::SetSoundLooping;
+        m_api.seek_sound = &ScriptWorker::SeekSound;
+        m_api.get_sound_duration = &ScriptWorker::GetSoundDuration;
+        m_api.get_sound_position = &ScriptWorker::GetSoundPosition;
         m_api.attach_audio_source = &ScriptWorker::AttachAudioSource;
         m_api.play_source = &ScriptWorker::PlaySource;
         m_api.stop_source = &ScriptWorker::StopSource;
@@ -555,6 +564,14 @@ public:
             case CppWorkerMessage::Frame:
                 RunFrame(packet.x);
                 break;
+            case CppWorkerMessage::TriggerBeginOverlap:
+                m_triggerEvents.push_back(
+                    {true, packet.entity, packet.other});
+                break;
+            case CppWorkerMessage::TriggerEndOverlap:
+                m_triggerEvents.push_back(
+                    {false, packet.entity, packet.other});
+                break;
             case CppWorkerMessage::Quit:
                 return 0;
             default:
@@ -568,7 +585,16 @@ private:
     struct LoadedModule {
         void* library = nullptr;
         GaleshiScriptUpdateFn update = nullptr;
+        GaleshiScriptTriggerFn triggerBegin = nullptr;
+        GaleshiScriptTriggerFn triggerEnd = nullptr;
     };
+
+    struct TriggerEvent {
+        bool begin = true;
+        uint32_t trigger = UINT32_MAX;
+        uint32_t other = UINT32_MAX;
+    };
+    std::deque<TriggerEvent> m_triggerEvents;
 
     bool ReadPacket(CppWorkerPacket& packet) {
         return ReadExact(STDIN_FILENO, &packet, sizeof(packet));
@@ -664,6 +690,10 @@ private:
             WritePacket(result);
             return;
         }
+        auto triggerBegin = reinterpret_cast<GaleshiScriptTriggerFn>(
+            dlsym(library, "OnTriggerBeginOverlap"));
+        auto triggerEnd = reinterpret_cast<GaleshiScriptTriggerFn>(
+            dlsym(library, "OnTriggerEndOverlap"));
         try {
             registerFn(&m_api);
         } catch (const std::exception& error) {
@@ -679,12 +709,30 @@ private:
             WritePacket(result);
             return;
         }
-        m_modules.push_back({library, updateFn});
+        m_modules.push_back({library, updateFn, triggerBegin, triggerEnd});
         result.valid = 1;
         WritePacket(result);
     }
 
     void RunFrame(float dt) {
+        while (!m_triggerEvents.empty()) {
+            const TriggerEvent event = m_triggerEvents.front();
+            m_triggerEvents.pop_front();
+            for (const LoadedModule& module : m_modules) {
+                const GaleshiScriptTriggerFn callback =
+                    event.begin ? module.triggerBegin : module.triggerEnd;
+                if (!callback) continue;
+                try {
+                    callback(event.trigger, event.other);
+                } catch (const std::exception& error) {
+                    SendLog(std::string("C++ trigger exception: ") +
+                            error.what());
+                } catch (...) {
+                    SendLog("C++ trigger threw an unknown exception");
+                }
+            }
+        }
+
         for (const LoadedModule& module : m_modules) {
             if (!module.update) continue;
             try {
@@ -953,6 +1001,66 @@ private:
         if (!user) return;
         static_cast<ScriptWorker*>(user)->Request(
             CppWorkerRequest::StopAllSounds, UINT32_MAX);
+    }
+
+    static bool PauseSound(void* user, const char* path) {
+        if (!user || !path) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::PauseSound, UINT32_MAX, path)
+            .valid != 0;
+    }
+
+    static bool ResumeSound(void* user, const char* path) {
+        if (!user || !path) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::ResumeSound, UINT32_MAX, path)
+            .valid != 0;
+    }
+
+    static bool SetSoundVolume(void* user, const char* path, float volume) {
+        if (!user || !path) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetSoundVolume, UINT32_MAX, path,
+                      {volume, 0.0f, 0.0f})
+            .valid != 0;
+    }
+
+    static bool SetSoundPitch(void* user, const char* path, float pitch) {
+        if (!user || !path) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetSoundPitch, UINT32_MAX, path,
+                      {pitch, 0.0f, 0.0f})
+            .valid != 0;
+    }
+
+    static bool SetSoundLooping(void* user, const char* path, bool loop) {
+        if (!user || !path) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetSoundLooping, UINT32_MAX, path,
+                      {}, 0.0f, UINT32_MAX, loop ? 1u : 0u)
+            .valid != 0;
+    }
+
+    static bool SeekSound(void* user, const char* path, float seconds) {
+        if (!user || !path) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SeekSound, UINT32_MAX, path,
+                      {seconds, 0.0f, 0.0f})
+            .valid != 0;
+    }
+
+    static float GetSoundDuration(void* user, const char* path) {
+        if (!user || !path) return 0.0f;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::GetSoundDuration, UINT32_MAX, path)
+            .x;
+    }
+
+    static float GetSoundPosition(void* user, const char* path) {
+        if (!user || !path) return 0.0f;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::GetSoundPosition, UINT32_MAX, path)
+            .x;
     }
 
     static bool AttachAudioSource(void* user, uint32_t entity,

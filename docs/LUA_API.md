@@ -167,12 +167,41 @@ a scalar full size or a `{x,y,z}` full-size vector.
 Galeshi.audio.play("assets/sounds/hit.wav", false)
 Galeshi.audio.stop("assets/sounds/hit.wav")
 Galeshi.audio.is_playing("assets/sounds/hit.wav")
+Galeshi.audio.pause("assets/sounds/hit.wav")
+Galeshi.audio.resume("assets/sounds/hit.wav")
+Galeshi.audio.set_volume("assets/sounds/hit.wav", 0.6)
+Galeshi.audio.set_pitch("assets/sounds/hit.wav", 1.1)
+Galeshi.audio.set_looping("assets/sounds/hit.wav", true)
+Galeshi.audio.seek("assets/sounds/hit.wav", 2.5)
+local duration = Galeshi.audio.duration("assets/sounds/music.mp3")
+local position = Galeshi.audio.position("assets/sounds/music.mp3")
 Galeshi.audio.stop_all()
 Galeshi.audio.set_bus("SFX", 0.8, false)
 local bus = Galeshi.audio.get_bus("SFX") -- {name, volume, muted}
 ```
 
+`play` supports WAV and MP3. Its controls are keyed by file path, matching
+`play`/`stop`; use one player entity per independent 3D source instead.
 Buses are `Master`, `Music`, `SFX`, `Voice`, and `Ambient`.
+
+### Trigger overlap callbacks
+
+Define either optional global function. They receive raw entity ids; the first
+entity is the collider whose `Is Trigger` flag is set.
+
+```lua
+function OnTriggerBeginOverlap(trigger, other)
+    print("entered", trigger, other)
+end
+
+function OnTriggerEndOverlap(trigger, other)
+    print("left", trigger, other)
+end
+```
+
+The end callback fires when the last contact between the pair is removed.
+Entities need a collider with `Is Trigger` enabled; add a rigid body to moving
+objects.
 
 ### `Galeshi.animation`
 
