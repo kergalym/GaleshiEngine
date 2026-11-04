@@ -302,6 +302,10 @@ json MaterialToJson(const Material& m, const AssetManager& assets) {
         {"occlusionSrgb", m.occlusionSrgb},
         {"opacitySrgb", m.opacitySrgb},
         {"specularSrgb", m.specularSrgb},
+        {"landscapeAlbedoSrgb", m.landscapeAlbedoSrgb},
+        {"landscapeOrmSrgb", m.landscapeOrmSrgb},
+        {"landscapeNormalSrgb", m.landscapeNormalSrgb},
+        {"landscapeBlend", m.landscapeBlend},
         {"metallicFactor", m.metallicFactor},
         {"specularFactor", m.specularFactor},
         {"roughnessFactor", m.roughnessFactor},
@@ -336,7 +340,10 @@ json MaterialToJson(const Material& m, const AssetManager& assets) {
         {"emissiveMapPath", relPath(m.emissiveMap)},
         {"occlusionMapPath", relPath(m.occlusionMap)},
         {"opacityMapPath", relPath(m.opacityMap)},
-        {"specularMapPath", relPath(m.specularMap)}
+        {"specularMapPath", relPath(m.specularMap)},
+        {"landscapeAlbedoMapPath", relPath(m.landscapeAlbedoMap)},
+        {"landscapeOrmMapPath", relPath(m.landscapeOrmMap)},
+        {"landscapeNormalMapPath", relPath(m.landscapeNormalMap)}
     };
 }
 
@@ -369,6 +376,13 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     material->occlusionSrgb = jm.value("occlusionSrgb", false);
     material->opacitySrgb = jm.value("opacitySrgb", false);
     material->specularSrgb = jm.value("specularSrgb", false);
+    material->landscapeAlbedoSrgb =
+        jm.value("landscapeAlbedoSrgb", true);
+    material->landscapeOrmSrgb =
+        jm.value("landscapeOrmSrgb", false);
+    material->landscapeNormalSrgb =
+        jm.value("landscapeNormalSrgb", false);
+    material->landscapeBlend = jm.value("landscapeBlend", false);
     material->metallicFactor = jm.value("metallicFactor", 0.0f);
     material->specularFactor = glm::clamp(
         jm.value("specularFactor", 1.0f), 0.0f, 1.0f);
@@ -451,6 +465,12 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     material->opacityMap = loadMap("opacityMapPath", material->opacitySrgb);
     material->specularMap =
         loadMap("specularMapPath", material->specularSrgb);
+    material->landscapeAlbedoMap = loadMap(
+        "landscapeAlbedoMapPath", material->landscapeAlbedoSrgb);
+    material->landscapeOrmMap = loadMap(
+        "landscapeOrmMapPath", material->landscapeOrmSrgb);
+    material->landscapeNormalMap = loadMap(
+        "landscapeNormalMapPath", material->landscapeNormalSrgb);
 
     // Older saves could write the white fallback path after an sRGB toggle.
     // Recover the authored albedo from the source model by material name.
@@ -660,11 +680,16 @@ std::string SceneSerializer::SaveToString(bool includeEditorState) const {
             for (auto& value : safeHeights) {
                 if (!std::isfinite(value)) value = 0.0f;
             }
+            std::vector<float> safePaint = lc.paintWeights;
+            for (auto& value : safePaint) {
+                if (!std::isfinite(value)) value = 0.0f;
+            }
             je["landscape"] = {
                 {"sizeX", lc.sizeX},
                 {"sizeZ", lc.sizeZ},
                 {"scale", lc.scale},
-                {"heights", safeHeights}
+                {"heights", safeHeights},
+                {"paintWeights", safePaint}
             };
         }
         if (reg.all_of<VegetationComponent>(handle)) {
@@ -1374,6 +1399,19 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             }
             const size_t expected = static_cast<size_t>(landscape.sizeX) * static_cast<size_t>(landscape.sizeZ);
             if (landscape.heights.size() != expected) landscape.heights.resize(expected, 0.0f);
+            if (jl.contains("paintWeights") && jl["paintWeights"].is_array()) {
+                landscape.paintWeights.reserve(jl["paintWeights"].size());
+                for (const auto& weight : jl["paintWeights"]) {
+                    const float value = weight.get<float>();
+                    landscape.paintWeights.push_back(
+                        std::isfinite(value)
+                            ? std::clamp(value, 0.0f, 1.0f)
+                            : 0.0f);
+                }
+            }
+            if (landscape.paintWeights.size() != expected) {
+                landscape.paintWeights.resize(expected, 0.0f);
+            }
         }
         if (je.contains("vegetation")) {
             const auto& jv = je["vegetation"];

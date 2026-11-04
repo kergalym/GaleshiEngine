@@ -162,7 +162,8 @@ namespace {
         bool alphaTest = false;
         bool twoSided = false;
         bool backfaceCulling = true;
-        std::array<const Texture*, 9> textures{};
+        bool landscapeBlend = false;
+        std::array<const Texture*, 12> textures{};
 
         bool operator==(const MeshMaterialKey& other) const {
             return mesh == other.mesh &&
@@ -183,6 +184,7 @@ namespace {
                    alphaTest == other.alphaTest &&
                    twoSided == other.twoSided &&
                    backfaceCulling == other.backfaceCulling &&
+                   landscapeBlend == other.landscapeBlend &&
                    textures == other.textures;
         }
     };
@@ -217,6 +219,7 @@ namespace {
             HashCombine(seed, std::hash<bool>{}(key.alphaTest));
             HashCombine(seed, std::hash<bool>{}(key.twoSided));
             HashCombine(seed, std::hash<bool>{}(key.backfaceCulling));
+            HashCombine(seed, std::hash<bool>{}(key.landscapeBlend));
             for (const Texture* texture : key.textures) {
                 HashCombine(seed, std::hash<const void*>{}(texture));
             }
@@ -240,6 +243,7 @@ namespace {
         key.alphaTest = mat.alphaTest;
         key.twoSided = mat.twoSided;
         key.backfaceCulling = mat.backfaceCulling;
+        key.landscapeBlend = mat.landscapeBlend;
         key.textures = {
             mat.albedoMap.get(),
             mat.metallicRoughnessMap.get(),
@@ -249,7 +253,10 @@ namespace {
             mat.opacityMap.get(),
             mat.metallicMap.get(),
             mat.roughnessMap.get(),
-            mat.specularMap.get()
+            mat.specularMap.get(),
+            mat.landscapeAlbedoMap.get(),
+            mat.landscapeOrmMap.get(),
+            mat.landscapeNormalMap.get()
         };
         return key;
     }
@@ -368,6 +375,7 @@ void RenderSystem::Init(AssetManager* assets) {
     u_pointLightCount = bgfx::createUniform("u_pointLightCount", bgfx::UniformType::Vec4);
     u_materialParams = bgfx::createUniform("u_materialParams", bgfx::UniformType::Vec4);
     u_materialFlags = bgfx::createUniform("u_materialFlags", bgfx::UniformType::Vec4);
+    u_landscapeParams = bgfx::createUniform("u_landscapeParams", bgfx::UniformType::Vec4);
     u_subsurfaceParams = bgfx::createUniform("u_subsurfaceParams", bgfx::UniformType::Vec4);
     u_shadowDepthOffset = bgfx::createUniform("u_shadowDepthOffset", bgfx::UniformType::Vec4);
     u_translucencyParams = bgfx::createUniform("u_translucencyParams", bgfx::UniformType::Vec4);
@@ -422,6 +430,12 @@ void RenderSystem::Init(AssetManager* assets) {
     s_metallicMap = bgfx::createUniform("s_metallicMap", bgfx::UniformType::Sampler);
     s_roughnessMap = bgfx::createUniform("s_roughnessMap", bgfx::UniformType::Sampler);
     s_specularMap = bgfx::createUniform("s_specularMap", bgfx::UniformType::Sampler);
+    s_landscapeAlbedoMap = bgfx::createUniform(
+        "s_landscapeAlbedoMap", bgfx::UniformType::Sampler);
+    s_landscapeOrmMap = bgfx::createUniform(
+        "s_landscapeOrmMap", bgfx::UniformType::Sampler);
+    s_landscapeNormalMap = bgfx::createUniform(
+        "s_landscapeNormalMap", bgfx::UniformType::Sampler);
     s_brdfLUT = bgfx::createUniform("s_brdfLUT", bgfx::UniformType::Sampler);
 }
 
@@ -517,6 +531,10 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(s_metallicMap)) bgfx::destroy(s_metallicMap);
     if (bgfx::isValid(s_roughnessMap)) bgfx::destroy(s_roughnessMap);
     if (bgfx::isValid(s_specularMap)) bgfx::destroy(s_specularMap);
+    if (bgfx::isValid(s_landscapeAlbedoMap)) bgfx::destroy(s_landscapeAlbedoMap);
+    if (bgfx::isValid(s_landscapeOrmMap)) bgfx::destroy(s_landscapeOrmMap);
+    if (bgfx::isValid(s_landscapeNormalMap)) bgfx::destroy(s_landscapeNormalMap);
+    if (bgfx::isValid(u_landscapeParams)) bgfx::destroy(u_landscapeParams);
     if (bgfx::isValid(s_brdfLUT)) bgfx::destroy(s_brdfLUT);
     m_program = BGFX_INVALID_HANDLE;
 }
@@ -1661,8 +1679,11 @@ void RenderSystem::BindMaterial(const Material& mat) {
     bgfx::setUniform(u_metallicFactor, met);
     bgfx::setUniform(u_roughnessFactor, rgh);
     bgfx::setUniform(u_emissiveFactor, emi);
+    const float landscapeParams[4] = {
+        mat.landscapeBlend ? 1.0f : 0.0f, 1.0f, 0.0f, 0.0f};
     bgfx::setUniform(u_materialParams, params);
     bgfx::setUniform(u_materialFlags, flags);
+    bgfx::setUniform(u_landscapeParams, landscapeParams);
     // Subsurface color is premultiplied by strength so a zero vector
     // disables the feature without an extra branch in the G-buffer.
     const float sss[4] = {
@@ -1688,6 +1709,12 @@ void RenderSystem::BindMaterial(const Material& mat) {
     auto metallic = mat.metallicMap ? mat.metallicMap : white;
     auto roughness = mat.roughnessMap ? mat.roughnessMap : white;
     auto specular = mat.specularMap ? mat.specularMap : white;
+    auto landscapeAlbedo =
+        mat.landscapeAlbedoMap ? mat.landscapeAlbedoMap : albedo;
+    auto landscapeOrm =
+        mat.landscapeOrmMap ? mat.landscapeOrmMap : mr;
+    auto landscapeNormal =
+        mat.landscapeNormalMap ? mat.landscapeNormalMap : nrm;
     bgfx::setTexture(0, s_albedoMap, albedo->Handle());
     bgfx::setTexture(1, s_metallicRoughnessMap, mr->Handle());
     bgfx::setTexture(2, s_normalMap, nrm->Handle());
@@ -1702,6 +1729,11 @@ void RenderSystem::BindMaterial(const Material& mat) {
     bgfx::setTexture(10, s_metallicMap, metallic->Handle());
     bgfx::setTexture(11, s_roughnessMap, roughness->Handle());
     bgfx::setTexture(12, s_specularMap, specular->Handle());
+    bgfx::setTexture(13, s_landscapeAlbedoMap,
+                     landscapeAlbedo->Handle());
+    bgfx::setTexture(14, s_landscapeOrmMap, landscapeOrm->Handle());
+    bgfx::setTexture(15, s_landscapeNormalMap,
+                     landscapeNormal->Handle());
     bgfx::setTexture(6, s_brdfLUT,
                      bgfx::isValid(m_brdfLUT) ? m_brdfLUT : white->Handle());
 }

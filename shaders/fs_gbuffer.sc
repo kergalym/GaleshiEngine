@@ -1,4 +1,4 @@
-$input v_worldPos, v_normal, v_tangent, v_uv, v_motion
+$input v_worldPos, v_normal, v_tangent, v_uv, v_motion, v_landscapeBlend
 #include <bgfx_shader.sh>
 
 SAMPLER2D(s_albedoMap,            0);
@@ -10,7 +10,11 @@ SAMPLER2D(s_opacityMap,           9);
 SAMPLER2D(s_metallicMap,         10);
 SAMPLER2D(s_roughnessMap,        11);
 SAMPLER2D(s_specularMap,         12);
+SAMPLER2D(s_landscapeAlbedoMap,  13);
+SAMPLER2D(s_landscapeOrmMap,     14);
+SAMPLER2D(s_landscapeNormalMap,  15);
 
+uniform vec4 u_landscapeParams;
 uniform vec4 u_albedoFactor;
 // x = metallic factor, y = specular strength
 uniform vec4 u_metallicFactor;
@@ -27,7 +31,14 @@ uniform vec4 u_subsurfaceParams;
 
 void main()
 {
+    float landscapeBlend = u_landscapeParams.x > 0.5
+        ? clamp(v_landscapeBlend * u_landscapeParams.y, 0.0, 1.0)
+        : 0.0;
     vec4 a = texture2D(s_albedoMap, v_uv);
+    if (landscapeBlend > 0.0) {
+        vec4 layerAlbedo = texture2D(s_landscapeAlbedoMap, v_uv);
+        a = mix(a, layerAlbedo, landscapeBlend);
+    }
     float opacity = texture2D(s_opacityMap, v_uv).r;
     // Only texture alpha drives the cutout. Legacy FBX materials often carry
     // a fractional albedo/opacity factor (e.g. cornea transparency) while
@@ -48,6 +59,13 @@ void main()
     }
     if (u_materialFlags.y > 0.5) {
         rough = texture2D(s_roughnessMap, v_uv).r * u_roughnessFactor.r;
+    }
+    if (landscapeBlend > 0.0) {
+        vec4 layerOrm = texture2D(s_landscapeOrmMap, v_uv);
+        metallic = mix(
+            metallic, layerOrm.b * u_metallicFactor.r, landscapeBlend);
+        rough = mix(
+            rough, layerOrm.g * u_roughnessFactor.r, landscapeBlend);
     }
     metallic = clamp(metallic, 0.0, 1.0);
     rough    = clamp(rough, 0.04, 1.0);
@@ -71,11 +89,23 @@ void main()
         if (backFace) T = -T;
         vec3 B = cross(N, T);
         vec3 tangentNormal = texture2D(s_normalMap, v_uv).xyz * 2.0 - 1.0;
+        if (landscapeBlend > 0.0) {
+            vec3 layerNormal =
+                texture2D(s_landscapeNormalMap, v_uv).xyz * 2.0 - 1.0;
+            tangentNormal = normalize(
+                mix(tangentNormal, layerNormal, landscapeBlend));
+        }
         tangentNormal.xy *= u_materialParams.x;
         N = normalize(mul(mat3(T, B, N), tangentNormal));
     }
 
-    float occlusion = mix(1.0, texture2D(s_occlusionMap, v_uv).r,
+    float occlusionValue = texture2D(s_occlusionMap, v_uv).r;
+    if (landscapeBlend > 0.0) {
+        float layerOcclusion = texture2D(s_landscapeOrmMap, v_uv).r;
+        occlusionValue = mix(
+            occlusionValue, layerOcclusion, landscapeBlend);
+    }
+    float occlusion = mix(1.0, occlusionValue,
                           clamp(u_materialParams.y, 0.0, 1.0));
     vec3 emissive = u_emissiveFactor.rgb * texture2D(s_emissiveMap, v_uv).rgb;
     // White fallback yields 1.0 (standard dielectric F0). A real specular

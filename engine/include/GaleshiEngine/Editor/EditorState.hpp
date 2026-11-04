@@ -19,6 +19,7 @@ public:
         Noise,
         Terrace,
         Sharpen,
+        PaintLandscape,
         PaintTrees,
         PaintGrass
     };

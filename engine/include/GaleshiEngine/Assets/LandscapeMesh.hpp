@@ -64,6 +64,16 @@ public:
                           float localX, float localZ,
                           float dt);
 
+    // Paints (or erases) the per-vertex landscape material blend weight.
+    static int ApplyPaintBrush(LandscapeComponent& landscape,
+                               float localX, float localZ,
+                               float radius, float strength, float falloff,
+                               float dt, bool erase = false);
+
+    // Copies the paint weights into the mesh's spare vertex-weight channel.
+    static void UpdatePaintWeights(const LandscapeComponent& landscape,
+                                   Mesh& mesh);
+
     static void ResetHeights(LandscapeComponent& landscape);
 };
 

@@ -165,6 +165,7 @@ private:
     bgfx::UniformHandle u_lightColorIntensity = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_materialParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_materialFlags = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_landscapeParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_subsurfaceParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_shadowDepthOffset = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_translucencyParams = BGFX_INVALID_HANDLE;
@@ -213,5 +214,8 @@ private:
     bgfx::UniformHandle s_emissiveMap = BGFX_INVALID_HANDLE, s_occlusionMap = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_opacityMap = BGFX_INVALID_HANDLE, s_metallicMap = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_roughnessMap = BGFX_INVALID_HANDLE, s_specularMap = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_landscapeAlbedoMap = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_landscapeOrmMap = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_landscapeNormalMap = BGFX_INVALID_HANDLE;
 };
 } // namespace Galeshi

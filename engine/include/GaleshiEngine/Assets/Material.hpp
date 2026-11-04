@@ -32,6 +32,12 @@ public:
     bool      occlusionSrgb    = false;
     bool      opacitySrgb      = false;
     bool      specularSrgb     = false;
+    // Landscape paint layer maps. The blend weight comes from the landscape
+    // vertex weight channel.
+    bool      landscapeAlbedoSrgb = true;
+    bool      landscapeOrmSrgb = false;
+    bool      landscapeNormalSrgb = false;
+    bool      landscapeBlend = false;
     float     metallicFactor   = 0.0f;
     // Scales the dielectric specular response. The optional specular map is
     // multiplied by this value.
@@ -95,6 +101,9 @@ public:
     std::shared_ptr<Texture> occlusionMap;
     std::shared_ptr<Texture> opacityMap;
     std::shared_ptr<Texture> specularMap;
+    std::shared_ptr<Texture> landscapeAlbedoMap;
+    std::shared_ptr<Texture> landscapeOrmMap;
+    std::shared_ptr<Texture> landscapeNormalMap;
 
     // Set when one or more imported maps came from a UDIM tile set. The UVs
     // of meshes using this material are remapped into the generated atlas at

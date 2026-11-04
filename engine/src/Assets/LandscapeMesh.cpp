@@ -76,6 +76,9 @@ void LandscapeMesh::Rebuild(LandscapeComponent& lc, Mesh& mesh) {
 
     const size_t expected = static_cast<size_t>(lc.sizeX) * static_cast<size_t>(lc.sizeZ);
     if (lc.heights.size() != expected) lc.heights.resize(expected, 0.0f);
+    if (lc.paintWeights.size() != expected) {
+        lc.paintWeights.resize(expected, 0.0f);
+    }
 
     std::vector<Vertex> verts;
     verts.reserve(expected);
@@ -93,7 +96,12 @@ void LandscapeMesh::Rebuild(LandscapeComponent& lc, Mesh& mesh) {
             v.uv = glm::vec2(static_cast<float>(x) / lc.sizeX,
                              static_cast<float>(z) / lc.sizeZ);
             v.boneIDs = glm::vec4(0.0f);
-            v.boneWeights = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
+            const float paintWeight =
+                lc.paintWeights[static_cast<size_t>(z) * lc.sizeX + x];
+            // Keep the skin weights normalized (all indices point at bone 0)
+            // while carrying the blend weight in the otherwise unused z slot.
+            v.boneWeights = glm::vec4(
+                1.0f - paintWeight, 0.0f, paintWeight, 0.0f);
             verts.push_back(v);
         }
     }
@@ -369,9 +377,74 @@ int LandscapeMesh::ApplyBrush(LandscapeComponent& lc,
     return changed;
 }
 
+int LandscapeMesh::ApplyPaintBrush(LandscapeComponent& lc,
+                                   float localX, float localZ,
+                                   float radius, float strength,
+                                   float falloff, float dt,
+                                   bool erase) {
+    if (lc.sizeX < 2 || lc.sizeZ < 2 || radius <= 0.0f || dt <= 0.0f) {
+        return 0;
+    }
+    const size_t expected =
+        static_cast<size_t>(lc.sizeX) * static_cast<size_t>(lc.sizeZ);
+    if (lc.paintWeights.size() != expected) {
+        lc.paintWeights.resize(expected, 0.0f);
+    }
+    const float centerX = localX / lc.scale + lc.sizeX * 0.5f;
+    const float centerZ = localZ / lc.scale + lc.sizeZ * 0.5f;
+    const float radiusCells = radius / lc.scale;
+    const int minX = std::max(
+        0, static_cast<int>(std::floor(centerX - radiusCells)));
+    const int maxX = std::min(
+        lc.sizeX - 1, static_cast<int>(std::ceil(centerX + radiusCells)));
+    const int minZ = std::max(
+        0, static_cast<int>(std::floor(centerZ - radiusCells)));
+    const int maxZ = std::min(
+        lc.sizeZ - 1, static_cast<int>(std::ceil(centerZ + radiusCells)));
+    const float exponent = glm::mix(0.25f, 2.0f, Clamp01(falloff));
+    const float direction = erase ? -1.0f : 1.0f;
+    int changed = 0;
+    for (int z = minZ; z <= maxZ; ++z) {
+        for (int x = minX; x <= maxX; ++x) {
+            const float dx = (static_cast<float>(x) - centerX) * lc.scale;
+            const float dz = (static_cast<float>(z) - centerZ) * lc.scale;
+            const float distance = std::sqrt(dx * dx + dz * dz);
+            if (distance > radius) continue;
+            const float t = 1.0f - distance / radius;
+            const float weight = std::pow(Clamp01(t), exponent);
+            const size_t index = static_cast<size_t>(z) * lc.sizeX + x;
+            const float before = lc.paintWeights[index];
+            lc.paintWeights[index] = Clamp01(
+                before + direction * std::max(0.0f, strength) * dt * weight);
+            if (std::abs(lc.paintWeights[index] - before) > 1e-6f) {
+                ++changed;
+            }
+        }
+    }
+    return changed;
+}
+
+void LandscapeMesh::UpdatePaintWeights(const LandscapeComponent& lc,
+                                        Mesh& mesh) {
+    const size_t expected =
+        static_cast<size_t>(lc.sizeX) * static_cast<size_t>(lc.sizeZ);
+    if (lc.paintWeights.size() != expected ||
+        mesh.Vertices().size() != expected) {
+        return;
+    }
+    std::vector<Vertex> vertices = mesh.Vertices();
+    for (size_t i = 0; i < vertices.size(); ++i) {
+        const float weight = Clamp01(lc.paintWeights[i]);
+        vertices[i].boneWeights = glm::vec4(
+            1.0f - weight, 0.0f, weight, 0.0f);
+    }
+    mesh.UpdateVertexData(vertices);
+}
+
 void LandscapeMesh::ResetHeights(LandscapeComponent& lc) {
     const size_t expected = static_cast<size_t>(std::max(2, lc.sizeX)) * static_cast<size_t>(std::max(2, lc.sizeZ));
     lc.heights.assign(expected, 0.0f);
+    lc.paintWeights.assign(expected, 0.0f);
 }
 
 } // namespace Galeshi

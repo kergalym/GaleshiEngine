@@ -1,5 +1,5 @@
 $input a_position, a_normal, a_tangent, a_texcoord0, a_indices, a_weight
-$output v_worldPos, v_normal, v_tangent, v_uv, v_motion
+$output v_worldPos, v_normal, v_tangent, v_uv, v_motion, v_landscapeBlend
 
 #include <bgfx_shader.sh>
 
@@ -50,6 +50,9 @@ void main()
     v_tangent = mul(u_model[0], mul(skinMat, vec4(a_tangent, 0.0))).xyz;
 
     v_uv = a_texcoord0;
+    // Landscape meshes store their paint-layer weight in the spare bone
+    // weight channel. Other meshes leave the material blend flag disabled.
+    v_landscapeBlend = a_weight.z;
     vec4 currentClip = mul(u_viewProj, worldPos);
     vec4 previousClip = mul(u_prevViewProj, prevWorld);
     v_motion = clipToScreenUV(previousClip) - clipToScreenUV(currentClip);

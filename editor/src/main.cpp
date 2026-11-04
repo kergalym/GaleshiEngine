@@ -8128,6 +8128,9 @@ if (ImGui::BeginMenu("File")) {
                     const bool paintGrass =
                         m_editor.toolMode ==
                         Galeshi::EditorState::ToolMode::PaintGrass;
+                    const bool paintLandscape =
+                        m_editor.toolMode ==
+                        Galeshi::EditorState::ToolMode::PaintLandscape;
                     const bool paintMode = paintTrees || paintGrass;
                     const bool leftClicked =
                         ImGui::IsMouseClicked(ImGuiMouseButton_Left);
@@ -8137,7 +8140,27 @@ if (ImGui::BeginMenu("File")) {
                         m_wasSculpting = true;
                         m_paintStampValid = false;
                     }
-                    if (paintMode &&
+                    if (paintLandscape &&
+                        (leftClicked ||
+                         (m_wasSculpting &&
+                          ImGui::IsMouseDown(ImGuiMouseButton_Left)))) {
+                        const bool erase = ImGui::GetIO().KeyAlt;
+                        if (Galeshi::LandscapeMesh::ApplyPaintBrush(
+                                landscape, hit.localPosition.x,
+                                hit.localPosition.z, m_editor.brushRadius,
+                                m_editor.brushStrength,
+                                m_editor.brushFalloff,
+                                ImGui::GetIO().DeltaTime, erase) > 0) {
+                            if (sel.HasComponent<Galeshi::MeshComponent>()) {
+                                auto& meshComponent =
+                                    sel.GetComponent<Galeshi::MeshComponent>();
+                                if (meshComponent.mesh) {
+                                    Galeshi::LandscapeMesh::UpdatePaintWeights(
+                                        landscape, *meshComponent.mesh);
+                                }
+                            }
+                        }
+                    } else if (paintMode &&
                         (leftClicked ||
                          (m_wasSculpting &&
                           ImGui::IsMouseDown(ImGuiMouseButton_Left)))) {
@@ -8201,7 +8224,7 @@ if (ImGui::BeginMenu("File")) {
                         !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                         m_wasSculpting = false;
                         m_paintStampValid = false;
-                        if (!paintMode &&
+                        if (!paintMode && !paintLandscape &&
                             sel.HasComponent<Galeshi::VegetationComponent>()) {
                             sel.GetComponent<Galeshi::VegetationComponent>().dirty = true;
                         }
@@ -10792,11 +10815,13 @@ void DrawDetails() {
             beginDetailsSection(
                 "Landscape (Sculpting)", ImGuiTreeNodeFlags_DefaultOpen,
                 "landscape sculpt brush raise lower smooth flatten noise terrace "
-                "sharpen trees grass radius strength falloff height terrain")) {
+                "sharpen layer paint albedo orm normal texture blend trees grass "
+                "radius strength falloff height terrain")) {
             auto& landscape = selected[0].GetComponent<Galeshi::LandscapeComponent>();
             const char* toolNames[] = {
                 "Select", "Raise", "Lower", "Smooth", "Flatten", "Noise",
-                "Terrace", "Sharpen", "Paint Trees", "Paint Grass"
+                "Terrace", "Sharpen", "Paint Landscape", "Paint Trees",
+                "Paint Grass"
             };
             int currentTool = static_cast<int>(m_editor.toolMode);
             if (ImGui::Combo("Brush", &currentTool, toolNames, IM_ARRAYSIZE(toolNames))) {
@@ -10819,10 +10844,39 @@ void DrawDetails() {
                 ImGui::DragFloat("Terrace Step", &m_editor.terraceStep,
                                  0.05f, 0.05f, 100.0f);
             }
+            ImGui::Separator();
+            ImGui::Text("Landscape Layer (painted blend)");
+            auto* layerMaterialComponent =
+                reg.try_get<Galeshi::MaterialComponent>(selectedHandle);
+            if (layerMaterialComponent &&
+                layerMaterialComponent->material) {
+                auto& layerMaterial = layerMaterialComponent->material;
+                DrawTextureSlot("Layer Albedo",
+                                layerMaterial->landscapeAlbedoMap, true,
+                                &layerMaterial->landscapeAlbedoSrgb);
+                DrawTextureSlot("Layer ORM",
+                                layerMaterial->landscapeOrmMap, false,
+                                &layerMaterial->landscapeOrmSrgb);
+                DrawTextureSlot("Layer Normal",
+                                layerMaterial->landscapeNormalMap, false,
+                                &layerMaterial->landscapeNormalSrgb);
+                layerMaterial->landscapeBlend =
+                    layerMaterial->landscapeAlbedoMap ||
+                    layerMaterial->landscapeOrmMap ||
+                    layerMaterial->landscapeNormalMap;
+                ImGui::TextDisabled(
+                    "Paint Landscape blends this layer over the base "
+                    "material. Alt paints the weight out.");
+            } else {
+                ImGui::TextDisabled(
+                    "Attach a material to the landscape to define a layer.");
+            }
             ImGui::TextDisabled("%d x %d vertices, scale %.2f", landscape.sizeX, landscape.sizeZ, landscape.scale);
             if (m_editor.toolMode == Galeshi::EditorState::ToolMode::Select) {
                 ImGui::TextDisabled("Select a brush, then left-click and drag in the viewport.");
             } else if (m_editor.toolMode ==
+                           Galeshi::EditorState::ToolMode::PaintLandscape ||
+                       m_editor.toolMode ==
                            Galeshi::EditorState::ToolMode::PaintTrees ||
                        m_editor.toolMode ==
                            Galeshi::EditorState::ToolMode::PaintGrass) {
@@ -10841,6 +10895,8 @@ void DrawDetails() {
                     auto& meshComponent = selected[0].GetComponent<Galeshi::MeshComponent>();
                     if (meshComponent.mesh) {
                         Galeshi::LandscapeMesh::UpdateMesh(landscape, *meshComponent.mesh);
+                        Galeshi::LandscapeMesh::UpdatePaintWeights(
+                            landscape, *meshComponent.mesh);
                     }
                 }
                 if (selected[0].HasComponent<Galeshi::VegetationComponent>()) {
@@ -11221,6 +11277,10 @@ void DrawDetails() {
             addHash(mat.occlusionSrgb);
             addHash(mat.opacitySrgb);
             addHash(mat.specularSrgb);
+            addHash(mat.landscapeAlbedoSrgb);
+            addHash(mat.landscapeOrmSrgb);
+            addHash(mat.landscapeNormalSrgb);
+            addHash(mat.landscapeBlend);
             addFloat(mat.metallicFactor);
             addFloat(mat.specularFactor);
             addFloat(mat.roughnessFactor);
@@ -11256,6 +11316,9 @@ void DrawDetails() {
             addMap(mat.occlusionMap);
             addMap(mat.opacityMap);
             addMap(mat.specularMap);
+            addMap(mat.landscapeAlbedoMap);
+            addMap(mat.landscapeOrmMap);
+            addMap(mat.landscapeNormalMap);
             addHash(reinterpret_cast<uintptr_t>(mat.base.get()));
             return h;
         };

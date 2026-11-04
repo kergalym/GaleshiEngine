@@ -227,6 +227,8 @@ struct LandscapeComponent {
     int sizeZ = 100;
     float scale = 1.0f;
     std::vector<float> heights;
+    // Per-vertex blend weight for the procedurally painted landscape layer.
+    std::vector<float> paintWeights;
 };
 
 // One independently configured tree species used by landscape vegetation.
