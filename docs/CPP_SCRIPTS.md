@@ -1,5 +1,13 @@
 # C++ gameplay scripts
 
+For a complete third-person gameplay sample, see
+[THIRD_PERSON_DEMO.md](THIRD_PERSON_DEMO.md) and
+[third_person_demo.cpp](third_person_demo.cpp).
+
+For the distinction between native C++ and hot-reload scripts, and for a
+detailed explanation of the `extern "C"` module ABI, see
+[CPP_API_MODES.md](CPP_API_MODES.md).
+
 Place `.cpp`, `.cc` or `.cxx` files in the project's `scripts/` or
 `assets/scripts/` directory. The editor compiles changed files into temporary
 shared libraries and loads them in a separate `GaleshiScriptWorker` process, so

@@ -1,5 +1,8 @@
 # GaleshiEngine C++ API
 
+For a conceptual explanation of the two integration modes and the module ABI,
+see [CPP_API_MODES.md](CPP_API_MODES.md).
+
 The engine exposes two complementary C++ surfaces:
 
 1. **Native API** — link against `GaleshiEngine::GaleshiEngine` and include
