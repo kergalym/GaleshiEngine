@@ -2425,8 +2425,8 @@ private:
         setView(37, "TAA History");
         setView(38, "Scene Color/Depth Copy");
         setView(39, "Water & Hair");
-        setView(40, "Tonemap");
-        setView(41, "Color Correction");
+        setView(40, "Scene Grade + ACES");
+        setView(41, "Environment Palette");
         setView(42, "Vignette");
         setView(43, "Chromatic Aberration");
         setView(44, "SMAA Edge Detection");
@@ -7034,15 +7034,19 @@ if (ImGui::BeginMenu("File")) {
                 }
                 postFxSegmentStart = ProfileClock::now();
 
-                // 9. Tonemap (View 40)
-                m_postProcess.RenderTonemap(m_postProcess.OutputTexture(), m_postProcess.PingFbo(), 40, renderW, renderH, pp.exposure, pp.contrast, pp.saturation);
+                // 9. Scene-referred grading + ACES tonemap (View 40)
+                m_postProcess.RenderTonemap(
+                    m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
+                    40, renderW, renderH,
+                    pp.exposure * pp.colorExposure,
+                    pp.contrast, pp.saturation,
+                    pp.colorContrast, pp.colorSaturation);
                 m_postProcess.SwapFbos();
 
-                // 10. Color Correction + environment palette (View 41)
+                // 10. LUT-style environment palette (View 41), after tonemap
                 m_postProcess.RenderColorCorrection(
                     m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
-                    41, renderW, renderH, pp.colorExposure, pp.colorContrast,
-                    pp.colorSaturation,
+                    41, renderW, renderH, 1.0f, 1.0f, 1.0f,
                     pp.environmentPaletteEnabled
                         ? pp.environmentPaletteAmount
                         : 0.0f,
@@ -10715,6 +10719,7 @@ void DrawDetails() {
             addHash(mat.opacitySrgb);
             addHash(mat.specularSrgb);
             addFloat(mat.metallicFactor);
+            addFloat(mat.specularFactor);
             addFloat(mat.roughnessFactor);
             addVec3(mat.emissiveFactor);
             addHash(mat.isGlass);
@@ -10869,14 +10874,22 @@ void DrawDetails() {
 
                 if (showMaterialGroup(
                         "Main Parameters",
-                        "albedo color metallic roughness normal occlusion alpha "
-                        "cutoff glass transparent opacity two sided emissive")) {
+                        "albedo color metallic specular reflection roughness "
+                        "normal occlusion alpha cutoff glass transparent opacity "
+                        "two sided emissive")) {
                 ImGui::Separator();
 
                 if (showMaterialField("Albedo Factor", "albedo color base"))
                 ImGui::ColorEdit4("Albedo Factor", glm::value_ptr(m.albedoFactor));
                 if (showMaterialField("Metallic Factor", "metal metallic"))
                 ImGui::SliderFloat("Metallic Factor",  &m.metallicFactor,  0.0f, 1.0f);
+                if (showMaterialField("Specular Factor", "specular reflection"))
+                ImGui::SliderFloat("Specular Factor", &m.specularFactor, 0.0f, 1.0f);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Scales the dielectric specular response. The optional "
+                        "specular map multiplies this value.");
+                }
                 if (showMaterialField("Roughness Factor", "rough"))
                 ImGui::SliderFloat("Roughness Factor", &m.roughnessFactor, 0.04f, 1.0f);
                 if (showMaterialField("Normal Strength", "normal bump"))

@@ -90,14 +90,16 @@ bool Renderer::Init(const RendererSpec& spec) {
     // The swap-chain is sRGB so the final linear framebuffer is encoded by
     // hardware instead of a manual gamma pass.
     init.resolution.reset  = BGFX_RESET_VSYNC |
-                             BGFX_RESET_SRGB_BACKBUFFER;
+                             BGFX_RESET_SRGB_BACKBUFFER |
+                             BGFX_RESET_MAXANISOTROPY;
 
     if (!bgfx::init(init)) {
         spdlog::error("[Renderer] bgfx::init failed (Vulkan backend)");
         return false;
     }
 
-    m_impl->resetFlags  = BGFX_RESET_VSYNC | BGFX_RESET_SRGB_BACKBUFFER;
+    m_impl->resetFlags  = BGFX_RESET_VSYNC | BGFX_RESET_SRGB_BACKBUFFER |
+                          BGFX_RESET_MAXANISOTROPY;
     m_impl->initialized = true;
 
     bgfx::setViewClear(0,

@@ -26,6 +26,7 @@ uniform mat4 u_lightViewProj1;
 uniform mat4 u_lightViewProj2;
 
 uniform vec4 u_albedoFactor;
+// x = metallic factor, y = specular strength
 uniform vec4 u_metallicFactor;
 uniform vec4 u_roughnessFactor;
 uniform vec4 u_emissiveFactor;
@@ -166,7 +167,8 @@ void main()
 
     float occlusion = mix(1.0, texture2D(s_occlusionMap, v_uv).r,
                           clamp(u_materialParams.y, 0.0, 1.0));
-    float specular = clamp(texture2D(s_specularMap, v_uv).r, 0.0, 1.0);
+    float specular = clamp(texture2D(s_specularMap, v_uv).r, 0.0, 1.0) *
+                     clamp(u_metallicFactor.y, 0.0, 1.0);
     vec3 emissive = u_emissiveFactor.rgb * texture2D(s_emissiveMap, v_uv).rgb;
 
     vec3 V = normalize(u_cameraPosition.xyz - v_worldPos);

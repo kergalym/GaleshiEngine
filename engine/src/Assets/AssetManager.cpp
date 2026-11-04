@@ -1197,6 +1197,10 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         if (hasMetallicFactor)
             mat->metallicFactor = glm::clamp(metallic, 0.0f, 1.0f);
 
+        float specularFactor = 1.0f;
+        if (aiMat->Get(AI_MATKEY_SPECULAR_FACTOR, specularFactor) == AI_SUCCESS)
+            mat->specularFactor = glm::clamp(specularFactor, 0.0f, 1.0f);
+
         // Use the standard material default when the source does not provide
         // a roughness value.
         float roughness = 0.0f;

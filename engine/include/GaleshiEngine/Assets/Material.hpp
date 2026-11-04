@@ -33,6 +33,9 @@ public:
     bool      opacitySrgb      = false;
     bool      specularSrgb     = false;
     float     metallicFactor   = 0.0f;
+    // Scales the dielectric specular response. The optional specular map is
+    // multiplied by this value.
+    float     specularFactor   = 1.0f;
     // Standard opaque-material default.
     float     roughnessFactor  = 1.0f;
     float     normalStrength   = 1.0f;

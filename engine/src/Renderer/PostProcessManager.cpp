@@ -281,6 +281,7 @@ void PostProcessManager::Init() {
         m_chromaticProg       = createFsProg("shaders/fs_chromatic.bin");
 
         u_colorParams           = bgfx::createUniform("u_colorParams", bgfx::UniformType::Vec4);
+        u_gradeParams           = bgfx::createUniform("u_gradeParams", bgfx::UniformType::Vec4);
         u_colorCorrectionParams = bgfx::createUniform("u_colorCorrectionParams", bgfx::UniformType::Vec4);
         u_envPaletteShadow      = bgfx::createUniform("u_envPaletteShadow", bgfx::UniformType::Vec4);
         u_envPaletteMid         = bgfx::createUniform("u_envPaletteMid", bgfx::UniformType::Vec4);
@@ -560,7 +561,8 @@ void PostProcessManager::Shutdown() {
     destroyProg(m_tonemapProg); destroyProg(m_bloomExtractProg);
     destroyProg(m_bloomBlurProg); destroyProg(m_bloomCombineProg);
     destroyProg(m_colorCorrectionProg); destroyProg(m_vignetteProg); destroyProg(m_chromaticProg);
-    destroyUni(u_colorParams); destroyUni(u_colorCorrectionParams);
+    destroyUni(u_colorParams); destroyUni(u_gradeParams);
+    destroyUni(u_colorCorrectionParams);
     destroyUni(u_envPaletteShadow); destroyUni(u_envPaletteMid);
     destroyUni(u_envPaletteHighlight);
     destroyUni(u_vignetteParams); destroyUni(u_chromaParams);
@@ -1291,13 +1293,22 @@ bgfx::TextureHandle PostProcessManager::RenderChromatic(bgfx::TextureHandle colo
     bgfx::submit(viewId, m_chromaticProg);
     return m_pingColor;
 }
-bgfx::TextureHandle PostProcessManager::RenderTonemap(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float exposure, float contrast, float saturation) {
-    if (!bgfx::isValid(m_tonemapProg) || !bgfx::isValid(u_colorParams)) return color;
+bgfx::TextureHandle PostProcessManager::RenderTonemap(
+    bgfx::TextureHandle color, bgfx::FrameBufferHandle target,
+    bgfx::ViewId viewId, uint16_t w, uint16_t h,
+    float exposure, float contrast, float saturation,
+    float gradeContrast, float gradeSaturation) {
+    if (!bgfx::isValid(m_tonemapProg) || !bgfx::isValid(u_colorParams) ||
+        !bgfx::isValid(u_gradeParams)) {
+        return color;
+    }
     bgfx::setViewFrameBuffer(viewId, target);
     bgfx::setViewRect(viewId, 0, 0, w, h);
     bgfx::setTexture(0, s_texColor, color);
     float params[4] = { exposure, contrast, saturation, 0 };
     bgfx::setUniform(u_colorParams, params);
+    float grade[4] = { gradeContrast, gradeSaturation, 0, 0 };
+    bgfx::setUniform(u_gradeParams, grade);
     bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId, m_tonemapProg);

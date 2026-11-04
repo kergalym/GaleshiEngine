@@ -3,6 +3,7 @@ $input v_worldPos, v_normal, v_tangent, v_uv, v_motion
 #include <bgfx_shader.sh>
 
 uniform vec4 u_albedoFactor;
+// x = metallic factor, y = specular strength
 uniform vec4 u_metallicFactor;
 uniform vec4 u_roughnessFactor;
 uniform vec4 u_emissiveFactor;
@@ -61,11 +62,6 @@ vec3 fresnelTerm(float vdh, vec3 f0)
     return mix(f0, vec3_splat(1.0), pow(clamp(1.0 - vdh, 0.0, 1.0), 5.0));
 }
 
-vec3 aces_tonemap(vec3 color) {
-    // Krzysztof Narkowicz ACES approximation
-    return clamp((color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14), 0.0, 1.0);
-}
-
 void main()
 {
     if (dot(v_worldPos, u_reflectionClip.xyz) + u_reflectionClip.w < 0.0) {
@@ -114,7 +110,8 @@ void main()
 
     float occlusion = mix(1.0, texture2D(s_occlusionMap, v_uv).r,
                           clamp(u_materialParams.y, 0.0, 1.0));
-    float specular = clamp(texture2D(s_specularMap, v_uv).r, 0.0, 1.0);
+    float specular = clamp(texture2D(s_specularMap, v_uv).r, 0.0, 1.0) *
+                     clamp(u_metallicFactor.y, 0.0, 1.0);
     vec3 emissive = u_emissiveFactor.rgb * texture2D(s_emissiveMap, v_uv).rgb;
 
     vec3 V = normalize(u_cameraPosition.xyz - v_worldPos);

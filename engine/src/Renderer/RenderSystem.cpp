@@ -154,6 +154,7 @@ namespace {
         glm::vec4 albedoFactor{1.0f};
         glm::vec3 emissiveFactor{0.0f};
         float metallicFactor = 0.0f;
+        float specularFactor = 1.0f;
         float roughnessFactor = 1.0f;
         float normalStrength = 1.0f;
         float occlusionStrength = 1.0f;
@@ -174,6 +175,7 @@ namespace {
                    emissiveFactor.y == other.emissiveFactor.y &&
                    emissiveFactor.z == other.emissiveFactor.z &&
                    metallicFactor == other.metallicFactor &&
+                   specularFactor == other.specularFactor &&
                    roughnessFactor == other.roughnessFactor &&
                    normalStrength == other.normalStrength &&
                    occlusionStrength == other.occlusionStrength &&
@@ -207,6 +209,7 @@ namespace {
             HashCombine(seed, HashFloat(key.emissiveFactor.y));
             HashCombine(seed, HashFloat(key.emissiveFactor.z));
             HashCombine(seed, HashFloat(key.metallicFactor));
+            HashCombine(seed, HashFloat(key.specularFactor));
             HashCombine(seed, HashFloat(key.roughnessFactor));
             HashCombine(seed, HashFloat(key.normalStrength));
             HashCombine(seed, HashFloat(key.occlusionStrength));
@@ -229,6 +232,7 @@ namespace {
         key.albedoFactor = mat.albedoFactor;
         key.emissiveFactor = mat.emissiveFactor;
         key.metallicFactor = mat.metallicFactor;
+        key.specularFactor = mat.specularFactor;
         key.roughnessFactor = mat.roughnessFactor;
         key.normalStrength = mat.normalStrength;
         key.occlusionStrength = mat.occlusionStrength;
@@ -1052,7 +1056,7 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
     auto flatNormal = m_assets->FlatNormalTexture();
     if (!white || !flatNormal) return;
 
-    const float metallic[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    const float metallic[4] = {0.0f, 1.0f, 0.0f, 0.0f};
     const float emissive[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     const float flags[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     const float noSSS[4] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -1641,7 +1645,7 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
 void RenderSystem::BindMaterial(const Material& mat) {
     const float alb[4] = {mat.albedoFactor.r, mat.albedoFactor.g,
                           mat.albedoFactor.b, mat.albedoFactor.a};
-    const float met[4] = {mat.metallicFactor, 0, 0, 0};
+    const float met[4] = {mat.metallicFactor, mat.specularFactor, 0, 0};
     const float rgh[4] = {mat.roughnessFactor, 0, 0, 0};
     const float emi[4] = {mat.emissiveFactor.r, mat.emissiveFactor.g,
                           mat.emissiveFactor.b, 0};
@@ -2277,9 +2281,11 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
     for (const GlassItem& item : items) {
         const Material& mat = *item.material;
         const float alb[4] = {mat.albedoFactor.r, mat.albedoFactor.g, mat.albedoFactor.b, mat.albedoFactor.a};
+        const float met[4] = {mat.metallicFactor, mat.specularFactor, 0.0f, 0.0f};
         const float glass[4] = {mat.glassOpacity, mat.normalStrength, mat.roughnessFactor,
                                 mat.twoSided ? 1.0f : 0.0f};
         bgfx::setUniform(u_albedoFactor, alb);
+        bgfx::setUniform(u_metallicFactor, met);
         bgfx::setUniform(u_glassParams, glass);
 
         auto albedo = mat.albedoMap ? mat.albedoMap : white;
@@ -2469,7 +2475,7 @@ void RenderSystem::RenderTranslucency(Scene& scene, const Camera& camera,
         const Material& mat = *item.material;
         const float alb[4] = {mat.albedoFactor.r, mat.albedoFactor.g,
                               mat.albedoFactor.b, mat.albedoFactor.a};
-        const float met[4] = {mat.metallicFactor, 0.0f, 0.0f, 0.0f};
+        const float met[4] = {mat.metallicFactor, mat.specularFactor, 0.0f, 0.0f};
         const float rgh[4] = {mat.roughnessFactor, 0.0f, 0.0f, 0.0f};
         const float emi[4] = {mat.emissiveFactor.r, mat.emissiveFactor.g,
                               mat.emissiveFactor.b, 0.0f};

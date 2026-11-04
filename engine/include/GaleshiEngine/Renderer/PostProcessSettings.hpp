@@ -39,7 +39,8 @@ struct PostProcessSettings {
     float contrast   = 1.0f;
     float saturation = 1.0f;
 
-    // Color correction
+    // Scene-referred color grading. Applied before the ACES curve, matching
+    // the UE-style linear grading stage.
     float colorExposure   = 1.0f;
     float colorContrast   = 1.0f;
     float colorSaturation = 1.0f;

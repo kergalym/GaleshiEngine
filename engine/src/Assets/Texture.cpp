@@ -75,7 +75,8 @@ bool& CompressionFlag() {
 }
 
 uint64_t TextureFlags(bool srgb) {
-    uint64_t flags = BGFX_TEXTURE_NONE | BGFX_SAMPLER_NONE;
+    uint64_t flags = BGFX_TEXTURE_NONE | BGFX_SAMPLER_MIN_ANISOTROPIC |
+                     BGFX_SAMPLER_MAG_ANISOTROPIC;
     if (srgb) flags |= BGFX_TEXTURE_SRGB;
     return flags;
 }

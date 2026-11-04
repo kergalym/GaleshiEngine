@@ -12,6 +12,7 @@ SAMPLER2D(s_roughnessMap,        11);
 SAMPLER2D(s_specularMap,         12);
 
 uniform vec4 u_albedoFactor;
+// x = metallic factor, y = specular strength
 uniform vec4 u_metallicFactor;
 uniform vec4 u_roughnessFactor;
 uniform vec4 u_emissiveFactor;
@@ -79,7 +80,8 @@ void main()
     vec3 emissive = u_emissiveFactor.rgb * texture2D(s_emissiveMap, v_uv).rgb;
     // White fallback yields 1.0 (standard dielectric F0). A real specular
     // map modulates the dielectric reflectance in the lighting pass.
-    float specular = clamp(texture2D(s_specularMap, v_uv).r, 0.0, 1.0);
+    float specular = clamp(texture2D(s_specularMap, v_uv).r, 0.0, 1.0) *
+                     clamp(u_metallicFactor.y, 0.0, 1.0);
 
     gl_FragData[0] = vec4(albedo, metallic);          // RT0
     gl_FragData[1] = vec4(N * 0.5 + 0.5, rough);      // RT1

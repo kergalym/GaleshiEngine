@@ -303,6 +303,7 @@ json MaterialToJson(const Material& m, const AssetManager& assets) {
         {"opacitySrgb", m.opacitySrgb},
         {"specularSrgb", m.specularSrgb},
         {"metallicFactor", m.metallicFactor},
+        {"specularFactor", m.specularFactor},
         {"roughnessFactor", m.roughnessFactor},
         {"emissiveFactor", Vec3ToJson(m.emissiveFactor)},
         {"isGlass", m.isGlass},
@@ -369,6 +370,8 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     material->opacitySrgb = jm.value("opacitySrgb", false);
     material->specularSrgb = jm.value("specularSrgb", false);
     material->metallicFactor = jm.value("metallicFactor", 0.0f);
+    material->specularFactor = glm::clamp(
+        jm.value("specularFactor", 1.0f), 0.0f, 1.0f);
     material->roughnessFactor = jm.value("roughnessFactor", 1.0f);
     material->emissiveFactor = jm.contains("emissiveFactor")
         ? Vec3FromJson(jm.at("emissiveFactor")) : glm::vec3(0.0f);

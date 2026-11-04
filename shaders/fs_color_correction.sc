@@ -2,6 +2,8 @@ $input v_texcoord0
 #include <bgfx_shader.sh>
 
 SAMPLER2D(s_texColor, 0);
+// The exposure/contrast/saturation inputs stay neutral in the post-tonemap
+// palette pass; scene-referred grading is performed by fs_tonemap.
 uniform vec4 u_colorCorrectionParams; // x = exposure, y = contrast, z = saturation, w = palette amount
 uniform vec4 u_envPaletteShadow;
 uniform vec4 u_envPaletteMid;

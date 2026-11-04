@@ -7,6 +7,8 @@ SAMPLER2D(s_opacityMap, 9);
 
 uniform vec4 u_cameraPosition;
 uniform vec4 u_albedoFactor;
+// x = metallic factor, y = specular strength
+uniform vec4 u_metallicFactor;
 // x = glass opacity, y = normal strength, z = roughness,
 // w = two-sided material flag
 uniform vec4 u_glassParams;
@@ -31,7 +33,8 @@ void main()
 
     vec3 V = normalize(u_cameraPosition.xyz - v_worldPos.xyz);
     float NdotV = max(dot(N, V), 0.0);
-    float fresnel = pow(1.0 - NdotV, 5.0);
+    float fresnel = pow(1.0 - NdotV, 5.0) *
+                    clamp(u_metallicFactor.y, 0.0, 1.0);
 
     vec4 base = texture2D(s_albedoMap, v_uv);
     float opacityTex = texture2D(s_opacityMap, v_uv).r;
