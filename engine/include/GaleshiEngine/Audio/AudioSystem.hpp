@@ -1,5 +1,4 @@
 #pragma once
-#define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
 
 #include "GaleshiEngine/Audio/AudioTypes.hpp"

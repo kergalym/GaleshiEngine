@@ -327,6 +327,8 @@ public:
         m_api.set_player_strafing = &ScriptWorker::SetPlayerStrafing;
         m_api.compile_shader = &ScriptWorker::CompileShader;
         m_api.get_shader_error = &ScriptWorker::GetShaderError;
+        m_api.abi_version = kGaleshiScriptApiVersion;
+        m_api.struct_size = static_cast<uint32_t>(sizeof(GaleshiScriptApi));
     }
 
     ~ScriptWorker() {

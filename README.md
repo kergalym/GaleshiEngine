@@ -92,6 +92,7 @@ Squad coordination and shared blackboards are not implemented.
 - Lua 5.4 with sol2.
 - Hot reload with F5.
 - Unified `Galeshi` API: namespaced gameplay modules (`world`, `input`, `physics`, `audio`, `animation`, `ai`, `navigation`, `ui`, `particles`, `engine`) plus entity handles with methods. The legacy global functions remain available for existing scripts. See [docs/LUA_API.md](docs/LUA_API.md).
+- Native C++ API umbrella (`GaleshiEngine/GaleshiEngine.hpp`) with a non-owning `Api::EngineContext`, plus class wrappers for the isolated hot-reload C++ script ABI. See [docs/CPP_API.md](docs/CPP_API.md).
 
 ```lua
 local player = nil

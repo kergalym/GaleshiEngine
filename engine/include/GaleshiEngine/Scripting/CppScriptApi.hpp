@@ -56,7 +56,14 @@ struct GaleshiScriptApi {
 
     bool (*compile_shader)(void* user, const char* path) = nullptr;
     const char* (*get_shader_error)(void* user) = nullptr;
+
+    // Appended for forward-compatible capability checks. Older scripts
+    // compiled against a previous layout simply never read these fields.
+    uint32_t abi_version = 0;
+    uint32_t struct_size = 0;
 };
+
+inline constexpr uint32_t kGaleshiScriptApiVersion = 1;
 
 inline float GaleshiInterpFactor(float deltaTime, float speed) {
     if (speed <= 0.0f) return 1.0f;

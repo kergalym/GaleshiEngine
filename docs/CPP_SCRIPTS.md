@@ -35,6 +35,31 @@ velocity access, gameplay camera mode switching, plus `FInterp` and `VInterp`.
 Scripts are intentionally compiled with a stable C ABI so the engine can be
 rebuilt independently.
 
+Class-based wrappers are available from
+`GaleshiEngine/Scripting/CppGameplayApi.hpp`:
+
+```cpp
+#include "GaleshiEngine/Scripting/CppGameplayApi.hpp"
+
+static Galeshi::Script::Api* g_api = nullptr;
+
+extern "C" void GaleshiScriptRegister(const GaleshiScriptApi* api) {
+    static Galeshi::Script::Api wrapper(api);
+    g_api = &wrapper;
+}
+
+extern "C" void GaleshiScriptUpdate(float dt) {
+    (void)dt;
+    const uint32_t player = g_api->world.Find("Player");
+    if (!g_api->world.Valid(player)) return;
+    g_api->physics.SetVelocity(player, {0.0f, 0.0f, -5.0f});
+}
+```
+
+New modules can check `g_api->AbiVersion()` / `Compatible()`. The C++ API
+surface and subsystem expansion plan are documented in
+[CPP_API.md](CPP_API.md).
+
 ```cpp
 g_api->set_camera_mode(g_api->user, GALESHI_CAMERA_FIRST_PERSON);
 const int mode = g_api->get_camera_mode(g_api->user);

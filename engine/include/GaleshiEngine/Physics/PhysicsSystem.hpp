@@ -6,6 +6,8 @@
 #include <functional>
 #include <entt/entt.hpp>
 
+namespace JPH { class JobSystem; }
+
 namespace Galeshi {
 
 class Scene;

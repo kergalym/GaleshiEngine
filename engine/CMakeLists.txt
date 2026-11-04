@@ -18,6 +18,7 @@ list(FILTER GALESHI_ENGINE_SOURCES EXCLUDE REGEX "/AssetManager copy\\.cpp$")
 add_library(GaleshiEngine STATIC
     ${GALESHI_ENGINE_SOURCES}
     ${GALESHI_ENGINE_HEADERS})
+add_library(GaleshiEngine::GaleshiEngine ALIAS GaleshiEngine)
 
 # Add new source files
 target_sources(GaleshiEngine PRIVATE src/Core/ProjectManager.cpp)
@@ -26,6 +27,8 @@ target_include_directories(GaleshiEngine
 
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_BINARY_DIR}/_deps/sol2-src/include
+        ${CMAKE_BINARY_DIR}/_deps/lua-src/src
     PRIVATE
         ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bgfx/include
         ${CMAKE_BINARY_DIR}/_deps/bgfx-src/bimg/include
@@ -55,12 +58,13 @@ target_link_libraries(GaleshiEngine
         bimg
         bimg_encode
         bx
+        Jolt
         ${CMAKE_DL_LIBS}
     PRIVATE
         assimp::assimp
         Recast
         Detour
-        DetourCrowd Jolt)
+        DetourCrowd)
 
 galeshi_set_warnings(GaleshiEngine)
 
