@@ -98,6 +98,8 @@ void GaleshiEditorApp::DrawDetails() {
 
         auto& reg = m_scene.Registry();
         const entt::entity selectedHandle = selected[0].Handle();
+        const bool selectedIsLandscape =
+            selected[0].HasComponent<Galeshi::LandscapeComponent>();
         bool selectionHasMesh = false;
         bool selectionHasTextures = false;
         bool selectionHasMaterials = false;
@@ -1915,7 +1917,8 @@ void GaleshiEditorApp::DrawDetails() {
         // 1. Draw material for the selected entity itself (if any). A
         // collision capsule can own a character subtree; in that case its
         // child material slots are still valid Details content.
-        if ((!selectedIsCollisionShape || selectionHasMaterials) &&
+        if (!selectedIsLandscape &&
+            (!selectedIsCollisionShape || selectionHasMaterials) &&
             (selected[0].HasComponent<Galeshi::MaterialComponent>() ||
              selected[0].HasComponent<Galeshi::MeshComponent>())) {
             if (auto* matc = ensureMaterialSlot(selected[0])) {
@@ -1934,7 +1937,8 @@ void GaleshiEditorApp::DrawDetails() {
 
         // 2. Draw materials for all descendants (skeletal model wrappers can
         // sit below a capsule, and their sub-meshes below another model root).
-        if (!selectedIsCollisionShape || selectionHasMaterials) {
+        if (!selectedIsLandscape &&
+            (!selectedIsCollisionShape || selectionHasMaterials)) {
             for (auto e : m_scene.AllEntities()) {
                 if (e.Handle() == selectedHandle) continue;
                 entt::entity cursor = e.Handle();
