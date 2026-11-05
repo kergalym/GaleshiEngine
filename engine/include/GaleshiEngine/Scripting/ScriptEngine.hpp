@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <vector>
 #include <unordered_map>
 #include <glm/glm.hpp>
@@ -20,6 +21,10 @@ namespace Galeshi {
 
 class Scene;
 class AssetManager;
+class Material;
+struct UICanvas;
+struct UIWidget;
+struct ScriptApiBuildContext;
 
 class ScriptEngine {
 public:
@@ -175,11 +180,26 @@ public:
 
 private:
     void BuildApi();
+    void BuildApiCore(ScriptApiBuildContext& context);
+    void BuildApiGameplay(ScriptApiBuildContext& context);
+    void BuildApiUI(ScriptApiBuildContext& context);
+    void BuildApiRuntime(ScriptApiBuildContext& context);
     void UpdateCppScripts(float dt);
     bool StartCppWorker();
     void StopCppWorker(const std::string& reason = {});
     bool HandleWorkerPacket(CppWorkerPacket& packet);
     CppWorkerPacket MakeWorkerResponse(const CppWorkerPacket& request);
+    bool MakeWorkerCoreResponse(const CppWorkerPacket& request,
+                                CppWorkerPacket& response);
+    bool MakeWorkerUIResponse(const CppWorkerPacket& request,
+                              CppWorkerPacket& response);
+    bool MakeWorkerWorldResponse(const CppWorkerPacket& request,
+                                 CppWorkerPacket& response);
+    bool MakeWorkerAIResponse(const CppWorkerPacket& request,
+                              CppWorkerPacket& response);
+    UICanvas* FindCanvasByEntity(uint32_t handle);
+    UIWidget* FindWidgetByEntity(uint32_t handle, const char* widgetId);
+    std::shared_ptr<Material> FindMaterialByEntity(uint32_t handle);
     void DestroyEntity(entt::entity entity);
     bool HasPhysicsBody(uint32_t entityId) const;
 
