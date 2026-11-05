@@ -162,7 +162,7 @@ void main()
     {
         "player_controller",
         "Player Controller",
-        "Physics movement and jumping for an entity named Player.",
+        "Player movement, jumping and ASME Speed for an entity named Player.",
         "player_controller.lua",
         R"LUA(-- Player Controller
 -- Assign this file in Edit -> Scripts, or use it as the main script.
@@ -171,9 +171,24 @@ local moveSpeed = 8.0
 local turnSpeed = 120.0
 local jumpImpulse = 8.0
 local player = nil
+local animationEntity = nil
+
+local function findAnimationEntity(entity)
+    if not entity or not entity:valid() then return nil end
+    if entity:has_component("animation_state_machine") then
+        return entity
+    end
+    local children = entity:children()
+    for i = 1, #children do
+        local found = findAnimationEntity(children[i])
+        if found then return found end
+    end
+    return nil
+end
 
 local function acquirePlayer()
     player = Galeshi.world.find(playerName)
+    animationEntity = findAnimationEntity(player)
 end
 
 function RunOnce()
@@ -184,6 +199,9 @@ function RunAlways(dt)
     if not player or not player:valid() then
         acquirePlayer()
         if not player then return end
+    end
+    if not animationEntity or not animationEntity:valid() then
+        animationEntity = findAnimationEntity(player)
     end
 
     local velocity = Galeshi.physics.get_velocity(player)
@@ -218,37 +236,321 @@ function RunAlways(dt)
     if Galeshi.input.axis("Jump") > 0.5 and math.abs(velocity.y) < 0.5 then
         Galeshi.physics.add_impulse(player, 0.0, jumpImpulse, 0.0)
     end
+
+    if animationEntity then
+        local speed = math.sqrt(vx * vx + vz * vz) / moveSpeed
+        Galeshi.animation.set_parameter(
+            animationEntity, "Speed", math.min(speed, 1.0))
+    end
 end
 )LUA"
     },
     {
+        "player_controller_cpp",
+        "Player Controller (C++)",
+        "Hot-reloaded C++ counterpart of the player controller. Updates "
+        "ASME Speed.",
+        "player_controller.cpp",
+        R"CPP(// Player Controller (C++ hot-reload)
+#include "GaleshiEngine/Scripting/CppGameplayApi.hpp"
+
+#include <algorithm>
+#include <cmath>
+
+namespace {
+
+using Galeshi::Script::Api;
+using Galeshi::Script::Quat;
+using Galeshi::Script::Vec3;
+
+constexpr const char* kPlayerName = "Player";
+constexpr const char* kPlayerVisualName = "PlayerVisual";
+constexpr float kMoveSpeed = 8.0f;
+constexpr float kTurnSpeed = 120.0f;
+constexpr float kJumpImpulse = 8.0f;
+
+Api* g_api = nullptr;
+uint32_t g_player = UINT32_MAX;
+uint32_t g_animation = UINT32_MAX;
+
+Quat YawQuat(float yaw) {
+    return {0.0f, std::sin(yaw * 0.5f), 0.0f, std::cos(yaw * 0.5f)};
+}
+
+float YawFromRotation(Quat rotation) {
+    return 2.0f * std::atan2(rotation.y, rotation.w);
+}
+
+uint32_t FindAnimationEntity(Api& api, uint32_t player) {
+    if (api.world.HasComponent(player, "animation_state_machine")) {
+        return player;
+    }
+    const uint32_t visual = api.world.Find(kPlayerVisualName);
+    if (api.world.Valid(visual) &&
+        api.world.HasComponent(visual, "animation_state_machine")) {
+        return visual;
+    }
+    return player;
+}
+
+void AcquirePlayer(Api& api) {
+    g_player = api.world.Find(kPlayerName);
+    g_animation = g_player == UINT32_MAX
+        ? UINT32_MAX : FindAnimationEntity(api, g_player);
+}
+
+} // namespace
+
+extern "C" void GaleshiScriptRegister(const GaleshiScriptApi* api) {
+    static Galeshi::Script::Api wrapper(api);
+    g_api = &wrapper;
+    g_player = UINT32_MAX;
+    g_animation = UINT32_MAX;
+}
+
+extern "C" void GaleshiScriptUpdate(float dt) {
+    if (!g_api || !g_api->Compatible() || dt <= 0.0f) return;
+    Api& api = *g_api;
+
+    if (g_player == UINT32_MAX || !api.world.Valid(g_player)) {
+        AcquirePlayer(api);
+        if (g_player == UINT32_MAX) return;
+    }
+    if (g_animation == UINT32_MAX || !api.world.Valid(g_animation)) {
+        g_animation = FindAnimationEntity(api, g_player);
+    }
+
+    const float horizontal = api.input.Axis("Horizontal");
+    const float vertical = api.input.Axis("Vertical");
+    const bool strafing = api.player.Strafing();
+    const Vec3 forward = api.camera.Forward();
+    const Vec3 velocity = api.physics.Velocity(g_player);
+    float vx = 0.0f;
+    float vz = 0.0f;
+
+    if (std::abs(vertical) > 0.001f) {
+        api.world.SetRotation(
+            g_player, YawQuat(std::atan2(forward.x, forward.z)));
+        vx = forward.x * vertical * kMoveSpeed;
+        vz = forward.z * vertical * kMoveSpeed;
+    } else if (!strafing && std::abs(horizontal) > 0.001f) {
+        const float yaw = YawFromRotation(api.world.Rotation(g_player)) -
+                          horizontal * kTurnSpeed * dt;
+        api.world.SetRotation(g_player, YawQuat(yaw));
+    }
+
+    if (strafing) {
+        const Vec3 move = api.camera.Movement(horizontal, vertical);
+        vx = move.x * kMoveSpeed;
+        vz = move.z * kMoveSpeed;
+    }
+
+    if (api.world.HasComponent(g_player, "rigid_body")) {
+        api.physics.SetVelocity(g_player, {vx, velocity.y, vz});
+        if (api.input.Axis("Jump") > 0.5f &&
+            std::abs(velocity.y) < 0.5f) {
+            api.physics.ApplyImpulse(
+                g_player, {0.0f, kJumpImpulse, 0.0f});
+        }
+    } else {
+        Vec3 position = api.world.Position(g_player);
+        position.x += vx * dt;
+        position.z += vz * dt;
+        api.world.SetPosition(g_player, position);
+    }
+
+    if (g_animation != UINT32_MAX) {
+        const float speed = std::min(
+            1.0f, std::sqrt(vx * vx + vz * vz) / kMoveSpeed);
+        api.animation.SetParameter(g_animation, "Speed", speed);
+    }
+}
+)CPP"
+    },
+    {
         "ai_controller",
         "AI Controller",
-        "Chase an entity named Player.",
+        "Chase an entity named Player and update ASME Speed.",
         "ai_controller.lua",
         R"LUA(-- AI Controller
 -- Attach this file to an entity with an AI Controller component.
 local targetName = "Player"
 local moveSpeed = 3.5
 local chaseRadius = 20.0
+local stopRadius = 1.0
+local animationEntity = nil
+local lastPosition = nil
+
+local function findAnimationEntity(entity)
+    if not entity or not entity:valid() then return nil end
+    if entity:has_component("animation_state_machine") then
+        return entity
+    end
+    local children = entity:children()
+    for i = 1, #children do
+        local found = findAnimationEntity(children[i])
+        if found then return found end
+    end
+    return nil
+end
 
 function update_ai(eid, dt)
     local agent = Galeshi.world.entity(eid)
     if not agent or not agent:valid() then return end
+    if not animationEntity or not animationEntity:valid() then
+        animationEntity = findAnimationEntity(agent)
+    end
+
+    local agentPosition = agent:position()
+    local actualSpeed = 0.0
+    if lastPosition and dt > 0.0 then
+        local dx = agentPosition.x - lastPosition.x
+        local dz = agentPosition.z - lastPosition.z
+        actualSpeed = math.sqrt(dx * dx + dz * dz) / dt
+    end
+    lastPosition = {
+        x = agentPosition.x,
+        y = agentPosition.y,
+        z = agentPosition.z,
+    }
 
     Galeshi.ai.set_speed(agent, moveSpeed)
     local target = Galeshi.world.find(targetName)
-    if not target or not target:valid() then return end
+    if target and target:valid() then
+        local position = target:position()
+        local dx = position.x - agentPosition.x
+        local dz = position.z - agentPosition.z
+        local distanceSq = dx * dx + dz * dz
+        if distanceSq <= chaseRadius * chaseRadius and
+           distanceSq > stopRadius * stopRadius then
+            Galeshi.ai.set_target(
+                agent, position.x, position.y, position.z)
+        else
+            Galeshi.ai.clear_target(agent)
+        end
+    else
+        Galeshi.ai.clear_target(agent)
+    end
 
-    local position = target:position()
-    local agentPosition = agent:position()
-    local dx = position.x - agentPosition.x
-    local dz = position.z - agentPosition.z
-    if dx * dx + dz * dz <= chaseRadius * chaseRadius then
-        Galeshi.ai.set_target(agent, position.x, position.y, position.z)
+    if animationEntity then
+        local speed = math.min(actualSpeed / moveSpeed, 1.0)
+        Galeshi.animation.set_parameter(animationEntity, "Speed", speed)
     end
 end
 )LUA"
+    },
+    {
+        "ai_controller_cpp",
+        "AI Controller (C++)",
+        "Hot-reloaded C++ counterpart of the AI controller. Updates ASME "
+        "Speed.",
+        "ai_controller.cpp",
+        R"CPP(// AI Controller (C++ hot-reload)
+//
+// C++ scripts update globally, so this drives the first NavAgent in the
+// scene. Rename kAgentVisualName if the ASME lives on a child model.
+#include "GaleshiEngine/Scripting/CppGameplayApi.hpp"
+
+#include <algorithm>
+#include <cmath>
+
+namespace {
+
+using Galeshi::Script::Api;
+using Galeshi::Script::Vec3;
+
+constexpr const char* kTargetName = "Player";
+constexpr const char* kAgentVisualName = "AIVisual";
+constexpr float kMoveSpeed = 3.5f;
+constexpr float kChaseRadius = 20.0f;
+constexpr float kStopRadius = 1.0f;
+
+Api* g_api = nullptr;
+uint32_t g_agent = UINT32_MAX;
+uint32_t g_animation = UINT32_MAX;
+Vec3 g_lastPosition{};
+bool g_hasLastPosition = false;
+
+uint32_t FindAnimationEntity(Api& api, uint32_t agent) {
+    if (api.world.HasComponent(agent, "animation_state_machine")) {
+        return agent;
+    }
+    const uint32_t visual = api.world.Find(kAgentVisualName);
+    if (api.world.Valid(visual) &&
+        api.world.HasComponent(visual, "animation_state_machine")) {
+        return visual;
+    }
+    return agent;
+}
+
+void AcquireAgent(Api& api) {
+    g_agent = api.ai.FindNavAgent();
+    if (g_agent == UINT32_MAX) {
+        g_animation = UINT32_MAX;
+        g_hasLastPosition = false;
+        return;
+    }
+    g_animation = FindAnimationEntity(api, g_agent);
+    g_lastPosition = api.world.Position(g_agent);
+    g_hasLastPosition = true;
+}
+
+} // namespace
+
+extern "C" void GaleshiScriptRegister(const GaleshiScriptApi* api) {
+    static Galeshi::Script::Api wrapper(api);
+    g_api = &wrapper;
+    g_agent = UINT32_MAX;
+    g_animation = UINT32_MAX;
+    g_hasLastPosition = false;
+}
+
+extern "C" void GaleshiScriptUpdate(float dt) {
+    if (!g_api || !g_api->Compatible() || dt <= 0.0f) return;
+    Api& api = *g_api;
+
+    if (g_agent == UINT32_MAX || !api.world.Valid(g_agent)) {
+        AcquireAgent(api);
+        if (g_agent == UINT32_MAX) return;
+    }
+    if (g_animation == UINT32_MAX || !api.world.Valid(g_animation)) {
+        g_animation = FindAnimationEntity(api, g_agent);
+    }
+
+    const Vec3 agentPosition = api.world.Position(g_agent);
+    float actualSpeed = 0.0f;
+    if (g_hasLastPosition) {
+        const float dx = agentPosition.x - g_lastPosition.x;
+        const float dz = agentPosition.z - g_lastPosition.z;
+        actualSpeed = std::sqrt(dx * dx + dz * dz) / dt;
+    }
+    g_lastPosition = agentPosition;
+    g_hasLastPosition = true;
+
+    const uint32_t target = api.world.Find(kTargetName);
+    if (api.world.Valid(target)) {
+        const Vec3 targetPosition = api.world.Position(target);
+        const float dx = targetPosition.x - agentPosition.x;
+        const float dz = targetPosition.z - agentPosition.z;
+        const float distanceSq = dx * dx + dz * dz;
+        if (distanceSq <= kChaseRadius * kChaseRadius &&
+            distanceSq > kStopRadius * kStopRadius) {
+            api.ai.SetFloat(g_agent, "nav_agent", "speed", kMoveSpeed);
+            api.ai.SetVec3(g_agent, "nav_agent", "target_position",
+                           targetPosition);
+            api.ai.SetFlag(g_agent, "nav_agent", "has_target", true);
+        } else {
+            api.ai.SetFlag(g_agent, "nav_agent", "has_target", false);
+        }
+    }
+
+    if (g_animation != UINT32_MAX) {
+        const float speed = std::min(
+            1.0f, actualSpeed / kMoveSpeed);
+        api.animation.SetParameter(g_animation, "Speed", speed);
+    }
+}
+)CPP"
     },
     {
         "ai_patrol",
@@ -648,8 +950,14 @@ bool ContentBrowser::CreateLuaFile(const std::string& name) {
         m_dialogError = error;
         return false;
     }
-    const fs::path target = m_current / filename;
+    const fs::path scriptsDirectory = fs::path(m_root) / "scripts";
     std::error_code ec;
+    fs::create_directories(scriptsDirectory, ec);
+    if (ec) {
+        m_dialogError = "Cannot create scripts directory.";
+        return false;
+    }
+    const fs::path target = scriptsDirectory / filename;
     if (fs::exists(target, ec)) {
         m_dialogError = "A file with that name already exists.";
         return false;
@@ -1107,8 +1415,10 @@ std::string ContentBrowser::Draw() {
             ImGui::CloseCurrentPopup();
         }
         if (ImGui::MenuItem("New Lua Script")) {
-            OpenDialog(Dialog::NewLua, m_current,
-                       UniqueName(m_current, "new_script", ".lua", false));
+            const fs::path scriptsDirectory = fs::path(m_root) / "scripts";
+            OpenDialog(Dialog::NewLua, scriptsDirectory,
+                       UniqueName(scriptsDirectory, "new_script", ".lua",
+                                  false));
             ImGui::CloseCurrentPopup();
         }
         ImGui::Separator();

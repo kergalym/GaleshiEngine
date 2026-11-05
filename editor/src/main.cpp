@@ -3634,9 +3634,33 @@ if (ImGui::BeginMenu("File")) {
         m_audio.StopAll();
         if (m_physics) m_physics->Reset();
         if (m_particles) m_particles->Reset();
+
+        // The Play snapshot recreates every entity, invalidating the ASME
+        // selection handle. Remember the character name so the editor can
+        // stay on the same character after the scene is restored.
+        std::string stateMachineCharacterName;
+        if (m_stateMachineEditorEntity != entt::null) {
+            auto& registry = m_scene.Registry();
+            if (registry.valid(m_stateMachineEditorEntity) &&
+                registry.all_of<Galeshi::NameComponent>(
+                    m_stateMachineEditorEntity)) {
+                stateMachineCharacterName =
+                    registry.get<Galeshi::NameComponent>(
+                        m_stateMachineEditorEntity).name;
+            }
+        }
+
         if (m_serializer && m_historyIndex >= 0 &&
             m_historyIndex < static_cast<int>(m_history.size())) {
             m_serializer->LoadFromString(m_history[m_historyIndex]);
+        }
+
+        if (!stateMachineCharacterName.empty()) {
+            Galeshi::Entity restored =
+                m_scene.FindEntityByName(stateMachineCharacterName);
+            if (restored) {
+                m_stateMachineEditorEntity = restored.Handle();
+            }
         }
         DeactivateGameplayCamera();
     }

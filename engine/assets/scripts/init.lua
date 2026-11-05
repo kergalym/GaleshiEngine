@@ -4,6 +4,20 @@ log("init.lua: loaded player controller")
 --   RunOnce()          runs once after the script is loaded (and after a successful hot reload)
 --   RunAlways(dt)      runs every frame
 local player = nil
+local animationEntity = nil
+
+local function findAnimationEntity(entity)
+    if not entity or not entity:valid() then return nil end
+    if entity:has_component("animation_state_machine") then
+        return entity
+    end
+    local children = entity:children()
+    for i = 1, #children do
+        local found = findAnimationEntity(children[i])
+        if found then return found end
+    end
+    return nil
+end
 
 local function findPlayer()
     -- Prefer a Player entity that already has a character/mesh attached.
@@ -24,6 +38,7 @@ function RunOnce()
         player = Galeshi.physics.create_box("Player", 0.0, 5.0, 0.0, 2.0)
     end
     if player then
+        animationEntity = findAnimationEntity(player)
         log("init.lua: using player eid=" .. tostring(player.id))
     end
 end
@@ -32,6 +47,9 @@ function RunAlways(dt)
     if not player or not player:valid() then
         player = findPlayer()
         if not player then return end
+    end
+    if not animationEntity or not animationEntity:valid() then
+        animationEntity = findAnimationEntity(player)
     end
 
     local speed = 10.0
@@ -74,5 +92,11 @@ function RunAlways(dt)
     if Galeshi.input.axis("Jump") > 0.5 and math.abs(vy) < 0.5 then
         log("JUMP!")
         Galeshi.physics.add_impulse(player, 0, jump_force, 0)
+    end
+
+    if animationEntity then
+        local horizontalSpeed = math.sqrt(vx * vx + vz * vz) / speed
+        Galeshi.animation.set_parameter(
+            animationEntity, "Speed", math.min(horizontalSpeed, 1.0))
     end
 end
