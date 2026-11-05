@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -95,6 +96,17 @@ public:
 
     bool IsInitialized() const { return m_initialized; }
 
+    // Optional project-aware path resolver. The host should point this at
+    // AssetManager::ResolvePath so relative sound paths work regardless of
+    // the process working directory.
+    using PathResolver = std::function<std::string(const std::string&)>;
+    void SetPathResolver(PathResolver resolver) {
+        m_pathResolver = std::move(resolver);
+    }
+    std::string ResolvePath(const std::string& path) const {
+        return m_pathResolver ? m_pathResolver(path) : path;
+    }
+
     // Stops every 2D and entity sound. Used on Play stop / scene unload.
     void StopAll() {
         if (!m_initialized) return;
@@ -128,12 +140,14 @@ public:
         if (!m_initialized) return;
         StopSound(filepath);
 
+        const std::string resolvedPath = ResolvePath(filepath);
         ma_sound* pSound = new ma_sound();
         ma_result result = ma_sound_init_from_file(
-            &m_engine, filepath.c_str(), 0, BusGroup(bus), nullptr, pSound);
+            &m_engine, resolvedPath.c_str(), 0, BusGroup(bus), nullptr,
+            pSound);
         if (result != MA_SUCCESS) {
-            spdlog::error("[Audio] Failed to play '{}': {}",
-                          filepath, static_cast<int>(result));
+            spdlog::error("[Audio] Failed to play '{}' (resolved '{}'): {}",
+                          filepath, resolvedPath, static_cast<int>(result));
             delete pSound;
             return;
         }
@@ -227,13 +241,15 @@ public:
         if (!m_initialized || source.soundPath.empty()) return false;
         StopSource(entity);
 
+        const std::string resolvedPath = ResolvePath(source.soundPath);
         ma_sound* sound = new ma_sound();
         ma_result result = ma_sound_init_from_file(
-            &m_engine, source.soundPath.c_str(), 0,
+            &m_engine, resolvedPath.c_str(), 0,
             BusGroup(source.bus), nullptr, sound);
         if (result != MA_SUCCESS) {
-            spdlog::error("[Audio] Failed to play source '{}': {}",
-                          source.soundPath, static_cast<int>(result));
+            spdlog::error(
+                "[Audio] Failed to play source '{}' (resolved '{}'): {}",
+                source.soundPath, resolvedPath, static_cast<int>(result));
             delete sound;
             return false;
         }
@@ -433,6 +449,7 @@ private:
     std::unordered_map<std::string, ma_sound*> m_activeSounds;
     std::unordered_map<entt::entity, SourceRuntime> m_sourceSounds;
     std::unordered_set<SoundPlayer*> m_players;
+    PathResolver m_pathResolver;
 
     glm::vec3 m_lastListenerPosition{0.0f};
     bool m_hasLastListenerPosition = false;

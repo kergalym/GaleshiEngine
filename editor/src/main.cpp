@@ -1133,6 +1133,9 @@ protected:
         // skeletal animation models. The AssetManager is also used by the
         // scene serializer and renderer below.
         m_assets = std::make_unique<Galeshi::AssetManager>();
+        m_audio.SetPathResolver([this](const std::string& path) {
+            return m_assets ? m_assets->ResolvePath(path) : path;
+        });
         m_scripts.BindAssets(m_assets.get());
         m_physics = std::make_unique<Galeshi::EnginePhysicsSystem>();
         spdlog::info("[Subsystem] m_physics->Init() begin");

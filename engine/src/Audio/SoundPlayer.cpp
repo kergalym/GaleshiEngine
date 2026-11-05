@@ -59,12 +59,14 @@ bool SoundPlayer::Load(const std::string& path, AudioBus bus) {
     }
 
     Unload();
+    const std::string resolvedPath = m_impl->audio->ResolvePath(path);
     const ma_result result = ma_sound_init_from_file(
-        &m_impl->audio->m_engine, path.c_str(), 0,
+        &m_impl->audio->m_engine, resolvedPath.c_str(), 0,
         m_impl->audio->BusGroup(bus), nullptr, &m_impl->sound);
     if (result != MA_SUCCESS) {
-        spdlog::error("[Audio] Failed to load sound player '{}': {}", path,
-                      static_cast<int>(result));
+        spdlog::error(
+            "[Audio] Failed to load sound player '{}' (resolved '{}'): {}",
+            path, resolvedPath, static_cast<int>(result));
         return false;
     }
 
