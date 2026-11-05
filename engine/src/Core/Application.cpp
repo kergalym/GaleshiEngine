@@ -240,7 +240,7 @@ Application::Application(const ApplicationSpec& spec)
         if (display != 0 && SDL_GetDisplayUsableBounds(display, &bounds) &&
             bounds.w > 0 && bounds.h > 0) {
             resolved.width = bounds.w;
-            resolved.height = bounds.h - 20; // leave some space for the taskbar
+            resolved.height = bounds.h - 60; // leave some space for the taskbar
         } else {
             resolved.width = 1920;
             resolved.height = 1080;
