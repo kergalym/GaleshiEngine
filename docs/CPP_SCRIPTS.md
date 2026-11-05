@@ -90,6 +90,60 @@ module-level, not per-entity: inspect the trigger/other ids if one module
 handles several volumes. Entities must have a collider with `Is Trigger`
 enabled in the editor.
 
+### Accessing an entity shown in the Outliner
+
+The editor's Outliner selection is not exposed to scripts. There is no
+`get_selected_entity()` in Lua or in the hot-reload C++ ABI. Gameplay code
+must find entities by name or numeric id.
+
+Lua:
+
+```lua
+local crate = Galeshi.world.find("Crate")
+if not crate or not crate:valid() then return end
+
+crate:set_position(0.0, 2.0, 0.0)
+local position = crate:position()
+
+-- Duplicate names: find_all returns every match.
+local crates = Galeshi.world.find_all("Crate")
+```
+
+Native C++ (linked with the engine):
+
+```cpp
+Galeshi::Entity crate = scene.FindEntityByName("Crate");
+if (!crate) return;
+
+auto& transform = crate.GetComponent<Galeshi::TransformComponent>();
+transform.position = {0.0f, 2.0f, 0.0f};
+```
+
+Hot-reload C++ script:
+
+```cpp
+const uint32_t crate = g_api->world.Find("Crate");
+if (!g_api->world.Valid(crate)) return;
+
+const GaleshiScriptVec3 position = g_api->world.Position(crate);
+g_api->physics.SetVelocity(crate, {0.0f, 0.0f, 5.0f});
+```
+
+Notes:
+
+- Names are the Outliner names (`NameComponent`) and are case-sensitive.
+- Lua `find` and C++ `World::Find` return the first match. Keep Outliner
+  names unique, or use Lua `find_all` / native registry views.
+- Lua handles expose `parent()` and `children()`; C++ hot-reload scripts do
+  not have child enumeration, so use stable names or native C++ for hierarchy
+  traversal.
+- Entity ids received by trigger callbacks are raw numeric ids. In Lua wrap
+  them with `Galeshi.world.entity(id)`; in C++ pass them to `world.*` calls.
+- Keep a cached handle/id but revalidate it (`valid()` / `Valid()`) before use:
+  loading a scene or undo can destroy the entity.
+- The editor's `m_editor.Selected(...)` is editor-only. Using the selected
+  entity from a gameplay script requires adding a host binding for it.
+
 World, input, physics, navigation and audio examples:
 
 ```cpp

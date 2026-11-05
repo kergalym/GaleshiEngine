@@ -62,6 +62,24 @@ Methods use Lua colon syntax:
 | `has_component(name)` | Check for an engine component, for example `"rigid_body"`, `"nav_agent"`, `"ui_canvas"`, `"particle_emitter"`. |
 | `destroy()` | Destroy the entity. |
 
+The Outliner selection is editor-only and is not exposed to scripts. Use
+`Galeshi.world.find("Name")` to get an object shown in the Outliner. If
+multiple objects share a name, use `find_all`. Keep the name unique in the
+Outliner or store the numeric id:
+
+```lua
+local crate = Galeshi.world.find("Crate")
+local crates = Galeshi.world.find_all("Crate")
+if crate then
+    local same = Galeshi.world.entity(crate:get_id())
+end
+```
+
+Entity handles are invalidated when a scene is reloaded or an entity is
+destroyed; check `valid()` again or find the object by name. Trigger callbacks
+receive raw numeric ids, which can be wrapped with
+`Galeshi.world.entity(id)`.
+
 ## Modules
 
 ### `Galeshi.world`
