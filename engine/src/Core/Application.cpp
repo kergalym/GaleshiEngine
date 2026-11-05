@@ -230,6 +230,25 @@ Application::Application(const ApplicationSpec& spec)
         std::abort();
     }
 
+    // bgfx does not expose monitor dimensions, and ImGui is not initialized
+    // until after the native window exists. Use the same SDL display API that
+    // ImGui's SDL3 backend uses, before creating the window.
+    ApplicationSpec resolved = spec;
+    if (resolved.width <= 0 || resolved.height <= 0) {
+        SDL_Rect bounds{};
+        const SDL_DisplayID display = SDL_GetPrimaryDisplay();
+        if (display != 0 && SDL_GetDisplayUsableBounds(display, &bounds) &&
+            bounds.w > 0 && bounds.h > 0) {
+            resolved.width = bounds.w;
+            resolved.height = bounds.h - 20; // leave some space for the taskbar
+        } else {
+            resolved.width = 1920;
+            resolved.height = 1080;
+            spdlog::warn("[Galeshi] Could not query monitor size; using 1920x1080");
+        }
+    }
+    m_impl->spec = resolved;
+
     // Install signal handlers after SDL_Init; SDL may replace them.
     std::signal(SIGINT,  Galeshi::OnSignal);
     std::signal(SIGTERM, Galeshi::OnSignal);
@@ -245,11 +264,12 @@ Application::Application(const ApplicationSpec& spec)
         }
     }
 
-    ShowStartupSplash(spec.splashImage);
+    ShowStartupSplash(resolved.splashImage);
 
     // HIGH_PIXEL_DENSITY can break the swapchain on Qtile.
     const SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE;
-    m_impl->window = SDL_CreateWindow(spec.name.c_str(), spec.width, spec.height, flags);
+    m_impl->window = SDL_CreateWindow(resolved.name.c_str(), resolved.width,
+                                      resolved.height, flags);
     if (!m_impl->window) {
         spdlog::critical("[Galeshi] SDL_CreateWindow failed: {}", SDL_GetError());
         std::abort();
@@ -258,9 +278,9 @@ Application::Application(const ApplicationSpec& spec)
     m_impl->renderer = std::make_unique<Renderer>();
     RendererSpec rspec;
     rspec.window = m_impl->window;
-    rspec.width  = static_cast<uint32_t>(spec.width);
-    rspec.height = static_cast<uint32_t>(spec.height);
-    rspec.debug  = spec.debug;
+    rspec.width  = static_cast<uint32_t>(resolved.width);
+    rspec.height = static_cast<uint32_t>(resolved.height);
+    rspec.debug  = resolved.debug;
     if (!m_impl->renderer->Init(rspec)) {
         spdlog::critical("[Galeshi] Renderer init failed");
         std::abort();
@@ -350,7 +370,8 @@ Application::Application(const ApplicationSpec& spec)
     m_impl->freq = static_cast<double>(SDL_GetPerformanceFrequency());
     m_impl->lastCounter = SDL_GetPerformanceCounter();
 
-    spdlog::info("[Galeshi] '{}' initialized ({}x{})", spec.name, spec.width, spec.height);
+    spdlog::info("[Galeshi] '{}' initialized ({}x{})", resolved.name,
+                 resolved.width, resolved.height);
 }
 
 Application::~Application() {

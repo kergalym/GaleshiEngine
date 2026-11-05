@@ -17,7 +17,7 @@ class GaleshiRuntimeApp final : public Galeshi::Application {
 public:
     GaleshiRuntimeApp()
         : Galeshi::Application({
-              .name = "GaleshiRuntime", .width = 1280, .height = 720, .editor = false}) {}
+              .name = "GaleshiRuntime", .width = 0, .height = 0, .editor = false}) {}
 
 protected:
     void OnStart() override {

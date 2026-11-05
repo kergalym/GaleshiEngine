@@ -424,7 +424,7 @@ public:
                               std::string gameProjectPath = {})
         : Galeshi::Application({
               .name = isGameMode ? "GaleshiGame" : "GaleshiEditor", 
-              .width = 1600, .height = 900, 
+              .width = 0, .height = 0,
               .editor = true,
               .debug = debugMode,
               .splashImage = isGameMode ? "" : "assets/icons/galeshi_engine_logo.png"}) {

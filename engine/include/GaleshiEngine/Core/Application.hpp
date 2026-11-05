@@ -10,8 +10,8 @@ class InputAxisSystem;
 
 struct ApplicationSpec {
     std::string name   = "GaleshiEngine App";
-    int         width  = 1600;
-    int         height = 900;
+    int         width  = 1920; // <= 0 uses the primary monitor width
+    int         height = 1080; // <= 0 uses the primary monitor height
     bool        editor = false;
     bool        debug  = false;
     // Optional startup splash image, relative to the executable directory.
