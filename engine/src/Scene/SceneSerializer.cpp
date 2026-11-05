@@ -1053,14 +1053,19 @@ std::string SceneSerializer::SaveToString(bool includeEditorState) const {
                     {"checked", widget.checked},
                     {"maxChars", widget.maxChars},
                     {"fontSize", widget.fontSize},
+                    {"fontPath", widget.fontPath},
                     {"textAlign", static_cast<int>(widget.textAlign)},
                     {"textWrapWidth", widget.textWrapWidth},
+                    {"textOffset", {widget.textOffset.x, widget.textOffset.y}},
+                    {"rotation", widget.rotation},
                     {"sliderStep", widget.sliderStep},
                     {"options", widget.options},
                     {"selectedOption", widget.selectedOption},
                     {"imagePath", widget.imagePath},
                     {"useColor", widget.useColor},
                     {"color", Vec4ToJson(widget.color)},
+                    {"useTextColor", widget.useTextColor},
+                    {"textColor", Vec4ToJson(widget.textColor)},
                     {"useBorderColor", widget.useBorderColor},
                     {"borderColor", Vec4ToJson(widget.borderColor)},
                     {"radius", widget.radius},
@@ -2070,10 +2075,20 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                     widget.checked = jw.value("checked", false);
                     widget.maxChars = jw.value("maxChars", 128);
                     widget.fontSize = jw.value("fontSize", 0.0f);
+                    widget.fontPath =
+                        jw.value("fontPath", std::string{});
                     widget.textAlign = static_cast<UITextAlign>(
                         std::clamp(jw.value("textAlign", 0), 0, 2));
                     widget.textWrapWidth =
                         jw.value("textWrapWidth", 0.0f);
+                    if (jw.contains("textOffset") &&
+                        jw["textOffset"].is_array() &&
+                        jw["textOffset"].size() >= 2) {
+                        widget.textOffset = {
+                            jw["textOffset"][0].get<float>(),
+                            jw["textOffset"][1].get<float>()};
+                    }
+                    widget.rotation = jw.value("rotation", 0.0f);
                     widget.sliderStep = jw.value("sliderStep", 0.0f);
                     if (jw.contains("options") && jw["options"].is_array()) {
                         widget.options = jw["options"].get<
@@ -2084,6 +2099,12 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                     widget.imagePath = jw.value("imagePath", std::string{});
                     widget.useColor = jw.value("useColor", false);
                     if (jw.contains("color")) widget.color = Vec4FromJson(jw.at("color"));
+                    widget.useTextColor =
+                        jw.value("useTextColor", false);
+                    if (jw.contains("textColor")) {
+                        widget.textColor = Vec4FromJson(
+                            jw.at("textColor"));
+                    }
                     widget.useBorderColor =
                         jw.value("useBorderColor", false);
                     if (jw.contains("borderColor")) {

@@ -1187,7 +1187,8 @@ std::string ContentBrowser::Draw() {
     if (ImGui::Button("Import Asset")) {
         m_importPicker.Open(m_current.string(), "Import Asset",
                             { ".gltf", ".glb", ".obj", ".dae",
-                              ".png", ".jpg", ".wav", ".mp3" });
+                              ".png", ".jpg", ".wav", ".mp3",
+                              ".ttf", ".otf" });
     }
     ImGui::Separator();
 

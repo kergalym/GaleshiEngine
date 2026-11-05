@@ -1,11 +1,17 @@
 #include "GaleshiEngine/UI/UIRuntime.hpp"
 #include "GaleshiEngine/UI/UIWidgets.hpp"
+#include "GaleshiEngine/Assets/AssetManager.hpp"
+#include "GaleshiEngine/Assets/Texture.hpp"
 #include "GaleshiEngine/Scene/Components.hpp"
 #include "GaleshiEngine/Scene/Scene.hpp"
 
 #include <imgui.h>
+#ifdef IMGUI_ENABLE_FREETYPE
+#include "misc/freetype/imgui_freetype.h"
+#endif
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <numeric>
@@ -43,6 +49,49 @@ ImU32 WidgetBorderColor(const UIWidget& widget, float alpha,
         ImVec4(c.r, c.g, c.b, std::clamp(c.a * alpha, 0.0f, 1.0f)));
 }
 
+ImU32 WidgetTextColor(const UIWidget& widget, float alpha,
+                      ImU32 fallback) {
+    if (!widget.useTextColor) return fallback;
+    const glm::vec4& c = widget.textColor;
+    return ImGui::ColorConvertFloat4ToU32(
+        ImVec4(c.r, c.g, c.b, std::clamp(c.a * alpha, 0.0f, 1.0f)));
+}
+
+ImTextureID LoadUITexture(AssetManager* assets, const std::string& path) {
+    if (!assets || path.empty()) return 0;
+    auto texture = assets->LoadTexture(path, true);
+    if (!texture || texture == assets->WhiteTexture() ||
+        !texture->Valid()) {
+        return 0;
+    }
+    return static_cast<ImTextureID>(texture->Handle().idx);
+}
+
+void RotateTextVertices(ImDrawList* drawList, int firstVertex,
+                        ImVec2 pivot, float radians) {
+    if (!drawList || radians == 0.0f) return;
+    const float c = std::cos(radians);
+    const float s = std::sin(radians);
+    for (int i = firstVertex; i < drawList->VtxBuffer.Size; ++i) {
+        ImVec2& p = drawList->VtxBuffer[i].pos;
+        const float x = p.x - pivot.x;
+        const float y = p.y - pivot.y;
+        p.x = pivot.x + x * c - y * s;
+        p.y = pivot.y + x * s + y * c;
+    }
+}
+
+void AddTextRotated(ImDrawList* drawList, ImFont* font, float fontSize,
+                    ImVec2 position, ImU32 color, const char* text,
+                    const char* textEnd, float wrapWidth, ImVec2 pivot,
+                    float rotationDegrees) {
+    const int firstVertex = drawList->VtxBuffer.Size;
+    drawList->AddText(font, fontSize, position, color, text, textEnd,
+                      wrapWidth);
+    RotateTextVertices(drawList, firstVertex, pivot,
+                       rotationDegrees * 3.14159265358979323846f / 180.0f);
+}
+
 } // namespace
 
 std::string& UIRuntime::TextBuffer(const std::string& key) {
@@ -62,6 +111,59 @@ std::string UIRuntime::TextValue(int canvasEntity,
         if (entry.first == key) return entry.second;
     }
     return {};
+}
+
+ImFont* UIRuntime::LoadFont(const std::string& path) {
+    if (path.empty()) return nullptr;
+    const auto cached = m_fonts.find(path);
+    if (cached != m_fonts.end()) return cached->second;
+    if (!m_assets) return nullptr;
+    // ImGui locks the atlas between NewFrame() and EndFrame(); adding a font
+    // then would assert. The host preloads fonts from OnUpdate instead.
+    if (ImGui::GetIO().Fonts->Locked) return nullptr;
+
+    const std::string resolved = m_assets->ResolvePath(path);
+    ImFontConfig config;
+    config.PixelSnapH = true;
+    config.Flags |= ImFontFlags_NoLoadError;
+#ifdef IMGUI_ENABLE_FREETYPE
+    config.FontLoaderFlags = ImGuiFreeTypeLoaderFlags_NoHinting;
+#endif
+    static ImVector<ImWchar> ranges;
+    if (ranges.empty()) {
+        ImFontGlyphRangesBuilder builder;
+        builder.AddRanges(ImGui::GetIO().Fonts->GetGlyphRangesDefault());
+        builder.AddRanges(ImGui::GetIO().Fonts->GetGlyphRangesCyrillic());
+        builder.AddRanges(ImGui::GetIO().Fonts->GetGlyphRangesGreek());
+        builder.BuildRanges(&ranges);
+    }
+    ImFont* font = ImGui::GetIO().Fonts->AddFontFromFileTTF(
+        resolved.c_str(), 32.0f, &config, ranges.Data);
+    if (!font) {
+        m_fonts[path] = nullptr;
+        return nullptr;
+    }
+
+    // The ImGuiBgfx backend uses the legacy atlas texture path. Rebuild the
+    // atlas and let the host upload the new texture.
+    ImGui::GetIO().Fonts->Build();
+    if (m_fontAtlasChanged) m_fontAtlasChanged();
+    m_fonts[path] = font;
+    return font;
+}
+
+void UIRuntime::PreloadFonts(Scene& scene) {
+    auto view = scene.Registry().view<UICanvasComponent>();
+    for (const entt::entity entity : view) {
+        for (const auto& widget : view.get<UICanvasComponent>(entity).canvas.widgets) {
+            if (!widget.fontPath.empty()) LoadFont(widget.fontPath);
+        }
+    }
+}
+
+ImFont* UIRuntime::FontForPath(const std::string& path) const {
+    const auto it = m_fonts.find(path);
+    return it != m_fonts.end() ? it->second : nullptr;
 }
 
 void UIRuntime::Emit(UIEvent event) {
@@ -220,6 +322,7 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
         ImGui::BeginDisabled(!widget.enabled ||
                              (!widget.interactable && interactive));
         ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha * ImGui::GetStyle().Alpha);
+        int pushedColors = 0;
         if (widget.useColor) {
             const ImVec4 tint(widget.color.r, widget.color.g, widget.color.b,
                               widget.color.a);
@@ -230,6 +333,21 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
             ImGui::PushStyleColor(ImGuiCol_ButtonActive,
                                   ImVec4(tint.x * 0.85f, tint.y * 0.85f,
                                          tint.z * 0.85f, tint.w));
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, tint);
+            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered,
+                                  ImVec4(tint.x * 1.15f, tint.y * 1.15f,
+                                         tint.z * 1.15f, tint.w));
+            ImGui::PushStyleColor(ImGuiCol_FrameBgActive,
+                                  ImVec4(tint.x * 0.85f, tint.y * 0.85f,
+                                         tint.z * 0.85f, tint.w));
+            pushedColors += 6;
+        }
+        if (widget.useTextColor) {
+            ImGui::PushStyleColor(
+                ImGuiCol_Text,
+                ImVec4(widget.textColor.r, widget.textColor.g,
+                       widget.textColor.b, widget.textColor.a));
+            ++pushedColors;
         }
 
         switch (widget.type) {
@@ -264,28 +382,43 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
                 widget.fontSize > 0.0f ? widget.fontSize * scale
                                        : heightPx * 0.62f,
                 6.0f, 160.0f);
-            const ImU32 color =
+            const ImU32 fallbackColor =
                 widget.useColor ? WidgetColor(widget, alpha)
                                 : IM_COL32(225, 233, 245, 255);
+            const ImU32 color = widget.useTextColor
+                ? WidgetTextColor(widget, alpha, fallbackColor)
+                : fallbackColor;
             const float wrapWidth = widget.textWrapWidth > 0.0f
                                         ? widget.textWrapWidth * scale
                                         : widthPx;
-            const float fontScale =
-                fontSize / std::max(1.0f, ImGui::GetFontSize());
-            ImVec2 textSize = ImGui::CalcTextSize(
-                widget.label.c_str(), nullptr, false,
-                wrapWidth / std::max(0.01f, fontScale));
-            textSize.x *= fontScale;
-            textSize.y *= fontScale;
-            float textX = pos.x;
+            ImFont* font = widget.fontPath.empty()
+                ? nullptr : LoadFont(widget.fontPath);
+            ImVec2 textSize;
+            if (font) {
+                textSize = font->CalcTextSizeA(
+                    fontSize, FLT_MAX, wrapWidth, widget.label.c_str());
+            } else {
+                const float fontScale =
+                    fontSize / std::max(1.0f, ImGui::GetFontSize());
+                textSize = ImGui::CalcTextSize(
+                    widget.label.c_str(), nullptr, false,
+                    wrapWidth / std::max(0.01f, fontScale));
+                textSize.x *= fontScale;
+                textSize.y *= fontScale;
+            }
+            float textX = pos.x + widget.textOffset.x * scale;
+            const float textY = pos.y + widget.textOffset.y * scale;
             if (widget.textAlign == UITextAlign::Center) {
                 textX += (widthPx - textSize.x) * 0.5f;
             } else if (widget.textAlign == UITextAlign::Right) {
                 textX += widthPx - textSize.x;
             }
-            drawList->AddText(ImGui::GetFont(), fontSize,
-                              ImVec2(textX, pos.y), color,
-                              widget.label.c_str(), nullptr, wrapWidth);
+            const ImVec2 pivot(pos.x + widthPx * 0.5f,
+                               pos.y + heightPx * 0.5f);
+            AddTextRotated(drawList, font, fontSize,
+                           ImVec2(textX, textY), color,
+                           widget.label.c_str(), nullptr, wrapWidth,
+                           pivot, widget.rotation);
             ImGui::Dummy(
                 ImVec2(widthPx, std::max(heightPx, textSize.y)));
             break;
@@ -294,7 +427,57 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
         case UIWidgetType::Button: {
             const float height = (widget.buttonHeight > 0.0f ? widget.buttonHeight
                                                              : 30.0f) * scale;
-            if (ImGui::Button(widget.label.c_str(), ImVec2(widthPx, height))) {
+            const ImTextureID image =
+                LoadUITexture(m_assets, widget.imagePath);
+            if (image) {
+                const ImVec2 size(widthPx, height);
+                const bool pressed =
+                    ImGui::InvisibleButton("##button_image", size);
+                const ImVec2 bmin = ImGui::GetItemRectMin();
+                const ImVec2 bmax = ImGui::GetItemRectMax();
+                const bool active = ImGui::IsItemActive();
+                if (widget.useColor) {
+                    drawList->AddRectFilled(
+                        bmin, bmax, WidgetColor(widget, alpha), radiusPx);
+                }
+
+                const float brightness = active ? 0.8f : 1.0f;
+                const ImVec4 tint(brightness, brightness, brightness, alpha);
+                drawList->AddImageRounded(
+                    image, bmin, bmax, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f),
+                    ImGui::ColorConvertFloat4ToU32(tint), radiusPx);
+
+                if (!widget.label.empty()) {
+                    ImFont* font = widget.fontPath.empty()
+                        ? nullptr : LoadFont(widget.fontPath);
+                    const float fontSize = widget.fontSize > 0.0f
+                        ? widget.fontSize * scale
+                        : std::max(9.0f, ImGui::GetFontSize());
+                    const ImVec2 textSize = font
+                        ? font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f,
+                                              widget.label.c_str())
+                        : ImGui::CalcTextSize(widget.label.c_str());
+                    const ImVec2 textPos(
+                        bmin.x + (size.x - textSize.x) * 0.5f +
+                            widget.textOffset.x * scale,
+                        bmin.y + (size.y - textSize.y) * 0.5f +
+                            widget.textOffset.y * scale);
+                    const ImU32 textColor = widget.useTextColor
+                        ? WidgetTextColor(widget, alpha,
+                                          IM_COL32(255, 255, 255, 255))
+                        : IM_COL32(255, 255, 255, 255);
+                    const ImVec2 pivot(bmin.x + size.x * 0.5f,
+                                       bmin.y + size.y * 0.5f);
+                    AddTextRotated(drawList, font, fontSize, textPos, textColor,
+                                   widget.label.c_str(), nullptr, 0.0f, pivot,
+                                   widget.rotation);
+                }
+                if (pressed) {
+                    Emit({UIEvent::Type::Clicked, canvasEntity,
+                          canvas.canvasId, widget.id, 0.0f, false});
+                }
+            } else if (ImGui::Button(
+                           widget.label.c_str(), ImVec2(widthPx, height))) {
                 Emit({UIEvent::Type::Clicked, canvasEntity, canvas.canvasId,
                       widget.id, 0.0f, false});
             }
@@ -312,11 +495,12 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
         case UIWidgetType::Slider: {
             if (!widget.label.empty()) {
                 const float fontSize = std::max(9.0f, ImGui::GetFontSize() * 0.9f);
-                drawList->AddText(ImGui::GetFont(), fontSize,
-                                  ImVec2(pos.x, pos.y - fontSize - 2.0f),
-                                  widget.useColor ? WidgetColor(widget, alpha)
-                                                  : IM_COL32(220, 226, 236, 255),
-                                  widget.label.c_str());
+                drawList->AddText(
+                    ImGui::GetFont(), fontSize,
+                    ImVec2(pos.x, pos.y - fontSize - 2.0f),
+                    WidgetTextColor(widget, alpha,
+                                    IM_COL32(220, 226, 236, 255)),
+                    widget.label.c_str());
             }
             ImGui::SetNextItemWidth(widthPx);
             if (ImGui::SliderFloat("##value", &widget.sliderValue,
@@ -354,10 +538,12 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
             std::snprintf(temp, sizeof(temp), "%s", buffer.c_str());
             if (!widget.label.empty()) {
                 const float fontSize = std::max(9.0f, ImGui::GetFontSize() * 0.9f);
-                drawList->AddText(ImGui::GetFont(), fontSize,
-                                  ImVec2(pos.x, pos.y - fontSize - 2.0f),
-                                  IM_COL32(220, 226, 236, 255),
-                                  widget.label.c_str());
+                drawList->AddText(
+                    ImGui::GetFont(), fontSize,
+                    ImVec2(pos.x, pos.y - fontSize - 2.0f),
+                    WidgetTextColor(widget, alpha,
+                                    IM_COL32(220, 226, 236, 255)),
+                    widget.label.c_str());
             }
             ImGui::SetNextItemWidth(widthPx);
             if (ImGui::InputText("##input", temp, sizeof(temp))) {
@@ -374,10 +560,12 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
         case UIWidgetType::Dropdown: {
             if (!widget.label.empty()) {
                 const float fontSize = std::max(9.0f, ImGui::GetFontSize() * 0.9f);
-                drawList->AddText(ImGui::GetFont(), fontSize,
-                                  ImVec2(pos.x, pos.y - fontSize - 2.0f),
-                                  IM_COL32(220, 226, 236, 255),
-                                  widget.label.c_str());
+                drawList->AddText(
+                    ImGui::GetFont(), fontSize,
+                    ImVec2(pos.x, pos.y - fontSize - 2.0f),
+                    WidgetTextColor(widget, alpha,
+                                    IM_COL32(220, 226, 236, 255)),
+                    widget.label.c_str());
             }
             const int selected = std::clamp(
                 widget.selectedOption, 0,
@@ -423,25 +611,42 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
         case UIWidgetType::Image: {
             const ImVec2 size(widthPx, (widget.size.y > 0.0f ? widget.size.y
                                                              : 96.0f) * scale);
-            drawList->AddRectFilled(pos,
-                                    ImVec2(pos.x + size.x, pos.y + size.y),
-                                    IM_COL32(30, 30, 30, 200), radiusPx);
+            const ImVec2 imageMax(pos.x + size.x, pos.y + size.y);
+            drawList->AddRectFilled(
+                pos, imageMax,
+                widget.useColor ? WidgetColor(widget, alpha)
+                                : IM_COL32(30, 30, 30, 200),
+                radiusPx);
+            const ImTextureID image =
+                LoadUITexture(m_assets, widget.imagePath);
+            if (image) {
+                drawList->AddImageRounded(
+                    image, pos, imageMax, ImVec2(0.0f, 0.0f),
+                    ImVec2(1.0f, 1.0f),
+                    ImGui::ColorConvertFloat4ToU32(
+                        ImVec4(1.0f, 1.0f, 1.0f, alpha)),
+                    radiusPx);
+            } else {
+                const char* caption =
+                    !widget.imagePath.empty()
+                        ? widget.imagePath.c_str()
+                        : (!widget.label.empty() ? widget.label.c_str()
+                                                 : "[Image]");
+                const ImVec2 textSize = ImGui::CalcTextSize(caption);
+                drawList->AddText(
+                    ImVec2(pos.x + (size.x - textSize.x) * 0.5f,
+                           pos.y + (size.y - textSize.y) * 0.5f),
+                    WidgetTextColor(widget, alpha,
+                                    IM_COL32(150, 150, 150, 255)),
+                    caption);
+            }
             if (widget.border > 0.0f) {
                 drawList->AddRect(
-                    pos, ImVec2(pos.x + size.x, pos.y + size.y),
+                    pos, imageMax,
                     WidgetBorderColor(widget, alpha,
                                       IM_COL32(80, 80, 80, 220)),
                     radiusPx, 0, borderPx);
             }
-            const char* caption =
-                !widget.imagePath.empty()
-                    ? widget.imagePath.c_str()
-                    : (!widget.label.empty() ? widget.label.c_str() : "[Image]");
-            const ImVec2 textSize = ImGui::CalcTextSize(caption);
-            drawList->AddText(
-                ImVec2(pos.x + (size.x - textSize.x) * 0.5f,
-                       pos.y + (size.y - textSize.y) * 0.5f),
-                IM_COL32(150, 150, 150, 255), caption);
             ImGui::Dummy(size);
             break;
         }
@@ -472,7 +677,7 @@ void UIRuntime::RenderCanvasInRect(UICanvas& canvas, int canvasEntity,
             }
         }
 
-        if (widget.useColor) ImGui::PopStyleColor(3);
+        if (pushedColors > 0) ImGui::PopStyleColor(pushedColors);
         ImGui::PopStyleVar();
         ImGui::EndDisabled();
         ImGui::PopID();

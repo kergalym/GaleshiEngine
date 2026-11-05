@@ -105,6 +105,9 @@ struct UIWidget {
     float fontSize = 0.0f;  // 0 = automatic from widget height
     UITextAlign textAlign = UITextAlign::Left;
     float textWrapWidth = 0.0f;  // 0 = widget width
+    std::string fontPath;    // empty = default UI font
+    glm::vec2 textOffset{0.0f};
+    float rotation = 0.0f;   // degrees; text and image-button labels
 
     // Input
     int maxChars = 128;
@@ -121,7 +124,9 @@ struct UIWidget {
 
     // Style
     bool      useColor = false;
-    glm::vec4 color{1.0f};   // RGBA 0..1
+    glm::vec4 color{1.0f};   // background, or legacy text color for Text
+    bool      useTextColor = false;
+    glm::vec4 textColor{0.92f, 0.96f, 1.0f, 1.0f};
     bool      useBorderColor = false;
     glm::vec4 borderColor{0.35f, 0.55f, 0.78f, 0.63f};
     float     radius = 0.0f;

@@ -268,7 +268,9 @@ Script surface:
 
 ### 8. UI and widgets — done (configuration, events, text values)
 
-Native surface: `UIRuntime`, `UICanvas`, `UIWidget`.
+Native surface: `UIRuntime`, `UICanvas`, `UIWidget` (`imagePath`, `fontPath`,
+`fontSize`, `textOffset`, `rotation`, `useColor`/`color` and
+`useTextColor`/`textColor`).
 
 Script surface:
 

@@ -315,12 +315,18 @@ Galeshi.ui.set_widget("HUD", "start", {
     value = 0.5,
     checked = true,
     font_size = 28,
+    font = "assets/fonts/DejaVuSans.ttf",
     text_align = "center",
     wrap_width = 640,
+    text_offset = {0, 4},
+    rotation = -8.0,
     slider_step = 0.1,
     tooltip = "Start the game",
+    image = "assets/textures/button.png",
     color = {1.0, 0.8, 0.2, 1.0},
     use_color = true,
+    text_color = {0.1, 0.1, 0.1, 1.0},
+    use_text_color = true,
     border_color = {0.4, 0.7, 1.0, 1.0},
     use_border_color = true,
     options = {"Low", "Medium", "High"},
@@ -332,6 +338,12 @@ local widget = Galeshi.ui.widget("HUD", "start")
 Galeshi.ui.set_value("HUD", "start", 0.75)
 Galeshi.ui.show_canvas("HUD", false)
 ```
+
+`image` supplies the background for Button and the texture for Image widgets.
+`font`, `text_offset` and `rotation` affect Text widgets (button labels also use
+them); `font_size` is in pixels. `color` is the widget background and `text_color`
+is the label color, enabled by `use_color` and `use_text_color` respectively.
+Text keeps `color`/`use_color` as a legacy text-color fallback.
 
 Available helpers: `find_canvas`, `canvases`, `canvas`, `widget`, `set_widget`,
 `set_value`, `value`, `show_canvas`, `on`, `off`, `call`.

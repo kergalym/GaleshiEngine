@@ -235,6 +235,7 @@ constexpr UIBoolField kUIBools[] = {
     {"block_input", &UIWidget::blockInput},
     {"checked", &UIWidget::checked},
     {"use_color", &UIWidget::useColor},
+    {"use_text_color", &UIWidget::useTextColor},
     {"use_border_color", &UIWidget::useBorderColor},
 };
 constexpr UIFloatField kUIFloats[] = {
@@ -246,6 +247,7 @@ constexpr UIFloatField kUIFloats[] = {
     {"slider_step", &UIWidget::sliderStep},
     {"font_size", &UIWidget::fontSize},
     {"text_wrap_width", &UIWidget::textWrapWidth},
+    {"rotation", &UIWidget::rotation},
     {"radius", &UIWidget::radius},
     {"border", &UIWidget::border},
 };
@@ -259,6 +261,7 @@ constexpr UIStringField kUIStrings[] = {
     {"label", &UIWidget::label},
     {"tooltip", &UIWidget::tooltip},
     {"image", &UIWidget::imagePath},
+    {"font", &UIWidget::fontPath},
     {"on_click", &UIWidget::onClick},
     {"on_hover", &UIWidget::onHover},
     {"on_show", &UIWidget::onShow},
@@ -269,9 +272,11 @@ constexpr UIVec2Field kUIVec2s[] = {
     {"pivot", &UIWidget::pivot},
     {"anchor_min", &UIWidget::anchorMin},
     {"anchor_max", &UIWidget::anchorMax},
+    {"text_offset", &UIWidget::textOffset},
 };
 constexpr UIVec4Field kUIVec4s[] = {
     {"color", &UIWidget::color},
+    {"text_color", &UIWidget::textColor},
     {"border_color", &UIWidget::borderColor},
 };
 
@@ -2393,13 +2398,18 @@ void ScriptEngine::BuildApi() {
         table["slider_step"] = widget.sliderStep;
         table["checked"] = widget.checked;
         table["font_size"] = widget.fontSize;
+        table["font"] = widget.fontPath;
         table["wrap_width"] = widget.textWrapWidth;
+        table["text_offset"] = makeVec2(widget.textOffset);
+        table["rotation"] = widget.rotation;
         table["text_align"] =
             widget.textAlign == UITextAlign::Center ? "center"
             : widget.textAlign == UITextAlign::Right ? "right"
                                                      : "left";
         table["use_color"] = widget.useColor;
         table["color"] = makeVec4(widget.color);
+        table["use_text_color"] = widget.useTextColor;
+        table["text_color"] = makeVec4(widget.textColor);
         table["use_border_color"] = widget.useBorderColor;
         table["border_color"] = makeVec4(widget.borderColor);
         table["tooltip"] = widget.tooltip;
@@ -2442,8 +2452,17 @@ void ScriptEngine::BuildApi() {
         if (readNumber(props.get<sol::object>("font_size"), number)) {
             widget.fontSize = std::max(0.0f, number);
         }
+        if (readString(props.get<sol::object>("font"), text)) {
+            widget.fontPath = text;
+        }
         if (readNumber(props.get<sol::object>("wrap_width"), number)) {
             widget.textWrapWidth = std::max(0.0f, number);
+        }
+        if (readNumber(props.get<sol::object>("rotation"), number)) {
+            widget.rotation = number;
+        }
+        if (readVec2(props.get<sol::object>("text_offset"), vector2)) {
+            widget.textOffset = vector2;
         }
         if (readString(props.get<sol::object>("text_align"), text)) {
             if (text == "center") widget.textAlign = UITextAlign::Center;
@@ -2475,8 +2494,14 @@ void ScriptEngine::BuildApi() {
         if (readBool(props.get<sol::object>("use_color"), boolean)) {
             widget.useColor = boolean;
         }
+        if (readBool(props.get<sol::object>("use_text_color"), boolean)) {
+            widget.useTextColor = boolean;
+        }
         if (readBool(props.get<sol::object>("use_border_color"), boolean)) {
             widget.useBorderColor = boolean;
+        }
+        if (readVec4(props.get<sol::object>("text_color"), color)) {
+            widget.textColor = color;
         }
         if (readVec4(props.get<sol::object>("border_color"), color)) {
             widget.borderColor = color;

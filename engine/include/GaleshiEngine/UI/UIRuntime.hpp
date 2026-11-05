@@ -6,8 +6,11 @@
 #include <unordered_set>
 #include <vector>
 
+struct ImFont;
+
 namespace Galeshi {
 
+class AssetManager;
 class Scene;
 struct UICanvas;
 
@@ -66,11 +69,28 @@ public:
         m_handler = std::move(handler);
     }
 
+    // Optional project assets for UI images and custom fonts.
+    void SetAssetManager(AssetManager* assets) { m_assets = assets; }
+
+    // Called when a custom font is added to the ImGui atlas. The host must
+    // re-upload the atlas texture (legacy ImGuiBgfx backend).
+    void SetFontAtlasChangedCallback(std::function<void()> callback) {
+        m_fontAtlasChanged = std::move(callback);
+    }
+
+    // Must be called outside ImGui::NewFrame()/EndFrame().
+    void PreloadFonts(Scene& scene);
+    ImFont* FontForPath(const std::string& path) const;
+
 private:
     void Emit(UIEvent event);
+    ImFont* LoadFont(const std::string& path);
 
     std::vector<UIEvent> m_events;
     std::function<void(const UIEvent&)> m_handler;
+    AssetManager* m_assets = nullptr;
+    std::unordered_map<std::string, ImFont*> m_fonts;
+    std::function<void()> m_fontAtlasChanged;
     // Stable id -> text buffer for InputText widgets.  Keyed per widget so the
     // buffer survives frames and does not depend on vector reallocation.
     std::vector<std::pair<std::string, std::string>> m_textBuffers;

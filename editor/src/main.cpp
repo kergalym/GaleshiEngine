@@ -55,6 +55,7 @@
 #include <array>
 #include <functional>
 #include <cctype>
+#include <cfloat>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -171,6 +172,11 @@ static bool IsImageAssetPath(const std::string& path) {
 static bool IsAudioAssetPath(const std::string& path) {
     const std::string extension = AssetExtensionLower(path);
     return extension == ".wav" || extension == ".mp3";
+}
+
+static bool IsFontAssetPath(const std::string& path) {
+    const std::string extension = AssetExtensionLower(path);
+    return extension == ".ttf" || extension == ".otf";
 }
 
 static bool IsCppCodeAssetPath(const std::string& path) {
@@ -568,7 +574,7 @@ protected:
             return;
         }
         if (!IsDragDropModelAssetPath(filepath) && !IsImageAssetPath(filepath) &&
-            !IsAudioAssetPath(filepath)) {
+            !IsAudioAssetPath(filepath) && !IsFontAssetPath(filepath)) {
             return;
         }
 
@@ -1136,6 +1142,13 @@ protected:
         m_audio.SetPathResolver([this](const std::string& path) {
             return m_assets ? m_assets->ResolvePath(path) : path;
         });
+        m_uiRuntime.SetAssetManager(m_assets.get());
+        m_uiPreviewRuntime.SetAssetManager(m_assets.get());
+        const auto reloadUiFonts = []() {
+            Galeshi::ImGuiBgfx::ReloadFontTexture();
+        };
+        m_uiRuntime.SetFontAtlasChangedCallback(reloadUiFonts);
+        m_uiPreviewRuntime.SetFontAtlasChangedCallback(reloadUiFonts);
         m_scripts.BindAssets(m_assets.get());
         m_physics = std::make_unique<Galeshi::EnginePhysicsSystem>();
         spdlog::info("[Subsystem] m_physics->Init() begin");
@@ -1482,6 +1495,11 @@ protected:
         UpdateLoadingState();
         if (m_loadingState.isLoading) return; // Pause engine during load
         if (!m_projectLoaded) return;
+
+        // ImGui locks its font atlas during NewFrame/EndFrame, so custom UI
+        // fonts must be added here, before the frame starts.
+        m_uiRuntime.PreloadFonts(m_scene);
+        m_uiPreviewRuntime.PreloadFonts(m_scene);
 
         // This update path is independent of m_realtimeRendering. Pausing
         // render passes must not stop scene simulation: physics, scripting,
@@ -4284,6 +4302,22 @@ if (ImGui::BeginMenu("File")) {
         PushHistory();
     }
 
+    void DeleteUICanvas(entt::entity entity) {
+        auto& registry = m_scene.Registry();
+        if (entity == entt::null || !registry.valid(entity) ||
+            !registry.all_of<Galeshi::UICanvasComponent>(entity)) {
+            return;
+        }
+        PushHistory();
+        m_uiPreview = false;
+        m_uiCanvasEntity = entt::null;
+        m_uiWidgetIndex = -1;
+        m_editor.ClearSelection();
+        m_scene.DestroyEntity(Galeshi::Entity(entity, &m_scene));
+        spdlog::info("[UI Designer] Deleted canvas entity {}",
+                     static_cast<uint32_t>(entity));
+    }
+
     void ReorderSelectedUIWidget(int mode) {
         Galeshi::UICanvas* canvas = ActiveUICanvas();
         if (!canvas) return;
@@ -4485,6 +4519,13 @@ if (ImGui::BeginMenu("File")) {
             if (ImGui::Selectable("+ New Canvas")) CreateUICanvas("UICanvas");
             ImGui::EndCombo();
         }
+        if (activeEntity != entt::null) {
+            ImGui::SameLine();
+            if (ImGui::Button("Delete Canvas")) {
+                DeleteUICanvas(activeEntity);
+                return;
+            }
+        }
 
         // Re-fetch after the combo: "+ New Canvas" may have added a component
         // and invalidated the pointer obtained above.
@@ -4680,6 +4721,12 @@ if (ImGui::BeginMenu("File")) {
         if (ImGui::Button("+ Add Widget")) AddDefaultUIWidget(Galeshi::UIWidgetType::Button);
         ImGui::SameLine();
         if (ImGui::Button("Open Script")) ImGui::SetWindowFocus("Code Editor");
+
+        ImGui::Separator();
+        if (ImGui::Button("Delete Canvas")) {
+            DeleteUICanvas(ActiveUICanvasEntity());
+            return;
+        }
     }
 
     void DrawUIWidgetProperties(Galeshi::UICanvas& canvas,
@@ -4729,12 +4776,24 @@ if (ImGui::BeginMenu("File")) {
         ImGui::DragFloat2("Position (px)", glm::value_ptr(widget.position), 1.0f);
         ImGui::DragFloat2("Size (px)", glm::value_ptr(widget.size), 1.0f, 0.0f, 10000.0f);
 
-        ImGui::Checkbox("Override Color", &widget.useColor);
+        const bool textWidget =
+            widget.type == Galeshi::UIWidgetType::Text;
+        ImGui::Checkbox(
+            textWidget ? "Use Legacy Text Color"
+                       : "Override Background Color",
+            &widget.useColor);
         if (!widget.useColor) ImGui::BeginDisabled();
-        ImGui::ColorEdit4("Color RGBA", glm::value_ptr(widget.color),
+        ImGui::ColorEdit4(
+            textWidget ? "Legacy Text Color" : "Background Color",
+            glm::value_ptr(widget.color),
+            ImGuiColorEditFlags_Uint8 | ImGuiColorEditFlags_AlphaBar);
+        if (!widget.useColor) ImGui::EndDisabled();
+        ImGui::Checkbox("Override Text Color", &widget.useTextColor);
+        if (!widget.useTextColor) ImGui::BeginDisabled();
+        ImGui::ColorEdit4("Text Color", glm::value_ptr(widget.textColor),
                           ImGuiColorEditFlags_Uint8 |
                               ImGuiColorEditFlags_AlphaBar);
-        if (!widget.useColor) ImGui::EndDisabled();
+        if (!widget.useTextColor) ImGui::EndDisabled();
         ImGui::SliderFloat("Opacity", &widget.opacity, 0.0f, 1.0f, "%.2f");
         ImGui::DragFloat("Radius", &widget.radius, 0.5f, 0.0f, 64.0f);
         ImGui::DragFloat("Border", &widget.border, 0.1f, 0.0f, 16.0f);
@@ -4752,11 +4811,33 @@ if (ImGui::BeginMenu("File")) {
         ImGui::Checkbox("Block Input", &widget.blockInput);
         UIEventInput("Tooltip", widget.tooltip);
 
+        const auto drawAssetPathField =
+            [this](const char* label, std::string& value, bool font) {
+                UIEventInput(label, value);
+                if (!ImGui::BeginDragDropTarget()) return;
+                if (const ImGuiPayload* payload =
+                        ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
+                    const char* path =
+                        static_cast<const char*>(payload->Data);
+                    const bool accepted = path &&
+                        (font ? IsFontAssetPath(path)
+                              : IsImageAssetPath(path));
+                    if (accepted) {
+                        PushHistory();
+                        value = m_assets ? m_assets->MakeRelativePath(path)
+                                         : std::string(path);
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            };
+
         switch (widget.type) {
         case Galeshi::UIWidgetType::Button:
+            drawAssetPathField("Image Path", widget.imagePath, false);
             ImGui::DragFloat("Height", &widget.buttonHeight, 0.5f, 0.0f, 400.0f);
             break;
         case Galeshi::UIWidgetType::Text: {
+            drawAssetPathField("Font Path", widget.fontPath, true);
             ImGui::DragFloat("Font Size", &widget.fontSize, 0.5f, 0.0f,
                              160.0f);
             if (ImGui::IsItemHovered()) {
@@ -4773,6 +4854,10 @@ if (ImGui::BeginMenu("File")) {
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("0 wraps at the widget width.");
             }
+            ImGui::DragFloat2("Text Offset (px)",
+                              glm::value_ptr(widget.textOffset), 1.0f);
+            ImGui::DragFloat("Text Rotation", &widget.rotation, 0.5f,
+                             -360.0f, 360.0f, "%.1f deg");
             break;
         }
         case Galeshi::UIWidgetType::Slider:
@@ -4829,7 +4914,7 @@ if (ImGui::BeginMenu("File")) {
             break;
         }
         case Galeshi::UIWidgetType::Image:
-            UIEventInput("Image Path", widget.imagePath);
+            drawAssetPathField("Image Path", widget.imagePath, false);
             break;
         default:
             break;
@@ -4886,8 +4971,46 @@ if (ImGui::BeginMenu("File")) {
             return ImGui::ColorConvertFloat4ToU32(
                 ImVec4(c.r, c.g, c.b, std::clamp(c.a, 0.0f, 1.0f)));
         };
-        auto scaledTextSize = [](const char* text, float fontSize) {
-            return ImGui::GetFont()->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text);
+        auto scaledTextSize = [](ImFont* font, const char* text,
+                                 float fontSize) {
+            return (font ? font : ImGui::GetFont())
+                ->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text);
+        };
+        auto textureFor = [this](const std::string& path) -> ImTextureID {
+            if (!m_assets || path.empty()) return 0;
+            auto texture = m_assets->LoadTexture(path, true);
+            if (!texture || texture == m_assets->WhiteTexture() ||
+                !texture->Valid()) {
+                return 0;
+            }
+            return static_cast<ImTextureID>(texture->Handle().idx);
+        };
+        auto textColorFor = [&](const Galeshi::UIWidget& widget,
+                                ImU32 fallback) {
+            if (widget.useTextColor) return toU32(widget.textColor);
+            if (widget.useColor &&
+                widget.type == Galeshi::UIWidgetType::Text) {
+                return toU32(widget.color);
+            }
+            return fallback;
+        };
+        auto addTextRotated = [&](ImFont* font, float fontSize, ImVec2 pos,
+                                  ImU32 color, const char* text,
+                                  ImVec2 pivot, float rotation) {
+            const int firstVertex = draw->VtxBuffer.Size;
+            draw->AddText(font, fontSize, pos, color, text);
+            if (rotation == 0.0f) return;
+            const float radians =
+                rotation * 3.14159265358979323846f / 180.0f;
+            const float c = std::cos(radians);
+            const float s = std::sin(radians);
+            for (int i = firstVertex; i < draw->VtxBuffer.Size; ++i) {
+                ImVec2& p = draw->VtxBuffer[i].pos;
+                const float x = p.x - pivot.x;
+                const float y = p.y - pivot.y;
+                p.x = pivot.x + x * c - y * s;
+                p.y = pivot.y + x * s + y * c;
+            }
         };
 
         const ImU32 kYellow = IM_COL32(255, 210, 60, 255);
@@ -4969,12 +5092,41 @@ if (ImGui::BeginMenu("File")) {
                 }
                 break;
             case Galeshi::UIWidgetType::Button: {
-                draw->AddRectFilled(wmin, wmax, accent, widget.radius * scale);
-                const ImVec2 textSize = ImGui::CalcTextSize(widget.label.c_str());
-                draw->AddText(
-                    ImVec2(wmin.x + (wmax.x - wmin.x - textSize.x) * 0.5f,
-                           wmin.y + (wmax.y - wmin.y - textSize.y) * 0.5f),
-                    IM_COL32(255, 255, 255, 255), widget.label.c_str());
+                const ImTextureID image = textureFor(widget.imagePath);
+                if (widget.useColor) {
+                    draw->AddRectFilled(wmin, wmax, accent,
+                                        widget.radius * scale);
+                }
+                if (image) {
+                    draw->AddImageRounded(
+                        image, wmin, wmax, ImVec2(0.0f, 0.0f),
+                        ImVec2(1.0f, 1.0f),
+                        IM_COL32(255, 255, 255, 255),
+                        widget.radius * scale);
+                } else {
+                    draw->AddRectFilled(wmin, wmax, accent,
+                                        widget.radius * scale);
+                }
+                ImFont* widgetFont =
+                    m_uiRuntime.FontForPath(widget.fontPath);
+                const float fontSize = widget.fontSize > 0.0f
+                    ? widget.fontSize * scale
+                    : ImGui::GetFontSize();
+                const ImVec2 textSize = scaledTextSize(
+                    widgetFont, widget.label.c_str(), fontSize);
+                const ImVec2 textPos(
+                    wmin.x + (wmax.x - wmin.x - textSize.x) * 0.5f +
+                        widget.textOffset.x * scale,
+                    wmin.y + (wmax.y - wmin.y - textSize.y) * 0.5f +
+                        widget.textOffset.y * scale);
+                addTextRotated(
+                    widgetFont ? widgetFont : ImGui::GetFont(), fontSize,
+                    textPos,
+                    textColorFor(widget, IM_COL32(255, 255, 255, 255)),
+                    widget.label.c_str(),
+                    ImVec2((wmin.x + wmax.x) * 0.5f,
+                           (wmin.y + wmax.y) * 0.5f),
+                    widget.rotation);
                 break;
             }
             case Galeshi::UIWidgetType::Text: {
@@ -4983,41 +5135,68 @@ if (ImGui::BeginMenu("File")) {
                         ? widget.fontSize * scale
                         : size.y * scale * 0.62f,
                     6.0f, 160.0f);
+                ImFont* widgetFont =
+                    m_uiRuntime.FontForPath(widget.fontPath);
                 const ImVec2 textSize =
-                    scaledTextSize(widget.label.c_str(), fontSize);
-                float textX = wmin.x;
+                    scaledTextSize(widgetFont, widget.label.c_str(), fontSize);
+                float textX = wmin.x + widget.textOffset.x * scale;
+                const float textY = wmin.y + widget.textOffset.y * scale;
                 if (widget.textAlign == Galeshi::UITextAlign::Center) {
                     textX += (wmax.x - wmin.x - textSize.x) * 0.5f;
                 } else if (widget.textAlign == Galeshi::UITextAlign::Right) {
                     textX += wmax.x - wmin.x - textSize.x;
                 }
-                draw->AddText(ImGui::GetFont(), fontSize,
-                              ImVec2(textX, wmin.y), kText,
-                              widget.label.c_str());
+                addTextRotated(widgetFont ? widgetFont : ImGui::GetFont(),
+                               fontSize, ImVec2(textX, textY),
+                               textColorFor(widget, kText),
+                               widget.label.c_str(),
+                               ImVec2((wmin.x + wmax.x) * 0.5f,
+                                      (wmin.y + wmax.y) * 0.5f),
+                               widget.rotation);
                 break;
             }
             case Galeshi::UIWidgetType::Image: {
-                draw->AddRectFilled(wmin, wmax, IM_COL32(30, 30, 30, 210),
-                                    widget.radius * scale);
+                draw->AddRectFilled(
+                    wmin, wmax,
+                    widget.useColor ? toU32(widget.color)
+                                    : IM_COL32(30, 30, 30, 210),
+                    widget.radius * scale);
+                if (const ImTextureID image = textureFor(widget.imagePath)) {
+                    draw->AddImageRounded(
+                        image, wmin, wmax, ImVec2(0.0f, 0.0f),
+                        ImVec2(1.0f, 1.0f),
+                        IM_COL32(255, 255, 255, 255),
+                        widget.radius * scale);
+                } else {
+                    const char* caption =
+                        !widget.imagePath.empty()
+                            ? widget.imagePath.c_str()
+                            : (!widget.label.empty() ? widget.label.c_str()
+                                                     : "[Image]");
+                    const float fontSize =
+                        std::clamp(12.0f * scale, 9.0f, 18.0f);
+                    const ImVec2 textSize =
+                        scaledTextSize(nullptr, caption, fontSize);
+                    draw->AddText(
+                        ImGui::GetFont(), fontSize,
+                        ImVec2(wmin.x +
+                                   (wmax.x - wmin.x - textSize.x) * 0.5f,
+                               wmin.y +
+                                   (wmax.y - wmin.y - textSize.y) * 0.5f),
+                        textColorFor(widget,
+                                     IM_COL32(150, 150, 150, 255)),
+                        caption);
+                }
                 draw->AddRect(wmin, wmax, borderAccent,
                               widget.radius * scale);
-                const char* caption =
-                    !widget.imagePath.empty()
-                        ? widget.imagePath.c_str()
-                        : (!widget.label.empty() ? widget.label.c_str()
-                                                 : "[Image]");
-                const float fontSize = std::clamp(12.0f * scale, 9.0f, 18.0f);
-                const ImVec2 textSize = scaledTextSize(caption, fontSize);
-                draw->AddText(
-                    ImGui::GetFont(), fontSize,
-                    ImVec2(wmin.x + (wmax.x - wmin.x - textSize.x) * 0.5f,
-                           wmin.y + (wmax.y - wmin.y - textSize.y) * 0.5f),
-                    IM_COL32(150, 150, 150, 255), caption);
                 break;
             }
             case Galeshi::UIWidgetType::Progress: {
-                draw->AddRectFilled(wmin, wmax, IM_COL32(25, 25, 25, 220),
-                                    widget.radius * scale);
+                draw->AddRectFilled(
+                    wmin, wmax,
+                    widget.useColor ? toU32(widget.color)
+                                    : IM_COL32(25, 25, 25, 220),
+                    widget.radius * scale);
                 const float fraction = std::clamp(widget.sliderValue, 0.0f, 1.0f);
                 draw->AddRectFilled(wmin,
                                     ImVec2(wmin.x + (wmax.x - wmin.x) * fraction,
@@ -5027,7 +5206,8 @@ if (ImGui::BeginMenu("File")) {
                 draw->AddText(
                     ImVec2(wmin.x + (wmax.x - wmin.x - textSize.x) * 0.5f,
                            wmin.y + (wmax.y - wmin.y - textSize.y) * 0.5f),
-                    IM_COL32(255, 255, 255, 255), widget.label.c_str());
+                    textColorFor(widget, IM_COL32(255, 255, 255, 255)),
+                    widget.label.c_str());
                 break;
             }
             case Galeshi::UIWidgetType::Slider: {
@@ -5043,15 +5223,19 @@ if (ImGui::BeginMenu("File")) {
                 draw->AddCircleFilled(
                     ImVec2(wmin.x + (wmax.x - wmin.x) * fraction, centerY),
                     6.0f, IM_COL32(220, 220, 220, 255));
-                draw->AddText(ImVec2(wmin.x, wmin.y - 16.0f), kText,
+                draw->AddText(ImVec2(wmin.x, wmin.y - 16.0f),
+                              textColorFor(widget, kText),
                               widget.label.c_str());
                 break;
             }
             case Galeshi::UIWidgetType::CheckBox:
             case Galeshi::UIWidgetType::Toggle: {
                 const float box = std::min(18.0f, wmax.y - wmin.y);
-                draw->AddRectFilled(wmin, ImVec2(wmin.x + box, wmin.y + box),
-                                    IM_COL32(30, 30, 30, 230), 3.0f);
+                draw->AddRectFilled(
+                    wmin, ImVec2(wmin.x + box, wmin.y + box),
+                    widget.useColor ? toU32(widget.color)
+                                    : IM_COL32(30, 30, 30, 230),
+                    3.0f);
                 draw->AddRect(wmin, ImVec2(wmin.x + box, wmin.y + box), kBorder,
                               3.0f);
                 if (widget.checked) {
@@ -5062,15 +5246,19 @@ if (ImGui::BeginMenu("File")) {
                 }
                 draw->AddText(ImVec2(wmin.x + box + 6.0f,
                                      wmin.y + (box - ImGui::GetFontSize()) * 0.5f),
-                              kText, widget.label.c_str());
+                              textColorFor(widget, kText),
+                              widget.label.c_str());
                 break;
             }
             case Galeshi::UIWidgetType::Input:
             case Galeshi::UIWidgetType::Dropdown:
             case Galeshi::UIWidgetType::ScrollList:
             case Galeshi::UIWidgetType::LayoutGroup: {
-                draw->AddRectFilled(wmin, wmax, IM_COL32(25, 25, 25, 220),
-                                    widget.radius * scale);
+                draw->AddRectFilled(
+                    wmin, wmax,
+                    widget.useColor ? toU32(widget.color)
+                                    : IM_COL32(25, 25, 25, 220),
+                    widget.radius * scale);
                 draw->AddRect(wmin, wmax, borderAccent,
                               widget.radius * scale);
                 const char* preview = widget.label.c_str();
@@ -5083,7 +5271,9 @@ if (ImGui::BeginMenu("File")) {
                         widget.options[static_cast<size_t>(selected)].c_str();
                 }
                 draw->AddText(ImVec2(wmin.x + 4.0f, wmin.y + 4.0f),
-                              IM_COL32(160, 160, 160, 255), preview);
+                              textColorFor(widget,
+                                           IM_COL32(160, 160, 160, 255)),
+                              preview);
                 break;
             }
             default:

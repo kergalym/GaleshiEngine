@@ -4,6 +4,7 @@
 #include "GaleshiEngine/Scene/Components.hpp"
 #include "GaleshiEngine/Scripting/ScriptEngine.hpp"
 #include "GaleshiEngine/UI/UIRuntime.hpp"
+#include "GaleshiEngine/Renderer/ImGuiBgfx.hpp"
 
 #include <imgui.h>
 #include <spdlog/spdlog.h>
@@ -23,6 +24,9 @@ protected:
         m_scripts.BindFunctions();
         m_scripts.BindECS(m_scene);
         m_assets = std::make_unique<Galeshi::AssetManager>();
+        m_ui.SetAssetManager(m_assets.get());
+        m_ui.SetFontAtlasChangedCallback(
+            []() { Galeshi::ImGuiBgfx::ReloadFontTexture(); });
         m_scripts.BindAssets(m_assets.get());
         m_scripts.BindEngine([this]() { RequestExit(); });
         if (!m_scripts.RunScript("assets/scripts/ui_menu.lua")) {
@@ -114,7 +118,10 @@ protected:
         }
     }
 
-    void OnUpdate(float dt) override { m_scripts.Update(dt); }
+    void OnUpdate(float dt) override {
+        m_ui.PreloadFonts(m_scene);
+        m_scripts.Update(dt);
+    }
 
     void OnImGui() override { m_ui.Render(m_scene); }
 

@@ -42,10 +42,21 @@ void ImGuiBgfx::Init() {
     }
 
     // Legacy API: create the font texture manually.
+    ReloadFontTexture();
+}
+
+void ImGuiBgfx::ReloadFontTexture() {
+    ImGuiIO& io = ImGui::GetIO();
+
     unsigned char* pixels = nullptr;
     int width = 0, height = 0;
     io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+    if (!pixels || width <= 0 || height <= 0) return;
 
+    if (bgfx::isValid(g_fontTexture)) {
+        bgfx::destroy(g_fontTexture);
+        g_fontTexture = BGFX_INVALID_HANDLE;
+    }
     g_fontTexture = bgfx::createTexture2D(
         static_cast<uint16_t>(width),
         static_cast<uint16_t>(height),
@@ -55,7 +66,6 @@ void ImGuiBgfx::Init() {
     );
 
     io.Fonts->SetTexID(static_cast<ImTextureID>(g_fontTexture.idx));
-    
     spdlog::info("[ImGuiBgfx] Font texture created: {}x{}", width, height);
 }
 
