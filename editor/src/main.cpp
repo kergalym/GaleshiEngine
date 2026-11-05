@@ -4831,9 +4831,48 @@ if (ImGui::BeginMenu("File")) {
                 ImGui::EndDragDropTarget();
             };
 
+        const auto drawImageDropField =
+            [this](const char* label, std::string& value) {
+                ImGui::PushID(label);
+                ImGui::TextUnformatted(label);
+                const std::string caption = value.empty()
+                    ? "Drop image here"
+                    : std::filesystem::path(value).filename().string();
+                const float width = ImGui::GetContentRegionAvail().x;
+                ImGui::Button(caption.c_str(), ImVec2(width, 32.0f));
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "%s\nDrag a PNG/JPG/TGA/DDS image from the Content Browser.",
+                        value.empty() ? "No image assigned."
+                                      : value.c_str());
+                }
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload =
+                            ImGui::AcceptDragDropPayload(
+                                "GALESHI_ASSET_PATH")) {
+                        const char* path =
+                            static_cast<const char*>(payload->Data);
+                        if (path && IsImageAssetPath(path)) {
+                            PushHistory();
+                            value = m_assets
+                                ? m_assets->MakeRelativePath(path)
+                                : std::string(path);
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                if (!value.empty()) {
+                    if (ImGui::SmallButton("Clear Image Path")) {
+                        PushHistory();
+                        value.clear();
+                    }
+                }
+                ImGui::PopID();
+            };
+
         switch (widget.type) {
         case Galeshi::UIWidgetType::Button:
-            drawAssetPathField("Image Path", widget.imagePath, false);
+            drawImageDropField("Image Path", widget.imagePath);
             ImGui::DragFloat("Height", &widget.buttonHeight, 0.5f, 0.0f, 400.0f);
             break;
         case Galeshi::UIWidgetType::Text: {
@@ -4914,7 +4953,7 @@ if (ImGui::BeginMenu("File")) {
             break;
         }
         case Galeshi::UIWidgetType::Image:
-            drawAssetPathField("Image Path", widget.imagePath, false);
+            drawImageDropField("Image Path", widget.imagePath);
             break;
         default:
             break;
