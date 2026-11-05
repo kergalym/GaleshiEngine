@@ -563,6 +563,9 @@ std::string SceneSerializer::SaveToString(bool includeEditorState) const {
             {"text", m_codeEditorText},
             {"cppMode", m_codeEditorCppMode}
         };
+        root["contentBrowser"] = {
+            {"path", m_contentBrowserPath}
+        };
     }
 
     // Iterate once and assign stable ids.  ParentComponent stores an entt
@@ -1226,6 +1229,10 @@ void SceneSerializer::SetCodeEditorState(std::string path, std::string text,
     m_codeEditorCppMode = cppMode;
 }
 
+void SceneSerializer::SetContentBrowserPath(std::string path) {
+    m_contentBrowserPath = std::move(path);
+}
+
 bool SceneSerializer::Load(const std::string& path,
                            const std::atomic<bool>* cancel) {
     std::ifstream in(path);
@@ -1268,6 +1275,12 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
         m_codeEditorPath = codeEditor.value("path", std::string{});
         m_codeEditorText = codeEditor.value("text", std::string{});
         m_codeEditorCppMode = codeEditor.value("cppMode", false);
+    }
+    m_contentBrowserPath.clear();
+    if (root.contains("contentBrowser") &&
+        root["contentBrowser"].is_object()) {
+        m_contentBrowserPath = root["contentBrowser"].value(
+            "path", std::string{});
     }
 
     // Start from defaults so scenes saved before the mixer existed do not

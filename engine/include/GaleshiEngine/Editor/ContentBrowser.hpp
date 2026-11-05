@@ -27,6 +27,11 @@ public:
     // Folder currently shown in the browser. File-manager drops that land on
     // the Content Browser are imported here.
     const std::filesystem::path& CurrentDirectory() const { return m_current; }
+    const std::filesystem::path& RootDirectory() const { return m_root; }
+
+    // Restores a folder saved with the scene. Relative paths are resolved
+    // against the content root; invalid paths fall back to the root.
+    void SetDirectory(const std::string& path);
 
     // Copies external files into destDir and refreshes the browser. Returns
     // true when at least one file was imported.

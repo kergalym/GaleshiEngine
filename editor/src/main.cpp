@@ -2105,6 +2105,10 @@ private:
             if (s.sceneLoaded.exchange(false, std::memory_order_acquire)) {
                 ApplySceneViewState();
                 RestoreCodeEditorStateFromSerializer();
+                if (m_browser && !m_serializer->ContentBrowserPath().empty()) {
+                    m_browser->SetDirectory(
+                        m_serializer->ContentBrowserPath());
+                }
                 // A loaded scene is a new history root; snapshots from the
                 // previous document must never be reachable through Undo.
                 m_history.clear();
@@ -3660,6 +3664,13 @@ if (ImGui::BeginMenu("File")) {
         if (!m_serializer || path.empty()) return;
         CaptureSceneViewState();
         SyncCodeEditorStateToSerializer();
+        if (m_browser) {
+            std::error_code ec;
+            const std::filesystem::path relative = std::filesystem::relative(
+                m_browser->CurrentDirectory(), m_browser->RootDirectory(), ec);
+            m_serializer->SetContentBrowserPath(
+                ec ? std::string{} : relative.generic_string());
+        }
         if (m_serializer->Save(path)) {
             m_currentScenePath =
                 std::filesystem::absolute(path).lexically_normal().string();

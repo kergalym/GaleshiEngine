@@ -693,6 +693,20 @@ ContentBrowser::ContentBrowser(std::string rootDir, AssetManager* assets)
     Refresh();
 }
 
+void ContentBrowser::SetDirectory(const std::string& path) {
+    std::error_code ec;
+    fs::path target = fs::path(path);
+    if (target.is_relative()) target = fs::path(m_root) / target;
+    target = target.lexically_normal();
+
+    if (!fs::is_directory(target, ec) || !IsInsideRoot(target)) {
+        spdlog::warn("[ContentBrowser] Ignoring saved folder '{}'", path);
+        target = fs::path(m_root);
+    }
+    m_current = target;
+    Refresh();
+}
+
 void ContentBrowser::Refresh() {
     m_entries.clear();
     std::error_code ec;

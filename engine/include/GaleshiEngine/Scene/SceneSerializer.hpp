@@ -32,12 +32,18 @@ public:
     const std::string& CodeEditorText() const { return m_codeEditorText; }
     bool CodeEditorCppMode() const { return m_codeEditorCppMode; }
 
+    void SetContentBrowserPath(std::string path);
+    const std::string& ContentBrowserPath() const {
+        return m_contentBrowserPath;
+    }
+
 private:
     Scene&        m_scene;
     AssetManager& m_assets;
     std::string   m_codeEditorPath;
     std::string   m_codeEditorText;
     bool          m_codeEditorCppMode = false;
+    std::string   m_contentBrowserPath;
 };
 
 } // namespace Galeshi
