@@ -7,6 +7,26 @@ find_package(PNG REQUIRED)
 
 add_executable(GaleshiEditor
     src/main.cpp
+    src/EditorApp.cpp
+    src/EditorAnimation.cpp
+    src/EditorAssets.cpp
+    src/EditorAudio.cpp
+    src/EditorCamera.cpp
+    src/EditorCodeEditor.cpp
+    src/EditorDetails.cpp
+    src/EditorLandscape.cpp
+    src/EditorLoading.cpp
+    src/EditorMiscPanels.cpp
+    src/EditorOutliner.cpp
+    src/EditorPackage.cpp
+    src/EditorPanels.cpp
+    src/EditorPhysics.cpp
+    src/EditorPostProcess.cpp
+    src/EditorProject.cpp
+    src/EditorSceneIO.cpp
+    src/EditorSupport.cpp
+    src/EditorUIDesigner.cpp
+    src/EditorViewport.cpp
     src/TextEditor/TextEditor.cpp
 )
 
