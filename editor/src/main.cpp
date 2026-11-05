@@ -168,6 +168,11 @@ static bool IsImageAssetPath(const std::string& path) {
            extension == ".ktx";
 }
 
+static bool IsAudioAssetPath(const std::string& path) {
+    const std::string extension = AssetExtensionLower(path);
+    return extension == ".wav" || extension == ".mp3";
+}
+
 static bool IsCppCodeAssetPath(const std::string& path) {
     const std::string extension = AssetExtensionLower(path);
     return extension == ".cpp" || extension == ".cc" ||
@@ -563,7 +568,7 @@ protected:
             return;
         }
         if (!IsDragDropModelAssetPath(filepath) && !IsImageAssetPath(filepath) &&
-            ext != ".wav" && ext != ".mp3") {
+            !IsAudioAssetPath(filepath)) {
             return;
         }
 
@@ -1754,7 +1759,9 @@ protected:
             if (ImGui::GetIO().KeyCtrl) {
                 if (ImGui::IsKeyPressed(ImGuiKey_N)) NewScene();
                 if (ImGui::IsKeyPressed(ImGuiKey_I)) OpenFileDialog();
-                if (ImGui::IsKeyPressed(ImGuiKey_S)) SaveScene();
+                if (ImGui::IsKeyPressed(ImGuiKey_S)) {
+                    SaveScene(ImGui::GetIO().KeyShift);
+                }
                 if (ImGui::IsKeyPressed(ImGuiKey_O)) LoadScene();
                 if (ImGui::IsKeyPressed(ImGuiKey_Z)) Undo();
                 if (ImGui::IsKeyPressed(ImGuiKey_Y)) Redo();
@@ -1807,17 +1814,7 @@ protected:
 
         std::string chosenSave = m_filePickerSave.Draw();
         if (!chosenSave.empty()) {
-            if (m_serializer) {
-                CaptureSceneViewState();
-                SyncCodeEditorStateToSerializer();
-                if (m_serializer->Save(chosenSave)) {
-                    m_currentScenePath = std::filesystem::absolute(chosenSave).lexically_normal().string();
-                    AddRecentScene(m_currentScenePath);
-                    spdlog::info("[Editor] Scene saved to {}", m_currentScenePath);
-                } else {
-                    spdlog::error("[Editor] Failed to save scene to {}", chosenSave);
-                }
-            }
+            SaveSceneToPath(chosenSave);
         }
 
         // Load Scene dialog (.json)
@@ -1855,6 +1852,27 @@ protected:
             }
             m_animationClipTarget = entt::null;
             m_animationClipState = -1;
+        }
+
+        std::string chosenAudio = m_audioPicker.Draw();
+        if (!chosenAudio.empty() && m_audioPickerTarget != entt::null) {
+            auto& audioRegistry = m_scene.Registry();
+            if (audioRegistry.valid(m_audioPickerTarget) &&
+                audioRegistry.all_of<Galeshi::AudioSourceComponent>(
+                    m_audioPickerTarget)) {
+                PushHistory();
+                auto& source =
+                    audioRegistry.get<Galeshi::AudioSourceComponent>(
+                        m_audioPickerTarget);
+                m_audio.StopSource(m_audioPickerTarget);
+                source.soundPath = m_assets
+                    ? m_assets->MakeRelativePath(chosenAudio)
+                    : chosenAudio;
+                source.playing = false;
+            }
+            m_audioPickerTarget = entt::null;
+        } else if (!m_audioPicker.IsOpen()) {
+            m_audioPickerTarget = entt::null;
         }
 
         // Static tree-mesh picker for the selected landscape vegetation.
@@ -3227,6 +3245,9 @@ if (ImGui::BeginMenu("File")) {
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveScene();
+            if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S")) {
+                SaveScene(true);
+            }
             if (ImGui::MenuItem("Import Model...", "Ctrl+I")) OpenFileDialog();
             ImGui::Separator();
             if (ImGui::MenuItem("Exit")) RequestExit();
@@ -3613,12 +3634,32 @@ if (ImGui::BeginMenu("File")) {
     // -------------------------------------------------------------------
     // Save / Load / Delete
     // -------------------------------------------------------------------
-    void SaveScene() {
+    void SaveSceneToPath(const std::string& path) {
+        if (!m_serializer || path.empty()) return;
+        CaptureSceneViewState();
+        SyncCodeEditorStateToSerializer();
+        if (m_serializer->Save(path)) {
+            m_currentScenePath =
+                std::filesystem::absolute(path).lexically_normal().string();
+            AddRecentScene(m_currentScenePath);
+            spdlog::info("[Editor] Scene saved to {}", m_currentScenePath);
+        } else {
+            spdlog::error("[Editor] Failed to save scene to {}", path);
+        }
+    }
+
+    void SaveScene(bool saveAs = false) {
+        if (!saveAs && !m_currentScenePath.empty()) {
+            SaveSceneToPath(m_currentScenePath);
+            return;
+        }
         const std::string start = SceneStartDirectory();
         const std::string fileName = m_currentScenePath.empty()
             ? "scene.json"
             : std::filesystem::path(m_currentScenePath).filename().string();
-        m_filePickerSave.SaveAs(start, fileName, "Save Scene", { ".json" });
+        m_filePickerSave.SaveAs(
+            start, fileName, saveAs ? "Save Scene As" : "Save Scene",
+            { ".json" });
     }
     
     void LoadScene() {
@@ -11350,12 +11391,75 @@ void DrawDetails() {
                     auto& audio = sel.GetComponent<Galeshi::AudioSourceComponent>();
                     if (beginDetailsSection(
                             "Audio Source", 0,
-                            "audio sound path bus autoplay loop spatial volume "
-                            "pitch attenuation distance rolloff doppler offset")) {
-                        char buf[512];
-                        snprintf(buf, sizeof buf, "%s", audio.soundPath.c_str());
-                        if (ImGui::InputText("Sound Path", buf, sizeof buf)) {
-                            audio.soundPath = buf;
+                            "audio sound file drop wav mp3 bus autoplay loop "
+                            "spatial volume pitch attenuation distance rolloff "
+                            "doppler offset")) {
+                        const auto openAudioPicker = [&]() {
+                            m_audioPickerTarget = sel.Handle();
+                            std::string start = "assets";
+                            const std::string projectPath =
+                                Galeshi::ProjectManager::GetProjectPath();
+                            if (!projectPath.empty()) {
+                                start = (std::filesystem::path(projectPath) /
+                                         "assets").string();
+                            }
+                            m_audioPicker.Open(
+                                start, "Select Sound", {".wav", ".mp3"});
+                        };
+
+                        const std::string soundLabel =
+                            audio.soundPath.empty()
+                                ? "Drop WAV/MP3 sound here"
+                                : std::filesystem::path(audio.soundPath)
+                                      .filename()
+                                      .string();
+                        const float browseWidth = 82.0f;
+                        const float soundWidth = std::max(
+                            120.0f,
+                            ImGui::GetContentRegionAvail().x - browseWidth -
+                                ImGui::GetStyle().ItemSpacing.x);
+                        if (ImGui::Button(
+                                soundLabel.c_str(),
+                                ImVec2(soundWidth, 32.0f))) {
+                            openAudioPicker();
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip(
+                                "%s\nDrop a WAV/MP3 file from the Content "
+                                "Browser, or click to browse.",
+                                audio.soundPath.empty()
+                                    ? "No sound assigned."
+                                    : audio.soundPath.c_str());
+                        }
+                        if (ImGui::BeginDragDropTarget()) {
+                            if (const ImGuiPayload* payload =
+                                    ImGui::AcceptDragDropPayload(
+                                        "GALESHI_ASSET_PATH")) {
+                                const char* path =
+                                    static_cast<const char*>(payload->Data);
+                                if (path && IsAudioAssetPath(path)) {
+                                    PushHistory();
+                                    m_audio.StopSource(sel.Handle());
+                                    audio.soundPath = m_assets
+                                        ? m_assets->MakeRelativePath(path)
+                                        : std::string(path);
+                                    audio.playing = false;
+                                }
+                            }
+                            ImGui::EndDragDropTarget();
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Browse...")) {
+                            openAudioPicker();
+                        }
+                        if (!audio.soundPath.empty()) {
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Clear")) {
+                                PushHistory();
+                                m_audio.StopSource(sel.Handle());
+                                audio.soundPath.clear();
+                                audio.playing = false;
+                            }
                         }
 
                         const char* busNames[Galeshi::kAudioBusCount] = {
@@ -15353,6 +15457,8 @@ void DrawDetails() {
     Galeshi::FilePickerDialog m_animationClipPicker;
     entt::entity m_animationClipTarget = entt::null;
     int m_animationClipState = -1;
+    Galeshi::FilePickerDialog m_audioPicker;
+    entt::entity m_audioPickerTarget = entt::null;
     int m_paintTreeType = -1;
 
     // Details search. The scroll flag makes the first matching section jump
