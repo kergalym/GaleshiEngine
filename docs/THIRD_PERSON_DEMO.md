@@ -10,12 +10,15 @@ complete combat or character controller.
 
 ## What the script does
 
-- Finds or optionally creates a `Player` entity.
-- Optionally creates a capsule rigid body for the player.
+- Finds or optionally creates a non-physical `Player` visual root.
+- Finds or optionally creates a separate `PlayerPhysics` entity with a
+  dynamic capsule body.
 - Switches the gameplay camera to third-person orbit.
-- Moves the player relative to the camera with acceleration.
+- Moves the physics proxy relative to the camera with acceleration, then
+  copies its position to the visual Player root.
 - Supports sprinting, jumping, respawning and a simple attack trigger.
-- Rotates the player toward the movement direction.
+- Rotates the Player root toward the movement direction. Physics cannot
+  overwrite this rotation because the Player itself has no rigid body.
 - Sends `Speed`, `Jump`, `Attack` and `Respawn` signals to the animation state
   machine when those parameters/states exist.
 - Plays optional footstep and attack sounds.
@@ -23,12 +26,12 @@ complete combat or character controller.
 
 ## Scene setup
 
-The script can create a basic physics player, but a scene needs a ground and a
-camera.
+The script can create the Player and physics proxy, but a scene needs a ground
+and a camera.
 
 1. Create a scene with a ground.
    - Use a landscape or a large ground mesh with a static collider.
-   - The player needs collision to stand and jump.
+   - The physics proxy needs collision to stand and jump.
 
 2. Create a camera:
    - **Create → Camera**.
@@ -40,13 +43,25 @@ camera.
 
 3. Create the player:
    - Option A: create an entity named `Player`, give it a visible model/mesh,
-     and add a **Capsule Collider** and **Rigid Body**.
-   - Option B: let the script create a Player root and capsule body. Set
+     and **do not add a Rigid Body or Collider**. The Player root is the visual
+     and camera target; it must remain non-physical.
+   - Option B: let the script create a non-physical Player root. Set
      `kPlayerModel` to a model path that exists in your project. The script
      spawns it as a visual child. If the model path is missing, the player is
-     invisible but physics and camera tracking still work.
+     invisible but movement and camera tracking still work.
+   - Keep the Player at the scene root. The script writes its position in world
+     coordinates.
 
-4. Copy `third_person_demo.cpp` into the project:
+4. Physics proxy:
+   - The script creates an entity named `PlayerPhysics` at the Player's feet
+     plus the capsule center offset, and attaches a dynamic capsule.
+   - If you want to author it manually, make it a root entity with a dynamic
+     **Capsule Collider** and **Rigid Body**. The script reuses it.
+   - An older `Player` with a Rigid Body is handled by destroying that body at
+     startup. Remove the leftover Rigid Body/Collider components in the
+     inspector for a clean scene.
+
+5. Copy `third_person_demo.cpp` into the project:
 
    ```text
    <project>/scripts/third_person_demo.cpp
@@ -58,7 +73,7 @@ camera.
    <project>/assets/scripts/third_person_demo.cpp
    ```
 
-5. Open the project in the editor, wait for the C++ script to compile, and
+6. Open the project in the editor, wait for the C++ script to compile, and
    press **Play**.
 
 ## Controls
@@ -80,20 +95,26 @@ The top of `third_person_demo.cpp` contains the main constants:
 
 ```cpp
 constexpr const char* kPlayerName = "Player";
+constexpr const char* kPlayerPhysicsName = "PlayerPhysics";
 constexpr const char* kCameraName = "Camera";
 constexpr const char* kPlayerModel = "assets/models/player.glb";
 
 constexpr bool kAutoCreatePlayer = true;
-constexpr bool kAutoAttachPhysics = true;
+constexpr bool kAutoCreatePhysicsProxy = true;
 constexpr bool kAutoParentCamera = true;
 
-constexpr Vec3 kSpawn{0.0f, 2.0f, 0.0f};
+constexpr Vec3 kSpawn{0.0f, 2.0f, 0.0f}; // Player feet
 constexpr float kWalkSpeed = 4.5f;
 constexpr float kRunSpeed = 8.5f;
 constexpr float kJumpSpeed = 7.0f;
 constexpr float kCapsuleHalfHeight = 0.85f;
 constexpr float kCapsuleRadius = 0.35f;
+constexpr float kCapsuleCenterY = kCapsuleHalfHeight + kCapsuleRadius;
 ```
+
+`kSpawn` is the visual Player position (feet). The script sets the physics
+proxy at `kSpawn.y + kCapsuleCenterY` because a Jolt capsule is centered on its
+body origin.
 
 ### Model facing direction
 
@@ -147,7 +168,7 @@ The script creates a canvas named `ThirdPersonHUD` with a text widget named
 
 - horizontal speed,
 - grounded/airborne state,
-- whether the player has a physics body.
+- whether `PlayerPhysics` has a rigid body.
 
 The UI API is idempotent: reloading the script reuses an existing canvas and
 widget rather than creating duplicates.
@@ -176,7 +197,12 @@ This is a demo controller, not a production character system:
 - Attack has no hit detection, damage, combo system or networking.
 - The camera auto-parent heuristic only looks for a camera named `Camera`
   that has no parent.
-- Only one player entity is controlled.
+- The Player root must stay unparented; position is copied from the proxy in
+  world space.
+- Destroying a legacy Player body leaves its `RigidBodyComponent` and
+  `ColliderComponent` in the scene. Remove them in the inspector for a clean
+  setup.
+- Only one player and one `PlayerPhysics` are controlled.
 - The player needs a suitable model or mesh for a visible result.
 - Camera collision, animation root motion and network prediction are outside
   this sample.
