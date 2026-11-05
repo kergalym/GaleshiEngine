@@ -1471,7 +1471,8 @@ protected:
             std::error_code ec;
             std::filesystem::create_directories(browserRoot, ec);
         }
-        m_browser    = std::make_unique<Galeshi::ContentBrowser>(browserRoot);
+        m_browser    = std::make_unique<Galeshi::ContentBrowser>(
+            browserRoot, m_assets.get());
         m_serializer = std::make_unique<Galeshi::SceneSerializer>(m_scene, *m_assets);
         LoadRecentScenes();
 

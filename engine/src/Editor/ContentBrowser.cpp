@@ -1222,68 +1222,66 @@ std::string ContentBrowser::Draw() {
     const auto drawThumbnail = [this, &entryExtension, &isImage](
                                    const Entry& entry, float size) {
         const std::string ext = entryExtension(entry);
+        ImTextureID textureId = 0;
         if (!entry.isDirectory && isImage(entry) && m_assets) {
             auto texture = m_assets->LoadTexture(entry.path.string(), true);
             if (texture && texture != m_assets->WhiteTexture() &&
                 bgfx::isValid(texture->Handle())) {
-                ImGui::Image(
-                    static_cast<ImTextureID>(texture->Handle().idx),
-                    ImVec2(size, size), ImVec2(0.0f, 1.0f),
-                    ImVec2(1.0f, 0.0f));
-                return;
+                textureId = static_cast<ImTextureID>(texture->Handle().idx);
             }
         }
 
-        const ImVec2 pos = ImGui::GetCursorScreenPos();
-        const ImVec2 max(pos.x + size, pos.y + size);
+        ImGui::InvisibleButton("##thumbnail", ImVec2(size, size));
+        const bool doubleClicked = ImGui::IsItemHovered() &&
+            ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+        const ImVec2 pos = ImGui::GetItemRectMin();
+        const ImVec2 max = ImGui::GetItemRectMax();
         ImDrawList* drawList = ImGui::GetWindowDrawList();
-        const float rounding = std::max(2.0f, size * 0.12f);
-        ImU32 accent = IM_COL32(115, 135, 160, 255);
+        const ImU32 tileBg = IM_COL32(38, 38, 38, 235);
+        const ImU32 icon = IM_COL32(210, 210, 210, 255);
+        const ImU32 iconDim = IM_COL32(145, 145, 145, 255);
+        const ImU32 border = IM_COL32(95, 95, 95, 255);
         std::string label = "FILE";
 
+        if (textureId) {
+            drawList->AddImage(textureId, pos, max, ImVec2(0.0f, 1.0f),
+                               ImVec2(1.0f, 0.0f));
+            drawList->AddRect(pos, max, border, 0.0f, 0, 1.0f);
+            return doubleClicked;
+        }
+
+        drawList->AddRectFilled(pos, max, tileBg);
         if (entry.isDirectory) {
-            accent = IM_COL32(214, 171, 75, 255);
-            drawList->AddRectFilled(pos, max, IM_COL32(32, 36, 43, 235),
-                                    rounding);
+            label.clear();
             const float margin = std::max(1.0f, size * 0.12f);
-            const float tabHeight = size * 0.18f;
+            const float tabHeight = size * 0.22f;
             drawList->AddRectFilled(
-                ImVec2(pos.x + margin, pos.y + margin * 0.7f),
-                ImVec2(pos.x + size * 0.58f, pos.y + tabHeight),
-                accent, rounding * 0.45f);
+                ImVec2(pos.x + margin, pos.y + margin * 0.6f),
+                ImVec2(pos.x + size * 0.58f, pos.y + tabHeight), iconDim);
             drawList->AddRectFilled(
-                ImVec2(pos.x + margin, pos.y + tabHeight * 0.85f),
-                ImVec2(max.x - margin, max.y - margin), accent,
-                rounding * 0.65f);
+                ImVec2(pos.x + margin, pos.y + tabHeight),
+                ImVec2(max.x - margin, max.y - margin), icon);
         } else {
             if (isImage(entry)) {
-                accent = IM_COL32(74, 166, 184, 255);
                 label = "IMG";
             } else if (ext == ".gltf" || ext == ".glb" || ext == ".obj" ||
                        ext == ".dae" || ext == ".fbx") {
-                accent = IM_COL32(85, 139, 214, 255);
                 label = "3D";
             } else if (ext == ".wav" || ext == ".mp3" || ext == ".ogg" ||
                        ext == ".flac") {
-                accent = IM_COL32(88, 180, 121, 255);
                 label = "SND";
             } else if (ext == ".lua") {
-                accent = IM_COL32(93, 178, 226, 255);
                 label = "LUA";
             } else if (ext == ".cpp" || ext == ".cc" || ext == ".cxx" ||
                        ext == ".hpp" || ext == ".h") {
-                accent = IM_COL32(206, 122, 91, 255);
                 label = "C++";
             } else if (ext == ".ttf" || ext == ".otf") {
-                accent = IM_COL32(170, 128, 214, 255);
                 label = "Aa";
             } else if (ext == ".glsl" || ext == ".hlsl" ||
                        ext == ".vert" || ext == ".frag" ||
                        ext == ".comp") {
-                accent = IM_COL32(202, 100, 180, 255);
                 label = "FX";
             } else if (ext == ".scene" || ext == ".json") {
-                accent = IM_COL32(195, 160, 85, 255);
                 label = ext == ".json" ? "JSON" : "SCN";
             } else if (!ext.empty()) {
                 label = ext.substr(1);
@@ -1294,14 +1292,10 @@ std::string ContentBrowser::Draw() {
                 if (label.size() > 4) label.resize(4);
             }
 
-            drawList->AddRectFilled(pos, max, IM_COL32(32, 36, 43, 235),
-                                    rounding);
+            drawList->AddRect(pos, max, border, 0.0f, 0, 1.0f);
             drawList->AddRectFilled(
                 ImVec2(pos.x + size * 0.14f, pos.y + size * 0.14f),
-                ImVec2(max.x - size * 0.14f, pos.y + size * 0.30f),
-                accent, rounding * 0.4f);
-            drawList->AddRect(pos, max, IM_COL32(255, 255, 255, 22),
-                              rounding);
+                ImVec2(max.x - size * 0.14f, pos.y + size * 0.30f), iconDim);
         }
 
         if (size >= 24.0f && !label.empty()) {
@@ -1313,9 +1307,9 @@ std::string ContentBrowser::Draw() {
                 font, fontSize,
                 ImVec2(pos.x + (size - textSize.x) * 0.5f,
                        pos.y + (size - textSize.y) * 0.5f),
-                IM_COL32(235, 240, 248, 255), label.c_str());
+                icon, label.c_str());
         }
-        ImGui::Dummy(ImVec2(size, size));
+        return doubleClicked;
     };
     const auto entryType = [&entryExtension](const Entry& entry) {
         if (entry.isDirectory) return std::string("Folder");
@@ -1410,7 +1404,7 @@ std::string ContentBrowser::Draw() {
                 ImGui::TableNextColumn();
                 ImGui::PushID(e.path.string().c_str());
                 ImGui::BeginGroup();
-                drawThumbnail(e, iconSize);
+                if (drawThumbnail(e, iconSize)) activateEntry(e);
                 if (ImGui::Selectable(
                         e.name.c_str(), false,
                         ImGuiSelectableFlags_AllowDoubleClick)) {
@@ -1440,7 +1434,7 @@ std::string ContentBrowser::Draw() {
                 ImGui::PushID(e.path.string().c_str());
 
                 ImGui::TableSetColumnIndex(0);
-                drawThumbnail(e, 16.0f);
+                if (drawThumbnail(e, 16.0f)) activateEntry(e);
                 ImGui::SameLine();
                 if (ImGui::Selectable(
                         e.name.c_str(), false,
@@ -1464,7 +1458,7 @@ std::string ContentBrowser::Draw() {
         for (const auto& e : m_entries) {
             ImGui::PushID(e.path.string().c_str());
             ImGui::BeginGroup();
-            drawThumbnail(e, 16.0f);
+            if (drawThumbnail(e, 16.0f)) activateEntry(e);
             ImGui::SameLine();
             if (ImGui::Selectable(
                     e.name.c_str(), false,
