@@ -1224,7 +1224,8 @@ std::string ContentBrowser::Draw() {
         const std::string ext = entryExtension(entry);
         if (!entry.isDirectory && isImage(entry) && m_assets) {
             auto texture = m_assets->LoadTexture(entry.path.string(), true);
-            if (texture && bgfx::isValid(texture->Handle())) {
+            if (texture && texture != m_assets->WhiteTexture() &&
+                bgfx::isValid(texture->Handle())) {
                 ImGui::Image(
                     static_cast<ImTextureID>(texture->Handle().idx),
                     ImVec2(size, size), ImVec2(0.0f, 1.0f),
@@ -1232,15 +1233,89 @@ std::string ContentBrowser::Draw() {
                 return;
             }
         }
+
+        const ImVec2 pos = ImGui::GetCursorScreenPos();
+        const ImVec2 max(pos.x + size, pos.y + size);
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        const float rounding = std::max(2.0f, size * 0.12f);
+        ImU32 accent = IM_COL32(115, 135, 160, 255);
+        std::string label = "FILE";
+
         if (entry.isDirectory) {
-            ImGui::TextDisabled("[D]");
-        } else if (isImage(entry)) {
-            ImGui::TextDisabled("[IMG]");
-        } else if (!ext.empty()) {
-            ImGui::TextDisabled("[%s]", ext.substr(1).c_str());
+            accent = IM_COL32(214, 171, 75, 255);
+            drawList->AddRectFilled(pos, max, IM_COL32(32, 36, 43, 235),
+                                    rounding);
+            const float margin = std::max(1.0f, size * 0.12f);
+            const float tabHeight = size * 0.18f;
+            drawList->AddRectFilled(
+                ImVec2(pos.x + margin, pos.y + margin * 0.7f),
+                ImVec2(pos.x + size * 0.58f, pos.y + tabHeight),
+                accent, rounding * 0.45f);
+            drawList->AddRectFilled(
+                ImVec2(pos.x + margin, pos.y + tabHeight * 0.85f),
+                ImVec2(max.x - margin, max.y - margin), accent,
+                rounding * 0.65f);
         } else {
-            ImGui::TextDisabled("[F]");
+            if (isImage(entry)) {
+                accent = IM_COL32(74, 166, 184, 255);
+                label = "IMG";
+            } else if (ext == ".gltf" || ext == ".glb" || ext == ".obj" ||
+                       ext == ".dae" || ext == ".fbx") {
+                accent = IM_COL32(85, 139, 214, 255);
+                label = "3D";
+            } else if (ext == ".wav" || ext == ".mp3" || ext == ".ogg" ||
+                       ext == ".flac") {
+                accent = IM_COL32(88, 180, 121, 255);
+                label = "SND";
+            } else if (ext == ".lua") {
+                accent = IM_COL32(93, 178, 226, 255);
+                label = "LUA";
+            } else if (ext == ".cpp" || ext == ".cc" || ext == ".cxx" ||
+                       ext == ".hpp" || ext == ".h") {
+                accent = IM_COL32(206, 122, 91, 255);
+                label = "C++";
+            } else if (ext == ".ttf" || ext == ".otf") {
+                accent = IM_COL32(170, 128, 214, 255);
+                label = "Aa";
+            } else if (ext == ".glsl" || ext == ".hlsl" ||
+                       ext == ".vert" || ext == ".frag" ||
+                       ext == ".comp") {
+                accent = IM_COL32(202, 100, 180, 255);
+                label = "FX";
+            } else if (ext == ".scene" || ext == ".json") {
+                accent = IM_COL32(195, 160, 85, 255);
+                label = ext == ".json" ? "JSON" : "SCN";
+            } else if (!ext.empty()) {
+                label = ext.substr(1);
+                for (char& c : label) {
+                    c = static_cast<char>(
+                        std::toupper(static_cast<unsigned char>(c)));
+                }
+                if (label.size() > 4) label.resize(4);
+            }
+
+            drawList->AddRectFilled(pos, max, IM_COL32(32, 36, 43, 235),
+                                    rounding);
+            drawList->AddRectFilled(
+                ImVec2(pos.x + size * 0.14f, pos.y + size * 0.14f),
+                ImVec2(max.x - size * 0.14f, pos.y + size * 0.30f),
+                accent, rounding * 0.4f);
+            drawList->AddRect(pos, max, IM_COL32(255, 255, 255, 22),
+                              rounding);
         }
+
+        if (size >= 24.0f && !label.empty()) {
+            ImFont* font = ImGui::GetFont();
+            const float fontSize = std::clamp(size * 0.24f, 8.0f, 20.0f);
+            const ImVec2 textSize = font->CalcTextSizeA(
+                fontSize, size, 0.0f, label.c_str());
+            drawList->AddText(
+                font, fontSize,
+                ImVec2(pos.x + (size - textSize.x) * 0.5f,
+                       pos.y + (size - textSize.y) * 0.5f),
+                IM_COL32(235, 240, 248, 255), label.c_str());
+        }
+        ImGui::Dummy(ImVec2(size, size));
     };
     const auto entryType = [&entryExtension](const Entry& entry) {
         if (entry.isDirectory) return std::string("Folder");
