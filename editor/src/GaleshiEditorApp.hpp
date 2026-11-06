@@ -54,6 +54,7 @@ class GaleshiEditorApp final : public Galeshi::Application {
     std::string m_outputLogBuffer;
     std::string m_outputLogSelection;
     entt::entity m_stateMachineEditorEntity = entt::null;
+    entt::entity m_lastStateMachineSelection = entt::null;
     int m_selectedAxis = 0;
     int m_rebindAxis = -1;
     int m_rebindBinding = -1;

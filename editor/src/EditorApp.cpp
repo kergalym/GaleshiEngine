@@ -828,6 +828,23 @@
         DrawOutputLog();
         DrawAudioMixer();
         DrawEnvironmentPaletteWindow();
+        {
+            Galeshi::Entity selected = m_editor.Selected(&m_scene);
+            const entt::entity selectedHandle =
+                selected ? selected.Handle() : entt::null;
+            if (selectedHandle != m_lastStateMachineSelection) {
+                m_lastStateMachineSelection = selectedHandle;
+                const bool isCharacter =
+                    selected &&
+                    (selected.HasComponent<Galeshi::SkeletalComponent>() ||
+                     (selected.HasComponent<Galeshi::MeshComponent>() &&
+                      IsSkeletalCharacter(selected)));
+                if (isCharacter) {
+                    m_stateMachineEditorEntity = selectedHandle;
+                    m_showStateMachineEditor = true;
+                }
+            }
+        }
         DrawStateMachineEditor();
         DrawPreferencesWindow();
         DrawHistoryModal();
