@@ -91,6 +91,11 @@ void GaleshiEditorApp::DrawDetails() {
         // still a physics page, not a material editor.
         const bool selectedPhysicsShapeWithMesh =
             selectedIsCollisionShape && selectedHasOwnMesh;
+        const bool selectedIsPlainCollisionShape =
+            selectedIsCollisionShape && !selectedHasOwnMesh &&
+            (!selected[0].HasComponent<Galeshi::RigidBodyComponent>() ||
+             selected[0].GetComponent<Galeshi::RigidBodyComponent>().motionType ==
+                 Galeshi::RigidBodyComponent::MotionType::Static);
 
         // Texture Settings is a global texture-loading option, but it is only
         // relevant while inspecting a 3D model that actually uses textures.
@@ -162,7 +167,8 @@ void GaleshiEditorApp::DrawDetails() {
         const bool isAttachedCamera =
             isCameraEntity &&
             selected[0].HasComponent<Galeshi::ParentComponent>();
-        const bool hideModelSections = isPlayerEntity || isCameraEntity;
+        const bool hideModelSections =
+            isPlayerEntity || isCameraEntity || selectedIsPlainCollisionShape;
 
         // Character asset field. Existing FBX scenes can migrate to glTF by
         // dropping a GLB/glTF here (or on the character/capsule in the
@@ -406,7 +412,8 @@ void GaleshiEditorApp::DrawDetails() {
             }
             if (ImGui::DragFloat3("Rotation", glm::value_ptr(rot), 1.0f)) { glm::quat q = glm::quat(glm::radians(rot)); for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().rotation = q; }
 
-            if (HasCollisionShapeParent(selectedHandle)) {
+            if (!selectedIsPlainCollisionShape &&
+                HasCollisionShapeParent(selectedHandle)) {
                 if (ImGui::Button("Detach from Collision Shape")) {
                     DetachChildFromCollisionShape(selectedHandle);
                 }
@@ -637,6 +644,14 @@ void GaleshiEditorApp::DrawDetails() {
                     sel.RemoveComponent<Galeshi::ColliderComponent>();
                 }
             }
+        }
+
+        // Pure collision shapes expose only their collision editor; the
+        // implicit static body is an implementation detail.
+        if (selectedIsPlainCollisionShape) {
+            ImGui::EndChild();
+            ImGui::End();
+            return;
         }
 
         // --- Rigid body inspector ----------------------------------------
