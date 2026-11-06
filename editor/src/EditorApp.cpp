@@ -841,7 +841,11 @@
                      (selected.HasComponent<Galeshi::MeshComponent>() &&
                       IsSkeletalCharacter(selected)));
                 if (isCharacter) {
-                    m_stateMachineEditorEntity = selectedHandle;
+                    // Only seed the pending target while the docked window is
+                    // closed. If it is already open, keep the user's choice.
+                    if (!m_showStateMachineEditor) {
+                        m_stateMachineEditorEntity = selectedHandle;
+                    }
                     m_showStateMachineEditor = true;
                 }
             }

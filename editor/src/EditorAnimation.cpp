@@ -561,6 +561,7 @@
             ImGui::End();
             return;
         }
+        const bool windowAppearing = ImGui::IsWindowAppearing();
 
         struct CharacterEntry {
             entt::entity entity = entt::null;
@@ -736,6 +737,11 @@
                   [](const CharacterEntry& a, const CharacterEntry& b) {
                       return a.label < b.label;
                   });
+
+        if (windowAppearing && playerEntity != entt::null &&
+            characterIndices.count(playerEntity)) {
+            m_stateMachineEditorEntity = playerEntity;
+        }
 
         if (characters.empty()) {
             ImGui::TextDisabled("No skeletal characters in the scene.");
