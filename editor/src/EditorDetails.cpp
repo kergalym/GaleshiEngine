@@ -2399,16 +2399,6 @@ void GaleshiEditorApp::DrawDetails() {
             ImGui::Text("Active Clip: %d  Time: %.2fs", skel.activeAnimation, skel.currentTime);
         }
 
-        if (selected[0].HasComponent<Galeshi::SkeletalComponent>() ||
-            selected[0].HasComponent<Galeshi::AnimationStateMachineComponent>()) {
-            if (beginDetailsSection(
-                    "Animation State Machine", ImGuiTreeNodeFlags_DefaultOpen,
-                    "animation state machine states transitions parameters "
-                    "clip loop speed blend playback animation scale")) {
-                DrawAnimationStateMachineContents(selected[0]);
-            }
-        }
-
         if (selected[0].HasComponent<Galeshi::DirectionalLightComponent>() && beginDetailsSection(
                 "Light", ImGuiTreeNodeFlags_DefaultOpen,
                 "directional light sun direction color intensity shadow")) {
