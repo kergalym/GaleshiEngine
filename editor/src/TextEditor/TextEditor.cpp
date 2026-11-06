@@ -8,6 +8,7 @@
 #include "TextEditor.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"
 
 // TODO
 // - multiline comments vs single-line: latter is blocking start of a ML
@@ -712,6 +713,13 @@ void TextEditor::HandleKeyboardInputs()
 
 		io.WantCaptureKeyboard = true;
 		io.WantTextInput = true;
+		// The SDL3 backend starts text input from ImGui's platform IME data,
+		// not from io.WantTextInput. Without this the editor receives key
+		// events but no character events.
+		if (ImGuiContext* context = ImGui::GetCurrentContext()) {
+			context->PlatformImeData.WantTextInput = true;
+		}
+		ImGui::SetNextFrameWantCaptureKeyboard(true);
 
 		if (!IsReadOnly() && ctrl && !shift && !alt && ImGui::IsKeyPressed(ImGuiKey_Z))
 			Undo();

@@ -1526,6 +1526,46 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                                 m_editor.brushStrength,
                                 m_editor.brushFalloff,
                                 ImGui::GetIO().DeltaTime, erase) > 0) {
+                            if (sel.HasComponent<Galeshi::MeshComponent>()) {
+                                auto& meshComponent =
+                                    sel.GetComponent<Galeshi::MeshComponent>();
+                                if (meshComponent.mesh) {
+                                    Galeshi::LandscapeMesh::UpdatePaintWeights(
+                                        landscape, *meshComponent.mesh);
+                                }
+                            }
+                            // Preview the active layer in the shader while
+                            // painting; the deferred bake below still resolves
+                            // all layers into the final texture set.
+                            if (auto* materialComponent =
+                                    m_scene.Registry()
+                                        .try_get<Galeshi::MaterialComponent>(
+                                            sel.Handle())) {
+                                if (materialComponent->material &&
+                                    landscape.activeLayer >= 0 &&
+                                    landscape.activeLayer <
+                                        static_cast<int>(
+                                            landscape.layers.size())) {
+                                    const auto& layer = landscape.layers[
+                                        static_cast<size_t>(
+                                            landscape.activeLayer)];
+                                    auto& material =
+                                        *materialComponent->material;
+                                    material.landscapeAlbedoMap =
+                                        layer.albedoMap;
+                                    material.landscapeOrmMap = layer.ormMap;
+                                    material.landscapeNormalMap =
+                                        layer.normalMap;
+                                    material.landscapeAlbedoSrgb =
+                                        layer.albedoSrgb;
+                                    material.landscapeOrmSrgb = layer.ormSrgb;
+                                    material.landscapeNormalSrgb =
+                                        layer.normalSrgb;
+                                    material.landscapeBlend =
+                                        layer.albedoMap || layer.ormMap ||
+                                        layer.normalMap;
+                                }
+                            }
                             // Bake after the stroke so sources are decoded at
                             // most once per mouse release, even if the cursor
                             // leaves the viewport.
@@ -1699,7 +1739,9 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                 }
                 if (m_wasSculpting &&
                     !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                    RebuildCloth(sel);
+                    // A model/skeletal root redirects to a descendant mesh;
+                    // rebuild that mesh, not the selected authoring root.
+                    RebuildCloth(clothEntity);
                     m_wasSculpting = false;
                     m_paintStampValid = false;
                 }

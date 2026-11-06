@@ -2,7 +2,7 @@
 -- Assign this file in Edit -> Scripts, or use it as the main script.
 local playerName = "Player"
 local moveSpeed = 8.0
-local turnSpeed = 120.0
+local turnSpeed = 90.0
 local jumpImpulse = 8.0
 local player = nil
 local animationEntity = nil

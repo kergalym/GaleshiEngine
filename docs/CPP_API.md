@@ -231,7 +231,9 @@ Script surface:
 - skeletal ragdolls from a `SkeletalComponent` model:
   `CreateRagdoll(scene, assets, entity)`, `DestroyRagdoll(scene, entity)`,
   `IsRagdollActive(entity)`, `RagdollBodyCount(entity)` and
-  `ApplyRagdollImpulse(entity, impulse)`. Ragdoll state is runtime-only.
+  `ApplyRagdollImpulse(entity, impulse)`. Ragdoll state is runtime-only, and
+  activation is explicit — call `CreateRagdoll()` from death, hit or input
+  logic; there is no automatic trigger.
 
 Cloth is data on an existing mesh entity, not a separate entity. See
 [Cloth painting and simulation](CLOTH.md) for the editor workflow and

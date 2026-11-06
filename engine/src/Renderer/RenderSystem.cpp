@@ -976,6 +976,11 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         const entt::entity root = FindRootEntity(scene, h);
         const bool hasSkeleton =
             scene.Registry().all_of<SkeletalComponent>(root);
+        // Landscape paint weights are carried in the vertex stream; the
+        // instanced vertex shader has no skin/weight attributes and would
+        // force the blend varying to zero.
+        const bool isLandscape =
+            scene.Registry().all_of<LandscapeComponent>(root);
 
         // The occlusion pass tests static entities before this pass. Results
         // are one frame old, which keeps the query readback off the GPU
@@ -1012,7 +1017,8 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         // Static meshes sharing geometry, LOD and material state are
         // collected and submitted as one instanced draw after the per-object
         // pass.
-        if (!hasSkeleton && canInstanceStatic && !modelMoved) {
+        if (!hasSkeleton && !isLandscape && canInstanceStatic &&
+            !modelMoved) {
             const MeshMaterialKey key = MakeMeshMaterialKey(mc, *matc.material, lod);
             const auto result = instanceBatches.try_emplace(key);
             MeshInstanceBatch& batch = result.first->second;

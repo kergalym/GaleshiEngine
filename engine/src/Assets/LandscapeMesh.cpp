@@ -102,8 +102,16 @@ void LandscapeMesh::Rebuild(LandscapeComponent& lc, Mesh& mesh) {
             v.uv = glm::vec2(static_cast<float>(x) / lc.sizeX,
                              static_cast<float>(z) / lc.sizeZ);
             v.boneIDs = glm::vec4(0.0f);
-            const float paintWeight =
-                lc.paintWeights[static_cast<size_t>(z) * lc.sizeX + x];
+            const size_t weightIndex =
+                static_cast<size_t>(z) * lc.sizeX + x;
+            float paintWeight = lc.paintWeights[weightIndex];
+            if (lc.activeLayer >= 0 &&
+                lc.activeLayer < static_cast<int>(lc.layerWeights.size()) &&
+                lc.layerWeights[static_cast<size_t>(lc.activeLayer)].size() ==
+                    expected) {
+                paintWeight = lc.layerWeights[
+                    static_cast<size_t>(lc.activeLayer)][weightIndex];
+            }
             // Keep the skin weights normalized (all indices point at bone 0)
             // while carrying the blend weight in the otherwise unused z slot.
             v.boneWeights = glm::vec4(
@@ -441,13 +449,20 @@ void LandscapeMesh::UpdatePaintWeights(const LandscapeComponent& lc,
                                         Mesh& mesh) {
     const size_t expected =
         static_cast<size_t>(lc.sizeX) * static_cast<size_t>(lc.sizeZ);
-    if (lc.paintWeights.size() != expected ||
-        mesh.Vertices().size() != expected) {
-        return;
+    if (mesh.Vertices().size() != expected) return;
+
+    const std::vector<float>* source = &lc.paintWeights;
+    if (lc.activeLayer >= 0 &&
+        lc.activeLayer < static_cast<int>(lc.layerWeights.size()) &&
+        lc.layerWeights[static_cast<size_t>(lc.activeLayer)].size() ==
+            expected) {
+        source = &lc.layerWeights[static_cast<size_t>(lc.activeLayer)];
     }
+    if (source->size() != expected) return;
+
     std::vector<Vertex> vertices = mesh.Vertices();
     for (size_t i = 0; i < vertices.size(); ++i) {
-        const float weight = Clamp01(lc.paintWeights[i]);
+        const float weight = Clamp01((*source)[i]);
         vertices[i].boneWeights = glm::vec4(
             1.0f - weight, 0.0f, weight, 0.0f);
     }

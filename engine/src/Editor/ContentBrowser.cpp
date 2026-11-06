@@ -168,7 +168,7 @@ void main()
 -- Assign this file in Edit -> Scripts, or use it as the main script.
 local playerName = "Player"
 local moveSpeed = 8.0
-local turnSpeed = 120.0
+local turnSpeed = 90.0
 local jumpImpulse = 8.0
 local player = nil
 local animationEntity = nil
@@ -266,7 +266,8 @@ using Galeshi::Script::Vec3;
 constexpr const char* kPlayerName = "Player";
 constexpr const char* kPlayerVisualName = "PlayerVisual";
 constexpr float kMoveSpeed = 8.0f;
-constexpr float kTurnSpeed = 120.0f;
+// Yaw helpers work in radians: 90 degrees/second.
+constexpr float kTurnSpeed = 1.5707963f;
 constexpr float kJumpImpulse = 8.0f;
 
 Api* g_api = nullptr;

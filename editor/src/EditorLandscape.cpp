@@ -291,6 +291,9 @@
 
         const glm::vec4 white(1.0f);
         const glm::vec4 flatNormal(0.5f, 0.5f, 1.0f, 1.0f);
+        // Fold the material tint into the baked output so unpainted base
+        // areas keep their authored color after albedoFactor is reset.
+        const glm::vec4 albedoTint = material->albedoFactor;
         const size_t expectedWeights =
             static_cast<size_t>(landscape.sizeX) * landscape.sizeZ;
         std::vector<float> weights(landscape.layers.size(), 0.0f);
@@ -328,7 +331,8 @@
                 const float invTotal = 1.0f / totalWeight;
 
                 const glm::vec4 baseAlbedoColor =
-                    SampleLandscapeImage(baseAlbedo, u, v, white);
+                    SampleLandscapeImage(baseAlbedo, u, v, white) *
+                    albedoTint;
                 glm::vec4 baseOrmColor =
                     SampleLandscapeImage(baseOrm, u, v, white);
                 if (baseMetallic.Valid()) {
@@ -508,6 +512,10 @@
         material->metallicRoughnessMap = std::move(generatedOrm);
         material->normalMap = std::move(generatedNormal);
         material->occlusionMap = material->metallicRoughnessMap;
+        // The generated map already contains the blended base/layer colors.
+        // A leftover flat albedo factor (the default Landscape is green)
+        // would multiply and tint the baked result.
+        material->albedoFactor = glm::vec4(1.0f);
         // The generated ORM map owns metallic/roughness now; leaving the
         // original split maps bound would make the shader ignore it.
         material->metallicMap.reset();

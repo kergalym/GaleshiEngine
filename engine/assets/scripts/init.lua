@@ -53,7 +53,7 @@ function RunAlways(dt)
     end
 
     local speed = 10.0
-    local turn_speed = 120.0
+    local turn_speed = 90.0
     local jump_force = 8.0
 
     local vel = Galeshi.physics.get_velocity(player)

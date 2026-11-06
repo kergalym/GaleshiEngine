@@ -194,8 +194,14 @@ Galeshi.physics.destroy_ragdoll(character)
 ```
 
 `create_ragdoll` returns false when the entity has no usable skeletal model.
+Activation is explicit: there is no automatic death/hit trigger, so call it
+from gameplay logic (for example on death, a strong hit or a key press).
 While active, animation is skipped and the skeleton follows the simulated
 bodies. `destroy_ragdoll` restores normal animation.
+
+The editor host binds these callbacks automatically. A custom runtime host must
+bind `ScriptEngine::PhysicsBindings::createRagdoll`, `destroyRagdoll`,
+`ragdollActive` and `applyRagdollImpulse` before Lua scripts can use them.
 
 ### `Galeshi.audio`
 
