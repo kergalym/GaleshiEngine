@@ -140,12 +140,10 @@
         if (target == entt::null) return;
 
         const glm::mat4 targetWorld = EntityWorldMatrix(target);
-        // The gameplay camera follows the Player's position but deliberately
-        // ignores its rotation. Scripts and physics are free to turn the
-        // character without spinning the camera around it.
-        const glm::mat4 targetFrame = glm::translate(
-            glm::mat4(1.0f), glm::vec3(targetWorld[3]));
-        const glm::mat4 inverseTarget = glm::inverse(targetFrame);
+        // Position follows the Player's full transform. Only the camera basis
+        // ignores the Player's rotation so turning the character does not
+        // spin the view.
+        const glm::mat4 inverseTarget = glm::inverse(targetWorld);
 
         glm::vec3 center;
         glm::vec3 boundsMin;
@@ -155,7 +153,7 @@
         m_gameCameraPivotLocal = glm::vec3(
             inverseTarget * glm::vec4(center, 1.0f));
         const glm::vec3 pivot =
-            glm::vec3(targetFrame * glm::vec4(m_gameCameraPivotLocal, 1.0f));
+            glm::vec3(targetWorld * glm::vec4(m_gameCameraPivotLocal, 1.0f));
 
         if (haveBounds) {
             // Eye height comes from the character itself, not from the
@@ -169,18 +167,21 @@
                 inverseTarget * glm::vec4(eyeWorld, 1.0f));
         }
 
-        glm::mat4 cameraWorld = EntityWorldMatrix(cameraEntity);
+        const glm::mat4 cameraWorld = EntityWorldMatrix(cameraEntity);
+        glm::mat4 cameraOrientationWorld = cameraWorld;
         if (IsEntityInHierarchy(cameraEntity, target)) {
             // A camera parented under the Player inherits the Player's
-            // rotation. Rebase it against the translation-only target frame
-            // so turning the character does not turn the player camera.
-            cameraWorld = targetFrame *
+            // rotation. Keep that for position, but rebase its orientation
+            // against a translation-only frame so the view does not spin.
+            const glm::mat4 targetFrame = glm::translate(
+                glm::mat4(1.0f), glm::vec3(targetWorld[3]));
+            cameraOrientationWorld = targetFrame *
                 (glm::inverse(targetWorld) * cameraWorld);
         }
         glm::vec3 forward = glm::vec3(
-            cameraWorld * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f));
+            cameraOrientationWorld * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f));
         glm::vec3 cameraUp = glm::vec3(
-            cameraWorld * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f));
+            cameraOrientationWorld * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f));
         if (glm::dot(forward, forward) < 1e-6f ||
             glm::dot(cameraUp, cameraUp) < 1e-6f) {
             forward = {0.0f, 0.0f, -1.0f};
@@ -307,18 +308,18 @@
                 forward = m_gameCameraBaseForward;
                 up = m_gameCameraBaseUp;
             }
-            const glm::vec3 targetPosition =
-                glm::vec3(EntityWorldMatrix(target)[3]);
-            eye = targetPosition + m_gameCameraEyeLocal;
+            const glm::mat4 targetWorld = EntityWorldMatrix(target);
+            eye = glm::vec3(
+                targetWorld * glm::vec4(m_gameCameraEyeLocal, 1.0f));
             applyInPlaceLook();
             m_camera.SetView(eye, eye + forward, up);
         } else {
             bool orbitActive = false;
             glm::vec3 pivot{0.0f};
             if (validTarget) {
-                const glm::vec3 targetPosition =
-                    glm::vec3(EntityWorldMatrix(target)[3]);
-                pivot = targetPosition + m_gameCameraPivotLocal;
+                const glm::mat4 targetWorld = EntityWorldMatrix(target);
+                pivot = glm::vec3(
+                    targetWorld * glm::vec4(m_gameCameraPivotLocal, 1.0f));
                 if (m_gameCameraBaseValid) {
                     eye = pivot + m_gameCameraBaseOffset;
                     forward = m_gameCameraBaseForward;
