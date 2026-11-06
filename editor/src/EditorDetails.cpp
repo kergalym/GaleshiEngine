@@ -155,6 +155,14 @@ void GaleshiEditorApp::DrawDetails() {
             (selected[0].HasComponent<Galeshi::NameComponent>() &&
              selected[0].GetComponent<Galeshi::NameComponent>().name ==
                  "Player");
+        // Cameras are plain too. An attached camera additionally exposes its
+        // Camera section; an unattached world camera has only Name/Transform.
+        const bool isCameraEntity =
+            selected[0].HasComponent<Galeshi::CameraComponent>();
+        const bool isAttachedCamera =
+            isCameraEntity &&
+            selected[0].HasComponent<Galeshi::ParentComponent>();
+        const bool hideModelSections = isPlayerEntity || isCameraEntity;
 
         // Character asset field. Existing FBX scenes can migrate to glTF by
         // dropping a GLB/glTF here (or on the character/capsule in the
@@ -162,7 +170,7 @@ void GaleshiEditorApp::DrawDetails() {
         // values are reloaded from the replacement file.
         if (Galeshi::Entity replacementRoot =
                 FindSkeletalRootForReplacement(selectedHandle);
-            !isPlayerEntity && replacementRoot) {
+            !hideModelSections && replacementRoot) {
             auto& replacementSkeleton =
                 reg.get<Galeshi::SkeletalComponent>(replacementRoot.Handle());
             if (beginDetailsSection(
@@ -245,7 +253,7 @@ void GaleshiEditorApp::DrawDetails() {
             if (!reg.all_of<Galeshi::ParentComponent>(cursor)) break;
             cursor = reg.get<Galeshi::ParentComponent>(cursor).parent;
         }
-        if (!isPlayerEntity && modelRoot != entt::null) {
+        if (!hideModelSections && modelRoot != entt::null) {
             auto& model = reg.get<Galeshi::ModelComponent>(modelRoot);
             if (beginDetailsSection(
                     "Model", ImGuiTreeNodeFlags_DefaultOpen,
@@ -265,7 +273,7 @@ void GaleshiEditorApp::DrawDetails() {
         // Mesh LOD controls apply to the selected mesh and all mesh children.
         // This is especially useful for imported static models, which default
         // to LOD0; users can opt into generated LODs per model/sub-mesh.
-        if (!isPlayerEntity) {
+        if (!hideModelSections) {
             std::vector<Galeshi::Entity> lodMeshes;
             for (auto entity : m_scene.AllEntities()) {
                 if (!entity.HasComponent<Galeshi::MeshComponent>()) continue;
@@ -352,7 +360,7 @@ void GaleshiEditorApp::DrawDetails() {
             }
         }
 
-        if (!isPlayerEntity && selectionHasMesh && selectionHasTextures) {
+        if (!hideModelSections && selectionHasMesh && selectionHasTextures) {
             if (beginDetailsSection(
                     "Texture Settings", 0,
                     "texture compression compress bc7 loading vram")) {
@@ -431,7 +439,7 @@ void GaleshiEditorApp::DrawDetails() {
             }
         }
 
-        if (isPlayerEntity) {
+        if (isPlayerEntity || (isCameraEntity && !isAttachedCamera)) {
             ImGui::EndChild();
             ImGui::End();
             return;
@@ -507,6 +515,12 @@ void GaleshiEditorApp::DrawDetails() {
                     "While Play is active, the highest-priority primary camera "
                     "overrides the viewport camera.");
             }
+        }
+
+        if (isCameraEntity) {
+            ImGui::EndChild();
+            ImGui::End();
+            return;
         }
 
         // --- Post-process volume inspector --------------------------------
