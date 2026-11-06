@@ -11,10 +11,14 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -26,6 +30,428 @@ namespace Galeshi {
 namespace {
 
 constexpr int kSceneFormatVersion = 2;
+
+// Chunked binary scene container. Payloads are a small self-describing binary
+// JSON encoding; the container itself is versioned independently so the
+// existing JSON format remains the source of truth and fallback.
+constexpr char kBinaryMagic[8] = {'G', 'S', 'C', 'N', 'B', 'I', 'N', '1'};
+constexpr uint32_t kBinaryVersion = 1;
+constexpr uint32_t kBinaryHeaderSize = 24;
+constexpr uint32_t kBinaryDirectoryEntrySize = 32;
+constexpr uint32_t kBinaryChunkMeta = 1;
+constexpr uint32_t kBinaryChunkMaterials = 2;
+constexpr uint32_t kBinaryChunkEntities = 3;
+constexpr size_t kEntityChunkSize = 256;
+constexpr size_t kMaxJsonDepth = 256;
+constexpr const char* kBinarySceneSuffix = ".gsc";
+
+[[noreturn]] void BinaryFail(const char* message) {
+    throw std::runtime_error(message);
+}
+
+void AppendU32(std::vector<uint8_t>& out, uint32_t value) {
+    for (int i = 0; i < 4; ++i) {
+        out.push_back(static_cast<uint8_t>(value >> (i * 8)));
+    }
+}
+
+void AppendU64(std::vector<uint8_t>& out, uint64_t value) {
+    for (int i = 0; i < 8; ++i) {
+        out.push_back(static_cast<uint8_t>(value >> (i * 8)));
+    }
+}
+
+void PatchU32(std::vector<uint8_t>& out, size_t offset, uint32_t value) {
+    if (offset + 4 > out.size()) BinaryFail("binary patch out of bounds");
+    for (int i = 0; i < 4; ++i) {
+        out[offset + static_cast<size_t>(i)] =
+            static_cast<uint8_t>(value >> (i * 8));
+    }
+}
+
+void PatchU64(std::vector<uint8_t>& out, size_t offset, uint64_t value) {
+    if (offset + 8 > out.size()) BinaryFail("binary patch out of bounds");
+    for (int i = 0; i < 8; ++i) {
+        out[offset + static_cast<size_t>(i)] =
+            static_cast<uint8_t>(value >> (i * 8));
+    }
+}
+
+void AppendVarUInt(std::vector<uint8_t>& out, uint64_t value) {
+    while (value >= 0x80u) {
+        out.push_back(static_cast<uint8_t>(value) | 0x80u);
+        value >>= 7;
+    }
+    out.push_back(static_cast<uint8_t>(value));
+}
+
+void AppendString(std::vector<uint8_t>& out, const std::string& value) {
+    AppendVarUInt(out, value.size());
+    out.insert(out.end(), value.begin(), value.end());
+}
+
+struct BinaryReader {
+    const uint8_t* data = nullptr;
+    size_t size = 0;
+    size_t pos = 0;
+
+    size_t Remaining() const { return size - pos; }
+    uint8_t U8() {
+        if (pos >= size) BinaryFail("unexpected end of binary scene");
+        return data[pos++];
+    }
+    uint32_t U32() {
+        if (pos + 4 > size) BinaryFail("unexpected end of binary scene");
+        uint32_t value = 0;
+        for (int i = 0; i < 4; ++i) {
+            value |= static_cast<uint32_t>(data[pos++]) << (i * 8);
+        }
+        return value;
+    }
+    uint64_t U64() {
+        if (pos + 8 > size) BinaryFail("unexpected end of binary scene");
+        uint64_t value = 0;
+        for (int i = 0; i < 8; ++i) {
+            value |= static_cast<uint64_t>(data[pos++]) << (i * 8);
+        }
+        return value;
+    }
+    uint64_t VarUInt() {
+        uint64_t value = 0;
+        int shift = 0;
+        for (int i = 0; i < 10; ++i) {
+            const uint8_t byte = U8();
+            value |= static_cast<uint64_t>(byte & 0x7fu) << shift;
+            if ((byte & 0x80u) == 0) return value;
+            shift += 7;
+        }
+        BinaryFail("invalid binary varint");
+    }
+    std::string String() {
+        const uint64_t length = VarUInt();
+        if (length > Remaining()) BinaryFail("invalid binary string length");
+        std::string value(reinterpret_cast<const char*>(data + pos),
+                          static_cast<size_t>(length));
+        pos += static_cast<size_t>(length);
+        return value;
+    }
+};
+
+uint64_t HashBytes(const uint8_t* data, size_t size) {
+    uint64_t hash = 1469598103934665603ull;
+    for (size_t i = 0; i < size; ++i) {
+        hash ^= data[i];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+uint64_t HashVector(const std::vector<uint8_t>& data) {
+    return HashBytes(data.data(), data.size());
+}
+
+void EncodeJsonValue(const json& value, std::vector<uint8_t>& out,
+                     size_t depth = 0) {
+    if (depth > kMaxJsonDepth) BinaryFail("scene JSON nesting too deep");
+    switch (value.type()) {
+        case json::value_t::null:
+            out.push_back(0);
+            break;
+        case json::value_t::boolean:
+            out.push_back(value.get<bool>() ? 2 : 1);
+            break;
+        case json::value_t::number_integer: {
+            out.push_back(3);
+            const int64_t signedValue = value.get<int64_t>();
+            const uint64_t bits = static_cast<uint64_t>(signedValue);
+            const uint64_t zigzag =
+                (bits << 1) ^ (signedValue < 0 ? ~uint64_t(0) : uint64_t(0));
+            AppendVarUInt(out, zigzag);
+            break;
+        }
+        case json::value_t::number_unsigned:
+            out.push_back(4);
+            AppendVarUInt(out, value.get<uint64_t>());
+            break;
+        case json::value_t::number_float: {
+            out.push_back(5);
+            const double number = value.get<double>();
+            uint64_t bits = 0;
+            static_assert(sizeof(bits) == sizeof(number));
+            std::memcpy(&bits, &number, sizeof(bits));
+            AppendU64(out, bits);
+            break;
+        }
+        case json::value_t::string:
+            out.push_back(6);
+            AppendString(out, value.get_ref<const std::string&>());
+            break;
+        case json::value_t::array:
+            out.push_back(7);
+            AppendVarUInt(out, value.size());
+            for (const auto& child : value) {
+                EncodeJsonValue(child, out, depth + 1);
+            }
+            break;
+        case json::value_t::object:
+            out.push_back(8);
+            AppendVarUInt(out, value.size());
+            for (auto it = value.begin(); it != value.end(); ++it) {
+                AppendString(out, it.key());
+                EncodeJsonValue(it.value(), out, depth + 1);
+            }
+            break;
+        case json::value_t::binary: {
+            out.push_back(9);
+            const auto& bytes = value.get_binary();
+            AppendVarUInt(out, bytes.size());
+            out.insert(out.end(), bytes.begin(), bytes.end());
+            break;
+        }
+        default:
+            BinaryFail("unsupported JSON value in binary scene");
+    }
+}
+
+json DecodeJsonValue(BinaryReader& reader, size_t depth = 0) {
+    if (depth > kMaxJsonDepth) BinaryFail("scene JSON nesting too deep");
+    switch (reader.U8()) {
+        case 0:
+            return nullptr;
+        case 1:
+            return false;
+        case 2:
+            return true;
+        case 3: {
+            const uint64_t value = reader.VarUInt();
+            const int64_t signedValue =
+                static_cast<int64_t>(value >> 1) -
+                static_cast<int64_t>(value & 1u);
+            return signedValue;
+        }
+        case 4:
+            return reader.VarUInt();
+        case 5: {
+            const uint64_t bits = reader.U64();
+            double number = 0.0;
+            std::memcpy(&number, &bits, sizeof(number));
+            return number;
+        }
+        case 6:
+            return reader.String();
+        case 7: {
+            const uint64_t count = reader.VarUInt();
+            if (count > reader.Remaining()) BinaryFail("invalid array size");
+            json result = json::array();
+            for (uint64_t i = 0; i < count; ++i) {
+                result.push_back(DecodeJsonValue(reader, depth + 1));
+            }
+            return result;
+        }
+        case 8: {
+            const uint64_t count = reader.VarUInt();
+            if (count > reader.Remaining()) BinaryFail("invalid object size");
+            json result = json::object();
+            for (uint64_t i = 0; i < count; ++i) {
+                std::string key = reader.String();
+                result.emplace(std::move(key),
+                               DecodeJsonValue(reader, depth + 1));
+            }
+            return result;
+        }
+        case 9: {
+            const uint64_t length = reader.VarUInt();
+            if (length > reader.Remaining()) BinaryFail("invalid binary size");
+            std::vector<uint8_t> bytes(
+                reader.data + reader.pos,
+                reader.data + reader.pos + static_cast<size_t>(length));
+            reader.pos += static_cast<size_t>(length);
+            return json::binary(std::move(bytes));
+        }
+        default:
+            BinaryFail("unknown binary JSON tag");
+    }
+}
+
+std::vector<uint8_t> EncodeJson(const json& value) {
+    std::vector<uint8_t> out;
+    EncodeJsonValue(value, out);
+    return out;
+}
+
+json DecodeJson(const std::vector<uint8_t>& data) {
+    BinaryReader reader{data.data(), data.size(), 0};
+    json value = DecodeJsonValue(reader);
+    if (reader.pos != reader.size) BinaryFail("trailing binary scene data");
+    return value;
+}
+
+bool ReadBinaryFile(const std::string& path, std::vector<uint8_t>& out) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) return false;
+    in.seekg(0, std::ios::end);
+    const std::streamoff length = in.tellg();
+    if (length < 0) return false;
+    in.seekg(0, std::ios::beg);
+    out.resize(static_cast<size_t>(length));
+    if (!out.empty()) {
+        in.read(reinterpret_cast<char*>(out.data()),
+                static_cast<std::streamsize>(out.size()));
+    }
+    return in.good() || in.eof();
+}
+
+bool WriteBinaryFile(const std::string& path,
+                     const std::vector<uint8_t>& data) {
+    const std::string temporary = path + ".tmp";
+    {
+        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+        if (!out.is_open()) return false;
+        if (!data.empty()) {
+            out.write(reinterpret_cast<const char*>(data.data()),
+                      static_cast<std::streamsize>(data.size()));
+        }
+        out.close();
+        if (!out.good()) {
+            std::error_code ignored;
+            std::filesystem::remove(temporary, ignored);
+            return false;
+        }
+    }
+    std::error_code ec;
+    std::filesystem::rename(temporary, path, ec);
+    if (ec) {
+        std::filesystem::remove(temporary, ec);
+        return false;
+    }
+    return true;
+}
+
+std::string BinaryScenePath(const std::string& jsonPath) {
+    return jsonPath + kBinarySceneSuffix;
+}
+
+bool WriteBinaryScene(const std::string& path, const json& root) {
+    std::vector<std::pair<uint32_t, std::vector<uint8_t>>> chunks;
+
+    json meta = json::object();
+    for (auto it = root.begin(); it != root.end(); ++it) {
+        if (it.key() == "entities" || it.key() == "materials") continue;
+        meta[it.key()] = it.value();
+    }
+    chunks.emplace_back(kBinaryChunkMeta, EncodeJson(meta));
+
+    if (root.contains("materials")) {
+        chunks.emplace_back(kBinaryChunkMaterials,
+                            EncodeJson(root["materials"]));
+    }
+
+    if (root.contains("entities") && root["entities"].is_array()) {
+        const json& entities = root["entities"];
+        for (size_t start = 0; start < entities.size();
+             start += kEntityChunkSize) {
+            json group = json::array();
+            const size_t end = std::min(entities.size(),
+                                        start + kEntityChunkSize);
+            for (size_t i = start; i < end; ++i) {
+                group.push_back(entities[i]);
+            }
+            chunks.emplace_back(kBinaryChunkEntities, EncodeJson(group));
+        }
+    }
+
+    std::vector<uint8_t> output;
+    output.insert(output.end(), kBinaryMagic, kBinaryMagic + 8);
+    AppendU32(output, kBinaryVersion);
+    AppendU32(output, static_cast<uint32_t>(chunks.size()));
+    AppendU64(output, 0);
+    const size_t directoryStart = output.size();
+    output.resize(output.size() +
+                  chunks.size() * kBinaryDirectoryEntrySize, 0);
+
+    for (size_t i = 0; i < chunks.size(); ++i) {
+        while ((output.size() & 7u) != 0) output.push_back(0);
+        const uint64_t offset = output.size();
+        const auto& payload = chunks[i].second;
+        output.insert(output.end(), payload.begin(), payload.end());
+        const size_t entry = directoryStart + i * kBinaryDirectoryEntrySize;
+        PatchU32(output, entry, chunks[i].first);
+        PatchU32(output, entry + 4, 0);
+        PatchU64(output, entry + 8, offset);
+        PatchU64(output, entry + 16, payload.size());
+        PatchU64(output, entry + 24, HashVector(payload));
+    }
+
+    return WriteBinaryFile(path, output);
+}
+
+bool ReadBinaryScene(const std::string& path, json& root,
+                     const std::atomic<bool>* cancel) {
+    std::vector<uint8_t> data;
+    if (!ReadBinaryFile(path, data)) return false;
+    if (data.size() < kBinaryHeaderSize ||
+        std::memcmp(data.data(), kBinaryMagic, 8) != 0) {
+        return false;
+    }
+
+    BinaryReader header{data.data() + 8, data.size() - 8, 0};
+    const uint32_t version = header.U32();
+    const uint32_t chunkCount = header.U32();
+    header.U64();
+    if (version != kBinaryVersion) {
+        spdlog::warn("[Scene] Unsupported binary scene version {}", version);
+        return false;
+    }
+    if (chunkCount > 100000 ||
+        kBinaryHeaderSize +
+                static_cast<size_t>(chunkCount) * kBinaryDirectoryEntrySize >
+            data.size()) {
+        return false;
+    }
+
+    root = json::object();
+    json entities = json::array();
+    bool hasMeta = false;
+    for (uint32_t i = 0; i < chunkCount; ++i) {
+        if (cancel && cancel->load(std::memory_order_relaxed)) return false;
+        const size_t entry = kBinaryHeaderSize +
+                             static_cast<size_t>(i) * kBinaryDirectoryEntrySize;
+        BinaryReader dir{data.data() + entry, kBinaryDirectoryEntrySize, 0};
+        const uint32_t type = dir.U32();
+        dir.U32(); // flags
+        const uint64_t offset = dir.U64();
+        const uint64_t size = dir.U64();
+        const uint64_t expectedHash = dir.U64();
+        if (offset > data.size() || size > data.size() - offset) {
+            return false;
+        }
+        const uint8_t* payload = data.data() + offset;
+        if (HashBytes(payload, static_cast<size_t>(size)) != expectedHash) {
+            spdlog::warn("[Scene] Binary scene chunk checksum mismatch");
+            return false;
+        }
+        std::vector<uint8_t> bytes(payload, payload + size);
+        json chunk = DecodeJson(bytes);
+        if (type == kBinaryChunkMeta) {
+            if (!chunk.is_object()) return false;
+            for (auto it = chunk.begin(); it != chunk.end(); ++it) {
+                root[it.key()] = it.value();
+            }
+            hasMeta = true;
+        } else if (type == kBinaryChunkMaterials) {
+            root["materials"] = std::move(chunk);
+        } else if (type == kBinaryChunkEntities) {
+            if (!chunk.is_array()) return false;
+            for (auto& entity : chunk) {
+                entities.push_back(std::move(entity));
+            }
+        }
+    }
+
+    if (!hasMeta) return false;
+    root["entities"] = std::move(entities);
+    return true;
+}
 
 json Vec3ToJson(const glm::vec3& v) { return json::array({v.x, v.y, v.z}); }
 glm::vec3 Vec3FromJson(const json& j) { return { j.at(0).get<float>(), j.at(1).get<float>(), j.at(2).get<float>() }; }
@@ -553,7 +979,7 @@ std::shared_ptr<Mesh> BuildClothMesh(const SoftBodyComponent& softBody) {
 
 } // namespace
 
-std::string SceneSerializer::SaveToString(bool includeEditorState) const {
+json SceneSerializer::SaveToJson(bool includeEditorState) const {
     json root;
     root["version"] = kSceneFormatVersion;
     root["entities"] = json::array();
@@ -1223,14 +1649,37 @@ std::string SceneSerializer::SaveToString(bool includeEditorState) const {
         root["entities"].push_back(std::move(je));
     }
 
-    return root.dump(2);
+    return root;
+}
+
+std::string SceneSerializer::SaveToString(bool includeEditorState) const {
+    return SaveToJson(includeEditorState).dump(2);
 }
 
 bool SceneSerializer::Save(const std::string& path) const {
+    if (path.empty()) return false;
+    const json root = SaveToJson(true);
+    if (std::filesystem::path(path).extension() == kBinarySceneSuffix) {
+        return WriteBinaryScene(path, root);
+    }
+
     std::ofstream out(path);
     if (!out.is_open()) return false;
-    out << SaveToString(true);
-    return out.good();
+    out << root.dump(2);
+    out.close();
+    if (!out.good()) return false;
+
+    const std::string binaryPath = BinaryScenePath(path);
+    if (!WriteBinaryScene(binaryPath, root)) {
+        spdlog::warn("[Scene] Could not write binary scene cache: {}",
+                     binaryPath);
+    }
+    return true;
+}
+
+bool SceneSerializer::SaveBinary(const std::string& path) const {
+    if (path.empty()) return false;
+    return WriteBinaryScene(path, SaveToJson(true));
 }
 
 void SceneSerializer::SetCodeEditorState(std::string path, std::string text,
@@ -1246,6 +1695,37 @@ void SceneSerializer::SetContentBrowserPath(std::string path) {
 
 bool SceneSerializer::Load(const std::string& path,
                            const std::atomic<bool>* cancel) {
+    if (path.empty()) return false;
+    const std::filesystem::path scenePath(path);
+    if (scenePath.extension() == kBinarySceneSuffix) {
+        return LoadBinary(path, cancel);
+    }
+
+    const std::string binaryPath = BinaryScenePath(path);
+    std::error_code ec;
+    bool useBinary = std::filesystem::exists(binaryPath, ec);
+    if (useBinary) {
+        ec.clear();
+        const bool jsonExists = std::filesystem::exists(path, ec);
+        if (jsonExists && !ec) {
+            const auto jsonTime =
+                std::filesystem::last_write_time(path, ec);
+            if (!ec) {
+                const auto binaryTime =
+                    std::filesystem::last_write_time(binaryPath, ec);
+                if (!ec && binaryTime < jsonTime) useBinary = false;
+            }
+        }
+    }
+
+    if (useBinary && LoadBinary(binaryPath, cancel)) {
+        return true;
+    }
+    if (useBinary) {
+        spdlog::warn("[Scene] Binary cache failed, falling back to JSON: {}",
+                     binaryPath);
+    }
+
     std::ifstream in(path);
     if (!in.is_open()) {
         spdlog::error("[Scene] Could not open scene file: {}", path);
@@ -1256,12 +1736,21 @@ bool SceneSerializer::Load(const std::string& path,
     return LoadFromString(ss.str(), cancel);
 }
 
+bool SceneSerializer::LoadBinary(const std::string& path,
+                                 const std::atomic<bool>* cancel) {
+    json root;
+    try {
+        if (!ReadBinaryScene(path, root, cancel)) return false;
+    } catch (const std::exception& e) {
+        spdlog::error("[Scene] Failed to read binary scene {}: {}",
+                      path, e.what());
+        return false;
+    }
+    return LoadFromJson(root, cancel);
+}
+
 bool SceneSerializer::LoadFromString(const std::string& jsonStr,
                                      const std::atomic<bool>* cancel) {
-    const auto cancelled = [cancel] {
-        return cancel && cancel->load(std::memory_order_relaxed);
-    };
-
     json root;
     try {
         root = json::parse(jsonStr);
@@ -1269,6 +1758,14 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
         spdlog::error("[Scene] Failed to parse scene JSON: {}", e.what());
         return false;
     }
+    return LoadFromJson(root, cancel);
+}
+
+bool SceneSerializer::LoadFromJson(const json& root,
+                                   const std::atomic<bool>* cancel) {
+    const auto cancelled = [cancel] {
+        return cancel && cancel->load(std::memory_order_relaxed);
+    };
 
     if (!root.is_object() || !root.contains("entities") || !root["entities"].is_array()) {
         spdlog::error("[Scene] Invalid scene JSON: missing entities array");

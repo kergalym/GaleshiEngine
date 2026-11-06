@@ -162,7 +162,10 @@
 
         m_scene.Registry().clear();
         m_scene.AudioBuses().fill(Galeshi::AudioBusSettings{});
-        if (m_assets) m_assets->Clear();
+        if (m_assets) {
+            m_assets->SaveImportCache();
+            m_assets->Clear();
+        }
         m_lastViewportTexture = BGFX_INVALID_HANDLE;
 
         m_currentScenePath.clear();
@@ -197,7 +200,7 @@
         }
 
         m_scene.Registry().clear();
-        m_assets->Clear();
+        m_assets->Clear(true);
         if (m_particles) m_particles->Reset();
         m_lastViewportTexture = BGFX_INVALID_HANDLE;
 

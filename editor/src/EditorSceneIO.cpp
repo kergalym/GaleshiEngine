@@ -78,6 +78,7 @@
             m_currentScenePath =
                 std::filesystem::absolute(path).lexically_normal().string();
             AddRecentScene(m_currentScenePath);
+            if (m_assets) m_assets->SaveImportCache();
             spdlog::info("[Editor] Scene saved to {}", m_currentScenePath);
         } else {
             spdlog::error("[Editor] Failed to save scene to {}", path);

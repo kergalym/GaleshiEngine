@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <nlohmann/json_fwd.hpp>
 #include <string>
 
 namespace Galeshi {
@@ -20,6 +21,11 @@ public:
     bool Load(const std::string& path,
               const std::atomic<bool>* cancel = nullptr);
 
+    // Chunked binary scene. Save() writes this as a sidecar next to JSON.
+    bool SaveBinary(const std::string& path) const;
+    bool LoadBinary(const std::string& path,
+                    const std::atomic<bool>* cancel = nullptr);
+
     // Undo/Redo snapshots. Editor UI state is serialized only when requested
     // by a real scene save, not by history snapshots.
     std::string SaveToString(bool includeEditorState = false) const;
@@ -38,6 +44,10 @@ public:
     }
 
 private:
+    nlohmann::json SaveToJson(bool includeEditorState) const;
+    bool LoadFromJson(const nlohmann::json& root,
+                      const std::atomic<bool>* cancel);
+
     Scene&        m_scene;
     AssetManager& m_assets;
     std::string   m_codeEditorPath;

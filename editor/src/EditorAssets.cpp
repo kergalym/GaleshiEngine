@@ -146,7 +146,7 @@
         }
 
         const std::string path = m_assets->MakeRelativePath(originalPath);
-        auto model = m_assets->LoadModel(path);
+        auto model = m_assets->ImportModel(path);
         if (model.meshes.empty()) {
             spdlog::error("[Editor] Cannot use '{}' as a landscape tree: "
                           "the model contains no meshes", path);
@@ -455,7 +455,7 @@
         }
 
         const std::string newPath = m_assets->MakeRelativePath(originalPath);
-        auto newModel = m_assets->LoadModel(newPath);
+        auto newModel = m_assets->ImportModel(newPath);
         if (newModel.meshes.empty()) {
             spdlog::error("[ModelSwap] glTF '{}' contains no meshes", newPath);
             return false;
@@ -870,7 +870,7 @@
                         bool placeAtPosition) {
         PushHistory();
         const std::string path = m_assets->MakeRelativePath(originalPath);
-        auto model = m_assets->LoadModel(path);
+        auto model = m_assets->ImportModel(path);
         if (model.meshes.empty()) return;
         namespace fs = std::filesystem;
         const auto stem = fs::path(path).stem().string();

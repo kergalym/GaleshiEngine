@@ -1,9 +1,11 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 #include <glm/glm.hpp>
 
@@ -72,6 +74,13 @@ public:
     };
     
     LoadedModel LoadModel(const std::string& path);
+    // Import through Assimp once and pin the result for later scene loads.
+    // Scene loads never populate this cache; they only consume it.
+    LoadedModel ImportModel(const std::string& path);
+    // Persist/restore the imported-model cache. The editor calls these on
+    // scene save and application shutdown/startup.
+    void SaveImportCache() const;
+    bool LoadImportCache();
 
     // Legacy single-clip API (clip 0).
     void UpdateAnimation(const LoadedModel& model, float time, std::vector<glm::mat4>& outBoneMatrices);
@@ -114,7 +123,8 @@ public:
 
     // Release cached meshes and textures. Clear the scene first so its
     // components no longer hold shared references to these resources.
-    void Clear();
+    // keepImportedModels preserves models pinned by ImportModel().
+    void Clear(bool keepImportedModels = false);
 
     // Drop cached models and textures that are no longer referenced by the
     // scene. retainedModels lists model paths that are still needed by
@@ -142,6 +152,12 @@ private:
     std::unordered_map<std::string, std::shared_ptr<EmbeddedTextureSource>>
                                                               m_embeddedSources;
     std::unordered_map<std::string, LoadedModel>              m_models;
+    // Models explicitly imported through the editor. Kept across scene
+    // unloads so loading a scene does not re-run Assimp.
+    std::unordered_map<std::string, LoadedModel>              m_importedModels;
+    // Source file size and write time captured when the model was imported.
+    std::unordered_map<std::string, std::pair<uint64_t, uint64_t>>
+                                                              m_importedSignatures;
 
     std::shared_ptr<Mesh>    m_cubeMesh;
     std::shared_ptr<Mesh>    m_sphereMesh;

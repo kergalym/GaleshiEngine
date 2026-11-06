@@ -18,9 +18,13 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <limits>
+#include <stdexcept>
 #include <unordered_set>
 #include <vector>
 
@@ -29,6 +33,193 @@ namespace Galeshi {
 const aiScene* g_currentAiScene = nullptr;
 
 // Current aiScene used by MakeMaterialFromAssimp.
+
+namespace {
+
+constexpr char kModelCacheMagic[8] = {'G', 'A', 'M', 'C', 'A', 'C', 'H', '1'};
+constexpr uint32_t kModelCacheVersion = 1;
+
+void CacheWriteU32(std::vector<uint8_t>& out, uint32_t value) {
+    for (int i = 0; i < 4; ++i) {
+        out.push_back(static_cast<uint8_t>(value >> (i * 8)));
+    }
+}
+
+void CacheWriteU64(std::vector<uint8_t>& out, uint64_t value) {
+    for (int i = 0; i < 8; ++i) {
+        out.push_back(static_cast<uint8_t>(value >> (i * 8)));
+    }
+}
+
+void CacheWriteVarUInt(std::vector<uint8_t>& out, uint64_t value) {
+    while (value >= 0x80u) {
+        out.push_back(static_cast<uint8_t>(value) | 0x80u);
+        value >>= 7;
+    }
+    out.push_back(static_cast<uint8_t>(value));
+}
+
+void CacheWriteString(std::vector<uint8_t>& out, const std::string& value) {
+    CacheWriteVarUInt(out, value.size());
+    out.insert(out.end(), value.begin(), value.end());
+}
+
+struct CacheReader {
+    const uint8_t* data = nullptr;
+    size_t size = 0;
+    size_t pos = 0;
+
+    size_t Remaining() const { return size - pos; }
+    uint8_t U8() {
+        if (pos >= size) throw std::runtime_error("model cache: truncated data");
+        return data[pos++];
+    }
+    uint32_t U32() {
+        if (pos + 4 > size) throw std::runtime_error("model cache: truncated u32");
+        uint32_t value = 0;
+        for (int i = 0; i < 4; ++i) {
+            value |= static_cast<uint32_t>(data[pos++]) << (i * 8);
+        }
+        return value;
+    }
+    uint64_t U64() {
+        if (pos + 8 > size) throw std::runtime_error("model cache: truncated u64");
+        uint64_t value = 0;
+        for (int i = 0; i < 8; ++i) {
+            value |= static_cast<uint64_t>(data[pos++]) << (i * 8);
+        }
+        return value;
+    }
+    uint64_t VarUInt() {
+        uint64_t value = 0;
+        int shift = 0;
+        for (int i = 0; i < 10; ++i) {
+            const uint8_t byte = U8();
+            value |= static_cast<uint64_t>(byte & 0x7fu) << shift;
+            if ((byte & 0x80u) == 0) return value;
+            shift += 7;
+        }
+        throw std::runtime_error("model cache: invalid varint");
+    }
+    std::string String() {
+        const uint64_t length = VarUInt();
+        if (length > Remaining()) {
+            throw std::runtime_error("model cache: invalid string length");
+        }
+        std::string value(reinterpret_cast<const char*>(data + pos),
+                          static_cast<size_t>(length));
+        pos += static_cast<size_t>(length);
+        return value;
+    }
+};
+
+void CacheWriteFloat(std::vector<uint8_t>& out, float value) {
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    CacheWriteU32(out, bits);
+}
+
+float CacheReadFloat(CacheReader& reader) {
+    const uint32_t bits = reader.U32();
+    float value = 0.0f;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+void CacheWriteDouble(std::vector<uint8_t>& out, double value) {
+    uint64_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    CacheWriteU64(out, bits);
+}
+
+double CacheReadDouble(CacheReader& reader) {
+    const uint64_t bits = reader.U64();
+    double value = 0.0;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+void CacheWriteVec2(std::vector<uint8_t>& out, const glm::vec2& value) {
+    CacheWriteFloat(out, value.x);
+    CacheWriteFloat(out, value.y);
+}
+
+glm::vec2 CacheReadVec2(CacheReader& reader) {
+    return {CacheReadFloat(reader), CacheReadFloat(reader)};
+}
+
+void CacheWriteVec3(std::vector<uint8_t>& out, const glm::vec3& value) {
+    CacheWriteFloat(out, value.x);
+    CacheWriteFloat(out, value.y);
+    CacheWriteFloat(out, value.z);
+}
+
+glm::vec3 CacheReadVec3(CacheReader& reader) {
+    return {CacheReadFloat(reader), CacheReadFloat(reader),
+            CacheReadFloat(reader)};
+}
+
+void CacheWriteVec4(std::vector<uint8_t>& out, const glm::vec4& value) {
+    CacheWriteFloat(out, value.x);
+    CacheWriteFloat(out, value.y);
+    CacheWriteFloat(out, value.z);
+    CacheWriteFloat(out, value.w);
+}
+
+glm::vec4 CacheReadVec4(CacheReader& reader) {
+    return {CacheReadFloat(reader), CacheReadFloat(reader),
+            CacheReadFloat(reader), CacheReadFloat(reader)};
+}
+
+std::string ModelCachePath() {
+    const std::string projectPath = ProjectManager::GetProjectPath();
+    if (projectPath.empty()) return {};
+    return (std::filesystem::path(projectPath) / ".galeshi_model_cache.bin")
+        .string();
+}
+
+bool ReadModelCacheFile(const std::string& path, std::vector<uint8_t>& out) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) return false;
+    in.seekg(0, std::ios::end);
+    const std::streamoff length = in.tellg();
+    if (length < 0) return false;
+    in.seekg(0, std::ios::beg);
+    out.resize(static_cast<size_t>(length));
+    if (!out.empty()) {
+        in.read(reinterpret_cast<char*>(out.data()),
+                static_cast<std::streamsize>(out.size()));
+    }
+    return in.good() || in.eof();
+}
+
+bool WriteModelCacheFile(const std::string& path,
+                         const std::vector<uint8_t>& data) {
+    const std::string temporary = path + ".tmp";
+    {
+        std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+        if (!out.is_open()) return false;
+        if (!data.empty()) {
+            out.write(reinterpret_cast<const char*>(data.data()),
+                      static_cast<std::streamsize>(data.size()));
+        }
+        out.close();
+        if (!out.good()) {
+            std::error_code ignored;
+            std::filesystem::remove(temporary, ignored);
+            return false;
+        }
+    }
+    std::error_code ec;
+    std::filesystem::rename(temporary, path, ec);
+    if (ec) {
+        std::filesystem::remove(temporary, ec);
+        return false;
+    }
+    return true;
+}
+
+} // namespace
 
 AssetManager::AssetManager() {
     m_white      = std::shared_ptr<Texture>(Texture::CreateWhite());
@@ -161,17 +352,22 @@ void AssetManager::ReleaseUnusedAssets(const std::vector<std::string>& retainedM
     }
 }
 
-void AssetManager::Clear() {
+void AssetManager::Clear(bool keepImportedModels) {
     // Scene entities must release their shared_ptrs before this is called.
     // Clearing the model cache destroys imported meshes plus their materials
     // and textures; removing the cached primitives releases their GPU buffers
     // as well. The small default textures are shared engine resources and
-    // remain alive.
+    // remain alive. Imported models stay pinned when requested so a scene
+    // load can reuse the Assimp result instead of importing again.
+    if (!keepImportedModels) {
+        m_importedModels.clear();
+        m_importedSignatures.clear();
+        m_embeddedTextures.clear();
+        m_embeddedSources.clear();
+    }
     m_models.clear();
     m_textures.clear();
     m_udimInfo.clear();
-    m_embeddedTextures.clear();
-    m_embeddedSources.clear();
     m_cubeMesh.reset();
     m_sphereMesh.reset();
     m_waterMesh.reset();
@@ -353,10 +549,21 @@ glm::mat4 aiToGlm(const aiMatrix4x4& from) {
     return to;
 }
 
+aiMatrix4x4 glmToAi(const glm::mat4& from) {
+    aiMatrix4x4 to;
+    to.a1 = from[0][0]; to.a2 = from[1][0]; to.a3 = from[2][0]; to.a4 = from[3][0];
+    to.b1 = from[0][1]; to.b2 = from[1][1]; to.b3 = from[2][1]; to.b4 = from[3][1];
+    to.c1 = from[0][2]; to.c2 = from[1][2]; to.c3 = from[2][2]; to.c4 = from[3][2];
+    to.d1 = from[0][3]; to.d2 = from[1][3]; to.d3 = from[2][3]; to.d4 = from[3][3];
+    return to;
+}
+
 void ReadNodeHeirarchy(const aiScene* scene, const aiAnimation* anim, float time,
                        const aiNode* node, const glm::mat4& parentTransform,
                        std::vector<glm::mat4>& boneMatrices,
                        const std::unordered_map<std::string, int>& boneMap,
+                       const std::unordered_map<std::string, glm::mat4>&
+                           boneOffsets,
                        int depth = 0) {
     if (!node || depth > 128) return;
 
@@ -450,28 +657,19 @@ void ReadNodeHeirarchy(const aiScene* scene, const aiAnimation* anim, float time
     if (boneIt != boneMap.end()) {
         const int boneIndex = boneIt->second;
         if (boneIndex >= 0 && boneIndex < 254) {
-            aiBone* bone = nullptr;
-            for (unsigned m = 0; m < scene->mNumMeshes && !bone; ++m) {
-                for (unsigned i = 0; i < scene->mMeshes[m]->mNumBones; ++i) {
-                    if (nodeName == scene->mMeshes[m]->mBones[i]->mName.data) {
-                        bone = scene->mMeshes[m]->mBones[i];
-                        break;
-                    }
-                }
-            }
-            if (bone) {
-                // aiBone::mOffsetMatrix is the inverse bind matrix. In the
-                // column-vector convention used by the rest of the engine the
-                // skinning matrix is pose * inverseBind.
-                boneMatrices[boneIndex] =
-                    globalTransform * aiToGlm(bone->mOffsetMatrix);
+            const auto offset = boneOffsets.find(nodeName);
+            if (offset != boneOffsets.end()) {
+                // The cached offset is the inverse bind matrix. In the
+                // column-vector convention used by the engine the skinning
+                // matrix is pose * inverseBind.
+                boneMatrices[boneIndex] = globalTransform * offset->second;
             }
         }
     }
 
     for (unsigned int i = 0; i < node->mNumChildren; ++i) {
         ReadNodeHeirarchy(scene, anim, time, node->mChildren[i], globalTransform,
-                          boneMatrices, boneMap, depth + 1);
+                          boneMatrices, boneMap, boneOffsets, depth + 1);
     }
 }
 
@@ -694,13 +892,718 @@ void ScaleBonePalette(std::vector<glm::mat4>& palettes, float scale) {
         palettes[i] = s * palettes[i] * invS;
     }
 }
+
+void CacheWriteMatrix(const glm::mat4& matrix, std::vector<uint8_t>& out) {
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            CacheWriteFloat(out, matrix[column][row]);
+        }
+    }
+}
+
+glm::mat4 CacheReadMatrix(CacheReader& reader) {
+    glm::mat4 matrix(1.0f);
+    for (int column = 0; column < 4; ++column) {
+        for (int row = 0; row < 4; ++row) {
+            matrix[column][row] = CacheReadFloat(reader);
+        }
+    }
+    return matrix;
+}
+
+void CacheWriteNode(const aiNode* node, std::vector<uint8_t>& out) {
+    if (!node) {
+        CacheWriteString(out, {});
+        CacheWriteMatrix(glm::mat4(1.0f), out);
+        CacheWriteVarUInt(out, 0);
+        return;
+    }
+    CacheWriteString(out, node->mName.C_Str());
+    CacheWriteMatrix(aiToGlm(node->mTransformation), out);
+    CacheWriteVarUInt(out, node->mNumChildren);
+    for (unsigned i = 0; i < node->mNumChildren; ++i) {
+        CacheWriteNode(node->mChildren[i], out);
+    }
+}
+
+aiNode* CacheReadNode(CacheReader& reader, int depth = 0) {
+    if (depth > 128) throw std::runtime_error("model cache: node depth");
+    const std::string name = reader.String();
+    const glm::mat4 matrix = CacheReadMatrix(reader);
+    auto* node = new aiNode(name);
+    node->mTransformation = glmToAi(matrix);
+    const uint64_t childCount = reader.VarUInt();
+    if (childCount > 1000000) {
+        delete node;
+        throw std::runtime_error("model cache: too many node children");
+    }
+    node->mNumChildren = static_cast<unsigned>(childCount);
+    if (childCount > 0) {
+        node->mChildren = new aiNode*[childCount];
+        for (uint64_t i = 0; i < childCount; ++i) {
+            node->mChildren[i] = CacheReadNode(reader, depth + 1);
+            node->mChildren[i]->mParent = node;
+        }
+    }
+    return node;
+}
+
+void CacheWriteAnimation(const aiAnimation* animation,
+                         std::vector<uint8_t>& out) {
+    CacheWriteString(out, animation ? animation->mName.C_Str() : std::string{});
+    CacheWriteDouble(out, animation ? animation->mDuration : 0.0);
+    CacheWriteDouble(out, animation ? animation->mTicksPerSecond : 0.0);
+    const unsigned channelCount = animation ? animation->mNumChannels : 0;
+    CacheWriteVarUInt(out, channelCount);
+    for (unsigned c = 0; c < channelCount; ++c) {
+        const aiNodeAnim* channel = animation->mChannels[c];
+        if (!channel) {
+            CacheWriteString(out, {});
+            CacheWriteVarUInt(out, 0);
+            CacheWriteVarUInt(out, 0);
+            CacheWriteVarUInt(out, 0);
+            continue;
+        }
+        CacheWriteString(out, channel->mNodeName.C_Str());
+        CacheWriteVarUInt(out, channel->mNumPositionKeys);
+        for (unsigned i = 0; i < channel->mNumPositionKeys; ++i) {
+            CacheWriteDouble(out, channel->mPositionKeys[i].mTime);
+            CacheWriteFloat(out, channel->mPositionKeys[i].mValue.x);
+            CacheWriteFloat(out, channel->mPositionKeys[i].mValue.y);
+            CacheWriteFloat(out, channel->mPositionKeys[i].mValue.z);
+        }
+        CacheWriteVarUInt(out, channel->mNumRotationKeys);
+        for (unsigned i = 0; i < channel->mNumRotationKeys; ++i) {
+            CacheWriteDouble(out, channel->mRotationKeys[i].mTime);
+            CacheWriteFloat(out, channel->mRotationKeys[i].mValue.w);
+            CacheWriteFloat(out, channel->mRotationKeys[i].mValue.x);
+            CacheWriteFloat(out, channel->mRotationKeys[i].mValue.y);
+            CacheWriteFloat(out, channel->mRotationKeys[i].mValue.z);
+        }
+        CacheWriteVarUInt(out, channel->mNumScalingKeys);
+        for (unsigned i = 0; i < channel->mNumScalingKeys; ++i) {
+            CacheWriteDouble(out, channel->mScalingKeys[i].mTime);
+            CacheWriteFloat(out, channel->mScalingKeys[i].mValue.x);
+            CacheWriteFloat(out, channel->mScalingKeys[i].mValue.y);
+            CacheWriteFloat(out, channel->mScalingKeys[i].mValue.z);
+        }
+    }
+}
+
+double CacheReadTime(CacheReader& reader) {
+    return CacheReadDouble(reader);
+}
+
+aiAnimation* CacheReadAnimation(CacheReader& reader) {
+    auto* animation = new aiAnimation();
+    animation->mName = aiString(reader.String());
+    animation->mDuration = CacheReadTime(reader);
+    animation->mTicksPerSecond = CacheReadTime(reader);
+    const uint64_t channelCount = reader.VarUInt();
+    if (channelCount > 1000000) {
+        delete animation;
+        throw std::runtime_error("model cache: too many animation channels");
+    }
+    animation->mNumChannels = static_cast<unsigned>(channelCount);
+    if (channelCount > 0) {
+        animation->mChannels = new aiNodeAnim*[channelCount];
+        for (uint64_t c = 0; c < channelCount; ++c) {
+            auto* channel = new aiNodeAnim();
+            channel->mNodeName = aiString(reader.String());
+            const uint64_t positions = reader.VarUInt();
+            if (positions > 10000000) {
+                delete channel;
+                delete animation;
+                throw std::runtime_error("model cache: too many animation keys");
+            }
+            channel->mNumPositionKeys = static_cast<unsigned>(positions);
+            if (positions > 0) {
+                channel->mPositionKeys = new aiVectorKey[positions];
+                for (uint64_t i = 0; i < positions; ++i) {
+                    channel->mPositionKeys[i].mTime = CacheReadTime(reader);
+                    channel->mPositionKeys[i].mValue.x = CacheReadFloat(reader);
+                    channel->mPositionKeys[i].mValue.y = CacheReadFloat(reader);
+                    channel->mPositionKeys[i].mValue.z = CacheReadFloat(reader);
+                }
+            }
+            const uint64_t rotations = reader.VarUInt();
+            if (rotations > 10000000) {
+                delete channel;
+                delete animation;
+                throw std::runtime_error("model cache: too many animation keys");
+            }
+            channel->mNumRotationKeys = static_cast<unsigned>(rotations);
+            if (rotations > 0) {
+                channel->mRotationKeys = new aiQuatKey[rotations];
+                for (uint64_t i = 0; i < rotations; ++i) {
+                    channel->mRotationKeys[i].mTime = CacheReadTime(reader);
+                    channel->mRotationKeys[i].mValue.w = CacheReadFloat(reader);
+                    channel->mRotationKeys[i].mValue.x = CacheReadFloat(reader);
+                    channel->mRotationKeys[i].mValue.y = CacheReadFloat(reader);
+                    channel->mRotationKeys[i].mValue.z = CacheReadFloat(reader);
+                }
+            }
+            const uint64_t scalings = reader.VarUInt();
+            if (scalings > 10000000) {
+                delete channel;
+                delete animation;
+                throw std::runtime_error("model cache: too many animation keys");
+            }
+            channel->mNumScalingKeys = static_cast<unsigned>(scalings);
+            if (scalings > 0) {
+                channel->mScalingKeys = new aiVectorKey[scalings];
+                for (uint64_t i = 0; i < scalings; ++i) {
+                    channel->mScalingKeys[i].mTime = CacheReadTime(reader);
+                    channel->mScalingKeys[i].mValue.x = CacheReadFloat(reader);
+                    channel->mScalingKeys[i].mValue.y = CacheReadFloat(reader);
+                    channel->mScalingKeys[i].mValue.z = CacheReadFloat(reader);
+                }
+            }
+            animation->mChannels[c] = channel;
+        }
+    }
+    return animation;
+}
+
+void CacheWriteTexture(const std::shared_ptr<Texture>& texture,
+                       std::vector<uint8_t>& out) {
+    const bool hasTexture = texture && !texture->Path().empty() &&
+                            texture->Path() != "<white>";
+    CacheWriteVarUInt(out, hasTexture ? 1 : 0);
+    if (!hasTexture) return;
+    CacheWriteString(out, texture->Path());
+    CacheWriteVarUInt(out, texture->IsSrgb() ? 1 : 0);
+    CacheWriteVarUInt(out, texture->FlippedVertically() ? 1 : 0);
+}
+
+std::shared_ptr<Texture> CacheReadTexture(AssetManager& assets,
+                                          CacheReader& reader) {
+    if (reader.VarUInt() == 0) return nullptr;
+    const std::string path = reader.String();
+    const bool srgb = reader.VarUInt() != 0;
+    const bool flip = reader.VarUInt() != 0;
+    return assets.LoadTexture(path, srgb, nullptr, flip);
+}
+
+void CacheWriteMaterial(const Material& material, std::vector<uint8_t>& out) {
+    CacheWriteString(out, material.name);
+    CacheWriteString(out, material.sourcePath);
+    CacheWriteVarUInt(out, material.sceneOverride ? 1 : 0);
+    CacheWriteVarUInt(out, material.isGlass ? 1 : 0);
+    CacheWriteVarUInt(out, material.twoSided ? 1 : 0);
+    CacheWriteVarUInt(out, material.backfaceCulling ? 1 : 0);
+    CacheWriteVec4(out, material.albedoFactor);
+    CacheWriteVarUInt(out, material.albedoSrgb ? 1 : 0);
+    CacheWriteVarUInt(out, material.metallicRoughnessSrgb ? 1 : 0);
+    CacheWriteVarUInt(out, material.metallicSrgb ? 1 : 0);
+    CacheWriteVarUInt(out, material.roughnessSrgb ? 1 : 0);
+    CacheWriteVarUInt(out, material.normalSrgb ? 1 : 0);
+    CacheWriteVarUInt(out, material.emissiveSrgb ? 1 : 0);
+    CacheWriteVarUInt(out, material.occlusionSrgb ? 1 : 0);
+    CacheWriteVarUInt(out, material.opacitySrgb ? 1 : 0);
+    CacheWriteVarUInt(out, material.specularSrgb ? 1 : 0);
+    CacheWriteVarUInt(out, material.landscapeAlbedoSrgb ? 1 : 0);
+    CacheWriteVarUInt(out, material.landscapeOrmSrgb ? 1 : 0);
+    CacheWriteVarUInt(out, material.landscapeNormalSrgb ? 1 : 0);
+    CacheWriteVarUInt(out, material.landscapeBlend ? 1 : 0);
+    CacheWriteFloat(out, material.metallicFactor);
+    CacheWriteFloat(out, material.specularFactor);
+    CacheWriteFloat(out, material.roughnessFactor);
+    CacheWriteFloat(out, material.normalStrength);
+    CacheWriteFloat(out, material.occlusionStrength);
+    CacheWriteFloat(out, material.alphaCutoff);
+    CacheWriteVarUInt(out, material.alphaTest ? 1 : 0);
+    CacheWriteVarUInt(out, material.alphaBlend ? 1 : 0);
+    CacheWriteFloat(out, material.glassOpacity);
+    CacheWriteVec3(out, material.emissiveFactor);
+    CacheWriteVarUInt(out, material.subsurfaceEnabled ? 1 : 0);
+    CacheWriteVec3(out, material.subsurfaceColor);
+    CacheWriteFloat(out, material.subsurfaceStrength);
+    CacheWriteFloat(out, material.subsurfaceRadius);
+    CacheWriteVarUInt(out, material.translucencyEnabled ? 1 : 0);
+    CacheWriteVec3(out, material.translucencyColor);
+    CacheWriteFloat(out, material.translucencyOpacity);
+    CacheWriteFloat(out, material.translucencyStrength);
+    CacheWriteFloat(out, material.translucencyThickness);
+    CacheWriteFloat(out, material.translucencyDistortion);
+    CacheWriteFloat(out, material.translucencyShadowDepth);
+    CacheWriteVarUInt(out, material.castsShadow ? 1 : 0);
+    CacheWriteFloat(out, material.shadowDepthOffset);
+    CacheWriteVarUInt(out, material.usesUdim ? 1 : 0);
+    CacheWriteVec2(out, material.udimUvScale);
+    CacheWriteVec2(out, material.udimUvOffset);
+    CacheWriteTexture(material.albedoMap, out);
+    CacheWriteTexture(material.metallicRoughnessMap, out);
+    CacheWriteTexture(material.metallicMap, out);
+    CacheWriteTexture(material.roughnessMap, out);
+    CacheWriteTexture(material.normalMap, out);
+    CacheWriteTexture(material.emissiveMap, out);
+    CacheWriteTexture(material.occlusionMap, out);
+    CacheWriteTexture(material.opacityMap, out);
+    CacheWriteTexture(material.specularMap, out);
+    CacheWriteTexture(material.landscapeAlbedoMap, out);
+    CacheWriteTexture(material.landscapeOrmMap, out);
+    CacheWriteTexture(material.landscapeNormalMap, out);
+}
+
+std::shared_ptr<Material> CacheReadMaterial(AssetManager& assets,
+                                            CacheReader& reader) {
+    auto material = std::make_shared<Material>();
+    material->name = reader.String();
+    material->sourcePath = reader.String();
+    material->sceneOverride = reader.VarUInt() != 0;
+    material->isGlass = reader.VarUInt() != 0;
+    material->twoSided = reader.VarUInt() != 0;
+    material->backfaceCulling = reader.VarUInt() != 0;
+    material->albedoFactor = CacheReadVec4(reader);
+    material->albedoSrgb = reader.VarUInt() != 0;
+    material->metallicRoughnessSrgb = reader.VarUInt() != 0;
+    material->metallicSrgb = reader.VarUInt() != 0;
+    material->roughnessSrgb = reader.VarUInt() != 0;
+    material->normalSrgb = reader.VarUInt() != 0;
+    material->emissiveSrgb = reader.VarUInt() != 0;
+    material->occlusionSrgb = reader.VarUInt() != 0;
+    material->opacitySrgb = reader.VarUInt() != 0;
+    material->specularSrgb = reader.VarUInt() != 0;
+    material->landscapeAlbedoSrgb = reader.VarUInt() != 0;
+    material->landscapeOrmSrgb = reader.VarUInt() != 0;
+    material->landscapeNormalSrgb = reader.VarUInt() != 0;
+    material->landscapeBlend = reader.VarUInt() != 0;
+    material->metallicFactor = CacheReadFloat(reader);
+    material->specularFactor = CacheReadFloat(reader);
+    material->roughnessFactor = CacheReadFloat(reader);
+    material->normalStrength = CacheReadFloat(reader);
+    material->occlusionStrength = CacheReadFloat(reader);
+    material->alphaCutoff = CacheReadFloat(reader);
+    material->alphaTest = reader.VarUInt() != 0;
+    material->alphaBlend = reader.VarUInt() != 0;
+    material->glassOpacity = CacheReadFloat(reader);
+    material->emissiveFactor = CacheReadVec3(reader);
+    material->subsurfaceEnabled = reader.VarUInt() != 0;
+    material->subsurfaceColor = CacheReadVec3(reader);
+    material->subsurfaceStrength = CacheReadFloat(reader);
+    material->subsurfaceRadius = CacheReadFloat(reader);
+    material->translucencyEnabled = reader.VarUInt() != 0;
+    material->translucencyColor = CacheReadVec3(reader);
+    material->translucencyOpacity = CacheReadFloat(reader);
+    material->translucencyStrength = CacheReadFloat(reader);
+    material->translucencyThickness = CacheReadFloat(reader);
+    material->translucencyDistortion = CacheReadFloat(reader);
+    material->translucencyShadowDepth = CacheReadFloat(reader);
+    material->castsShadow = reader.VarUInt() != 0;
+    material->shadowDepthOffset = CacheReadFloat(reader);
+    material->usesUdim = reader.VarUInt() != 0;
+    material->udimUvScale = CacheReadVec2(reader);
+    material->udimUvOffset = CacheReadVec2(reader);
+    material->albedoMap = CacheReadTexture(assets, reader);
+    material->metallicRoughnessMap = CacheReadTexture(assets, reader);
+    material->metallicMap = CacheReadTexture(assets, reader);
+    material->roughnessMap = CacheReadTexture(assets, reader);
+    material->normalMap = CacheReadTexture(assets, reader);
+    material->emissiveMap = CacheReadTexture(assets, reader);
+    material->occlusionMap = CacheReadTexture(assets, reader);
+    material->opacityMap = CacheReadTexture(assets, reader);
+    material->specularMap = CacheReadTexture(assets, reader);
+    material->landscapeAlbedoMap = CacheReadTexture(assets, reader);
+    material->landscapeOrmMap = CacheReadTexture(assets, reader);
+    material->landscapeNormalMap = CacheReadTexture(assets, reader);
+    return material;
+}
+
+void CacheWriteMesh(const std::shared_ptr<Mesh>& mesh,
+                    std::vector<uint8_t>& out) {
+    const auto& vertices = mesh ? mesh->Vertices() : std::vector<Vertex>{};
+    const auto& indices = mesh ? mesh->Indices() : std::vector<uint32_t>{};
+    CacheWriteVarUInt(out, vertices.size());
+    for (const Vertex& vertex : vertices) {
+        CacheWriteVec3(out, vertex.position);
+        CacheWriteVec3(out, vertex.normal);
+        CacheWriteVec3(out, vertex.tangent);
+        CacheWriteVec2(out, vertex.uv);
+        CacheWriteVec4(out, vertex.boneIDs);
+        CacheWriteVec4(out, vertex.boneWeights);
+    }
+    CacheWriteVarUInt(out, indices.size());
+    for (uint32_t index : indices) CacheWriteU32(out, index);
+}
+
+std::shared_ptr<Mesh> CacheReadMesh(CacheReader& reader) {
+    const uint64_t vertexCount = reader.VarUInt();
+    if (vertexCount > 100000000) {
+        throw std::runtime_error("model cache: too many vertices");
+    }
+    std::vector<Vertex> vertices(static_cast<size_t>(vertexCount));
+    for (Vertex& vertex : vertices) {
+        vertex.position = CacheReadVec3(reader);
+        vertex.normal = CacheReadVec3(reader);
+        vertex.tangent = CacheReadVec3(reader);
+        vertex.uv = CacheReadVec2(reader);
+        vertex.boneIDs = CacheReadVec4(reader);
+        vertex.boneWeights = CacheReadVec4(reader);
+    }
+    const uint64_t indexCount = reader.VarUInt();
+    if (indexCount > 300000000) {
+        throw std::runtime_error("model cache: too many indices");
+    }
+    std::vector<uint32_t> indices(static_cast<size_t>(indexCount));
+    for (uint32_t& index : indices) index = reader.U32();
+    auto mesh = std::make_shared<Mesh>();
+    if (!vertices.empty()) mesh->Upload(vertices, indices);
+    return mesh;
+}
+
+void CacheWriteLoadedModel(const AssetManager::LoadedModel& model,
+                           std::vector<uint8_t>& out) {
+    CacheWriteVarUInt(out, model.meshes.size());
+    for (const auto& mesh : model.meshes) CacheWriteMesh(mesh, out);
+    CacheWriteVarUInt(out, model.materials.size());
+    for (const auto& material : model.materials) {
+        if (material) {
+            CacheWriteVarUInt(out, 1);
+            CacheWriteMaterial(*material, out);
+        } else {
+            CacheWriteVarUInt(out, 0);
+        }
+    }
+    CacheWriteVarUInt(out, model.meshMaterialIndex.size());
+    for (int index : model.meshMaterialIndex) {
+        CacheWriteU32(out, static_cast<uint32_t>(index));
+    }
+    CacheWriteVarUInt(out, model.meshNames.size());
+    for (const auto& name : model.meshNames) CacheWriteString(out, name);
+    CacheWriteVarUInt(out, model.boneMap.size());
+    for (const auto& [name, index] : model.boneMap) {
+        CacheWriteString(out, name);
+        CacheWriteU32(out, static_cast<uint32_t>(index));
+    }
+    CacheWriteVarUInt(out, model.boneOffsetMatrices.size());
+    for (const auto& [name, matrix] : model.boneOffsetMatrices) {
+        CacheWriteString(out, name);
+        CacheWriteMatrix(matrix, out);
+    }
+    CacheWriteVarUInt(out, model.nodeRestGlobals.size());
+    for (const auto& [name, matrix] : model.nodeRestGlobals) {
+        CacheWriteString(out, name);
+        CacheWriteMatrix(matrix, out);
+    }
+    CacheWriteString(out, model.rootBoneName);
+    CacheWriteString(out, model.boneNamespacePrefix);
+    CacheWriteString(out, model.armatureRootName);
+    CacheWriteVarUInt(out, model.isGltf ? 1 : 0);
+    CacheWriteFloat(out, model.unitScaleFactor);
+    CacheWriteFloat(out, model.importScale);
+    CacheWriteU32(out, static_cast<uint32_t>(model.totalBones));
+    CacheWriteVarUInt(out, model.hasAnimation ? 1 : 0);
+    CacheWriteVarUInt(out, model.animationNames.size());
+    for (const auto& name : model.animationNames) CacheWriteString(out, name);
+    CacheWriteVarUInt(out, model.animationDurations.size());
+    for (float duration : model.animationDurations) {
+        CacheWriteFloat(out, duration);
+    }
+    CacheWriteFloat(out, model.scale);
+    CacheWriteMatrix(model.rootTransform, out);
+    const bool hasScene = model.rawScene && model.rawScene->mRootNode;
+    CacheWriteVarUInt(out, hasScene ? 1 : 0);
+    if (hasScene) {
+        CacheWriteNode(model.rawScene->mRootNode, out);
+        CacheWriteVarUInt(out, model.rawScene->mNumAnimations);
+        for (unsigned i = 0; i < model.rawScene->mNumAnimations; ++i) {
+            CacheWriteAnimation(model.rawScene->mAnimations[i], out);
+        }
+    }
+}
+
+AssetManager::LoadedModel CacheReadLoadedModel(AssetManager& assets,
+                                                CacheReader& reader) {
+    AssetManager::LoadedModel model;
+    const uint64_t meshCount = reader.VarUInt();
+    if (meshCount > 1000000) throw std::runtime_error("model cache: meshes");
+    model.meshes.reserve(static_cast<size_t>(meshCount));
+    for (uint64_t i = 0; i < meshCount; ++i) {
+        model.meshes.push_back(CacheReadMesh(reader));
+    }
+    const uint64_t materialCount = reader.VarUInt();
+    if (materialCount > 1000000) throw std::runtime_error("model cache: materials");
+    model.materials.reserve(static_cast<size_t>(materialCount));
+    for (uint64_t i = 0; i < materialCount; ++i) {
+        if (reader.VarUInt() != 0) {
+            model.materials.push_back(CacheReadMaterial(assets, reader));
+        } else {
+            model.materials.push_back(nullptr);
+        }
+    }
+    const uint64_t materialIndexCount = reader.VarUInt();
+    model.meshMaterialIndex.reserve(static_cast<size_t>(materialIndexCount));
+    for (uint64_t i = 0; i < materialIndexCount; ++i) {
+        model.meshMaterialIndex.push_back(static_cast<int>(reader.U32()));
+    }
+    const uint64_t meshNameCount = reader.VarUInt();
+    model.meshNames.reserve(static_cast<size_t>(meshNameCount));
+    for (uint64_t i = 0; i < meshNameCount; ++i) {
+        model.meshNames.push_back(reader.String());
+    }
+    const uint64_t boneCount = reader.VarUInt();
+    for (uint64_t i = 0; i < boneCount; ++i) {
+        std::string name = reader.String();
+        const int index = static_cast<int>(reader.U32());
+        model.boneMap.emplace(std::move(name), index);
+    }
+    const uint64_t offsetCount = reader.VarUInt();
+    for (uint64_t i = 0; i < offsetCount; ++i) {
+        std::string name = reader.String();
+        const glm::mat4 matrix = CacheReadMatrix(reader);
+        model.boneOffsetMatrices.emplace(std::move(name), matrix);
+    }
+    const uint64_t restCount = reader.VarUInt();
+    for (uint64_t i = 0; i < restCount; ++i) {
+        std::string name = reader.String();
+        const glm::mat4 matrix = CacheReadMatrix(reader);
+        model.nodeRestGlobals.emplace(std::move(name), matrix);
+    }
+    model.rootBoneName = reader.String();
+    model.boneNamespacePrefix = reader.String();
+    model.armatureRootName = reader.String();
+    model.isGltf = reader.VarUInt() != 0;
+    model.unitScaleFactor = CacheReadFloat(reader);
+    model.importScale = CacheReadFloat(reader);
+    model.totalBones = static_cast<int>(reader.U32());
+    model.hasAnimation = reader.VarUInt() != 0;
+    const uint64_t animationNameCount = reader.VarUInt();
+    model.animationNames.reserve(static_cast<size_t>(animationNameCount));
+    for (uint64_t i = 0; i < animationNameCount; ++i) {
+        model.animationNames.push_back(reader.String());
+    }
+    const uint64_t durationCount = reader.VarUInt();
+    model.animationDurations.reserve(static_cast<size_t>(durationCount));
+    for (uint64_t i = 0; i < durationCount; ++i) {
+        model.animationDurations.push_back(CacheReadFloat(reader));
+    }
+    model.scale = CacheReadFloat(reader);
+    model.rootTransform = CacheReadMatrix(reader);
+    if (reader.VarUInt() != 0) {
+        auto scene = std::make_shared<aiScene>();
+        scene->mRootNode = CacheReadNode(reader);
+        const uint64_t animationCount = reader.VarUInt();
+        if (animationCount > 1000000) {
+            throw std::runtime_error("model cache: animations");
+        }
+        scene->mNumAnimations = static_cast<unsigned>(animationCount);
+        if (animationCount > 0) {
+            scene->mAnimations = new aiAnimation*[animationCount];
+            for (uint64_t i = 0; i < animationCount; ++i) {
+                scene->mAnimations[i] = CacheReadAnimation(reader);
+            }
+        }
+        model.rawScene = std::move(scene);
+    }
+    return model;
+}
 } // namespace
+
+AssetManager::LoadedModel AssetManager::ImportModel(
+    const std::string& originalPath) {
+    if (originalPath.empty()) return LoadedModel{};
+    const std::string path = MakeRelativePath(originalPath);
+    // An explicit import must re-read the file even if a scene-load cache
+    // entry already exists.
+    m_models.erase(path);
+    m_importedModels.erase(path);
+    m_importedSignatures.erase(path);
+    LoadedModel model = LoadModel(path);
+    if (!model.meshes.empty() || model.hasAnimation) {
+        m_importedModels[path] = model;
+        const std::string resolved = ResolvePath(path);
+        std::error_code ec;
+        const uint64_t fileSize =
+            std::filesystem::is_regular_file(resolved, ec)
+                ? static_cast<uint64_t>(std::filesystem::file_size(resolved, ec))
+                : 0;
+        uint64_t fileTime = 0;
+        if (!ec) {
+            const auto time = std::filesystem::last_write_time(resolved, ec);
+            if (!ec) {
+                fileTime = static_cast<uint64_t>(time.time_since_epoch().count());
+            }
+        }
+        m_importedSignatures[path] = {fileSize, fileTime};
+        spdlog::info("[AssetManager] Imported model cached: {}", path);
+    }
+    return model;
+}
+
+void AssetManager::SaveImportCache() const {
+    const std::string path = ModelCachePath();
+    if (path.empty()) return;
+
+    struct SourceRecord {
+        std::shared_ptr<EmbeddedTextureSource> source;
+        std::vector<std::string> keys;
+    };
+    std::vector<SourceRecord> sources;
+    std::unordered_map<const EmbeddedTextureSource*, size_t> sourceIndex;
+    for (const auto& [key, source] : m_embeddedSources) {
+        if (!source) continue;
+        auto [it, inserted] = sourceIndex.emplace(source.get(), sources.size());
+        if (inserted) {
+            SourceRecord record;
+            record.source = source;
+            sources.push_back(std::move(record));
+        }
+        sources[it->second].keys.push_back(key);
+    }
+
+    std::vector<uint8_t> out;
+    out.insert(out.end(), kModelCacheMagic, kModelCacheMagic + 8);
+    CacheWriteU32(out, kModelCacheVersion);
+    CacheWriteU32(out, static_cast<uint32_t>(sources.size()));
+    CacheWriteU32(out, static_cast<uint32_t>(m_importedModels.size()));
+
+    for (const SourceRecord& record : sources) {
+        const EmbeddedTextureSource& source = *record.source;
+        CacheWriteString(out, source.displayPath);
+        CacheWriteU32(out, static_cast<uint32_t>(source.data.size()));
+        CacheWriteU32(out, static_cast<uint32_t>(source.width));
+        CacheWriteU32(out, static_cast<uint32_t>(source.height));
+        if (!source.data.empty()) {
+            out.insert(out.end(), source.data.begin(), source.data.end());
+        }
+        CacheWriteU32(out, static_cast<uint32_t>(record.keys.size()));
+        for (const std::string& key : record.keys) {
+            CacheWriteString(out, key);
+        }
+    }
+
+    for (const auto& [modelPath, model] : m_importedModels) {
+        CacheWriteString(out, modelPath);
+        const auto signature = m_importedSignatures.find(modelPath);
+        uint64_t fileSize = 0;
+        uint64_t fileTime = 0;
+        if (signature != m_importedSignatures.end()) {
+            fileSize = signature->second.first;
+            fileTime = signature->second.second;
+        } else {
+            const std::string resolved = ResolvePath(modelPath);
+            std::error_code ec;
+            fileSize = std::filesystem::is_regular_file(resolved, ec)
+                ? static_cast<uint64_t>(
+                      std::filesystem::file_size(resolved, ec))
+                : 0;
+            if (!ec) {
+                const auto time =
+                    std::filesystem::last_write_time(resolved, ec);
+                if (!ec) {
+                    fileTime = static_cast<uint64_t>(
+                        time.time_since_epoch().count());
+                }
+            }
+        }
+        CacheWriteU64(out, fileSize);
+        CacheWriteU64(out, fileTime);
+        CacheWriteLoadedModel(model, out);
+    }
+
+    if (!WriteModelCacheFile(path, out)) {
+        spdlog::warn("[AssetManager] Could not write model cache: {}", path);
+    }
+}
+
+bool AssetManager::LoadImportCache() {
+    const std::string path = ModelCachePath();
+    if (path.empty()) return false;
+    std::vector<uint8_t> data;
+    if (!ReadModelCacheFile(path, data)) return false;
+    try {
+        CacheReader reader{data.data(), data.size(), 0};
+        if (data.size() < 8 ||
+            std::memcmp(data.data(), kModelCacheMagic, 8) != 0) {
+            return false;
+        }
+        reader.pos = 8;
+        if (reader.U32() != kModelCacheVersion) return false;
+        const uint64_t sourceCount = reader.U32();
+        const uint64_t modelCount = reader.U32();
+        if (sourceCount > 100000 || modelCount > 100000) return false;
+
+        m_embeddedSources.clear();
+        m_embeddedTextures.clear();
+        m_importedModels.clear();
+        m_importedSignatures.clear();
+
+        for (uint64_t i = 0; i < sourceCount; ++i) {
+            const std::string displayPath = reader.String();
+            const uint64_t dataSize = reader.U32();
+            const int width = static_cast<int>(reader.U32());
+            const int height = static_cast<int>(reader.U32());
+            if (dataSize > reader.Remaining()) {
+                throw std::runtime_error("model cache: source data");
+            }
+            auto source = std::make_shared<EmbeddedTextureSource>();
+            source->displayPath = displayPath;
+            source->width = width;
+            source->height = height;
+            source->data.resize(static_cast<size_t>(dataSize));
+            if (dataSize > 0) {
+                std::memcpy(source->data.data(), reader.data + reader.pos,
+                            static_cast<size_t>(dataSize));
+                reader.pos += static_cast<size_t>(dataSize);
+            }
+            const uint64_t keyCount = reader.U32();
+            if (keyCount > 100000) {
+                throw std::runtime_error("model cache: source keys");
+            }
+            for (uint64_t key = 0; key < keyCount; ++key) {
+                m_embeddedSources[reader.String()] = source;
+            }
+        }
+
+        for (uint64_t i = 0; i < modelCount; ++i) {
+            const std::string modelPath = reader.String();
+            const uint64_t fileSize = reader.U64();
+            const uint64_t fileTime = reader.U64();
+            LoadedModel model = CacheReadLoadedModel(*this, reader);
+
+            const std::string resolved = ResolvePath(modelPath);
+            std::error_code ec;
+            bool valid = std::filesystem::is_regular_file(resolved, ec);
+            if (valid && fileSize > 0) {
+                valid = std::filesystem::file_size(resolved, ec) == fileSize;
+            }
+            if (valid && fileTime > 0) {
+                const auto time = std::filesystem::last_write_time(resolved, ec);
+                valid = !ec &&
+                    static_cast<uint64_t>(time.time_since_epoch().count()) ==
+                        fileTime;
+            }
+            if (valid && (!model.meshes.empty() || model.hasAnimation)) {
+                m_importedModels[modelPath] = std::move(model);
+                m_importedSignatures[modelPath] = {fileSize, fileTime};
+            }
+        }
+        spdlog::info("[AssetManager] Loaded model cache: {} models",
+                     m_importedModels.size());
+        return !m_importedModels.empty();
+    } catch (const std::exception& e) {
+        spdlog::warn("[AssetManager] Could not read model cache {}: {}",
+                     path, e.what());
+        m_importedModels.clear();
+        m_importedSignatures.clear();
+        m_embeddedSources.clear();
+        m_embeddedTextures.clear();
+        return false;
+    }
+}
 
 AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPath) {
     if (originalPath.empty()) return LoadedModel{};
     const std::string path = MakeRelativePath(originalPath);
     auto it = m_models.find(path);
     if (it != m_models.end()) return it->second;
+    auto imported = m_importedModels.find(path);
+    if (imported != m_importedModels.end()) {
+        m_models[path] = imported->second;
+        spdlog::info("[AssetManager] Using imported model cache: {}", path);
+        return imported->second;
+    }
 
     spdlog::info("[AssetManager] === Loading: {} ===", path);
 
@@ -1638,8 +2541,10 @@ void AssetManager::UpdateAnimationClip(const LoadedModel& model, int clip, float
             spdlog::info("[Bones]   {}", name);
         }
     }
-    ReadNodeHeirarchy(model.rawScene.get(), anim, time, model.rawScene->mRootNode,
-                      glm::mat4(1.0f), outBoneMatrices, model.boneMap);
+    ReadNodeHeirarchy(model.rawScene.get(), anim, time,
+                      model.rawScene->mRootNode, glm::mat4(1.0f),
+                      outBoneMatrices, model.boneMap,
+                      model.boneOffsetMatrices);
     ScaleBonePalette(outBoneMatrices, model.importScale);
 }
 
