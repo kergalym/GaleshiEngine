@@ -608,6 +608,11 @@ struct GroomComponent {
     bool simulate = true;
     bool visibleInEditor = true;
 
+    // Groom transform relative to the target character.
+    glm::vec3 position{0.0f};
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    glm::vec3 scale{1.0f};
+
     // Optional target mesh name. Empty means "use this entity's mesh, or the
     // highest descendant mesh" (the head cap of a character).
     std::string targetMeshName;

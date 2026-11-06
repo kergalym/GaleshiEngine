@@ -1420,6 +1420,9 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
                 {"enabled", g.enabled},
                 {"simulate", g.simulate},
                 {"visibleInEditor", g.visibleInEditor},
+                {"position", Vec3ToJson(g.position)},
+                {"rotation", QuatToJson(g.rotation)},
+                {"scale", Vec3ToJson(g.scale)},
                 {"targetMeshName", g.targetMeshName},
                 {"guideCount", g.guideCount},
                 {"strandsPerGuide", g.strandsPerGuide},
@@ -2490,6 +2493,15 @@ bool SceneSerializer::LoadFromJson(const json& root,
             groom.enabled = jg.value("enabled", true);
             groom.simulate = jg.value("simulate", true);
             groom.visibleInEditor = jg.value("visibleInEditor", true);
+            if (jg.contains("position")) {
+                groom.position = Vec3FromJson(jg.at("position"));
+            }
+            if (jg.contains("rotation")) {
+                groom.rotation = QuatFromJson(jg.at("rotation"));
+            }
+            if (jg.contains("scale")) {
+                groom.scale = Vec3FromJson(jg.at("scale"));
+            }
             groom.targetMeshName = jg.value("targetMeshName", std::string{});
             groom.guideCount = jg.value("guideCount", groom.guideCount);
             groom.strandsPerGuide = jg.value("strandsPerGuide", groom.strandsPerGuide);

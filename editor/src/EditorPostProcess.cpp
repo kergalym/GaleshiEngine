@@ -812,6 +812,22 @@
                               "highest descendant mesh of a character.");
         }
 
+        if (ImGui::TreeNodeEx("Transform",
+                              ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::DragFloat3("Position", glm::value_ptr(groom.position),
+                              0.01f);
+            glm::vec3 rotation =
+                glm::degrees(glm::eulerAngles(glm::normalize(groom.rotation)));
+            if (ImGui::DragFloat3("Rotation", glm::value_ptr(rotation),
+                                  1.0f)) {
+                groom.rotation =
+                    glm::normalize(glm::quat(glm::radians(rotation)));
+            }
+            ImGui::DragFloat3("Scale", glm::value_ptr(groom.scale),
+                              0.01f, 0.001f, 100.0f);
+            ImGui::TreePop();
+        }
+
         ImGui::Separator();
         ImGui::Text("Presets");
         if (ImGui::Button("Short Fur")) {

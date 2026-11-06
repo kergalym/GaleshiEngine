@@ -5,6 +5,7 @@
 #include "GaleshiEngine/Scene/Scene.hpp"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -445,6 +446,16 @@ void UpdateSimulation(Scene& scene, entt::entity target,
     }
 
     const glm::mat4 targetWorld = EntityWorldMatrix(scene, target);
+    glm::quat groomRotation = groom.rotation;
+    if (glm::dot(groomRotation, groomRotation) < 1e-6f) {
+        groomRotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+    } else {
+        groomRotation = glm::normalize(groomRotation);
+    }
+    const glm::mat4 groomLocal =
+        glm::translate(glm::mat4(1.0f), groom.position) *
+        glm::mat4_cast(groomRotation) *
+        glm::scale(glm::mat4(1.0f), groom.scale);
     entt::entity skeleton = FindSkeletonRoot(scene, target);
     const std::vector<glm::mat4>* bones = nullptr;
     if (skeleton != entt::null) {
@@ -466,7 +477,7 @@ void UpdateSimulation(Scene& scene, entt::entity target,
         const glm::mat4 skin = bones
             ? BuildSkinMatrix(*bones, strand.boneIDs, strand.boneWeights)
             : glm::mat4(1.0f);
-        const glm::mat4 bindToWorld = targetWorld * skin;
+        const glm::mat4 bindToWorld = targetWorld * groomLocal * skin;
 
         strand.restWorld.resize(strand.restLocal.size());
         for (size_t i = 0; i < strand.restLocal.size(); ++i) {
