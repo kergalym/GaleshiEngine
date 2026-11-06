@@ -92,10 +92,7 @@ void GaleshiEditorApp::DrawDetails() {
         const bool selectedPhysicsShapeWithMesh =
             selectedIsCollisionShape && selectedHasOwnMesh;
         const bool selectedIsPlainCollisionShape =
-            selectedIsCollisionShape && !selectedHasOwnMesh &&
-            (!selected[0].HasComponent<Galeshi::RigidBodyComponent>() ||
-             selected[0].GetComponent<Galeshi::RigidBodyComponent>().motionType ==
-                 Galeshi::RigidBodyComponent::MotionType::Static);
+            selectedIsCollisionShape && !selectedHasOwnMesh;
 
         // Texture Settings is a global texture-loading option, but it is only
         // relevant while inspecting a 3D model that actually uses textures.
@@ -590,6 +587,28 @@ void GaleshiEditorApp::DrawDetails() {
                 if (ImGui::Combo("Shape", &shapeType, shapeNames, 3)) {
                     collider.shapeType =
                         static_cast<Galeshi::ColliderShapeType>(shapeType);
+                    RebuildPhysicsBody(sel);
+                }
+
+                auto* body = m_scene.Registry()
+                    .try_get<Galeshi::RigidBodyComponent>(sel.Handle());
+                if (!body) {
+                    body = &sel.AddComponent<Galeshi::RigidBodyComponent>();
+                    body->motionType =
+                        Galeshi::RigidBodyComponent::MotionType::Static;
+                    body->useGravity = false;
+                }
+                const char* bodyNames[] = {"Static", "Dynamic"};
+                int bodyType =
+                    body->motionType ==
+                            Galeshi::RigidBodyComponent::MotionType::Static
+                        ? 0 : 1;
+                if (ImGui::Combo("Body Type", &bodyType, bodyNames, 2)) {
+                    body->motionType =
+                        bodyType == 0
+                            ? Galeshi::RigidBodyComponent::MotionType::Static
+                            : Galeshi::RigidBodyComponent::MotionType::Dynamic;
+                    body->useGravity = bodyType != 0;
                     RebuildPhysicsBody(sel);
                 }
 
@@ -2108,8 +2127,7 @@ void GaleshiEditorApp::DrawDetails() {
         // 1. Draw material for the selected entity itself (if any). A
         // collision capsule can own a character subtree; in that case its
         // child material slots are still valid Details content.
-        if (!selectedIsLandscape && !selectedPhysicsShapeWithMesh &&
-            selectedHasOwnMesh) {
+        if (!selectedPhysicsShapeWithMesh && selectedHasOwnMesh) {
             if (auto* matc = ensureMaterialSlot(selected[0])) {
                 std::string label =
                     (matc->material && !matc->material->name.empty())
@@ -2126,7 +2144,7 @@ void GaleshiEditorApp::DrawDetails() {
 
         // 2. Draw materials for all descendants (skeletal model wrappers can
         // sit below a capsule, and their sub-meshes below another model root).
-        if (!selectedIsLandscape && !selectedPhysicsShapeWithMesh &&
+        if (!selectedPhysicsShapeWithMesh &&
             (!selectedIsCollisionShape || selectionHasMaterials)) {
             for (auto e : m_scene.AllEntities()) {
                 if (e.Handle() == selectedHandle) continue;

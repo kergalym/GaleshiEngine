@@ -340,10 +340,6 @@ private:
     // in the scene cannot make an attached camera jump away from its character.
     entt::entity FindGameplayCameraTarget(entt::entity cameraEntity);
 
-    // Position + rotation of the camera target, without its scale. Used for
-    // target-local camera offsets.
-    glm::mat4 GameplayCameraTargetLocal(entt::entity target) const;
-
     bool SetGameplayCameraMode(int mode);
 
     int GetGameplayCameraMode() const;
@@ -723,7 +719,7 @@ void DrawDetails();
     entt::entity            m_gameCameraTarget = entt::null;
     glm::vec3               m_gameCameraPivotLocal{0.0f};
     glm::vec3               m_gameCameraEyeLocal{0.0f, 1.6f, 0.0f};
-    glm::vec3               m_gameCameraLocalOffset{0.0f};
+    glm::vec3               m_gameCameraBaseOffsetLocal{0.0f};
     glm::vec3               m_gameCameraBaseForward{0.0f, 0.0f, -1.0f};
     glm::vec3               m_gameCameraBaseUp{0.0f, 1.0f, 0.0f};
     bool                    m_gameCameraBaseValid = false;

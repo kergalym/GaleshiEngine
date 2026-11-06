@@ -1156,27 +1156,9 @@ if (ImGui::BeginMenu("File")) {
                 m_editor.Select(e);
             }
             if (ImGui::BeginMenu("Collision Shapes")) {
-                if (ImGui::BeginMenu("Static")) {
-                    if (createItem("Box"))    SpawnCollisionShape("CollisionBox", Galeshi::ColliderShapeType::Box);
-                    if (createItem("Sphere")) SpawnCollisionShape("CollisionSphere", Galeshi::ColliderShapeType::Sphere);
-                    if (createItem("Capsule"))SpawnCollisionShape("CollisionCapsule", Galeshi::ColliderShapeType::Capsule);
-                    ImGui::EndMenu();
-                }
-                if (ImGui::BeginMenu("Dynamic")) {
-                    if (createItem("Sphere")) {
-                        auto e = SpawnPhysicsSphere("PhysicsSphere", {0, 5, 0}, 0.5f);
-                        m_editor.Select(e);
-                    }
-                    if (createItem("Capsule")) {
-                        auto e = SpawnPhysicsCapsule("PhysicsCapsule", {0, 5, 0}, 0.5f, 0.5f);
-                        m_editor.Select(e);
-                    }
-                    if (createItem("Cube")) {
-                        auto e = SpawnPhysicsCube("PhysicsCube", {0, 5, 0});
-                        m_editor.Select(e);
-                    }
-                    ImGui::EndMenu();
-                }
+                if (createItem("Box"))    SpawnCollisionShape("CollisionBox", Galeshi::ColliderShapeType::Box);
+                if (createItem("Sphere")) SpawnCollisionShape("CollisionSphere", Galeshi::ColliderShapeType::Sphere);
+                if (createItem("Capsule"))SpawnCollisionShape("CollisionCapsule", Galeshi::ColliderShapeType::Capsule);
                 ImGui::EndMenu();
             }
             if (createItem("AI Agent (Behavior Tree)")) {
