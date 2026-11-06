@@ -14,6 +14,7 @@ GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20
 - [C++ API](docs/CPP_API.md)
 - [Native vs hot-reload C++ API](docs/CPP_API_MODES.md)
 - [C++ gameplay scripts](docs/CPP_SCRIPTS.md)
+- [Cloth painting and simulation](docs/CLOTH.md)
 
 ## Third-person demo game
 
@@ -79,7 +80,10 @@ Implemented post-processing passes:
 - Box, sphere, and capsule shapes.
 - Gravity, impulses, linear velocity, and contact callbacks.
 - Transform synchronization from Jolt to ECS.
-- Cloth/soft-body grid simulation.
+- Cloth painting directly on static and skeletal mesh entities. Painted
+  vertices acquire soft-body behavior and physical parameters (mass, friction,
+  restitution, gravity, damping, pressure, stiffness and compliance). See
+  [Cloth painting and simulation](docs/CLOTH.md).
 - Multithreaded job system.
 
 Joint and constraint interfaces are not exposed yet.

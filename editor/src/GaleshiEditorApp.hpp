@@ -683,6 +683,7 @@ void DrawDetails();
     // Bodies are only created when the scene is playing, so entities without
     // a runtime body are left alone.
     void RebuildPhysicsBody(Galeshi::Entity entity);
+    void RebuildCloth(Galeshi::Entity entity);
 
     // Creates runtime bodies for every authored collider that does not have
     // one yet. Called when Play starts.

@@ -1157,7 +1157,18 @@ std::string SceneSerializer::SaveToString(bool includeEditorState) const {
                 {"origin", Vec3ToJson(softBody.origin)},
                 {"stiffness", softBody.stiffness},
                 {"vertices", std::move(vertices)},
-                {"indices", softBody.indices}
+                {"indices", softBody.indices},
+                {"meshCloth", softBody.meshCloth},
+                {"paintWeights", softBody.paintWeights},
+                {"mass", softBody.mass},
+                {"friction", softBody.friction},
+                {"restitution", softBody.restitution},
+                {"gravityFactor", softBody.gravityFactor},
+                {"linearDamping", softBody.linearDamping},
+                {"pressure", softBody.pressure},
+                {"stretchCompliance", softBody.stretchCompliance},
+                {"shearCompliance", softBody.shearCompliance},
+                {"bendCompliance", softBody.bendCompliance}
             };
         }
         if (reg.all_of<AIControllerComponent>(handle)) {
@@ -1663,6 +1674,22 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             softBody.spacing = js.value("spacing", 0.2f);
             softBody.origin = js.contains("origin") ? Vec3FromJson(js.at("origin")) : glm::vec3(0.0f, 3.0f, 0.0f);
             softBody.stiffness = js.value("stiffness", 0.8f);
+            softBody.meshCloth = js.value("meshCloth", false);
+            if (js.contains("paintWeights") && js["paintWeights"].is_array()) {
+                softBody.paintWeights = js["paintWeights"].get<std::vector<float>>();
+            }
+            softBody.mass = js.value("mass", 1.0f);
+            softBody.friction = js.value("friction", 0.5f);
+            softBody.restitution = js.value("restitution", 0.0f);
+            softBody.gravityFactor = js.value("gravityFactor", 1.0f);
+            softBody.linearDamping = js.value("linearDamping", 0.1f);
+            softBody.pressure = js.value("pressure", 0.0f);
+            softBody.stretchCompliance =
+                js.value("stretchCompliance", 1.0e-4f);
+            softBody.shearCompliance =
+                js.value("shearCompliance", 1.0e-4f);
+            softBody.bendCompliance =
+                js.value("bendCompliance", 1.0e-3f);
             if (js.contains("vertices") && js["vertices"].is_array()) {
                 softBody.vertices.clear();
                 for (const auto& vertex : js["vertices"]) softBody.vertices.push_back(Vec3FromJson(vertex));

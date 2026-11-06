@@ -360,6 +360,25 @@ struct SoftBodyComponent {
     float stiffness = 0.8f;
     std::vector<glm::vec3> vertices;
     std::vector<uint32_t> indices;
+
+    // Painted mesh cloth. paintWeights is one entry per source mesh vertex;
+    // zero means pinned, positive values make the vertex dynamic.
+    bool meshCloth = false;
+    std::vector<float> paintWeights;
+    // Source mesh vertex -> welded soft-body vertex. Rebuilt at runtime.
+    std::vector<uint32_t> simVertexMap;
+
+    // Physical parameters used when the soft body is rebuilt.
+    float mass = 1.0f;
+    float friction = 0.5f;
+    float restitution = 0.0f;
+    float gravityFactor = 1.0f;
+    float linearDamping = 0.1f;
+    float pressure = 0.0f;
+    float stretchCompliance = 1.0e-4f;
+    float shearCompliance = 1.0e-4f;
+    float bendCompliance = 1.0e-3f;
+
     uint32_t softBodyId = 0xFFFFFFFF;
 };
 

@@ -828,7 +828,7 @@ void GaleshiEditorApp::DrawDetails() {
             const char* toolNames[] = {
                 "Select", "Raise", "Lower", "Smooth", "Flatten", "Noise",
                 "Terrace", "Sharpen", "Paint Landscape", "Paint Trees",
-                "Paint Grass"
+                "Paint Grass", "Paint Cloth"
             };
             int currentTool = static_cast<int>(m_editor.toolMode);
             if (ImGui::Combo("Brush", &currentTool, toolNames, IM_ARRAYSIZE(toolNames))) {
@@ -1505,6 +1505,133 @@ void GaleshiEditorApp::DrawDetails() {
                              type.paintedInstances.size();
             }
             ImGui::TextDisabled("%zu trees / %zu grass", treeTotal, grassTotal);
+        }
+
+        // Cloth is data on an existing mesh entity, not a separate entity.
+        // The checkbox enables the paint tool and creates the component on
+        // first use.
+        if (!selectedIsLandscape &&
+            selected[0].HasComponent<Galeshi::MeshComponent>()) {
+            auto* existingCloth =
+                reg.try_get<Galeshi::SoftBodyComponent>(selectedHandle);
+            const bool paintingCloth =
+                existingCloth && existingCloth->meshCloth &&
+                m_editor.toolMode ==
+                    Galeshi::EditorState::ToolMode::PaintCloth;
+            bool paintingEnabled = paintingCloth;
+            if (beginDetailsSection(
+                    "Cloth Painting", ImGuiTreeNodeFlags_DefaultOpen,
+                    "cloth painting fabric soft body paint mesh static "
+                    "skeletal simulation")) {
+                if (ImGui::Checkbox("Painting cloth", &paintingEnabled)) {
+                    if (paintingEnabled) {
+                        PushHistory();
+                        auto& mesh =
+                            selected[0].GetComponent<Galeshi::MeshComponent>();
+                        auto* cloth = reg.try_get<Galeshi::SoftBodyComponent>(
+                            selectedHandle);
+                        if (!cloth) {
+                            cloth = &selected[0]
+                                .AddComponent<Galeshi::SoftBodyComponent>();
+                        }
+                        if (!cloth->meshCloth) {
+                            if (m_physics &&
+                                cloth->softBodyId != 0xFFFFFFFFu) {
+                                m_physics->DestroyBody(cloth->softBodyId);
+                            }
+                            cloth->softBodyId = 0xFFFFFFFFu;
+                            cloth->meshCloth = true;
+                            cloth->gridX = 0;
+                            cloth->gridY = 0;
+                            cloth->vertices.clear();
+                            cloth->indices.clear();
+                            cloth->simVertexMap.clear();
+                        }
+                        const size_t vertexCount = mesh.mesh
+                            ? mesh.mesh->Vertices().size() : 0;
+                        if (cloth->paintWeights.size() != vertexCount) {
+                            cloth->paintWeights.assign(vertexCount, 0.0f);
+                        }
+                        m_editor.Select(selected[0]);
+                        m_editor.toolMode =
+                            Galeshi::EditorState::ToolMode::PaintCloth;
+                        m_wasSculpting = false;
+                        m_paintStampValid = false;
+                    } else {
+                        m_editor.toolMode =
+                            Galeshi::EditorState::ToolMode::Select;
+                        m_wasSculpting = false;
+                        m_paintStampValid = false;
+                    }
+                }
+            }
+
+            auto* cloth =
+                reg.try_get<Galeshi::SoftBodyComponent>(selectedHandle);
+            if (cloth && cloth->meshCloth &&
+                beginDetailsSection(
+                    "Cloth Properties", ImGuiTreeNodeFlags_DefaultOpen,
+                    "cloth soft body mass friction restitution gravity damping "
+                    "pressure stiffness compliance fabric")) {
+                ImGui::TextDisabled(
+                    "Paint vertices on the mesh, then rebuild the cloth body.");
+                if (ImGui::Button("Paint Cloth")) {
+                    m_editor.Select(selected[0]);
+                    m_editor.toolMode =
+                        Galeshi::EditorState::ToolMode::PaintCloth;
+                    m_wasSculpting = false;
+                    m_paintStampValid = false;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Clear Paint")) {
+                    PushHistory();
+                    std::fill(cloth->paintWeights.begin(),
+                              cloth->paintWeights.end(), 0.0f);
+                    RebuildCloth(selected[0]);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Rebuild Cloth")) {
+                    PushHistory();
+                    RebuildCloth(selected[0]);
+                }
+                ImGui::TextDisabled(
+                    "Painted vertices: %zu / %zu",
+                    static_cast<size_t>(std::count_if(
+                        cloth->paintWeights.begin(),
+                        cloth->paintWeights.end(),
+                        [](float value) { return value > 0.001f; })),
+                    cloth->paintWeights.size());
+
+                ImGui::Separator();
+                ImGui::Text("Physical Properties");
+                ImGui::DragFloat("Mass", &cloth->mass, 0.01f, 0.001f, 1000.0f);
+                ImGui::DragFloat("Friction", &cloth->friction, 0.01f,
+                                 0.0f, 2.0f);
+                ImGui::DragFloat("Restitution", &cloth->restitution, 0.01f,
+                                 0.0f, 1.0f);
+                ImGui::DragFloat("Gravity Factor", &cloth->gravityFactor,
+                                 0.01f, 0.0f, 5.0f);
+                ImGui::DragFloat("Linear Damping", &cloth->linearDamping,
+                                 0.01f, 0.0f, 10.0f);
+                ImGui::DragFloat("Pressure", &cloth->pressure, 0.01f,
+                                 -100.0f, 100.0f);
+                ImGui::DragFloat("Stiffness", &cloth->stiffness, 0.01f,
+                                 0.0f, 1.0f);
+                ImGui::DragFloat("Stretch Compliance",
+                                 &cloth->stretchCompliance, 1.0e-6f, 0.0f,
+                                 0.1f, "%.6f");
+                ImGui::DragFloat("Shear Compliance",
+                                 &cloth->shearCompliance, 1.0e-6f, 0.0f,
+                                 0.1f, "%.6f");
+                ImGui::DragFloat("Bend Compliance",
+                                 &cloth->bendCompliance, 1.0e-6f, 0.0f,
+                                 0.1f, "%.6f");
+
+                if (ImGui::Button("Rebuild With Properties")) {
+                    PushHistory();
+                    RebuildCloth(selected[0]);
+                }
+            }
         }
 
         auto materialUserCount = [&](const Galeshi::Material* material) {

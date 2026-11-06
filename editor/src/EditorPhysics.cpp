@@ -102,11 +102,102 @@
 
 
 
+    void GaleshiEditorApp::RebuildCloth(Galeshi::Entity entity) {
+        if (!m_physics || !entity || !m_assets) return;
+        auto& registry = m_scene.Registry();
+        const entt::entity handle = entity.Handle();
+        auto* cloth = registry.try_get<Galeshi::SoftBodyComponent>(handle);
+        if (!cloth) return;
+        if (cloth->softBodyId != 0xFFFFFFFFu) {
+            m_physics->DestroyBody(cloth->softBodyId);
+            cloth->softBodyId = 0xFFFFFFFFu;
+        }
+        if (!cloth->meshCloth) {
+            cloth->softBodyId = m_physics->CreateCloth(*cloth, handle);
+            spdlog::info("[Cloth] Rebuilt grid body for entity {} (0x{:08x})",
+                         static_cast<uint32_t>(handle), cloth->softBodyId);
+            return;
+        }
+        auto* meshComponent = registry.try_get<Galeshi::MeshComponent>(handle);
+        if (!meshComponent || !meshComponent->mesh) {
+            return;
+        }
+        const auto& meshVertices = meshComponent->mesh->Vertices();
+        if (cloth->paintWeights.size() != meshVertices.size()) {
+            cloth->paintWeights.resize(meshVertices.size(), 0.0f);
+        }
+
+        // Imported meshes split vertices at UV/normal seams. Weld identical
+        // positions for simulation so the painted surface stays connected.
+        std::vector<glm::vec3> simPositions;
+        std::vector<float> simWeights;
+        std::vector<uint32_t> simIndices;
+        std::map<std::array<int, 3>, uint32_t> weldMap;
+        cloth->simVertexMap.assign(meshVertices.size(), 0);
+        for (size_t i = 0; i < meshVertices.size(); ++i) {
+            const glm::vec3& position = meshVertices[i].position;
+            const std::array<int, 3> key = {
+                static_cast<int>(std::lround(position.x * 100000.0f)),
+                static_cast<int>(std::lround(position.y * 100000.0f)),
+                static_cast<int>(std::lround(position.z * 100000.0f))};
+            auto [it, inserted] = weldMap.emplace(key,
+                                                   static_cast<uint32_t>(simPositions.size()));
+            if (inserted) {
+                simPositions.push_back(position);
+                simWeights.push_back(cloth->paintWeights[i]);
+            } else if (i < cloth->paintWeights.size()) {
+                simWeights[it->second] = std::max(
+                    simWeights[it->second], cloth->paintWeights[i]);
+            }
+            cloth->simVertexMap[i] = it->second;
+        }
+        const auto& meshIndices = meshComponent->mesh->Indices();
+        simIndices.reserve(meshIndices.size());
+        for (size_t i = 0; i + 2 < meshIndices.size(); i += 3) {
+            const uint32_t i0 = meshIndices[i];
+            const uint32_t i1 = meshIndices[i + 1];
+            const uint32_t i2 = meshIndices[i + 2];
+            if (i0 >= cloth->simVertexMap.size() ||
+                i1 >= cloth->simVertexMap.size() ||
+                i2 >= cloth->simVertexMap.size()) {
+                continue;
+            }
+            const uint32_t s0 = cloth->simVertexMap[i0];
+            const uint32_t s1 = cloth->simVertexMap[i1];
+            const uint32_t s2 = cloth->simVertexMap[i2];
+            if (s0 == s1 || s1 == s2 || s0 == s2) continue;
+            simIndices.push_back(s0);
+            simIndices.push_back(s1);
+            simIndices.push_back(s2);
+        }
+
+        Galeshi::SoftBodyComponent simCloth = *cloth;
+        simCloth.paintWeights = std::move(simWeights);
+        const glm::mat4 world = EntityWorldMatrix(handle);
+        glm::vec3 scale, translation, skew;
+        glm::vec4 perspective;
+        glm::quat rotation;
+        glm::decompose(world, scale, rotation, translation, skew, perspective);
+        cloth->softBodyId = m_physics->CreateClothFromMesh(
+            simPositions, simIndices, simCloth, translation,
+            glm::normalize(rotation), handle);
+        spdlog::info("[Cloth] Rebuilt body for entity {} (0x{:08x})",
+                     static_cast<uint32_t>(handle), cloth->softBodyId);
+    }
+
     // Creates runtime bodies for every authored collider that does not have
     // one yet. Called when Play starts.
     void GaleshiEditorApp::EnsurePhysicsBodies() {
         if (!m_physics) return;
         auto& reg = m_scene.Registry();
+        auto softView = reg.view<Galeshi::SoftBodyComponent,
+                                 Galeshi::MeshComponent>();
+        for (auto e : softView) {
+            auto& cloth = softView.get<Galeshi::SoftBodyComponent>(e);
+            if (cloth.softBodyId == 0xFFFFFFFFu) {
+                RebuildCloth(Galeshi::Entity(e, &m_scene));
+            }
+        }
         auto view = reg.view<Galeshi::ColliderComponent, Galeshi::RigidBodyComponent,
                              Galeshi::TransformComponent>();
         int created = 0;

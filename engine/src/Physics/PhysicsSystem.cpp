@@ -487,8 +487,13 @@ bool EnginePhysicsSystem::SphereCast(
 }
 
 
-uint32_t EnginePhysicsSystem::CreateCloth(int gridX, int gridY, float spacing, const glm::vec3& origin, entt::entity entity) {
+uint32_t EnginePhysicsSystem::CreateCloth(
+    const SoftBodyComponent& cloth, entt::entity entity) {
     if (!m_impl->initialized) return 0xFFFFFFFFu;
+    const int gridX = std::max(cloth.gridX, 2);
+    const int gridY = std::max(cloth.gridY, 2);
+    const float spacing = cloth.spacing;
+    const glm::vec3 origin = cloth.origin;
 
     // Jolt 5.2 soft-body API: shared settings, faces, then constraints.
     JPH::Ref<JPH::SoftBodySharedSettings> settings = new JPH::SoftBodySharedSettings;
@@ -496,10 +501,13 @@ uint32_t EnginePhysicsSystem::CreateCloth(int gridX, int gridY, float spacing, c
     for (int y = 0; y < gridY; ++y) {
         for (int x = 0; x < gridX; ++x) {
             JPH::SoftBodySharedSettings::Vertex v;
+            // Keep grid vertices relative to the body origin. The render mesh
+            // is authored as origin + (x, y) * spacing, so UpdateSoftBodies
+            // can add the body position without double-offsetting the cloth.
             JPH::Vec3 pos(
-                origin.x + (x - gridX * 0.5f) * spacing,
-                origin.y,
-                origin.z + (y - gridY * 0.5f) * spacing
+                x * spacing,
+                0.0f,
+                y * spacing
             );
             pos.StoreFloat3(&v.mPosition);
             // Pin corners with invMass = 0; the rest stay dynamic.
@@ -523,10 +531,11 @@ uint32_t EnginePhysicsSystem::CreateCloth(int gridX, int gridY, float spacing, c
         }
     }
 
-    JPH::SoftBodySharedSettings::VertexAttributes attr;
-    attr.mCompliance = 1.0e-4f;
-    attr.mShearCompliance = 1.0e-4f;
-    attr.mBendCompliance = 1.0e-3f;
+    const float stiffness = std::clamp(cloth.stiffness, 0.01f, 1.0f);
+    JPH::SoftBodySharedSettings::VertexAttributes attr(
+        std::max(cloth.stretchCompliance / stiffness, 1.0e-6f),
+        std::max(cloth.shearCompliance / stiffness, 1.0e-6f),
+        std::max(cloth.bendCompliance / stiffness, 1.0e-6f));
     settings->CreateConstraints(&attr, 1, JPH::SoftBodySharedSettings::EBendType::Distance);
     settings->Optimize();
 
@@ -535,8 +544,11 @@ uint32_t EnginePhysicsSystem::CreateCloth(int gridX, int gridY, float spacing, c
         JPH::RVec3(origin.x, origin.y, origin.z),
         JPH::Quat::sIdentity(),
         LAYER_MOVING);
-    sbSettings.mFriction = 0.5f;
-    sbSettings.mRestitution = 0.0f;
+    sbSettings.mFriction = cloth.friction;
+    sbSettings.mRestitution = cloth.restitution;
+    sbSettings.mGravityFactor = cloth.gravityFactor;
+    sbSettings.mLinearDamping = cloth.linearDamping;
+    sbSettings.mPressure = cloth.pressure;
     sbSettings.mUpdatePosition = true;
 
     JPH::BodyID id = m_impl->bodyInterface->CreateAndAddSoftBody(sbSettings, JPH::EActivation::Activate);
@@ -550,6 +562,103 @@ uint32_t EnginePhysicsSystem::CreateCloth(int gridX, int gridY, float spacing, c
     return rawId;
 }
 
+
+uint32_t EnginePhysicsSystem::CreateClothFromMesh(
+    const std::vector<glm::vec3>& vertices,
+    const std::vector<uint32_t>& indices,
+    const SoftBodyComponent& cloth,
+    const glm::vec3& position,
+    const glm::quat& rotation,
+    entt::entity entity) {
+    if (!m_impl->initialized || vertices.empty() || indices.size() < 3) {
+        return 0xFFFFFFFFu;
+    }
+
+    JPH::Ref<JPH::SoftBodySharedSettings> settings =
+        new JPH::SoftBodySharedSettings;
+
+    bool hasDynamicVertex = false;
+    for (size_t i = 0; i < vertices.size(); ++i) {
+        const float weight = i < cloth.paintWeights.size()
+            ? std::clamp(cloth.paintWeights[i], 0.0f, 1.0f)
+            : 0.0f;
+        JPH::SoftBodySharedSettings::Vertex vertex;
+        JPH::Vec3 position(vertices[i].x, vertices[i].y, vertices[i].z);
+        position.StoreFloat3(&vertex.mPosition);
+        vertex.mInvMass = weight > 1.0e-4f
+            ? weight / std::max(cloth.mass, 1.0e-3f)
+            : 0.0f;
+        hasDynamicVertex = hasDynamicVertex || vertex.mInvMass > 0.0f;
+        settings->mVertices.push_back(vertex);
+    }
+    if (!hasDynamicVertex) {
+        spdlog::warn("[Physics] Cloth has no painted vertices");
+        return 0xFFFFFFFFu;
+    }
+
+    for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+        const uint32_t i0 = indices[i];
+        const uint32_t i1 = indices[i + 1];
+        const uint32_t i2 = indices[i + 2];
+        if (i0 >= vertices.size() || i1 >= vertices.size() ||
+            i2 >= vertices.size() || i0 == i1 || i1 == i2 || i0 == i2) {
+            continue;
+        }
+        const float w0 = i0 < cloth.paintWeights.size()
+            ? cloth.paintWeights[i0] : 0.0f;
+        const float w1 = i1 < cloth.paintWeights.size()
+            ? cloth.paintWeights[i1] : 0.0f;
+        const float w2 = i2 < cloth.paintWeights.size()
+            ? cloth.paintWeights[i2] : 0.0f;
+        if (w0 <= 1.0e-4f && w1 <= 1.0e-4f && w2 <= 1.0e-4f) continue;
+
+        JPH::SoftBodySharedSettings::Face face;
+        face.mVertex[0] = i0;
+        face.mVertex[1] = i1;
+        face.mVertex[2] = i2;
+        settings->AddFace(face);
+    }
+    if (settings->mFaces.empty()) {
+        spdlog::warn("[Physics] Cloth has no painted faces");
+        return 0xFFFFFFFFu;
+    }
+
+    const float stiffness = std::clamp(cloth.stiffness, 0.01f, 1.0f);
+    JPH::SoftBodySharedSettings::VertexAttributes attributes(
+        std::max(cloth.stretchCompliance / stiffness, 1.0e-6f),
+        std::max(cloth.shearCompliance / stiffness, 1.0e-6f),
+        std::max(cloth.bendCompliance / stiffness, 1.0e-6f));
+    settings->CreateConstraints(&attributes, 1,
+                                JPH::SoftBodySharedSettings::EBendType::Distance);
+    settings->Optimize();
+
+    JPH::SoftBodyCreationSettings bodySettings(
+        settings,
+        JPH::RVec3(position.x, position.y, position.z),
+        JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w),
+        LAYER_MOVING);
+    bodySettings.mFriction = cloth.friction;
+    bodySettings.mRestitution = cloth.restitution;
+    bodySettings.mGravityFactor = cloth.gravityFactor;
+    bodySettings.mLinearDamping = cloth.linearDamping;
+    bodySettings.mPressure = cloth.pressure;
+    bodySettings.mUpdatePosition = true;
+    bodySettings.mMakeRotationIdentity = false;
+    bodySettings.mAllowSleeping = false;
+
+    JPH::BodyID id = m_impl->bodyInterface->CreateAndAddSoftBody(
+        bodySettings, JPH::EActivation::Activate);
+    if (id.IsInvalid()) {
+        spdlog::error("[Physics] CreateClothFromMesh failed");
+        return 0xFFFFFFFFu;
+    }
+    const uint32_t rawId = id.GetIndexAndSequenceNumber();
+    if (entity != entt::null) m_impl->bodyToEntity[rawId] = entity;
+    spdlog::info("[Physics] Cloth from mesh: {} vertices, {} faces, "
+                 "bodyId=0x{:08x}", vertices.size(),
+                 settings->mFaces.size(), rawId);
+    return rawId;
+}
 
 void EnginePhysicsSystem::UpdateSoftBodies(Scene& scene) {
     auto view = scene.Registry().view<SoftBodyComponent, MeshComponent>();
@@ -567,12 +676,29 @@ void EnginePhysicsSystem::UpdateSoftBodies(Scene& scene) {
         if (!mp) continue;
 
         const auto& joltVertices = mp->GetVertices();
-        std::vector<glm::vec3> positions(joltVertices.size());
-        JPH::RVec3 bodyPos = body.GetPosition();
-        JPH::Quat bodyRot = body.GetRotation();
-        for (size_t i = 0; i < joltVertices.size(); ++i) {
-            JPH::RVec3 pos = bodyPos + bodyRot * joltVertices[i].mPosition;
-            positions[i] = glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ());
+        if (sb.meshCloth &&
+            sb.simVertexMap.size() != mc.mesh->Vertices().size()) {
+            continue;
+        }
+        if (!sb.meshCloth &&
+            joltVertices.size() != mc.mesh->Vertices().size()) {
+            continue;
+        }
+        std::vector<glm::vec3> positions(mc.mesh->Vertices().size());
+        if (sb.meshCloth) {
+            for (size_t i = 0; i < positions.size(); ++i) {
+                const uint32_t simIndex = sb.simVertexMap[i];
+                if (simIndex >= joltVertices.size()) continue;
+                const JPH::Vec3& pos = joltVertices[simIndex].mPosition;
+                positions[i] = glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ());
+            }
+        } else {
+            JPH::RVec3 bodyPos = body.GetPosition();
+            JPH::Quat bodyRot = body.GetRotation();
+            for (size_t i = 0; i < joltVertices.size(); ++i) {
+                JPH::RVec3 pos = bodyPos + bodyRot * joltVertices[i].mPosition;
+                positions[i] = glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ());
+            }
         }
         mc.mesh->UpdateVertices(positions);
     }

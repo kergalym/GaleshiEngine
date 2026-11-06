@@ -594,6 +594,11 @@
             Galeshi::AnimationSystem::Update(m_scene, *m_assets, dt);
             m_cpuProfile.animationMs = ProfileElapsedMs(animationStart, ProfileClock::now());
         }
+        // Soft-body meshes are updated after skeletal animation so a cloth
+        // painted on a skinned mesh is not immediately overwritten.
+        if (m_physics) {
+            m_physics->UpdateSoftBodies(m_scene);
+        }
         // Hair follows the freshly sampled skeleton, then simulates its own
         // spring chains before the render pass builds camera-facing ribbons.
         {

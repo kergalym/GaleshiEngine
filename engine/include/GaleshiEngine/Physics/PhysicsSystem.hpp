@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <memory>
 #include <functional>
+#include <vector>
 #include <entt/entt.hpp>
 
 namespace JPH { class JobSystem; }
@@ -13,6 +14,7 @@ namespace Galeshi {
 class Scene;
 struct ColliderComponent;
 struct RigidBodyComponent;
+struct SoftBodyComponent;
 
 class EnginePhysicsSystem {
 public:
@@ -51,7 +53,14 @@ public:
                     glm::vec3& hitPoint) const;
 
     void SyncTransformsToECS(Scene& scene);
-    uint32_t CreateCloth(int gridX, int gridY, float spacing, const glm::vec3& origin, entt::entity entity);
+    uint32_t CreateCloth(const SoftBodyComponent& cloth,
+                         entt::entity entity);
+    uint32_t CreateClothFromMesh(const std::vector<glm::vec3>& vertices,
+                                 const std::vector<uint32_t>& indices,
+                                 const SoftBodyComponent& cloth,
+                                 const glm::vec3& position,
+                                 const glm::quat& rotation,
+                                 entt::entity entity);
     void UpdateSoftBodies(Scene& scene);
 
     // Callback receives (entityA, entityB) for each ContactAdded event.

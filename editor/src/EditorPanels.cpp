@@ -1131,43 +1131,6 @@ if (ImGui::BeginMenu("File")) {
                 if (createItem("Capsule"))SpawnCollisionShape("CollisionCapsule", Galeshi::ColliderShapeType::Capsule);
                 ImGui::EndMenu();
             }
-            if (createItem("Cloth (SoftBody)")) {
-                auto e = m_scene.CreateEntity("Cloth");
-                auto& sb = e.AddComponent<Galeshi::SoftBodyComponent>();
-                sb.gridX = 10; sb.gridY = 10;
-                sb.origin = {0, 5, 0};
-                sb.softBodyId = m_physics->CreateCloth(sb.gridX, sb.gridY, sb.spacing, sb.origin, static_cast<entt::entity>(e));
-
-                auto mesh = std::make_shared<Galeshi::Mesh>();
-                std::vector<Galeshi::Vertex> verts;
-                std::vector<uint32_t> idxs;
-                for (int y = 0; y < sb.gridY; ++y) {
-                    for (int x = 0; x < sb.gridX; ++x) {
-                        Galeshi::Vertex v{};
-                        v.position = sb.origin + glm::vec3(x * sb.spacing, 0, y * sb.spacing);
-                        v.normal = glm::vec3(0, 1, 0);
-                        v.uv = glm::vec2(float(x)/sb.gridX, float(y)/sb.gridY);
-                        verts.push_back(v);
-                    }
-                }
-                for (int y = 0; y < sb.gridY - 1; ++y) {
-                    for (int x = 0; x < sb.gridX - 1; ++x) {
-                        uint32_t i0 = y * sb.gridX + x;
-                        uint32_t i1 = i0 + 1;
-                        uint32_t i2 = i0 + sb.gridX;
-                        uint32_t i3 = i2 + 1;
-                        idxs.push_back(i0); idxs.push_back(i2); idxs.push_back(i1);
-                        idxs.push_back(i1); idxs.push_back(i2); idxs.push_back(i3);
-                    }
-                }
-                mesh->Upload(verts, idxs);
-                e.AddComponent<Galeshi::MeshComponent>(Galeshi::MeshComponent{ mesh, "", "cloth" });
-                auto mat = std::make_shared<Galeshi::Material>();
-                mat->albedoFactor = {0.8f, 0.2f, 0.2f, 1.0f};
-                e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
-
-                m_editor.Select(e);
-            }
             if (createItem("Physics Cube")) {
                 auto e = SpawnPhysicsCube("PhysicsCube", {0, 5, 0});
                 m_editor.Select(e);

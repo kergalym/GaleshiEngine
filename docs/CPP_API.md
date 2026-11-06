@@ -223,8 +223,15 @@ Script surface:
 - impulse, force, linear/angular velocity;
 - sphere/ray casts and contact events;
 - trigger begin/end overlap callbacks and script events;
-- cloth creation/update;
+- cloth creation/update, including painted mesh cloth via
+  `CreateClothFromMesh()` and `SoftBodyComponent` paint weights;
+- cloth physical parameters: mass, friction, restitution, gravity, damping,
+  pressure, stiffness and compliance;
 - entity-to-body and body-to-entity mapping.
+
+Cloth is data on an existing mesh entity, not a separate entity. See
+[Cloth painting and simulation](CLOTH.md) for the editor workflow and
+`SoftBodyComponent` fields.
 
 ### 5. Navigation and AI — done
 

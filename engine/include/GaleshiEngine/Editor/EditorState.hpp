@@ -21,7 +21,8 @@ public:
         Sharpen,
         PaintLandscape,
         PaintTrees,
-        PaintGrass
+        PaintGrass,
+        PaintCloth
     };
     
 

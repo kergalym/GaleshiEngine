@@ -1,5 +1,64 @@
 #include "GaleshiEditorApp.hpp"
 
+namespace {
+
+bool RayTriangleIntersect(const glm::vec3& origin, const glm::vec3& direction,
+                          const glm::vec3& a, const glm::vec3& b,
+                          const glm::vec3& c, float& outT) {
+    constexpr float kEpsilon = 1.0e-7f;
+    const glm::vec3 edge1 = b - a;
+    const glm::vec3 edge2 = c - a;
+    const glm::vec3 p = glm::cross(direction, edge2);
+    const float determinant = glm::dot(edge1, p);
+    if (std::abs(determinant) < kEpsilon) return false;
+
+    const float inverse = 1.0f / determinant;
+    const glm::vec3 t = origin - a;
+    const float u = glm::dot(t, p) * inverse;
+    if (u < 0.0f || u > 1.0f) return false;
+
+    const glm::vec3 q = glm::cross(t, edge1);
+    const float v = glm::dot(direction, q) * inverse;
+    if (v < 0.0f || u + v > 1.0f) return false;
+
+    const float distance = glm::dot(edge2, q) * inverse;
+    if (distance <= kEpsilon) return false;
+    outT = distance;
+    return true;
+}
+
+bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
+                      const glm::vec3& direction, float& outDistance,
+                      glm::vec3& outHit) {
+    const auto& vertices = mesh.Vertices();
+    const auto& indices = mesh.Indices();
+    float best = std::numeric_limits<float>::max();
+    bool hit = false;
+    for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+        const uint32_t i0 = indices[i];
+        const uint32_t i1 = indices[i + 1];
+        const uint32_t i2 = indices[i + 2];
+        if (i0 >= vertices.size() || i1 >= vertices.size() ||
+            i2 >= vertices.size()) {
+            continue;
+        }
+        float distance = 0.0f;
+        if (RayTriangleIntersect(origin, direction,
+                                 vertices[i0].position,
+                                 vertices[i1].position,
+                                 vertices[i2].position, distance) &&
+            distance < best) {
+            best = distance;
+            hit = true;
+        }
+    }
+    if (!hit) return false;
+    outDistance = best;
+    outHit = origin + direction * best;
+    return true;
+}
+
+} // namespace
 
 
     void GaleshiEditorApp::DrawCollisionShapeGizmos() {
@@ -90,6 +149,34 @@
                             color);
                     }
                     break;
+                }
+            }
+        }
+
+        // Painted cloth vertices are shown as small green crosses so the
+        // brush result is visible before rebuilding the soft body.
+        if (selected && selected.HasComponent<Galeshi::SoftBodyComponent>() &&
+            selected.HasComponent<Galeshi::MeshComponent>()) {
+            const auto& cloth =
+                selected.GetComponent<Galeshi::SoftBodyComponent>();
+            const auto& meshComponent =
+                selected.GetComponent<Galeshi::MeshComponent>();
+            if (cloth.meshCloth && meshComponent.mesh) {
+                const glm::mat4 world = EntityWorldMatrix(selected.Handle());
+                const auto& vertices = meshComponent.mesh->Vertices();
+                const size_t count =
+                    std::min(vertices.size(), cloth.paintWeights.size());
+                for (size_t i = 0; i < count; ++i) {
+                    if (cloth.paintWeights[i] <= 0.001f) continue;
+                    const glm::vec3 p =
+                        glm::vec3(world * glm::vec4(vertices[i].position, 1.0f));
+                    const float size = 0.03f;
+                    m_debug->AddLine(p - glm::vec3(size, 0, 0),
+                                     p + glm::vec3(size, 0, 0),
+                                     glm::vec4(0.3f, 1.0f, 0.4f, 0.9f));
+                    m_debug->AddLine(p - glm::vec3(0, size, 0),
+                                     p + glm::vec3(0, size, 0),
+                                     glm::vec4(0.3f, 1.0f, 0.4f, 0.9f));
                 }
             }
         }
@@ -1347,6 +1434,15 @@
                 !m_isGameMode && selHasTf &&
                 sel.HasComponent<Galeshi::LandscapeComponent>() &&
                 m_editor.toolMode != Galeshi::EditorState::ToolMode::Select &&
+                m_editor.toolMode != Galeshi::EditorState::ToolMode::PaintCloth &&
+                !uiOverlayConsumed &&
+                (!m_editor.isPlaying || !m_uiRuntime.IsPointerOverUI());
+            const bool clothPaintActive =
+                !m_isGameMode && selHasTf &&
+                sel.HasComponent<Galeshi::SoftBodyComponent>() &&
+                sel.HasComponent<Galeshi::MeshComponent>() &&
+                m_editor.toolMode ==
+                    Galeshi::EditorState::ToolMode::PaintCloth &&
                 !uiOverlayConsumed &&
                 (!m_editor.isPlaying || !m_uiRuntime.IsPointerOverUI());
 
@@ -1509,6 +1605,100 @@
                     m_wasSculpting = false;
                     m_paintStampValid = false;
                 }
+            } else if (clothPaintActive) {
+                const ImVec2 paintMouse = ImGui::GetMousePos();
+                const bool overImage =
+                    ImGui::IsWindowHovered() &&
+                    paintMouse.x >= imgMin.x && paintMouse.x <= imgMax.x &&
+                    paintMouse.y >= imgMin.y && paintMouse.y <= imgMax.y;
+                if (overImage) {
+                    const float ndcX =
+                        ((paintMouse.x - imgMin.x) / w) * 2.0f - 1.0f;
+                    const float ndcY =
+                        1.0f - ((paintMouse.y - imgMin.y) / h) * 2.0f;
+                    const glm::mat4 invVP =
+                        glm::inverse(m_camera.Projection() * m_camera.View());
+                    glm::vec4 rayStart4 = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
+                    glm::vec4 rayEnd4 = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
+                    rayStart4 /= rayStart4.w;
+                    rayEnd4 /= rayEnd4.w;
+                    const glm::vec3 rayOrigin = glm::vec3(rayStart4);
+                    const glm::vec3 rayDir =
+                        glm::normalize(glm::vec3(rayEnd4 - rayStart4));
+
+                    auto& meshComponent =
+                        sel.GetComponent<Galeshi::MeshComponent>();
+                    auto& cloth = sel.GetComponent<Galeshi::SoftBodyComponent>();
+                    if (meshComponent.mesh) {
+                        const glm::mat4 world = EntityWorldMatrix(sel.Handle());
+                        const glm::mat4 inverseWorld = glm::inverse(world);
+                        const glm::vec3 localOrigin = glm::vec3(
+                            inverseWorld * glm::vec4(rayOrigin, 1.0f));
+                        const glm::vec3 localDirection = glm::normalize(
+                            glm::vec3(inverseWorld * glm::vec4(rayDir, 0.0f)));
+                    float hitDistance = 0.0f;
+                    glm::vec3 localHit(0.0f);
+                    if (RaycastMeshLocal(*meshComponent.mesh, localOrigin,
+                                         localDirection, hitDistance,
+                                         localHit)) {
+                        const auto& vertices = meshComponent.mesh->Vertices();
+                        if (cloth.paintWeights.size() != vertices.size()) {
+                            cloth.paintWeights.resize(vertices.size(), 0.0f);
+                        }
+                        const glm::vec3 scaleX(world[0]);
+                        const glm::vec3 scaleY(world[1]);
+                        const glm::vec3 scaleZ(world[2]);
+                        const float worldScale = std::max(
+                            0.001f, std::max({glm::length(scaleX),
+                                              glm::length(scaleY),
+                                              glm::length(scaleZ)}));
+                        const float localRadius =
+                            m_editor.brushRadius / worldScale;
+                        const bool erase = ImGui::GetIO().KeyAlt;
+                        const bool leftClicked =
+                            ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+                        if (leftClicked) {
+                            PushHistory();
+                            m_wasSculpting = true;
+                            m_paintStampValid = false;
+                        }
+                        if (m_wasSculpting &&
+                            ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                            const float minStep =
+                                std::max(0.01f, localRadius * 0.2f);
+                            const glm::vec3 delta = localHit - m_lastPaintLocal;
+                            if (!m_paintStampValid ||
+                                glm::dot(delta, delta) >= minStep * minStep) {
+                                for (size_t i = 0; i < vertices.size(); ++i) {
+                                    const float distance = glm::length(
+                                        vertices[i].position - localHit);
+                                    if (distance > localRadius) continue;
+                                    if (erase) {
+                                        cloth.paintWeights[i] = 0.0f;
+                                    } else {
+                                        const float falloff = std::clamp(
+                                            1.0f - distance / localRadius,
+                                            0.0f, 1.0f);
+                                        cloth.paintWeights[i] = std::max(
+                                            cloth.paintWeights[i],
+                                            std::clamp(m_editor.brushStrength *
+                                                           falloff,
+                                                       0.0f, 1.0f));
+                                    }
+                                }
+                                m_lastPaintLocal = localHit;
+                                m_paintStampValid = true;
+                            }
+                        }
+                    }
+                    }
+                }
+                if (m_wasSculpting &&
+                    !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    RebuildCloth(sel);
+                    m_wasSculpting = false;
+                    m_paintStampValid = false;
+                }
             } else {
                 m_wasSculpting = false;
             }
@@ -1539,7 +1729,8 @@
             }
 
             // --- Gizmo: apply translation/rotation/scale to the ECS. ---
-            if (selHasTf && !landscapeSculptActive && !selectedIsUICanvas &&
+            if (selHasTf && !landscapeSculptActive && !clothPaintActive &&
+                !selectedIsUICanvas &&
                 !uiOverlayConsumed && !m_editor.isPlaying) {
                 ImGuizmo::SetDrawlist();
                 ImGuizmo::SetRect(imgMin.x, imgMin.y, w, h);
@@ -1637,7 +1828,8 @@
                 std::hypot(mouse.x - selScreen.x, mouse.y - selScreen.y) < centerRadiusPx;
 
             // Begin drag on LMB down over center
-            if (!landscapeSculptActive && !selectedIsUICanvas &&
+            if (!landscapeSculptActive && !clothPaintActive &&
+                !selectedIsUICanvas &&
                 !uiOverlayConsumed && !m_editor.isPlaying &&
                 ImGui::IsItemHovered() && !m_isDragging &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left) && overCenter &&
@@ -1704,7 +1896,8 @@
                     centerRadiusPx * 0.5f, hintColor, 24, 2.0f);
             }
 
-            if (!landscapeSculptActive && !uiOverlayConsumed &&
+            if (!landscapeSculptActive && !clothPaintActive &&
+                !uiOverlayConsumed &&
                 ImGui::IsItemHovered() &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_isDragging &&
                 !overCenter && !ImGuizmo::IsOver()) {
