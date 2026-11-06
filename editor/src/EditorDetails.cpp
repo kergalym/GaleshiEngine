@@ -557,10 +557,11 @@ void GaleshiEditorApp::DrawDetails() {
 
         // --- Groom hair inspector ----------------------------------------
         if (auto sel = m_editor.Selected(&m_scene); sel) {
-            // Groom hair is only meaningful for skeletal characters. In
-            // particular, never expose it for landscape entities even if an
-            // old scene still contains a stale GroomComponent.
-            if (IsSkeletalCharacter(sel)) {
+            // Groom hair is only meaningful for skeletal characters. Never
+            // expose it for collision shapes (an attached collider walks up
+            // to its skeletal parent) or stale landscape components.
+            if (!sel.HasComponent<Galeshi::ColliderComponent>() &&
+                IsSkeletalCharacter(sel)) {
                 if (sel.HasComponent<Galeshi::GroomComponent>()) {
                     auto& groom = sel.GetComponent<Galeshi::GroomComponent>();
                     if (beginDetailsSection(
@@ -1566,9 +1567,14 @@ void GaleshiEditorApp::DrawDetails() {
         }
 
         // Cloth is data on an existing mesh entity, not a separate entity.
-        // The checkbox enables the paint tool and creates the component on
-        // first use.
-        if (!selectedIsLandscape &&
+        // Dynamic/kinematic physics proxies are not cloth authoring targets;
+        // static meshes and skeletal characters keep the paint controls.
+        const bool dynamicPhysicsProxy =
+            !IsSkeletalCharacter(selected[0]) &&
+            selected[0].HasComponent<Galeshi::RigidBodyComponent>() &&
+            selected[0].GetComponent<Galeshi::RigidBodyComponent>().motionType !=
+                Galeshi::RigidBodyComponent::MotionType::Static;
+        if (!selectedIsLandscape && !dynamicPhysicsProxy &&
             selected[0].HasComponent<Galeshi::MeshComponent>()) {
             auto* existingCloth =
                 reg.try_get<Galeshi::SoftBodyComponent>(selectedHandle);

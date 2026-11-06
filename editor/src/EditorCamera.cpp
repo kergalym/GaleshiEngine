@@ -125,15 +125,16 @@
 
 
 
-    // Cache the bounds centre, eye position and initial camera basis in world
-    // space. Keeping the basis independent from the target transform prevents
-    // character turning from rotating the player's camera.
+    // Cache the bounds centre, eye position and initial camera basis. The
+    // camera offset stays target-local so position follows the Player's full
+    // transform; the basis stays world-space so character turning does not
+    // rotate the view.
     void GaleshiEditorApp::RefreshGameplayCameraTarget(entt::entity target,
                                      entt::entity cameraEntity) {
         m_gameCameraTarget = target;
         m_gameCameraPivotLocal = glm::vec3(0.0f);
         m_gameCameraEyeLocal = glm::vec3(0.0f, 1.6f, 0.0f);
-        m_gameCameraBaseOffset = glm::vec3(0.0f);
+        m_gameCameraBaseOffsetLocal = glm::vec3(0.0f);
         m_gameCameraBaseForward = glm::vec3(0.0f, 0.0f, -1.0f);
         m_gameCameraBaseUp = glm::vec3(0.0f, 1.0f, 0.0f);
         m_gameCameraBaseValid = false;
@@ -195,7 +196,9 @@
                 ? glm::vec3(0.0f, 0.0f, 1.0f)
                 : glm::vec3(0.0f, 1.0f, 0.0f);
         }
-        m_gameCameraBaseOffset = glm::vec3(cameraWorld[3]) - pivot;
+        m_gameCameraBaseOffsetLocal = glm::vec3(
+            inverseTarget *
+            glm::vec4(glm::vec3(cameraWorld[3]) - pivot, 0.0f));
         m_gameCameraBaseForward = forward;
         m_gameCameraBaseUp = cameraUp;
         m_gameCameraBaseValid = true;
@@ -321,7 +324,9 @@
                 pivot = glm::vec3(
                     targetWorld * glm::vec4(m_gameCameraPivotLocal, 1.0f));
                 if (m_gameCameraBaseValid) {
-                    eye = pivot + m_gameCameraBaseOffset;
+                    eye = pivot + glm::vec3(
+                        targetWorld *
+                        glm::vec4(m_gameCameraBaseOffsetLocal, 0.0f));
                     forward = m_gameCameraBaseForward;
                     up = m_gameCameraBaseUp;
                 }
