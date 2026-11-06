@@ -772,22 +772,24 @@
             ImGui::SameLine(0.0f, 6.0f);
         }
 
-        // Play/Stop
-        if (ImGui::Button(m_editor.isPlaying ? "Stop" : "Play", ImVec2(60, 0))) {
-            // Never show the previous mode's cached viewport after Play/Stop.
-            m_lastViewportTexture = BGFX_INVALID_HANDLE;
-            if (!m_editor.isPlaying) {
-                PushHistory();
-                m_editor.isPlaying = true;
-                EnsurePhysicsBodies();
-                ActivateGameplayCamera();
-            } else {
-                StopPlay();
+        // Keep the menu row centered while the engine badge stays anchored
+        // at the left edge.
+        {
+            const char* menuLabels[] = {
+                "Post-Process", "Rendering", "File", "Edit", "Audio",
+                "Create", "Animation", "Testing", "Stats"
+            };
+            float menuWidth = 0.0f;
+            for (size_t i = 0; i < IM_ARRAYSIZE(menuLabels); ++i) {
+                if (i > 0) menuWidth += style.ItemSpacing.x;
+                menuWidth += ImGui::CalcTextSize(menuLabels[i]).x +
+                             style.FramePadding.x * 2.0f;
             }
+            const float centeredX =
+                (ImGui::GetWindowWidth() - menuWidth) * 0.5f;
+            ImGui::SetCursorPosX(
+                std::max(ImGui::GetCursorPosX(), centeredX));
         }
-        ImGui::SameLine();
-        ImGui::Text("|");
-        ImGui::SameLine();
 
                 if (ImGui::BeginMenu("Post-Process")) {
             // Edit the active source (highest-priority volume or global
@@ -1310,6 +1312,38 @@ if (ImGui::BeginMenu("File")) {
         }
 
         ImGui::EndMainMenuBar();
+
+        // Play/Stop sits in its own thin top bar, below the menu row and
+        // above the docked viewport.
+        const float playBarHeight =
+            ImGui::GetFrameHeight() + style.WindowPadding.y * 2.0f +
+            style.ItemSpacing.y + 1.0f;
+        if (ImGui::BeginViewportSideBar(
+                "##EditorPlayBar", ImGui::GetMainViewport(),
+                ImGuiDir_Up, playBarHeight,
+                ImGuiWindowFlags_NoScrollbar |
+                ImGuiWindowFlags_NoScrollWithMouse |
+                ImGuiWindowFlags_NoSavedSettings)) {
+            ImGui::Separator();
+            constexpr float kPlayWidth = 72.0f;
+            ImGui::SetCursorPosX(
+                (ImGui::GetWindowWidth() - kPlayWidth) * 0.5f);
+            if (ImGui::Button(m_editor.isPlaying ? "Stop" : "Play",
+                              ImVec2(kPlayWidth, 0.0f))) {
+                // Never show the previous mode's cached viewport after
+                // Play/Stop.
+                m_lastViewportTexture = BGFX_INVALID_HANDLE;
+                if (!m_editor.isPlaying) {
+                    PushHistory();
+                    m_editor.isPlaying = true;
+                    EnsurePhysicsBodies();
+                    ActivateGameplayCamera();
+                } else {
+                    StopPlay();
+                }
+            }
+            ImGui::End();
+        }
 
         // Start loading after the menu popup has been closed, so the loading
         // state cannot invalidate the menu while it is still being drawn.
