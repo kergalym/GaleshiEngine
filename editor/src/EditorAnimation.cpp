@@ -698,6 +698,40 @@
             }
         }
 
+        // ASME defaults to the authored Player entity when one exists, even
+        // if it is not a skeletal model yet.
+        entt::entity playerEntity = entt::null;
+        auto playerView = registry.view<Galeshi::PlayerTagComponent>();
+        for (entt::entity handle : playerView) {
+            if (playerEntity == entt::null) playerEntity = handle;
+            if (registry.all_of<Galeshi::NameComponent>(handle) &&
+                registry.get<Galeshi::NameComponent>(handle).name == "Player") {
+                playerEntity = handle;
+                break;
+            }
+        }
+        if (playerEntity == entt::null) {
+            auto namedView = registry.view<Galeshi::NameComponent>();
+            for (entt::entity handle : namedView) {
+                if (namedView.get<Galeshi::NameComponent>(handle).name ==
+                    "Player") {
+                    playerEntity = handle;
+                    break;
+                }
+            }
+        }
+        if (playerEntity != entt::null) {
+            std::string playerSourcePath;
+            if (const auto* skeleton =
+                    registry.try_get<Galeshi::SkeletalComponent>(playerEntity)) {
+                playerSourcePath = skeleton->sourcePath;
+            } else if (const auto* mesh =
+                           registry.try_get<Galeshi::MeshComponent>(playerEntity)) {
+                playerSourcePath = mesh->sourceAssetPath;
+            }
+            addCharacter(playerEntity, playerSourcePath);
+        }
+
         std::sort(characters.begin(), characters.end(),
                   [](const CharacterEntry& a, const CharacterEntry& b) {
                       return a.label < b.label;
@@ -717,7 +751,12 @@
             }
         }
         if (!found) {
-            m_stateMachineEditorEntity = characters.front().entity;
+            if (playerEntity != entt::null &&
+                characterIndices.count(playerEntity)) {
+                m_stateMachineEditorEntity = playerEntity;
+            } else {
+                m_stateMachineEditorEntity = characters.front().entity;
+            }
         }
 
         int current = 0;

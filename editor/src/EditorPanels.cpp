@@ -1049,6 +1049,27 @@ if (ImGui::BeginMenu("File")) {
             if (createItem("Empty Entity"))
                 m_editor.Select(m_scene.CreateEntity("New Entity"));
 
+            if (createItem("Player")) {
+                auto e = m_scene.CreateEntity("Player");
+                e.AddComponent<Galeshi::PlayerTagComponent>();
+                auto& tf = e.GetComponent<Galeshi::TransformComponent>();
+                tf.position = {0.0f, 1.0f, 0.0f};
+
+                auto mesh = m_assets->CreateCapsuleMesh(0.8f, 0.35f);
+                e.AddComponent<Galeshi::MeshComponent>(
+                    Galeshi::MeshComponent{mesh, "", "capsule"});
+                auto mat = std::make_shared<Galeshi::Material>();
+                mat->name = "Player_Material";
+                mat->albedoFactor = {0.35f, 0.55f, 0.85f, 1.0f};
+                mat->roughnessFactor = 0.65f;
+                e.AddComponent<Galeshi::MaterialComponent>(
+                    Galeshi::MaterialComponent{mat});
+
+                // Player is intentionally a plain visual/gameplay entity.
+                // Movement and collision belong to a separate physics proxy.
+                m_editor.Select(e);
+            }
+
             if (ImGui::BeginMenu("UI")) {
                 if (ImGui::MenuItem("UI Canvas")) CreateUICanvas("UICanvas");
                 ImGui::Separator();

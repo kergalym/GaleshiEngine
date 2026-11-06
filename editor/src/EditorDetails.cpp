@@ -85,6 +85,12 @@ void GaleshiEditorApp::DrawDetails() {
         // not expose rendering materials or audio source controls.
         const bool selectedIsCollisionShape =
             selected[0].HasComponent<Galeshi::ColliderComponent>();
+        const bool selectedHasOwnMesh =
+            selected[0].HasComponent<Galeshi::MeshComponent>();
+        // Physics primitives carry a visual mesh, but their Details page is
+        // still a physics page, not a material editor.
+        const bool selectedPhysicsShapeWithMesh =
+            selectedIsCollisionShape && selectedHasOwnMesh;
 
         // Texture Settings is a global texture-loading option, but it is only
         // relevant while inspecting a 3D model that actually uses textures.
@@ -2044,10 +2050,8 @@ void GaleshiEditorApp::DrawDetails() {
         // 1. Draw material for the selected entity itself (if any). A
         // collision capsule can own a character subtree; in that case its
         // child material slots are still valid Details content.
-        if (!selectedIsLandscape &&
-            (!selectedIsCollisionShape || selectionHasMaterials) &&
-            (selected[0].HasComponent<Galeshi::MaterialComponent>() ||
-             selected[0].HasComponent<Galeshi::MeshComponent>())) {
+        if (!selectedIsLandscape && !selectedPhysicsShapeWithMesh &&
+            selectedHasOwnMesh) {
             if (auto* matc = ensureMaterialSlot(selected[0])) {
                 std::string label =
                     (matc->material && !matc->material->name.empty())
@@ -2064,7 +2068,7 @@ void GaleshiEditorApp::DrawDetails() {
 
         // 2. Draw materials for all descendants (skeletal model wrappers can
         // sit below a capsule, and their sub-meshes below another model root).
-        if (!selectedIsLandscape &&
+        if (!selectedIsLandscape && !selectedPhysicsShapeWithMesh &&
             (!selectedIsCollisionShape || selectionHasMaterials)) {
             for (auto e : m_scene.AllEntities()) {
                 if (e.Handle() == selectedHandle) continue;
