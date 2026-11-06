@@ -155,6 +155,12 @@ extern "C" void GaleshiScriptUpdate(float dt) {
     g_api->physics.AttachBox(crate, {0.5f, 0.5f, 0.5f});
     g_api->physics.ApplyImpulse(crate, {0.0f, 2.0f, 0.0f});
 
+    // A skeletal entity can be switched to a ragdoll at runtime.
+    const uint32_t player = g_api->world.Find("Player");
+    if (g_api->physics.CreateRagdoll(player)) {
+        g_api->physics.ApplyRagdollImpulse(player, {0.0f, 4.0f, 0.0f});
+    }
+
     const float side = g_api->input.AxisRaw("Horizontal");
     g_api->camera.Movement(side, 0.0f);
 

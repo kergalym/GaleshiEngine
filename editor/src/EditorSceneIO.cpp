@@ -319,6 +319,9 @@
                     m_physics->DestroyBody(soft->softBodyId);
                     soft->softBodyId = 0xFFFFFFFFu;
                 }
+                if (m_scene.Registry().all_of<Galeshi::RagdollComponent>(e)) {
+                    m_physics->DestroyRagdoll(m_scene, e);
+                }
             }
             if (m_particles) m_particles->RemoveEmitter(e);
         }

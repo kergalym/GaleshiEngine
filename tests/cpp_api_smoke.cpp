@@ -24,6 +24,10 @@ static void ExerciseApi(const GaleshiScriptApi* raw) {
 
     api.physics.AttachBox(entity, {0.5f, 0.5f, 0.5f});
     api.physics.ApplyImpulse(entity, {0.0f, 1.0f, 0.0f});
+    api.physics.CreateRagdoll(entity);
+    api.physics.RagdollActive(entity);
+    api.physics.ApplyRagdollImpulse(entity, {0.0f, 1.0f, 0.0f});
+    api.physics.DestroyRagdoll(entity);
     api.physics.DestroyBody(entity);
 
     api.navigation.FindPath({0.0f, 0.0f, 0.0f},

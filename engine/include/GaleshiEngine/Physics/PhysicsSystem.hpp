@@ -12,6 +12,7 @@ namespace JPH { class JobSystem; }
 namespace Galeshi {
 
 class Scene;
+class AssetManager;
 struct ColliderComponent;
 struct RigidBodyComponent;
 struct SoftBodyComponent;
@@ -63,6 +64,16 @@ public:
                                  entt::entity entity);
     void UpdateSoftBodies(Scene& scene);
 
+    // Creates a Jolt ragdoll from the entity's skeletal bones. The entity
+    // must own a SkeletalComponent with a model that has a bone hierarchy.
+    bool CreateRagdoll(Scene& scene, AssetManager& assets,
+                       entt::entity entity);
+    void DestroyRagdoll(Scene& scene, entt::entity entity);
+    bool IsRagdollActive(entt::entity entity) const;
+    uint32_t RagdollBodyCount(entt::entity entity) const;
+    void ApplyRagdollImpulse(entt::entity entity,
+                             const glm::vec3& impulse);
+
     // Callback receives (entityA, entityB) for each ContactAdded event.
     void SetOnContactCallback(std::function<void(entt::entity, entt::entity)> cb);
 
@@ -79,6 +90,7 @@ JPH::JobSystem* GetJobSystem() const;
 
 private:
     struct Impl;
+    void SyncRagdollsToECS(Scene& scene);
     std::unique_ptr<Impl> m_impl;
 };
 

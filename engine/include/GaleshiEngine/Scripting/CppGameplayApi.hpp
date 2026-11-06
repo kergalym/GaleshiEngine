@@ -220,6 +220,26 @@ public:
                m_api->apply_impulse(m_api->user, entity, impulse);
     }
 
+    bool CreateRagdoll(uint32_t entity) const {
+        return m_api && m_api->create_ragdoll &&
+               m_api->create_ragdoll(m_api->user, entity);
+    }
+
+    bool DestroyRagdoll(uint32_t entity) const {
+        return m_api && m_api->destroy_ragdoll &&
+               m_api->destroy_ragdoll(m_api->user, entity);
+    }
+
+    bool RagdollActive(uint32_t entity) const {
+        return m_api && m_api->ragdoll_active &&
+               m_api->ragdoll_active(m_api->user, entity);
+    }
+
+    bool ApplyRagdollImpulse(uint32_t entity, Vec3 impulse) const {
+        return m_api && m_api->apply_ragdoll_impulse &&
+               m_api->apply_ragdoll_impulse(m_api->user, entity, impulse);
+    }
+
 private:
     const GaleshiScriptApi* m_api = nullptr;
 };

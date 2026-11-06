@@ -313,6 +313,20 @@
         scriptPhysics.destroyBody = [this](uint32_t bodyId) {
             if (m_physics) m_physics->DestroyBody(bodyId);
         };
+        scriptPhysics.createRagdoll = [this](entt::entity entity) {
+            return m_physics && m_assets &&
+                m_physics->CreateRagdoll(m_scene, *m_assets, entity);
+        };
+        scriptPhysics.destroyRagdoll = [this](entt::entity entity) {
+            if (m_physics) m_physics->DestroyRagdoll(m_scene, entity);
+        };
+        scriptPhysics.ragdollActive = [this](entt::entity entity) {
+            return m_physics && m_physics->IsRagdollActive(entity);
+        };
+        scriptPhysics.applyRagdollImpulse =
+            [this](entt::entity entity, const glm::vec3& impulse) {
+                if (m_physics) m_physics->ApplyRagdollImpulse(entity, impulse);
+            };
         m_scripts.BindPhysics(scriptPhysics);
         m_scripts.BindEngine([this]() { RequestExit(); });
         m_scripts.BindCamera(

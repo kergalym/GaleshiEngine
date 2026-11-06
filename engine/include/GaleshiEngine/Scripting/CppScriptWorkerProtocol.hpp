@@ -220,6 +220,10 @@ enum class CppWorkerRequest : uint32_t {
     SeekSound = 197,
     GetSoundDuration = 198,
     GetSoundPosition = 199,
+    CreateRagdoll = 200,
+    DestroyRagdoll = 201,
+    RagdollActive = 202,
+    ApplyRagdollImpulse = 203,
 };
 
 constexpr std::size_t kCppWorkerTextSize = 512;

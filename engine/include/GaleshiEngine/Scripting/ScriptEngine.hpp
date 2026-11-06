@@ -45,6 +45,11 @@ public:
                                entt::entity entity,
                                bool isStatic)> createCapsule;
         std::function<void(uint32_t bodyId)> destroyBody;
+        std::function<bool(entt::entity)> createRagdoll;
+        std::function<void(entt::entity)> destroyRagdoll;
+        std::function<bool(entt::entity)> ragdollActive;
+        std::function<void(entt::entity, const glm::vec3&)>
+            applyRagdollImpulse;
     };
 
     ScriptEngine();

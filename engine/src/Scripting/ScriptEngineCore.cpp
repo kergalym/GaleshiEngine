@@ -93,6 +93,10 @@ void ScriptEngine::DestroyEntity(entt::entity entity) {
             m_physics.destroyBody(softBody.softBodyId);
         }
     }
+    if (registry.all_of<RagdollComponent>(entity) &&
+        m_physics.destroyRagdoll) {
+        m_physics.destroyRagdoll(entity);
+    }
 
     registry.destroy(entity);
 }

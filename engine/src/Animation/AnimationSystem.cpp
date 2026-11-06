@@ -198,6 +198,7 @@ float AnimationSystem::GetParameter(const AnimationStateMachineComponent& machin
 void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
     auto view = scene.Registry().view<SkeletalComponent>();
     for (auto handle : view) {
+        if (scene.Registry().all_of<RagdollComponent>(handle)) continue;
         auto& skel = view.get<SkeletalComponent>(handle);
         if (skel.sourcePath.empty()) continue;
 

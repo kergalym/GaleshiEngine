@@ -530,6 +530,33 @@ bool ScriptEngine::MakeWorkerCoreResponse(
             response.valid = 1;
         }
         break;
+    case CppWorkerRequest::CreateRagdoll:
+        if (m_physics.createRagdoll) {
+            response.valid = m_physics.createRagdoll(
+                static_cast<entt::entity>(request.entity)) ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::DestroyRagdoll:
+        if (m_physics.destroyRagdoll) {
+            m_physics.destroyRagdoll(
+                static_cast<entt::entity>(request.entity));
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::RagdollActive:
+        if (m_physics.ragdollActive) {
+            response.valid = m_physics.ragdollActive(
+                static_cast<entt::entity>(request.entity)) ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::ApplyRagdollImpulse:
+        if (m_physics.applyRagdollImpulse) {
+            m_physics.applyRagdollImpulse(
+                static_cast<entt::entity>(request.entity),
+                FromScriptVec3({request.x, request.y, request.z}));
+            response.valid = 1;
+        }
+        break;
     case CppWorkerRequest::BuildNavMesh:
         if (m_buildNavMesh) {
             response.valid = m_buildNavMesh() ? 1u : 0u;

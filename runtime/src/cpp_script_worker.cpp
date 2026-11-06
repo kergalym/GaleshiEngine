@@ -349,6 +349,10 @@ public:
         m_api.attach_capsule = &ScriptWorker::AttachCapsule;
         m_api.destroy_body = &ScriptWorker::DestroyBody;
         m_api.apply_impulse = &ScriptWorker::ApplyImpulse;
+        m_api.create_ragdoll = &ScriptWorker::CreateRagdoll;
+        m_api.destroy_ragdoll = &ScriptWorker::DestroyRagdoll;
+        m_api.ragdoll_active = &ScriptWorker::RagdollActive;
+        m_api.apply_ragdoll_impulse = &ScriptWorker::ApplyRagdollImpulse;
         m_api.build_navmesh = &ScriptWorker::BuildNavMesh;
         m_api.find_path = &ScriptWorker::FindPath;
         m_api.path_point_count = &ScriptWorker::PathPointCount;
@@ -938,6 +942,36 @@ private:
         if (!user) return false;
         return static_cast<ScriptWorker*>(user)
             ->Request(CppWorkerRequest::ApplyImpulse, entity, nullptr,
+                      impulse)
+            .valid != 0;
+    }
+
+    static bool CreateRagdoll(void* user, uint32_t entity) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::CreateRagdoll, entity)
+            .valid != 0;
+    }
+
+    static bool DestroyRagdoll(void* user, uint32_t entity) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::DestroyRagdoll, entity)
+            .valid != 0;
+    }
+
+    static bool RagdollActive(void* user, uint32_t entity) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::RagdollActive, entity)
+            .valid != 0;
+    }
+
+    static bool ApplyRagdollImpulse(void* user, uint32_t entity,
+                                    GaleshiScriptVec3 impulse) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::ApplyRagdollImpulse, entity, nullptr,
                       impulse)
             .valid != 0;
     }

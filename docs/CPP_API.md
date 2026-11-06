@@ -146,7 +146,7 @@ Current class wrappers cover:
 - `Input` — key state, dead-zoned/raw axes, mouse buttons, position, delta,
   wheel
 - `Physics` — linear velocity, attach box/sphere/capsule, destroy body,
-  impulse
+  impulse, create/destroy/query a skeletal ragdoll and apply ragdoll impulses
 - `Navigation` — navmesh build, path query and path points
 - `Audio` — 2D play/stop/pause/resume/volume/pitch/loop/seek, 3D sources,
   stop-all and mixer buses
@@ -227,7 +227,11 @@ Script surface:
   `CreateClothFromMesh()` and `SoftBodyComponent` paint weights;
 - cloth physical parameters: mass, friction, restitution, gravity, damping,
   pressure, stiffness and compliance;
-- entity-to-body and body-to-entity mapping.
+- entity-to-body and body-to-entity mapping;
+- skeletal ragdolls from a `SkeletalComponent` model:
+  `CreateRagdoll(scene, assets, entity)`, `DestroyRagdoll(scene, entity)`,
+  `IsRagdollActive(entity)`, `RagdollBodyCount(entity)` and
+  `ApplyRagdollImpulse(entity, impulse)`. Ragdoll state is runtime-only.
 
 Cloth is data on an existing mesh entity, not a separate entity. See
 [Cloth painting and simulation](CLOTH.md) for the editor workflow and

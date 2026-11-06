@@ -668,4 +668,8 @@ struct UICanvasComponent {
     UICanvas canvas;
 };
 
+// Runtime marker for a character driven by a Jolt ragdoll. Body ids and
+// constraints are owned by EnginePhysicsSystem and are not serialized.
+struct RagdollComponent {};
+
 } // namespace Galeshi

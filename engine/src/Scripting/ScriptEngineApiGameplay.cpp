@@ -246,6 +246,34 @@ void ScriptEngine::BuildApiGameplay(ScriptApiBuildContext& context) {
         return true;
     };
 
+    physics["create_ragdoll"] = [this, resolve](sol::object value) {
+        const entt::entity entity = resolve(value);
+        return entity != entt::null && m_physics.createRagdoll &&
+            m_physics.createRagdoll(entity);
+    };
+    physics["destroy_ragdoll"] = [this, resolve](sol::object value) {
+        const entt::entity entity = resolve(value);
+        if (entity == entt::null) return false;
+        if (!m_physics.destroyRagdoll) return false;
+        m_physics.destroyRagdoll(entity);
+        return true;
+    };
+    physics["ragdoll_active"] = [this, resolve](sol::object value) {
+        const entt::entity entity = resolve(value);
+        return entity != entt::null && m_physics.ragdollActive &&
+            m_physics.ragdollActive(entity);
+    };
+    physics["apply_ragdoll_impulse"] =
+        [this, resolve](sol::object value, float x, float y, float z) {
+            const entt::entity entity = resolve(value);
+            if (entity == entt::null || !m_physics.applyRagdollImpulse ||
+                !m_physics.ragdollActive ||
+                !m_physics.ragdollActive(entity)) {
+                return false;
+            }
+            m_physics.applyRagdollImpulse(entity, {x, y, z});
+            return true;
+        };
     physics["add_impulse"] = applyImpulse;
     physics["get_velocity"] = getVelocity;
     physics["velocity"] = getVelocity;

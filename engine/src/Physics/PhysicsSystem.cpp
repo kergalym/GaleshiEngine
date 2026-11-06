@@ -17,25 +17,35 @@
 #include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
+#include <Jolt/Physics/Collision/GroupFilterTable.h>
 #include <Jolt/Physics/SoftBody/SoftBodySharedSettings.h>
 #include <Jolt/Physics/SoftBody/SoftBodyCreationSettings.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
+#include <Jolt/Physics/Constraints/PointConstraint.h>
 
 #include "GaleshiEngine/Physics/PhysicsSystem.hpp"
 #include <spdlog/spdlog.h>
 #include "GaleshiEngine/Scene/Scene.hpp"
+#include "GaleshiEngine/Assets/AssetManager.hpp"
 #include "GaleshiEngine/Assets/Mesh.hpp"
+#include <assimp/scene.h>
 #include <Jolt/Physics/SoftBody/SoftBodyMotionProperties.h>
 #include <Jolt/Physics/Body/BodyLockInterface.h>
 #include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Body/BodyLockMulti.h>
 #include "GaleshiEngine/Scene/Components.hpp"
 
 #include <glm/gtc/quaternion.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstring>
 #include <mutex>
+#include <numeric>
 #include <unordered_map>
+#include <unordered_set>
 #include <entt/entt.hpp>
 #include <functional>
 #include <thread>
@@ -72,6 +82,67 @@ public:
         return true;
     }
 };
+
+glm::mat4 RagdollEntityWorldMatrix(Galeshi::Scene& scene,
+                                  entt::entity handle) {
+    auto& reg = scene.Registry();
+    glm::mat4 world(1.0f);
+    std::vector<entt::entity> chain;
+    entt::entity current = handle;
+    int depth = 0;
+    while (reg.valid(current) && depth++ < 128) {
+        chain.push_back(current);
+        if (reg.all_of<Galeshi::ParentComponent>(current)) {
+            current = reg.get<Galeshi::ParentComponent>(current).parent;
+        } else {
+            break;
+        }
+    }
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        if (reg.all_of<Galeshi::TransformComponent>(*it)) {
+            world = world *
+                reg.get<Galeshi::TransformComponent>(*it).LocalMatrix();
+        }
+    }
+    return world;
+}
+
+std::string RagdollBoneBaseName(std::string name) {
+    const size_t separator = name.find_last_of(":|");
+    if (separator != std::string::npos) name.erase(0, separator + 1);
+    std::transform(name.begin(), name.end(), name.begin(),
+                   [](unsigned char c) {
+                       return static_cast<char>(std::tolower(c));
+                   });
+    return name;
+}
+
+bool IsRagdollBoneName(const std::string& name) {
+    static constexpr const char* kSides[] = {
+        "_right", "_left", ".right", ".left", "_r", "_l", ".r", ".l"
+    };
+    static constexpr const char* kParts[] = {
+        "hips", "pelvis", "chest", "neck", "head", "clavicle",
+        "shoulder", "arm", "hand", "thigh", "leg", "calf", "foot"
+    };
+    std::string lower = RagdollBoneBaseName(name);
+    for (const char* side : kSides) {
+        const size_t length = std::strlen(side);
+        if (lower.size() > length &&
+            lower.compare(lower.size() - length, length, side) == 0) {
+            lower.erase(lower.size() - length);
+            break;
+        }
+    }
+    for (const char* part : kParts) {
+        const size_t length = std::strlen(part);
+        if (lower.size() >= length &&
+            lower.compare(lower.size() - length, length, part) == 0) {
+            return true;
+        }
+    }
+    return lower.find("spine") != std::string::npos;
+}
 
 } // namespace
 
@@ -162,6 +233,25 @@ public:
 };
 
 struct EnginePhysicsSystem::Impl {
+    struct RagdollPart {
+        uint32_t bodyId = 0xFFFFFFFFu;
+        int boneIndex = -1;
+        glm::mat4 inverseBind{1.0f};
+    };
+
+    struct RagdollFollow {
+        int boneIndex = -1;
+        size_t parentPart = 0;
+        glm::mat4 localBind{1.0f};
+        glm::mat4 inverseBind{1.0f};
+    };
+
+    struct RagdollRuntime {
+        std::vector<RagdollPart> parts;
+        std::vector<RagdollFollow> followers;
+        std::vector<JPH::Constraint*> constraints;
+    };
+
     std::unique_ptr<JPH::TempAllocatorImpl>   tempAllocator;
     std::unique_ptr<JPH::JobSystemThreadPool> jobSystem;
     std::unique_ptr<JPH::PhysicsSystem>       physicsSystem;
@@ -173,6 +263,7 @@ struct EnginePhysicsSystem::Impl {
     JPH::BodyInterface* bodyInterface = nullptr;
     ContactListenerImpl contactListener;
     std::unordered_map<uint32_t, entt::entity> bodyToEntity;
+    std::unordered_map<entt::entity, RagdollRuntime> ragdolls;
     bool initialized = false;
 };
 
@@ -231,6 +322,7 @@ void EnginePhysicsSystem::Shutdown() {
     m_impl->jobSystem.reset();
     m_impl->tempAllocator.reset();
     m_impl->bodyToEntity.clear();
+    m_impl->ragdolls.clear();
     {
         std::lock_guard<std::mutex> lock(
             m_impl->contactListener.eventMutex);
@@ -248,11 +340,12 @@ void EnginePhysicsSystem::Reset() {
     Init();
 }
 
-void EnginePhysicsSystem::Update(Scene& /*scene*/, float dt) {
+void EnginePhysicsSystem::Update(Scene& scene, float dt) {
     if (!m_impl->initialized) return;
     constexpr int kCollisionSteps = 1;
     m_impl->physicsSystem->Update(dt, kCollisionSteps,
         m_impl->tempAllocator.get(), m_impl->jobSystem.get());
+    SyncRagdollsToECS(scene);
 
     // Jolt invokes contact callbacks from worker threads. Deliver queued
     // events on the caller's thread so script callbacks can touch the scene.
@@ -701,6 +794,356 @@ void EnginePhysicsSystem::UpdateSoftBodies(Scene& scene) {
             }
         }
         mc.mesh->UpdateVertices(positions);
+    }
+}
+
+bool EnginePhysicsSystem::CreateRagdoll(Scene& scene, AssetManager& assets,
+                                        entt::entity entity) {
+    if (!m_impl->initialized || entity == entt::null) return false;
+    auto& reg = scene.Registry();
+    if (!reg.valid(entity) ||
+        !reg.all_of<SkeletalComponent, TransformComponent>(entity)) {
+        return false;
+    }
+    auto& skeleton = reg.get<SkeletalComponent>(entity);
+    if (skeleton.sourcePath.empty()) return false;
+    auto model = assets.LoadModel(skeleton.sourcePath);
+    if (!model.rawScene || !model.rawScene->mRootNode ||
+        model.boneMap.empty()) {
+        spdlog::warn("[Physics] Ragdoll requires a skeletal model hierarchy: {}",
+                     skeleton.sourcePath);
+        return false;
+    }
+
+    DestroyRagdoll(scene, entity);
+
+    if (skeleton.boneMatrices.size() != 256) {
+        skeleton.boneMatrices.assign(256, glm::mat4(1.0f));
+    }
+
+    std::unordered_set<std::string> boneNames;
+    boneNames.reserve(model.boneMap.size());
+    for (const auto& [name, index] : model.boneMap) {
+        if (index >= 0 && index < 255) boneNames.insert(name);
+    }
+    if (boneNames.empty()) return false;
+
+    std::unordered_map<std::string, std::string> parentBones;
+    std::function<void(const aiNode*, const std::string&)> walk =
+        [&](const aiNode* node, const std::string& nearestParent) {
+            if (!node) return;
+            std::string nextParent = nearestParent;
+            const std::string name = node->mName.C_Str();
+            if (boneNames.count(name)) {
+                parentBones[name] = nearestParent;
+                nextParent = name;
+            }
+            for (unsigned i = 0; i < node->mNumChildren; ++i) {
+                walk(node->mChildren[i], nextParent);
+            }
+        };
+    walk(model.rawScene->mRootNode, {});
+
+    const glm::mat4 entityWorld = RagdollEntityWorldMatrix(scene, entity);
+    struct BoneBuild {
+        std::string name;
+        int index = -1;
+        glm::mat4 inverseBind{1.0f};
+        glm::vec3 worldPosition{0.0f};
+        glm::quat worldRotation{1.0f, 0.0f, 0.0f, 0.0f};
+    };
+    std::vector<BoneBuild> bones;
+    bones.reserve(boneNames.size());
+    std::unordered_map<std::string, size_t> boneLookup;
+
+    for (const auto& [name, index] : model.boneMap) {
+        if (index < 0 || index >= 255) continue;
+        const auto offset = model.boneOffsetMatrices.find(name);
+        if (offset == model.boneOffsetMatrices.end()) continue;
+        const glm::mat4 bindWorld = glm::inverse(offset->second);
+        const glm::mat4 modelWorld =
+            skeleton.boneMatrices[static_cast<size_t>(index)] * bindWorld;
+        const glm::mat4 world = entityWorld * modelWorld;
+        BoneBuild bone;
+        bone.name = name;
+        bone.index = index;
+        bone.inverseBind = offset->second;
+        bone.worldPosition = glm::vec3(world[3]);
+        bone.worldRotation = glm::normalize(glm::quat_cast(glm::mat3(world)));
+        boneLookup.emplace(name, bones.size());
+        bones.push_back(std::move(bone));
+    }
+    if (bones.empty()) return false;
+
+    // shortcut: a name-based core-bone set and point joints keep arbitrary
+    // rigs working; upgrade to authored RagdollSettings with swing/twist limits
+    // when non-humanoid rigs or self-collision are required.
+    std::vector<size_t> selected;
+    selected.reserve(bones.size());
+    for (size_t i = 0; i < bones.size(); ++i) {
+        if (IsRagdollBoneName(bones[i].name)) selected.push_back(i);
+    }
+    if (selected.size() < 4) {
+        selected.resize(bones.size());
+        std::iota(selected.begin(), selected.end(), size_t{0});
+    }
+
+    std::unordered_map<std::string, size_t> selectedLookup;
+    std::unordered_set<std::string> selectedNames;
+    for (size_t i = 0; i < selected.size(); ++i) {
+        selectedLookup.emplace(bones[selected[i]].name, i);
+        selectedNames.insert(bones[selected[i]].name);
+    }
+
+    std::unordered_map<std::string, std::string> selectedParents;
+    for (size_t i = 0; i < selected.size(); ++i) {
+        std::string parent = parentBones[bones[selected[i]].name];
+        while (!parent.empty() && selectedNames.count(parent) == 0) {
+            const auto next = parentBones.find(parent);
+            parent = next == parentBones.end() ? std::string{} : next->second;
+        }
+        if (!parent.empty()) {
+            selectedParents.emplace(bones[selected[i]].name, parent);
+        }
+    }
+
+    m_impl->ragdolls[entity] = Impl::RagdollRuntime{};
+    auto& runtime = m_impl->ragdolls[entity];
+    runtime.parts.reserve(selected.size());
+
+    auto cleanup = [&]() {
+        for (JPH::Constraint* constraint : runtime.constraints) {
+            m_impl->physicsSystem->RemoveConstraint(constraint);
+        }
+        runtime.constraints.clear();
+        for (const auto& part : runtime.parts) {
+            DestroyBody(part.bodyId);
+        }
+        runtime.parts.clear();
+        m_impl->ragdolls.erase(entity);
+    };
+
+    std::vector<float> nearestDistance(selected.size(), 0.0f);
+    std::vector<bool> hasChild(selected.size(), false);
+    for (const auto& [childName, parentName] : selectedParents) {
+        const auto child = selectedLookup.find(childName);
+        const auto parent = selectedLookup.find(parentName);
+        if (child == selectedLookup.end() || parent == selectedLookup.end()) {
+            continue;
+        }
+        const float distance = glm::distance(
+            bones[selected[parent->second]].worldPosition,
+            bones[selected[child->second]].worldPosition);
+        if (!hasChild[parent->second] ||
+            distance < nearestDistance[parent->second]) {
+            nearestDistance[parent->second] = distance;
+            hasChild[parent->second] = true;
+        }
+    }
+
+    JPH::Ref<JPH::GroupFilterTable> selfCollision =
+        new JPH::GroupFilterTable(static_cast<JPH::uint>(selected.size()));
+    for (size_t i = 0; i < selected.size(); ++i) {
+        for (size_t j = i + 1; j < selected.size(); ++j) {
+            selfCollision->DisableCollision(
+                static_cast<JPH::CollisionGroup::SubGroupID>(i),
+                static_cast<JPH::CollisionGroup::SubGroupID>(j));
+        }
+    }
+    const JPH::CollisionGroup::GroupID collisionGroup =
+        static_cast<JPH::CollisionGroup::GroupID>(entity) + 1u;
+
+    for (size_t i = 0; i < selected.size(); ++i) {
+        const BoneBuild& bone = bones[selected[i]];
+        const float radius = glm::clamp(
+            hasChild[i] ? nearestDistance[i] * 0.16f : 0.045f, 0.02f, 0.14f);
+        JPH::SphereShape* shape = new JPH::SphereShape(radius);
+        JPH::BodyCreationSettings settings(
+            shape, JPH::RVec3(bone.worldPosition.x, bone.worldPosition.y,
+                              bone.worldPosition.z),
+            JPH::Quat(bone.worldRotation.x, bone.worldRotation.y,
+                      bone.worldRotation.z, bone.worldRotation.w),
+            JPH::EMotionType::Dynamic, LAYER_MOVING);
+        settings.mCollisionGroup = JPH::CollisionGroup(
+            selfCollision,
+            collisionGroup,
+            static_cast<JPH::CollisionGroup::SubGroupID>(runtime.parts.size()));
+        settings.mAllowSleeping = true;
+        settings.mFriction = 0.6f;
+        settings.mRestitution = 0.0f;
+        settings.mLinearDamping = 0.25f;
+        settings.mAngularDamping = 0.45f;
+        settings.mGravityFactor = 1.0f;
+        JPH::MassProperties massProperties = shape->GetMassProperties();
+        massProperties.ScaleToMass(0.4f);
+        settings.mOverrideMassProperties =
+            JPH::EOverrideMassProperties::MassAndInertiaProvided;
+        settings.mMassPropertiesOverride = massProperties;
+        const JPH::BodyID bodyId = m_impl->bodyInterface->CreateAndAddBody(
+            settings, JPH::EActivation::Activate);
+        if (bodyId.IsInvalid()) {
+            cleanup();
+            return false;
+        }
+        const uint32_t rawId = bodyId.GetIndexAndSequenceNumber();
+        m_impl->bodyToEntity[rawId] = entity;
+        runtime.parts.push_back({rawId, bone.index, bone.inverseBind});
+    }
+
+    const JPH::BodyLockInterface& lockInterface =
+        m_impl->physicsSystem->GetBodyLockInterface();
+    for (const auto& [childName, parentName] : selectedParents) {
+        const auto child = selectedLookup.find(childName);
+        const auto parent = selectedLookup.find(parentName);
+        if (child == selectedLookup.end() || parent == selectedLookup.end()) {
+            continue;
+        }
+        const auto& childPart = runtime.parts[child->second];
+        const auto& parentPart = runtime.parts[parent->second];
+        JPH::PointConstraintSettings settings;
+        settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+        const glm::vec3 point =
+            bones[selected[child->second]].worldPosition;
+        settings.mPoint1 = settings.mPoint2 =
+            JPH::RVec3(point.x, point.y, point.z);
+
+        const JPH::BodyID bodies[] = {
+            JPH::BodyID(parentPart.bodyId), JPH::BodyID(childPart.bodyId)};
+        JPH::BodyLockMultiWrite lock(lockInterface, bodies, 2);
+        JPH::Body* parentBody = lock.GetBody(0);
+        JPH::Body* childBody = lock.GetBody(1);
+        if (!parentBody || !childBody) continue;
+        JPH::TwoBodyConstraint* constraint =
+            settings.Create(*parentBody, *childBody);
+        if (constraint) {
+            m_impl->physicsSystem->AddConstraint(constraint);
+            runtime.constraints.push_back(constraint);
+        }
+    }
+
+    // Bones outside the simulated core (fingers, face, hair, toes) follow the
+    // nearest simulated ancestor rigidly instead of staying in the old pose.
+    for (const BoneBuild& bone : bones) {
+        if (selectedNames.count(bone.name)) continue;
+        std::string ancestor = parentBones[bone.name];
+        while (!ancestor.empty() && selectedNames.count(ancestor) == 0) {
+            const auto next = parentBones.find(ancestor);
+            ancestor = next == parentBones.end() ? std::string{} : next->second;
+        }
+        if (ancestor.empty()) continue;
+        const auto parent = selectedLookup.find(ancestor);
+        const auto child = boneLookup.find(bone.name);
+        if (parent == selectedLookup.end() || child == boneLookup.end()) {
+            continue;
+        }
+        if (parent->second >= runtime.parts.size()) continue;
+        const glm::mat4 parentBind = bones[boneLookup[ancestor]].inverseBind;
+        runtime.followers.push_back({
+            bone.index,
+            parent->second,
+            parentBind * glm::inverse(bones[child->second].inverseBind),
+            bone.inverseBind});
+    }
+
+    reg.emplace_or_replace<RagdollComponent>(entity);
+    skeleton.isAnimated = true;
+    spdlog::info("[Physics] Ragdoll created for {} bones on entity {}",
+                 runtime.parts.size(), static_cast<uint32_t>(entity));
+    return !runtime.parts.empty();
+}
+
+void EnginePhysicsSystem::DestroyRagdoll(Scene& scene, entt::entity entity) {
+    auto it = m_impl->ragdolls.find(entity);
+    if (it == m_impl->ragdolls.end()) {
+        if (scene.Registry().valid(entity)) {
+            scene.Registry().remove<RagdollComponent>(entity);
+        }
+        return;
+    }
+    // ConstraintManager holds a Ref<Constraint>; removing releases the last
+    // reference and deletes the constraint.
+    for (JPH::Constraint* constraint : it->second.constraints) {
+        m_impl->physicsSystem->RemoveConstraint(constraint);
+    }
+    for (const auto& part : it->second.parts) {
+        DestroyBody(part.bodyId);
+    }
+    m_impl->ragdolls.erase(it);
+    if (scene.Registry().valid(entity)) {
+        scene.Registry().remove<RagdollComponent>(entity);
+    }
+}
+
+bool EnginePhysicsSystem::IsRagdollActive(entt::entity entity) const {
+    return m_impl->ragdolls.find(entity) != m_impl->ragdolls.end();
+}
+
+uint32_t EnginePhysicsSystem::RagdollBodyCount(entt::entity entity) const {
+    const auto it = m_impl->ragdolls.find(entity);
+    return it == m_impl->ragdolls.end()
+        ? 0u
+        : static_cast<uint32_t>(it->second.parts.size());
+}
+
+void EnginePhysicsSystem::ApplyRagdollImpulse(entt::entity entity,
+                                              const glm::vec3& impulse) {
+    const auto it = m_impl->ragdolls.find(entity);
+    if (it == m_impl->ragdolls.end()) return;
+    for (const auto& part : it->second.parts) {
+        AddImpulse(part.bodyId, impulse);
+    }
+}
+
+void EnginePhysicsSystem::SyncRagdollsToECS(Scene& scene) {
+    if (!m_impl->initialized) return;
+    auto& reg = scene.Registry();
+    for (auto& [entity, runtime] : m_impl->ragdolls) {
+        if (!reg.valid(entity) ||
+            !reg.all_of<SkeletalComponent>(entity)) {
+            continue;
+        }
+        auto& skeleton = reg.get<SkeletalComponent>(entity);
+        if (skeleton.boneMatrices.size() != 256) {
+            skeleton.boneMatrices.assign(256, glm::mat4(1.0f));
+        }
+        const glm::mat4 inverseEntity =
+            glm::inverse(RagdollEntityWorldMatrix(scene, entity));
+        auto getModel = [&](uint32_t bodyId, glm::mat4& model) {
+            const JPH::BodyID id(bodyId);
+            if (!m_impl->bodyInterface->IsAdded(id)) return false;
+            const JPH::RVec3 position = m_impl->bodyInterface->GetPosition(id);
+            const JPH::Quat rotation = m_impl->bodyInterface->GetRotation(id);
+            const glm::quat q(rotation.GetW(), rotation.GetX(),
+                              rotation.GetY(), rotation.GetZ());
+            const glm::mat4 world =
+                glm::translate(glm::mat4(1.0f),
+                               glm::vec3(position.GetX(), position.GetY(),
+                                         position.GetZ())) *
+                glm::mat4_cast(q);
+            model = inverseEntity * world;
+            return true;
+        };
+        for (const auto& part : runtime.parts) {
+            glm::mat4 model;
+            if (!getModel(part.bodyId, model)) continue;
+            if (part.boneIndex >= 0 && part.boneIndex < 255) {
+                skeleton.boneMatrices[static_cast<size_t>(part.boneIndex)] =
+                    model * part.inverseBind;
+            }
+        }
+        for (const auto& follow : runtime.followers) {
+            if (follow.parentPart >= runtime.parts.size()) continue;
+            glm::mat4 parentModel;
+            if (!getModel(runtime.parts[follow.parentPart].bodyId,
+                          parentModel)) {
+                continue;
+            }
+            if (follow.boneIndex >= 0 && follow.boneIndex < 255) {
+                skeleton.boneMatrices[static_cast<size_t>(follow.boneIndex)] =
+                    parentModel * follow.localBind * follow.inverseBind;
+            }
+        }
+        skeleton.isAnimated = true;
     }
 }
 

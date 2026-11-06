@@ -179,6 +179,24 @@ Galeshi.physics.destroy_body(box)
 The optional final boolean marks a body as static.  `create_box` accepts either
 a scalar full size or a `{x,y,z}` full-size vector.
 
+A skeletal entity can be switched to a Jolt ragdoll at runtime. The entity must
+own a `SkeletalComponent` whose model contains a bone hierarchy; the ragdoll is
+runtime-only and is not saved with the scene.
+
+```lua
+local character = Galeshi.world.find("Player")
+Galeshi.physics.create_ragdoll(character)
+Galeshi.physics.apply_ragdoll_impulse(character, 0, 4, 0)
+if Galeshi.physics.ragdoll_active(character) then
+    -- character is being driven by the ragdoll
+end
+Galeshi.physics.destroy_ragdoll(character)
+```
+
+`create_ragdoll` returns false when the entity has no usable skeletal model.
+While active, animation is skipped and the skeleton follows the simulated
+bodies. `destroy_ragdoll` restores normal animation.
+
 ### `Galeshi.audio`
 
 ```lua

@@ -507,9 +507,16 @@ struct GaleshiScriptApi {
     bool (*seek_sound)(void* user, const char* path, float seconds) = nullptr;
     float (*get_sound_duration)(void* user, const char* path) = nullptr;
     float (*get_sound_position)(void* user, const char* path) = nullptr;
+
+    // Skeletal ragdolls. Appended after the original ABI fields.
+    bool (*create_ragdoll)(void* user, uint32_t entity) = nullptr;
+    bool (*destroy_ragdoll)(void* user, uint32_t entity) = nullptr;
+    bool (*ragdoll_active)(void* user, uint32_t entity) = nullptr;
+    bool (*apply_ragdoll_impulse)(void* user, uint32_t entity,
+                                  GaleshiScriptVec3 impulse) = nullptr;
 };
 
-inline constexpr uint32_t kGaleshiScriptApiVersion = 18;
+inline constexpr uint32_t kGaleshiScriptApiVersion = 19;
 
 inline float GaleshiInterpFactor(float deltaTime, float speed) {
     if (speed <= 0.0f) return 1.0f;
