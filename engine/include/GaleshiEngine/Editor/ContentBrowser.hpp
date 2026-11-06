@@ -87,7 +87,7 @@ private:
                                   const std::string& extension,
                                   bool directory);
 
-    std::string           m_root;
+    std::filesystem::path m_root;
     AssetManager*         m_assets = nullptr;
     std::filesystem::path m_current;
     std::vector<Entry>    m_entries;
