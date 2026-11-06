@@ -1050,24 +1050,41 @@ if (ImGui::BeginMenu("File")) {
                 m_editor.Select(m_scene.CreateEntity("New Entity"));
 
             if (createItem("Player")) {
-                auto e = m_scene.CreateEntity("Player");
-                e.AddComponent<Galeshi::PlayerTagComponent>();
-                auto& tf = e.GetComponent<Galeshi::TransformComponent>();
-                tf.position = {0.0f, 1.0f, 0.0f};
-
-                auto mesh = m_assets->CreateCapsuleMesh(0.8f, 0.35f);
-                e.AddComponent<Galeshi::MeshComponent>(
-                    Galeshi::MeshComponent{mesh, "", "capsule"});
-                auto mat = std::make_shared<Galeshi::Material>();
-                mat->name = "Player_Material";
-                mat->albedoFactor = {0.35f, 0.55f, 0.85f, 1.0f};
-                mat->roughnessFactor = 0.65f;
-                e.AddComponent<Galeshi::MaterialComponent>(
-                    Galeshi::MaterialComponent{mat});
-
-                // Player is intentionally a plain visual/gameplay entity.
-                // Movement and collision belong to a separate physics proxy.
-                m_editor.Select(e);
+                // Player is authored once per scene. Existing scenes may
+                // contain an untagged Player by name, so check both.
+                entt::entity existingPlayer = entt::null;
+                auto playerView =
+                    m_scene.Registry().view<Galeshi::PlayerTagComponent>();
+                for (entt::entity handle : playerView) {
+                    existingPlayer = handle;
+                    break;
+                }
+                if (existingPlayer == entt::null) {
+                    auto namedView =
+                        m_scene.Registry().view<Galeshi::NameComponent>();
+                    for (entt::entity handle : namedView) {
+                        if (namedView.get<Galeshi::NameComponent>(handle).name ==
+                            "Player") {
+                            existingPlayer = handle;
+                            break;
+                        }
+                    }
+                }
+                if (existingPlayer != entt::null) {
+                    m_editor.Select(
+                        Galeshi::Entity(existingPlayer, &m_scene));
+                    spdlog::warn(
+                        "[Editor] Player already exists; duplicate discarded");
+                } else {
+                    // Plain gameplay entity: Name, Transform and Player tag.
+                    // Physics, audio, materials and meshes are separate
+                    // authored components, not implicit Player properties.
+                    auto e = m_scene.CreateEntity("Player");
+                    e.AddComponent<Galeshi::PlayerTagComponent>();
+                    e.GetComponent<Galeshi::TransformComponent>().position =
+                        {0.0f, 1.0f, 0.0f};
+                    m_editor.Select(e);
+                }
             }
 
             if (ImGui::BeginMenu("UI")) {

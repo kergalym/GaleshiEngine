@@ -147,12 +147,22 @@ void GaleshiEditorApp::DrawDetails() {
             if (ImGui::InputText("Name", buf, sizeof(buf))) nc.name = buf;
         }
 
+        // Player is a plain gameplay entity: only Name and Transform are
+        // authored on the root. Models, audio and physics live on children
+        // or on the separate PlayerPhysics entity.
+        const bool isPlayerEntity =
+            selected[0].HasComponent<Galeshi::PlayerTagComponent>() ||
+            (selected[0].HasComponent<Galeshi::NameComponent>() &&
+             selected[0].GetComponent<Galeshi::NameComponent>().name ==
+                 "Player");
+
         // Character asset field. Existing FBX scenes can migrate to glTF by
         // dropping a GLB/glTF here (or on the character/capsule in the
         // viewport or Outliner). The hierarchy is preserved and all material
         // values are reloaded from the replacement file.
         if (Galeshi::Entity replacementRoot =
-                FindSkeletalRootForReplacement(selectedHandle)) {
+                FindSkeletalRootForReplacement(selectedHandle);
+            !isPlayerEntity && replacementRoot) {
             auto& replacementSkeleton =
                 reg.get<Galeshi::SkeletalComponent>(replacementRoot.Handle());
             if (beginDetailsSection(
@@ -235,7 +245,7 @@ void GaleshiEditorApp::DrawDetails() {
             if (!reg.all_of<Galeshi::ParentComponent>(cursor)) break;
             cursor = reg.get<Galeshi::ParentComponent>(cursor).parent;
         }
-        if (modelRoot != entt::null) {
+        if (!isPlayerEntity && modelRoot != entt::null) {
             auto& model = reg.get<Galeshi::ModelComponent>(modelRoot);
             if (beginDetailsSection(
                     "Model", ImGuiTreeNodeFlags_DefaultOpen,
@@ -255,7 +265,7 @@ void GaleshiEditorApp::DrawDetails() {
         // Mesh LOD controls apply to the selected mesh and all mesh children.
         // This is especially useful for imported static models, which default
         // to LOD0; users can opt into generated LODs per model/sub-mesh.
-        {
+        if (!isPlayerEntity) {
             std::vector<Galeshi::Entity> lodMeshes;
             for (auto entity : m_scene.AllEntities()) {
                 if (!entity.HasComponent<Galeshi::MeshComponent>()) continue;
@@ -342,7 +352,7 @@ void GaleshiEditorApp::DrawDetails() {
             }
         }
 
-        if (selectionHasMesh && selectionHasTextures) {
+        if (!isPlayerEntity && selectionHasMesh && selectionHasTextures) {
             if (beginDetailsSection(
                     "Texture Settings", 0,
                     "texture compression compress bc7 loading vram")) {
@@ -419,6 +429,12 @@ void GaleshiEditorApp::DrawDetails() {
                     }
                 }
             }
+        }
+
+        if (isPlayerEntity) {
+            ImGui::EndChild();
+            ImGui::End();
+            return;
         }
 
         // --- Gameplay camera ----------------------------------------------
@@ -650,8 +666,15 @@ void GaleshiEditorApp::DrawDetails() {
             }
             const bool isLandscape =
                 sel.HasComponent<Galeshi::LandscapeComponent>();
+            const bool canHaveAudio =
+                sel.HasComponent<Galeshi::AudioSourceComponent>() ||
+                sel.HasComponent<Galeshi::AudioListenerComponent>() ||
+                sel.HasComponent<Galeshi::MeshComponent>() ||
+                sel.HasComponent<Galeshi::SkeletalComponent>() ||
+                sel.HasComponent<Galeshi::CameraComponent>();
 
-            if (!isLight && !isGround && !selectedIsCollisionShape) {
+            if (!isLight && !isGround && !selectedIsCollisionShape &&
+                canHaveAudio) {
                 if (!sel.HasComponent<Galeshi::AudioSourceComponent>()) {
                     if (!isLandscape &&
                         ImGui::Button("+ Add Audio Source")) {
@@ -817,7 +840,7 @@ void GaleshiEditorApp::DrawDetails() {
                             sel.RemoveComponent<Galeshi::AudioListenerComponent>();
                         }
                     }
-                } else if (!isLandscape &&
+                } else if (!isLandscape && canHaveAudio &&
                            ImGui::Button("+ Add Audio Listener")) {
                     sel.AddComponent<Galeshi::AudioListenerComponent>();
                 }

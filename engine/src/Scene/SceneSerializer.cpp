@@ -2269,8 +2269,15 @@ bool SceneSerializer::LoadFromString(const std::string& jsonStr,
             }
             tree.statusText = "Idle";
         }
-        if (je.value("playerTag", false)) {
+        const bool isPlayer =
+            je.value("playerTag", false) || entry.name == "Player";
+        if (isPlayer) {
             e.AddComponent<PlayerTagComponent>();
+            // Player is a non-physical entity. Older scenes may still carry
+            // a body/collider on the visual root; PlayerPhysics owns those.
+            e.RemoveComponent<RigidBodyComponent>();
+            e.RemoveComponent<ColliderComponent>();
+            e.RemoveComponent<SoftBodyComponent>();
         }
         if (je.value("luaEntity", false)) {
             e.AddComponent<LuaEntityComponent>();

@@ -57,9 +57,9 @@ and a camera.
      plus the capsule center offset, and attaches a dynamic capsule.
    - If you want to author it manually, make it a root entity with a dynamic
      **Capsule Collider** and **Rigid Body**. The script reuses it.
-   - An older `Player` with a Rigid Body is handled by destroying that body at
-     startup. Remove the leftover Rigid Body/Collider components in the
-     inspector for a clean scene.
+   - An older `Player` with a Rigid Body is cleaned up when the scene loads:
+     the loader strips its `RigidBodyComponent`, `ColliderComponent` and
+     `SoftBodyComponent`, so the visual root stays non-physical.
 
 5. Copy `third_person_demo.cpp` into the project:
 
@@ -199,9 +199,8 @@ This is a demo controller, not a production character system:
   that has no parent.
 - The Player root must stay unparented; position is copied from the proxy in
   world space.
-- Destroying a legacy Player body leaves its `RigidBodyComponent` and
-  `ColliderComponent` in the scene. Remove them in the inspector for a clean
-  setup.
+- Legacy Player body/collider components are stripped when a scene loads.
+  Bodies attached to the Player after loading are not migrated automatically.
 - Only one player and one `PlayerPhysics` are controlled.
 - The player needs a suitable model or mesh for a visible result.
 - Camera collision, animation root motion and network prediction are outside
