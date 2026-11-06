@@ -7,7 +7,8 @@ simulation.
 
 ## Painting cloth on a mesh
 
-1. Select an entity with a `MeshComponent` in the Outliner or viewport.
+1. Select an entity with a `MeshComponent`, or a static/skeletal model root,
+   in the Outliner or viewport. A model root uses its first descendant mesh.
 2. Open **Details → Cloth Painting**.
 3. Enable the **Painting cloth** checkbox.
 4. Paint on the mesh with the left mouse button.
@@ -17,7 +18,8 @@ simulation.
 
 Enabling the checkbox creates `SoftBodyComponent` on the selected mesh entity
 if it does not exist yet. Disabling the checkbox only leaves paint mode; the
-cloth data stays on the mesh.
+cloth data stays on the mesh. Dynamic and kinematic physics proxies do not
+expose the cloth tabs.
 
 Painted vertices are displayed as small green crosses while the mesh is
 selected. The brush uses **Brush Radius** and **Brush Strength** from the
@@ -87,4 +89,6 @@ is rebuilt automatically when Play starts.
 - Painted cloth on an animated skeletal mesh drives the mesh vertices from the
   cloth simulation; that mesh no longer follows the skeletal animation for the
   simulated region.
+- Selecting a multi-mesh model/skeletal root authors cloth on its first
+  descendant mesh.
 - Dense meshes produce large paint-weight arrays and should be used carefully.

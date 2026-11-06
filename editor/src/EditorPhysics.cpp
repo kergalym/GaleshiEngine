@@ -102,6 +102,42 @@
 
 
 
+    Galeshi::Entity GaleshiEditorApp::FindClothMeshTarget(
+        Galeshi::Entity selected) {
+        if (!selected) return {};
+        auto& reg = m_scene.Registry();
+        if (reg.all_of<Galeshi::MeshComponent>(selected.Handle())) {
+            return selected;
+        }
+        if (!reg.all_of<Galeshi::ModelComponent>(selected.Handle()) &&
+            !reg.all_of<Galeshi::SkeletalComponent>(selected.Handle())) {
+            return {};
+        }
+
+        auto children = reg.view<Galeshi::ParentComponent>();
+        std::vector<entt::entity> pending{selected.Handle()};
+        std::vector<entt::entity> next;
+        for (int depth = 0; depth < 128 && !pending.empty(); ++depth) {
+            next.clear();
+            for (entt::entity parent : pending) {
+                for (entt::entity child : children) {
+                    if (children.get<Galeshi::ParentComponent>(child).parent !=
+                        parent) {
+                        continue;
+                    }
+                    if (reg.all_of<Galeshi::MeshComponent>(child)) {
+                        return Galeshi::Entity{child, &m_scene};
+                    }
+                    next.push_back(child);
+                }
+            }
+            pending.swap(next);
+        }
+        return {};
+    }
+
+
+
     void GaleshiEditorApp::RebuildCloth(Galeshi::Entity entity) {
         if (!m_physics || !entity || !m_assets) return;
         auto& registry = m_scene.Registry();

@@ -155,14 +155,15 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
 
         // Painted cloth vertices are shown as small green crosses so the
         // brush result is visible before rebuilding the soft body.
-        if (selected && selected.HasComponent<Galeshi::SoftBodyComponent>() &&
-            selected.HasComponent<Galeshi::MeshComponent>()) {
+        const Galeshi::Entity clothEntity = FindClothMeshTarget(selected);
+        if (clothEntity && clothEntity.HasComponent<Galeshi::SoftBodyComponent>() &&
+            clothEntity.HasComponent<Galeshi::MeshComponent>()) {
             const auto& cloth =
-                selected.GetComponent<Galeshi::SoftBodyComponent>();
+                clothEntity.GetComponent<Galeshi::SoftBodyComponent>();
             const auto& meshComponent =
-                selected.GetComponent<Galeshi::MeshComponent>();
+                clothEntity.GetComponent<Galeshi::MeshComponent>();
             if (cloth.meshCloth && meshComponent.mesh) {
-                const glm::mat4 world = EntityWorldMatrix(selected.Handle());
+                const glm::mat4 world = EntityWorldMatrix(clothEntity.Handle());
                 const auto& vertices = meshComponent.mesh->Vertices();
                 const size_t count =
                     std::min(vertices.size(), cloth.paintWeights.size());
@@ -1430,6 +1431,7 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
             const bool selHasTf = sel && sel.HasComponent<Galeshi::TransformComponent>();
             const bool selectedIsUICanvas =
                 sel && sel.HasComponent<Galeshi::UICanvasComponent>();
+            Galeshi::Entity clothEntity = FindClothMeshTarget(sel);
             const bool landscapeSculptActive =
                 !m_isGameMode && selHasTf &&
                 sel.HasComponent<Galeshi::LandscapeComponent>() &&
@@ -1438,9 +1440,9 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                 !uiOverlayConsumed &&
                 (!m_editor.isPlaying || !m_uiRuntime.IsPointerOverUI());
             const bool clothPaintActive =
-                !m_isGameMode && selHasTf &&
-                sel.HasComponent<Galeshi::SoftBodyComponent>() &&
-                sel.HasComponent<Galeshi::MeshComponent>() &&
+                !m_isGameMode && selHasTf && clothEntity &&
+                clothEntity.HasComponent<Galeshi::SoftBodyComponent>() &&
+                clothEntity.HasComponent<Galeshi::MeshComponent>() &&
                 m_editor.toolMode ==
                     Galeshi::EditorState::ToolMode::PaintCloth &&
                 !uiOverlayConsumed &&
@@ -1627,10 +1629,12 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                         glm::normalize(glm::vec3(rayEnd4 - rayStart4));
 
                     auto& meshComponent =
-                        sel.GetComponent<Galeshi::MeshComponent>();
-                    auto& cloth = sel.GetComponent<Galeshi::SoftBodyComponent>();
+                        clothEntity.GetComponent<Galeshi::MeshComponent>();
+                    auto& cloth =
+                        clothEntity.GetComponent<Galeshi::SoftBodyComponent>();
                     if (meshComponent.mesh) {
-                        const glm::mat4 world = EntityWorldMatrix(sel.Handle());
+                        const glm::mat4 world =
+                            EntityWorldMatrix(clothEntity.Handle());
                         const glm::mat4 inverseWorld = glm::inverse(world);
                         const glm::vec3 localOrigin = glm::vec3(
                             inverseWorld * glm::vec4(rayOrigin, 1.0f));

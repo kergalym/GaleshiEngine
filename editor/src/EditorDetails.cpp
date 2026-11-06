@@ -1574,10 +1574,10 @@ void GaleshiEditorApp::DrawDetails() {
             selected[0].HasComponent<Galeshi::RigidBodyComponent>() &&
             selected[0].GetComponent<Galeshi::RigidBodyComponent>().motionType !=
                 Galeshi::RigidBodyComponent::MotionType::Static;
-        if (!selectedIsLandscape && !dynamicPhysicsProxy &&
-            selected[0].HasComponent<Galeshi::MeshComponent>()) {
+        Galeshi::Entity clothTarget = FindClothMeshTarget(selected[0]);
+        if (!selectedIsLandscape && !dynamicPhysicsProxy && clothTarget) {
             auto* existingCloth =
-                reg.try_get<Galeshi::SoftBodyComponent>(selectedHandle);
+                reg.try_get<Galeshi::SoftBodyComponent>(clothTarget.Handle());
             const bool paintingCloth =
                 existingCloth && existingCloth->meshCloth &&
                 m_editor.toolMode ==
@@ -1591,11 +1591,11 @@ void GaleshiEditorApp::DrawDetails() {
                     if (paintingEnabled) {
                         PushHistory();
                         auto& mesh =
-                            selected[0].GetComponent<Galeshi::MeshComponent>();
+                            clothTarget.GetComponent<Galeshi::MeshComponent>();
                         auto* cloth = reg.try_get<Galeshi::SoftBodyComponent>(
-                            selectedHandle);
+                            clothTarget.Handle());
                         if (!cloth) {
-                            cloth = &selected[0]
+                            cloth = &clothTarget
                                 .AddComponent<Galeshi::SoftBodyComponent>();
                         }
                         if (!cloth->meshCloth) {
@@ -1631,7 +1631,7 @@ void GaleshiEditorApp::DrawDetails() {
             }
 
             auto* cloth =
-                reg.try_get<Galeshi::SoftBodyComponent>(selectedHandle);
+                reg.try_get<Galeshi::SoftBodyComponent>(clothTarget.Handle());
             if (cloth && cloth->meshCloth &&
                 beginDetailsSection(
                     "Cloth Properties", ImGuiTreeNodeFlags_DefaultOpen,
@@ -1651,12 +1651,12 @@ void GaleshiEditorApp::DrawDetails() {
                     PushHistory();
                     std::fill(cloth->paintWeights.begin(),
                               cloth->paintWeights.end(), 0.0f);
-                    RebuildCloth(selected[0]);
+                    RebuildCloth(clothTarget);
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Rebuild Cloth")) {
                     PushHistory();
-                    RebuildCloth(selected[0]);
+                    RebuildCloth(clothTarget);
                 }
                 ImGui::TextDisabled(
                     "Painted vertices: %zu / %zu",
@@ -1693,7 +1693,7 @@ void GaleshiEditorApp::DrawDetails() {
 
                 if (ImGui::Button("Rebuild With Properties")) {
                     PushHistory();
-                    RebuildCloth(selected[0]);
+                    RebuildCloth(clothTarget);
                 }
             }
         }

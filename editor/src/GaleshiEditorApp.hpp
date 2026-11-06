@@ -683,6 +683,9 @@ void DrawDetails();
     // Bodies are only created when the scene is playing, so entities without
     // a runtime body are left alone.
     void RebuildPhysicsBody(Galeshi::Entity entity);
+    // Resolve the mesh that owns cloth data. Model/skeletal roots redirect to
+    // their first descendant mesh so cloth tools also work on the root.
+    Galeshi::Entity FindClothMeshTarget(Galeshi::Entity selected);
     void RebuildCloth(Galeshi::Entity entity);
 
     // Creates runtime bodies for every authored collider that does not have
