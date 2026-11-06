@@ -1452,11 +1452,27 @@ void AssetManager::SaveImportCache() const {
         sources[it->second].keys.push_back(key);
     }
 
+    std::unordered_set<std::string> modelPaths;
+    modelPaths.reserve(m_models.size() + m_importedModels.size());
+    for (const auto& [modelPath, model] : m_models) {
+        (void)model;
+        modelPaths.insert(modelPath);
+    }
+    for (const auto& [modelPath, model] : m_importedModels) {
+        (void)model;
+        modelPaths.insert(modelPath);
+    }
+    if (modelPaths.empty()) {
+        // Don't replace a valid cache with an empty one after opening an
+        // empty scene or closing before any model is loaded.
+        return;
+    }
+
     std::vector<uint8_t> out;
     out.insert(out.end(), kModelCacheMagic, kModelCacheMagic + 8);
     CacheWriteU32(out, kModelCacheVersion);
     CacheWriteU32(out, static_cast<uint32_t>(sources.size()));
-    CacheWriteU32(out, static_cast<uint32_t>(m_importedModels.size()));
+    CacheWriteU32(out, static_cast<uint32_t>(modelPaths.size()));
 
     for (const SourceRecord& record : sources) {
         const EmbeddedTextureSource& source = *record.source;
@@ -1473,7 +1489,16 @@ void AssetManager::SaveImportCache() const {
         }
     }
 
-    for (const auto& [modelPath, model] : m_importedModels) {
+    for (const std::string& modelPath : modelPaths) {
+        const LoadedModel* model = nullptr;
+        const auto cached = m_models.find(modelPath);
+        if (cached != m_models.end()) {
+            model = &cached->second;
+        } else {
+            const auto imported = m_importedModels.find(modelPath);
+            if (imported != m_importedModels.end()) model = &imported->second;
+        }
+        if (!model) continue;
         CacheWriteString(out, modelPath);
         const auto signature = m_importedSignatures.find(modelPath);
         uint64_t fileSize = 0;
@@ -1499,7 +1524,7 @@ void AssetManager::SaveImportCache() const {
         }
         CacheWriteU64(out, fileSize);
         CacheWriteU64(out, fileTime);
-        CacheWriteLoadedModel(model, out);
+        CacheWriteLoadedModel(*model, out);
     }
 
     if (!WriteModelCacheFile(path, out)) {
@@ -2499,6 +2524,23 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
     }
 
     m_models[path] = out;
+    {
+        const std::string resolved = ResolvePath(path);
+        std::error_code ec;
+        const uint64_t fileSize =
+            std::filesystem::is_regular_file(resolved, ec)
+                ? static_cast<uint64_t>(std::filesystem::file_size(resolved, ec))
+                : 0;
+        uint64_t fileTime = 0;
+        if (!ec) {
+            const auto time = std::filesystem::last_write_time(resolved, ec);
+            if (!ec) {
+                fileTime = static_cast<uint64_t>(
+                    time.time_since_epoch().count());
+            }
+        }
+        m_importedSignatures[path] = {fileSize, fileTime};
+    }
     spdlog::info("[AssetManager] === Loaded: {} ({} meshes, {} mats, {} bones) ===",
                  path, out.meshes.size(), out.materials.size(), nextBoneIndex);
     return out;
