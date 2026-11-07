@@ -2682,7 +2682,7 @@ bool SceneSerializer::LoadFromJson(const json& root,
             rb.friction = jr.value("friction", 0.5f);
             rb.restitution = jr.value("restitution", 0.0f);
             rb.useGravity = jr.value("useGravity", true);
-            rb.lockRotation = jr.value("lockRotation", false);
+            rb.lockRotation = jr.value("lockRotation", true);
             rb.bodyId = 0xFFFFFFFFu;
         }
         if (je.contains("collider")) {

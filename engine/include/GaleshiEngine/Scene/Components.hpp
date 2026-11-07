@@ -179,8 +179,8 @@ struct RigidBodyComponent {
     bool       useGravity = true;
 
     // Keeps the body upright by disabling rotational degrees of freedom.
-    // Enabled by default for PhysicsCapsule.
-    bool       lockRotation = false;
+    // New rigid bodies start upright; disable it for objects that must tumble.
+    bool       lockRotation = true;
 
     // Runtime handle to Jolt body; 0xFFFFFFFF = not created.
     uint32_t   bodyId     = 0xFFFFFFFFu;

@@ -57,22 +57,29 @@
     // Player-tagged entities are the orbit centre for the gameplay camera.
     // Prefer a Player in the camera's own hierarchy so a stray Player elsewhere
     // in the scene cannot make an attached camera jump away from its character.
+    // A physics node below the Player wins: legacy scenes often keep the body
+    // (and the visible character) on a capsule child while the Player root is
+    // only a controller. Following the root would leave the camera behind the
+    // character when the capsule moves.
     entt::entity GaleshiEditorApp::FindGameplayCameraTarget(entt::entity cameraEntity) {
         auto& reg = m_scene.Registry();
         entt::entity characterAncestor = entt::null;
+        entt::entity physicsAncestor = entt::null;
+        entt::entity playerAncestor = entt::null;
         entt::entity current = cameraEntity;
         for (int depth = 0; depth < 128; ++depth) {
             if (!reg.all_of<Galeshi::ParentComponent>(current)) break;
             current = reg.get<Galeshi::ParentComponent>(current).parent;
             if (current == entt::null) break;
             if (reg.all_of<Galeshi::TransformComponent>(current) &&
-                reg.all_of<Galeshi::PlayerTagComponent>(current)) {
-                return current;
+                reg.all_of<Galeshi::RigidBodyComponent>(current)) {
+                if (physicsAncestor == entt::null) physicsAncestor = current;
             }
             if (reg.all_of<Galeshi::TransformComponent>(current) &&
-                reg.all_of<Galeshi::NameComponent>(current) &&
-                reg.get<Galeshi::NameComponent>(current).name == "Player") {
-                return current;
+                (reg.all_of<Galeshi::PlayerTagComponent>(current) ||
+                 (reg.all_of<Galeshi::NameComponent>(current) &&
+                  reg.get<Galeshi::NameComponent>(current).name == "Player"))) {
+                playerAncestor = current;
             }
             if (characterAncestor == entt::null &&
                 (reg.all_of<Galeshi::SkeletalComponent>(current) ||
@@ -81,6 +88,9 @@
                 characterAncestor = current;
             }
         }
+
+        if (physicsAncestor != entt::null) return physicsAncestor;
+        if (playerAncestor != entt::null) return playerAncestor;
 
         auto players = reg.view<Galeshi::PlayerTagComponent,
                                 Galeshi::TransformComponent>();
@@ -126,8 +136,8 @@
 
 
     // Cache the bounds centre, eye position and initial camera basis. The
-    // camera offset stays target-local so position follows the Player's full
-    // transform; the basis stays world-space so character turning does not
+    // camera offset stays target-local so position follows the Player's
+    // translation; the basis stays world-space so character turning does not
     // rotate the view.
     void GaleshiEditorApp::RefreshGameplayCameraTarget(entt::entity target,
                                      entt::entity cameraEntity) {
@@ -141,10 +151,12 @@
         if (target == entt::null) return;
 
         const glm::mat4 targetWorld = EntityWorldMatrix(target);
-        // Position follows the Player's full transform. Only the camera basis
-        // ignores the Player's rotation so turning the character does not
-        // spin the view.
-        const glm::mat4 inverseTarget = glm::inverse(targetWorld);
+        // Position follows only the Player's translation. The basis and the
+        // offset stay world-oriented so turning or rolling the character does
+        // not spin the camera around it.
+        const glm::mat4 targetFrame = glm::translate(
+            glm::mat4(1.0f), glm::vec3(targetWorld[3]));
+        const glm::mat4 inverseTarget = glm::inverse(targetFrame);
 
         glm::vec3 center;
         glm::vec3 boundsMin;
@@ -154,7 +166,7 @@
         m_gameCameraPivotLocal = glm::vec3(
             inverseTarget * glm::vec4(center, 1.0f));
         const glm::vec3 pivot =
-            glm::vec3(targetWorld * glm::vec4(m_gameCameraPivotLocal, 1.0f));
+            glm::vec3(targetFrame * glm::vec4(m_gameCameraPivotLocal, 1.0f));
 
         if (haveBounds) {
             // Eye height comes from the character itself, not from the
@@ -311,9 +323,11 @@
                 forward = m_gameCameraBaseForward;
                 up = m_gameCameraBaseUp;
             }
-            const glm::mat4 targetWorld = EntityWorldMatrix(target);
+            const glm::mat4 targetFrame = glm::translate(
+                glm::mat4(1.0f),
+                glm::vec3(EntityWorldMatrix(target)[3]));
             eye = glm::vec3(
-                targetWorld * glm::vec4(m_gameCameraEyeLocal, 1.0f));
+                targetFrame * glm::vec4(m_gameCameraEyeLocal, 1.0f));
             applyInPlaceLook();
             m_camera.SetView(eye, eye + forward, up);
         } else {
@@ -321,11 +335,13 @@
             glm::vec3 pivot{0.0f};
             if (validTarget) {
                 const glm::mat4 targetWorld = EntityWorldMatrix(target);
+                const glm::mat4 targetFrame = glm::translate(
+                    glm::mat4(1.0f), glm::vec3(targetWorld[3]));
                 pivot = glm::vec3(
-                    targetWorld * glm::vec4(m_gameCameraPivotLocal, 1.0f));
+                    targetFrame * glm::vec4(m_gameCameraPivotLocal, 1.0f));
                 if (m_gameCameraBaseValid) {
                     eye = pivot + glm::vec3(
-                        targetWorld *
+                        targetFrame *
                         glm::vec4(m_gameCameraBaseOffsetLocal, 0.0f));
                     forward = m_gameCameraBaseForward;
                     up = m_gameCameraBaseUp;
