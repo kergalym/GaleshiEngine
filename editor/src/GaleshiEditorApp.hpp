@@ -437,6 +437,11 @@ private:
     // -------------------------------------------------------------------
     void DrawViewport();
 
+    void EnsurePlayerCameraPreviewResources();
+    void ShutdownPlayerCameraPreview();
+    bool RenderPlayerCameraPreview(entt::entity cameraEntity,
+                                   bool renderThisFrame);
+
     struct LandscapeImage {
         int width = 0;
         int height = 0;
@@ -736,6 +741,19 @@ void DrawDetails();
     // OnUpdate is deliberately unaffected: only render passes are paused.
     bool                    m_realtimeRendering = true;
     bgfx::TextureHandle     m_lastViewportTexture = BGFX_INVALID_HANDLE;
+
+    // Small offscreen render target for the selected player camera. The
+    // preview uses the forward path so it can share the scene's main render
+    // resources without disturbing the editor framebuffer or post chain.
+    static constexpr bgfx::ViewId m_playerCameraPreviewView = 24;
+    static constexpr bgfx::ViewId m_playerCameraPreviewTonemapView = 25;
+    static constexpr uint16_t m_playerCameraPreviewW = 320;
+    static constexpr uint16_t m_playerCameraPreviewH = 180;
+    bgfx::TextureHandle     m_playerCameraPreviewColor = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle     m_playerCameraPreviewDepth = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle     m_playerCameraPreviewOutput = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_playerCameraPreviewFbo = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_playerCameraPreviewOutputFbo = BGFX_INVALID_HANDLE;
 
     std::unique_ptr<Galeshi::AssetManager>    m_assets;
     std::unique_ptr<Galeshi::RenderSystem>    m_render;

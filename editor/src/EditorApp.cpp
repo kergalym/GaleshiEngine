@@ -1022,6 +1022,7 @@
         if (m_debug) m_debug->Shutdown();
         if (m_render) m_render->Shutdown();
         ShutdownShaderPreview();
+        ShutdownPlayerCameraPreview();
         m_postProcess.Shutdown();
         if (m_framebuffer) m_framebuffer->Destroy();
         for (auto& fbo : m_shadowFbos) {

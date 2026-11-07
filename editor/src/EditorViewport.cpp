@@ -61,6 +61,144 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
 } // namespace
 
 
+    void GaleshiEditorApp::EnsurePlayerCameraPreviewResources() {
+        if (bgfx::isValid(m_playerCameraPreviewFbo) &&
+            bgfx::isValid(m_playerCameraPreviewOutputFbo) &&
+            bgfx::isValid(m_playerCameraPreviewColor) &&
+            bgfx::isValid(m_playerCameraPreviewOutput)) {
+            return;
+        }
+
+        ShutdownPlayerCameraPreview();
+        const uint64_t rtFlags =
+            BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
+
+        m_playerCameraPreviewColor = bgfx::createTexture2D(
+            m_playerCameraPreviewW, m_playerCameraPreviewH, false, 1,
+            bgfx::TextureFormat::RGBA16F, rtFlags);
+        m_playerCameraPreviewDepth = bgfx::createTexture2D(
+            m_playerCameraPreviewW, m_playerCameraPreviewH, false, 1,
+            bgfx::TextureFormat::D32F, rtFlags);
+        if (bgfx::isValid(m_playerCameraPreviewColor) &&
+            bgfx::isValid(m_playerCameraPreviewDepth)) {
+            bgfx::TextureHandle attachments[] = {
+                m_playerCameraPreviewColor, m_playerCameraPreviewDepth
+            };
+            m_playerCameraPreviewFbo = bgfx::createFrameBuffer(
+                2, attachments, false);
+        }
+
+        m_playerCameraPreviewOutput = bgfx::createTexture2D(
+            m_playerCameraPreviewW, m_playerCameraPreviewH, false, 1,
+            bgfx::TextureFormat::RGBA8, rtFlags);
+        if (bgfx::isValid(m_playerCameraPreviewOutput)) {
+            m_playerCameraPreviewOutputFbo = bgfx::createFrameBuffer(
+                1, &m_playerCameraPreviewOutput, false);
+        }
+
+        if (!bgfx::isValid(m_playerCameraPreviewFbo) ||
+            !bgfx::isValid(m_playerCameraPreviewOutputFbo)) {
+            ShutdownPlayerCameraPreview();
+        }
+    }
+
+
+    void GaleshiEditorApp::ShutdownPlayerCameraPreview() {
+        if (bgfx::isValid(m_playerCameraPreviewFbo)) {
+            bgfx::destroy(m_playerCameraPreviewFbo);
+            m_playerCameraPreviewFbo = BGFX_INVALID_HANDLE;
+        }
+        if (bgfx::isValid(m_playerCameraPreviewOutputFbo)) {
+            bgfx::destroy(m_playerCameraPreviewOutputFbo);
+            m_playerCameraPreviewOutputFbo = BGFX_INVALID_HANDLE;
+        }
+        if (bgfx::isValid(m_playerCameraPreviewColor)) {
+            bgfx::destroy(m_playerCameraPreviewColor);
+            m_playerCameraPreviewColor = BGFX_INVALID_HANDLE;
+        }
+        if (bgfx::isValid(m_playerCameraPreviewDepth)) {
+            bgfx::destroy(m_playerCameraPreviewDepth);
+            m_playerCameraPreviewDepth = BGFX_INVALID_HANDLE;
+        }
+        if (bgfx::isValid(m_playerCameraPreviewOutput)) {
+            bgfx::destroy(m_playerCameraPreviewOutput);
+            m_playerCameraPreviewOutput = BGFX_INVALID_HANDLE;
+        }
+    }
+
+
+    bool GaleshiEditorApp::RenderPlayerCameraPreview(
+        entt::entity cameraEntity, bool renderThisFrame) {
+        if (!m_render || !m_scene.Registry().valid(cameraEntity)) return false;
+        const auto* camera =
+            m_scene.Registry().try_get<Galeshi::CameraComponent>(cameraEntity);
+        if (!camera) return false;
+
+        EnsurePlayerCameraPreviewResources();
+        if (!bgfx::isValid(m_playerCameraPreviewFbo) ||
+            !bgfx::isValid(m_playerCameraPreviewOutputFbo)) {
+            return false;
+        }
+
+        if (renderThisFrame) {
+            const glm::mat4 world = EntityWorldMatrix(cameraEntity);
+            glm::vec3 eye = glm::vec3(world[3]);
+            glm::vec3 forward = glm::vec3(
+                world * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f));
+            glm::vec3 up = glm::vec3(
+                world * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f));
+            if (glm::dot(forward, forward) < 1e-6f ||
+                glm::dot(up, up) < 1e-6f) {
+                forward = {0.0f, 0.0f, -1.0f};
+                up = {0.0f, 1.0f, 0.0f};
+            } else {
+                forward = glm::normalize(forward);
+                up = glm::normalize(up);
+            }
+            if (std::abs(glm::dot(forward, up)) > 0.999f) {
+                up = std::abs(forward.y) > 0.9f
+                    ? glm::vec3(0.0f, 0.0f, 1.0f)
+                    : glm::vec3(0.0f, 1.0f, 0.0f);
+            }
+
+            Galeshi::Camera previewCamera;
+            previewCamera.SetPerspective(
+                glm::radians(glm::clamp(camera->fovY, 1.0f, 179.0f)),
+                static_cast<float>(m_playerCameraPreviewW) /
+                    static_cast<float>(m_playerCameraPreviewH),
+                std::max(camera->nearZ, 1e-4f),
+                std::max(camera->farZ, camera->nearZ + 0.001f));
+            previewCamera.SetView(eye, eye + forward, up);
+
+            // The preview is deliberately forward-rendered: it must not
+            // touch the main deferred targets or the post-process chain.
+            const bool oldDeferred = m_render->DeferredEnabled();
+            const bool oldOcclusion = m_render->OcclusionCullingEnabled();
+            m_render->SetDeferredEnabled(false);
+            m_render->SetOcclusionCullingEnabled(false);
+            bgfx::setViewFrameBuffer(m_playerCameraPreviewView,
+                                     m_playerCameraPreviewFbo);
+            m_render->Render(m_scene, previewCamera,
+                             m_playerCameraPreviewView,
+                             m_playerCameraPreviewW, m_playerCameraPreviewH);
+            m_render->SetDeferredEnabled(oldDeferred);
+            m_render->SetOcclusionCullingEnabled(oldOcclusion);
+
+            const Galeshi::PostProcessSettings pp =
+                ResolvePostProcessSettings();
+            m_postProcess.RenderTonemap(
+                m_playerCameraPreviewColor, m_playerCameraPreviewOutputFbo,
+                m_playerCameraPreviewTonemapView,
+                m_playerCameraPreviewW, m_playerCameraPreviewH,
+                pp.exposure * pp.colorExposure,
+                pp.contrast, pp.saturation,
+                pp.colorContrast, pp.colorSaturation);
+        }
+
+        return bgfx::isValid(m_playerCameraPreviewOutput);
+    }
+
+
     void GaleshiEditorApp::DrawCollisionShapeGizmos() {
         if (!m_debug) return;
         Galeshi::Entity selected = m_editor.Selected(&m_scene);
@@ -1358,6 +1496,66 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                         ? IM_COL32(255, 190, 90, 255)
                         : IM_COL32(140, 220, 150, 255),
                     realtimeText);
+            }
+
+            // A selected player camera gets a floating live preview in the
+            // lower-right corner. It is rendered into its own small target,
+            // so it does not disturb the editor camera or the main post chain.
+            if (!m_isGameMode &&
+                m_viewportImageSize.x > 120.0f &&
+                m_viewportImageSize.y > 80.0f) {
+                Galeshi::Entity selectedCamera = m_editor.Selected(&m_scene);
+                if (selectedCamera &&
+                    selectedCamera.HasComponent<Galeshi::CameraComponent>() &&
+                    IsGameplayCameraAttachedToPlayer(
+                        selectedCamera.Handle()) &&
+                    RenderPlayerCameraPreview(
+                        selectedCamera.Handle(), renderThisFrame)) {
+                    const float maxWidth = std::min(
+                        320.0f, m_viewportImageSize.x * 0.38f);
+                    const float maxHeight = m_viewportImageSize.y * 0.38f;
+                    const float previewScale = std::min(
+                        maxWidth / static_cast<float>(m_playerCameraPreviewW),
+                        maxHeight / static_cast<float>(m_playerCameraPreviewH));
+                    if (previewScale > 0.1f) {
+                        const float previewW =
+                            static_cast<float>(m_playerCameraPreviewW) *
+                            previewScale;
+                        const float previewH =
+                            static_cast<float>(m_playerCameraPreviewH) *
+                            previewScale;
+                        const float margin = 16.0f;
+                        const ImVec2 previewMin(
+                            m_viewportImagePos.x + m_viewportImageSize.x -
+                                margin - previewW,
+                            m_viewportImagePos.y + m_viewportImageSize.y -
+                                margin - previewH);
+                        const ImVec2 previewMax(
+                            previewMin.x + previewW,
+                            previewMin.y + previewH);
+                        ImDrawList* drawList = ImGui::GetWindowDrawList();
+                        drawList->AddRectFilled(
+                            ImVec2(previewMin.x - 4.0f, previewMin.y - 4.0f),
+                            ImVec2(previewMax.x + 4.0f, previewMax.y + 4.0f),
+                            IM_COL32(8, 10, 14, 220), 6.0f);
+                        drawList->AddImage(
+                            static_cast<ImTextureID>(
+                                m_playerCameraPreviewOutput.idx),
+                            previewMin, previewMax);
+                        drawList->AddRect(
+                            previewMin, previewMax,
+                            IM_COL32(235, 242, 250, 230), 4.0f);
+                        const char* label = "Player Camera";
+                        drawList->AddText(
+                            ImVec2(previewMin.x + 8.0f,
+                                   previewMin.y + 7.0f),
+                            IM_COL32(0, 0, 0, 180), label);
+                        drawList->AddText(
+                            ImVec2(previewMin.x + 7.0f,
+                                   previewMin.y + 6.0f),
+                            IM_COL32(245, 250, 255, 255), label);
+                    }
+                }
             }
 
             // Accept assets dragged from the Content Browser. Models are
