@@ -208,6 +208,23 @@
                 ? glm::vec3(0.0f, 0.0f, 1.0f)
                 : glm::vec3(0.0f, 1.0f, 0.0f);
         }
+
+        // Third-person start framing must include the character immediately;
+        // an authored camera direction can point past the target until the
+        // first mouse-look orbit. First-person keeps its authored direction.
+        if (m_gameCameraMode != GALESHI_CAMERA_FIRST_PERSON) {
+            const glm::vec3 toPivot =
+                pivot - glm::vec3(cameraWorld[3]);
+            if (glm::dot(toPivot, toPivot) > 1e-6f) {
+                forward = glm::normalize(toPivot);
+                cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+                if (std::abs(glm::dot(forward, cameraUp)) > 0.999f) {
+                    cameraUp = std::abs(forward.y) > 0.9f
+                        ? glm::vec3(0.0f, 0.0f, 1.0f)
+                        : glm::vec3(0.0f, 1.0f, 0.0f);
+                }
+            }
+        }
         m_gameCameraBaseOffsetLocal = glm::vec3(
             inverseTarget *
             glm::vec4(glm::vec3(cameraWorld[3]) - pivot, 0.0f));
@@ -252,7 +269,8 @@
         // changing the scene entity. This keeps gameplay scripts free to
         // move/rotate the character while the player looks around with RMB.
         const bool gameLookInput =
-            (m_editor.isPlaying || m_isGameMode) &&
+            (m_isGameMode ||
+             (m_editor.isPlaying && m_viewportInputFocused)) &&
             (m_gameLooking ||
              ((m_viewportHovered || m_isGameMode) &&
               !m_uiRuntime.IsPointerOverUI())) &&

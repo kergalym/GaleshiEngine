@@ -437,6 +437,10 @@ private:
     // -------------------------------------------------------------------
     void DrawViewport();
 
+    // Play-mode input focus follows the viewport: Play focuses it, Stop
+    // releases it, and Shift+F1 can release it while playing.
+    void SetViewportInputFocus(bool focused);
+
     void EnsurePlayerCameraPreviewResources();
     void ShutdownPlayerCameraPreview();
     bool RenderPlayerCameraPreview(entt::entity cameraEntity,
@@ -770,6 +774,7 @@ void DrawDetails();
 
     uint16_t    m_viewportW = 0, m_viewportH = 0;
     bool        m_viewportHovered = false;
+    bool        m_viewportInputFocused = false;
     bool        m_editorLooking = false;
     bool        m_editorLookDragging = false;
     int         m_editorLookSkipFrames = 0;

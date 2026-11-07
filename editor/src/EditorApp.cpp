@@ -119,7 +119,8 @@
 
 
     bool GaleshiEditorApp::PlayerInputActive() const {
-        return m_isGameMode || m_editor.isPlaying;
+        return m_isGameMode ||
+               (m_editor.isPlaying && m_viewportInputFocused);
     }
 
 

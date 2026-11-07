@@ -111,6 +111,8 @@
 
     void GaleshiEditorApp::StopPlay() {
         if (!m_editor.isPlaying) return;
+        SetViewportInputFocus(false);
+        EndGameMouseLook();
         EndEditorMouseLook();
         m_lastViewportTexture = BGFX_INVALID_HANDLE;
         m_editor.isPlaying = false;
@@ -153,6 +155,7 @@
 
     void GaleshiEditorApp::StopPlayForSceneChange() {
         if (!m_editor.isPlaying && !m_usingGameCamera) return;
+        SetViewportInputFocus(false);
         EndEditorMouseLook();
         const bool wasPlaying = m_editor.isPlaying;
         m_editor.isPlaying = false;

@@ -1338,6 +1338,7 @@ if (ImGui::BeginMenu("File")) {
                     m_editor.isPlaying = true;
                     EnsurePhysicsBodies();
                     ActivateGameplayCamera();
+                    SetViewportInputFocus(true);
                 } else {
                     StopPlay();
                 }

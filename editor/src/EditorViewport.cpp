@@ -326,6 +326,17 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
     // -------------------------------------------------------------------
     // Viewport & Picking & Sculpting
     // -------------------------------------------------------------------
+    void GaleshiEditorApp::SetViewportInputFocus(bool focused) {
+        m_viewportInputFocused = focused;
+        if (m_isGameMode) return;
+        if (focused) {
+            ImGui::SetWindowFocus("Viewport");
+        } else {
+            ImGui::SetWindowFocus(nullptr);
+        }
+    }
+
+
     void GaleshiEditorApp::DrawViewport() {
         spdlog::trace("[Main] DrawViewport");
         m_uiOverlayHovered = false;
@@ -338,6 +349,10 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
         } else {
             ImGui::Begin("Viewport");
             m_viewportHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+            if (m_editor.isPlaying && ImGui::GetIO().KeyShift &&
+                ImGui::IsKeyPressed(ImGuiKey_F1)) {
+                SetViewportInputFocus(false);
+            }
         }
         ImGui::PopStyleVar();
 
@@ -1496,6 +1511,21 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                         ? IM_COL32(255, 190, 90, 255)
                         : IM_COL32(140, 220, 150, 255),
                     realtimeText);
+            }
+
+            // A left click inside the gameplay view restores the viewport
+            // input focus after Shift+F1 released it.
+            if (m_editor.isPlaying && !m_isGameMode &&
+                m_viewportImageSize.x > 0.0f &&
+                m_viewportImageSize.y > 0.0f &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+                ImGui::IsMouseHoveringRect(
+                    m_viewportImagePos,
+                    ImVec2(m_viewportImagePos.x + m_viewportImageSize.x,
+                           m_viewportImagePos.y + m_viewportImageSize.y),
+                    false) &&
+                !m_uiRuntime.IsPointerOverUI()) {
+                SetViewportInputFocus(true);
             }
 
             // A selected player camera gets a floating live preview in the
