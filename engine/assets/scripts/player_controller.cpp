@@ -40,6 +40,22 @@ float YawFromRotation(Quat rotation) {
     return 2.0f * std::atan2(rotation.y, rotation.w);
 }
 
+float ParentWorldYaw(const Api& api, uint32_t entity) {
+    float yaw = 0.0f;
+    uint32_t parent = api.world.Parent(entity);
+    for (int depth = 0; depth < 128 && parent != UINT32_MAX; ++depth) {
+        if (!api.world.Valid(parent)) break;
+        yaw += YawFromRotation(api.world.Rotation(parent));
+        parent = api.world.Parent(parent);
+    }
+    return yaw;
+}
+
+void SetWorldYaw(Api& api, uint32_t entity, float yaw) {
+    api.world.SetRotation(
+        entity, YawQuat(yaw - ParentWorldYaw(api, entity)));
+}
+
 bool HasRigidBody(const Api& api, uint32_t entity) {
     return api.world.Valid(entity) &&
            api.world.HasComponent(entity, "rigid_body");
@@ -142,20 +158,27 @@ extern "C" void GaleshiScriptUpdate(float dt) {
     float vz = 0.0f;
 
     if (std::abs(vertical) > 0.001f) {
-        // W+A/W+D face the diagonal movement direction; S keeps the
-        // existing backpedal facing.
-        const Vec3 direction = vertical > 0.0f ? move : forward;
-        api.world.SetRotation(
-            g_visual, YawQuat(std::atan2(direction.x, direction.z)));
+        if (!strafing && vertical > 0.0f &&
+            std::abs(horizontal) > 0.001f) {
+            // W+A/W+D rotate the Player itself in world space.
+            SetWorldYaw(api, g_player,
+                        std::atan2(move.x, move.z));
+        } else if (!strafing) {
+            // W/S without lateral input keep the existing local facing.
+            const Vec3 direction = vertical > 0.0f ? move : forward;
+            api.world.SetRotation(
+                g_visual, YawQuat(std::atan2(direction.x, direction.z)));
+        }
         vx = move.x * kMoveSpeed;
         vz = move.z * kMoveSpeed;
     } else if (!strafing && std::abs(horizontal) > 0.001f) {
-        // Without strafing, A/D keep their original turn-in-place behavior.
+        // Without strafing, A/D keep their original local turn-in-place.
         const float yaw = YawFromRotation(api.world.Rotation(g_visual)) -
                           horizontal * kTurnSpeed * dt;
         api.world.SetRotation(g_visual, YawQuat(yaw));
     } else if (strafing) {
-        // With strafing enabled, A/D move sideways without turning.
+        // With strafing enabled, A/D move sideways without world/local
+        // rotation.
         vx = move.x * kMoveSpeed;
         vz = move.z * kMoveSpeed;
     }

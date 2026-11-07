@@ -54,6 +54,19 @@ local function findBodyEntity(entity)
     return nil
 end
 
+-- Assign a world-space yaw while keeping the entity's local transform valid
+-- under its current parent.
+local function setWorldYaw(entity, yaw)
+    local parentYaw = 0.0
+    local parent = entity:parent()
+    while parent and parent:valid() do
+        local rotation = parent:rotation()
+        parentYaw = parentYaw + 2.0 * math.atan(rotation.y, rotation.w)
+        parent = parent:parent()
+    end
+    entity:set_euler(0.0, math.deg(yaw - parentYaw), 0.0)
+end
+
 local function findPlayer()
     -- Prefer a Player entity that already has a character/mesh attached.
     local candidates = Galeshi.world.find_all("Player")
@@ -111,23 +124,29 @@ function RunAlways(dt)
     local vx, vz = 0.0, 0.0
 
     if math.abs(vertical) > 0.001 then
-        -- W+A/W+D face the diagonal movement direction; S keeps the
-        -- existing backpedal facing.
-        local facing = visualEntity or player
-        local direction = vertical > 0.0 and move or forward
-        facing:set_euler(
-            0.0, math.deg(math.atan(direction.x, direction.z)), 0.0)
+        if not strafing and vertical > 0.0 and
+           math.abs(horizontal) > 0.001 then
+            -- W+A/W+D rotate the Player itself in world space.
+            setWorldYaw(player, math.atan(move.x, move.z))
+        elseif not strafing then
+            -- W/S without lateral input keep the existing local facing.
+            local facing = visualEntity or player
+            local direction = vertical > 0.0 and move or forward
+            facing:set_euler(
+                0.0, math.deg(math.atan(direction.x, direction.z)), 0.0)
+        end
         vx = move.x * speed
         vz = move.z * speed
     elseif not strafing and math.abs(horizontal) > 0.001 then
-        -- Without strafing, A/D keep their original turn-in-place behavior.
+        -- Without strafing, A/D keep their original local turn-in-place.
         local facing = visualEntity or player
         local rotation = facing:rotation()
         local yaw = math.deg(2.0 * math.atan(rotation.y, rotation.w))
         facing:set_euler(
             0.0, yaw - horizontal * turn_speed * dt, 0.0)
     elseif strafing then
-        -- With strafing enabled, A/D move sideways without turning.
+        -- With strafing enabled, A/D move sideways without world/local
+        -- rotation.
         vx = move.x * speed
         vz = move.z * speed
     end
