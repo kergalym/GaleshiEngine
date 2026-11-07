@@ -107,26 +107,27 @@ function RunAlways(dt)
     local vertical = Galeshi.input.axis("Vertical")
     local strafing = Galeshi.player.strafing()
     local forward = Galeshi.camera.forward()
+    local move = Galeshi.camera.movement(horizontal, vertical)
     local vx, vz = 0.0, 0.0
 
     if math.abs(vertical) > 0.001 then
-        -- W/S face the character along the camera direction.
+        -- W+A/W+D face the diagonal movement direction; S keeps the
+        -- existing backpedal facing.
         local facing = visualEntity or player
+        local direction = vertical > 0.0 and move or forward
         facing:set_euler(
-            0.0, math.deg(math.atan(forward.x, forward.z)), 0.0)
-        vx = forward.x * vertical * speed
-        vz = forward.z * vertical * speed
+            0.0, math.deg(math.atan(direction.x, direction.z)), 0.0)
+        vx = move.x * speed
+        vz = move.z * speed
     elseif not strafing and math.abs(horizontal) > 0.001 then
-        -- Without strafing, A/D turn the character in place.
+        -- Without strafing, A/D keep their original turn-in-place behavior.
         local facing = visualEntity or player
         local rotation = facing:rotation()
         local yaw = math.deg(2.0 * math.atan(rotation.y, rotation.w))
         facing:set_euler(
             0.0, yaw - horizontal * turn_speed * dt, 0.0)
-    end
-
-    if strafing then
-        local move = Galeshi.camera.movement(horizontal, vertical)
+    elseif strafing then
+        -- With strafing enabled, A/D move sideways without turning.
         vx = move.x * speed
         vz = move.z * speed
     end

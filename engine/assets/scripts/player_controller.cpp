@@ -136,24 +136,26 @@ extern "C" void GaleshiScriptUpdate(float dt) {
     const float vertical = api.input.Axis("Vertical");
     const bool strafing = api.player.Strafing();
     const Vec3 forward = api.camera.Forward();
+    const Vec3 move = api.camera.Movement(horizontal, vertical);
     const Vec3 velocity = api.physics.Velocity(g_body);
     float vx = 0.0f;
     float vz = 0.0f;
 
     if (std::abs(vertical) > 0.001f) {
-        // W/S face the visible character along the camera direction.
+        // W+A/W+D face the diagonal movement direction; S keeps the
+        // existing backpedal facing.
+        const Vec3 direction = vertical > 0.0f ? move : forward;
         api.world.SetRotation(
-            g_visual, YawQuat(std::atan2(forward.x, forward.z)));
-        vx = forward.x * vertical * kMoveSpeed;
-        vz = forward.z * vertical * kMoveSpeed;
+            g_visual, YawQuat(std::atan2(direction.x, direction.z)));
+        vx = move.x * kMoveSpeed;
+        vz = move.z * kMoveSpeed;
     } else if (!strafing && std::abs(horizontal) > 0.001f) {
+        // Without strafing, A/D keep their original turn-in-place behavior.
         const float yaw = YawFromRotation(api.world.Rotation(g_visual)) -
                           horizontal * kTurnSpeed * dt;
         api.world.SetRotation(g_visual, YawQuat(yaw));
-    }
-
-    if (strafing) {
-        const Vec3 move = api.camera.Movement(horizontal, vertical);
+    } else if (strafing) {
+        // With strafing enabled, A/D move sideways without turning.
         vx = move.x * kMoveSpeed;
         vz = move.z * kMoveSpeed;
     }
