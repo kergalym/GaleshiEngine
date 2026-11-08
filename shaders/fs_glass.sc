@@ -20,12 +20,22 @@ void main()
     vec3 N = normalize(v_normal);
     if (backFace) N = -N;
 
-    vec3 T = v_tangent - N * dot(N, v_tangent);
-    float tangentLen = length(T);
-    if (tangentLen > 1e-4) {
-        T /= tangentLen;
-        if (backFace) T = -T;
-        vec3 B = cross(N, T);
+    // Screen-space tangent frame: handles mirrored UV islands and meshes
+    // without authored tangents. The old vertex-tangent path assumed
+    // B = cross(N, T), which flips normal-map X/Y on mirrored UVs.
+    vec3 dp1 = dFdx(v_worldPos);
+    vec3 dp2 = dFdy(v_worldPos);
+    vec2 duv1 = dFdx(v_uv);
+    vec2 duv2 = dFdy(v_uv);
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    float maxLen = max(dot(T, T), dot(B, B));
+    if (maxLen > 1e-12) {
+        float invmax = inversesqrt(maxLen);
+        T *= invmax;
+        B *= invmax;
         vec3 tangentNormal = texture2D(s_normalMap, v_uv).xyz * 2.0 - 1.0;
         tangentNormal.xy *= u_glassParams.y;
         N = normalize(mul(mat3(T, B, N), tangentNormal));

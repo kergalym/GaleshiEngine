@@ -82,13 +82,25 @@ void main()
 
     // Tangent-space normal mapping. If the mesh has no tangent data the
     // geometric normal is kept instead of producing NaNs.
-    vec3 T = v_tangent - N * dot(N, v_tangent);
-    float tangentLen = length(T);
-    if (tangentLen > 1e-4) {
-        T /= tangentLen;
-        if (backFace) T = -T;
-        vec3 B = cross(N, T);
-        vec3 tangentNormal = texture2D(s_normalMap, v_uv).xyz * 2.0 - 1.0;
+    // Build the tangent frame from screen-space derivatives. This respects
+    // mirrored UV islands and works for meshes without authored tangents
+    // (the armour and sword meshes), unlike a fixed vertex tangent with an
+    // assumed bitangent sign.
+    vec3 dp1 = dFdx(v_worldPos);
+    vec3 dp2 = dFdy(v_worldPos);
+    vec2 duv1 = dFdx(v_uv);
+    vec2 duv2 = dFdy(v_uv);
+    vec3 dp2perp = cross(dp2, N);
+    vec3 dp1perp = cross(N, dp1);
+    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+    float maxLen = max(dot(T, T), dot(B, B));
+    if (maxLen > 1e-12) {
+        float invmax = inversesqrt(maxLen);
+        T *= invmax;
+        B *= invmax;
+        vec3 tangentNormal =
+            texture2D(s_normalMap, v_uv).xyz * 2.0 - 1.0;
         if (landscapeBlend > 0.0) {
             vec3 layerNormal =
                 texture2D(s_landscapeNormalMap, v_uv).xyz * 2.0 - 1.0;
@@ -96,7 +108,7 @@ void main()
                 mix(tangentNormal, layerNormal, landscapeBlend));
         }
         tangentNormal.xy *= u_materialParams.x;
-        N = normalize(mul(mat3(T, B, N), tangentNormal));
+        N = normalize(mat3(T, B, N) * tangentNormal);
     }
 
     float occlusionValue = texture2D(s_occlusionMap, v_uv).r;
