@@ -1103,8 +1103,16 @@ if (ImGui::BeginMenu("File")) {
                 // exists, select it instead of creating a duplicate.
                 auto landscapeView =
                     m_scene.Registry().view<Galeshi::LandscapeComponent>();
-                if (!landscapeView.empty()) {
-                    const entt::entity existing = *landscapeView.begin();
+                entt::entity existing = entt::null;
+                for (auto h : landscapeView) {
+                    if (!m_scene.Registry()
+                             .get<Galeshi::LandscapeComponent>(h)
+                             .waterBed) {
+                        existing = h;
+                        break;
+                    }
+                }
+                if (existing != entt::null) {
                     m_editor.Select(Galeshi::Entity(existing, &m_scene));
                     spdlog::warn("[Editor] Landscape already exists; duplicate discarded");
                 } else {

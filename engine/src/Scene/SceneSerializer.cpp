@@ -1137,7 +1137,9 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
                 {"sizeX", lc.sizeX},
                 {"sizeZ", lc.sizeZ},
                 {"scale", lc.scale},
+                {"waterBed", lc.waterBed},
                 {"heights", safeHeights},
+                {"vegetationMask", lc.vegetationMask},
                 {"paintWeights", safePaint},
                 {"layers", std::move(layers)},
                 {"layerWeights", std::move(layerWeights)},
@@ -1394,6 +1396,9 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
                 {"basinDepth", w.basinDepth},
                 {"bankWidth", w.bankWidth},
                 {"bankErosion", w.bankErosion},
+                {"underwaterTerrain", w.underwaterTerrain},
+                {"underwaterGrassCount", w.underwaterGrassCount},
+                {"underwaterGrassColor", Vec3ToJson(glm::vec3(w.underwaterGrassColor))},
                 {"width", w.width},
                 {"depth", w.depth},
                 {"waveHeight", w.waveHeight},
@@ -1977,6 +1982,7 @@ bool SceneSerializer::LoadFromJson(const json& root,
             landscape.sizeX = std::max(1, jl.value("sizeX", 100));
             landscape.sizeZ = std::max(1, jl.value("sizeZ", 100));
             landscape.scale = jl.value("scale", 1.0f);
+            landscape.waterBed = jl.value("waterBed", false);
             if (jl.contains("heights") && jl["heights"].is_array()) {
                 landscape.heights.reserve(jl["heights"].size());
                 for (const auto& height : jl["heights"]) {
@@ -1986,6 +1992,19 @@ bool SceneSerializer::LoadFromJson(const json& root,
             }
             const size_t expected = static_cast<size_t>(landscape.sizeX) * static_cast<size_t>(landscape.sizeZ);
             if (landscape.heights.size() != expected) landscape.heights.resize(expected, 0.0f);
+            if (jl.contains("vegetationMask") &&
+                jl["vegetationMask"].is_array()) {
+                landscape.vegetationMask.reserve(
+                    jl["vegetationMask"].size());
+                for (const auto& value : jl["vegetationMask"]) {
+                    landscape.vegetationMask.push_back(
+                        value.is_number() && value.get<float>() != 0.0f
+                            ? 1u : 0u);
+                }
+            }
+            if (landscape.vegetationMask.size() != expected) {
+                landscape.vegetationMask.assign(expected, 0);
+            }
             if (jl.contains("paintWeights") && jl["paintWeights"].is_array()) {
                 landscape.paintWeights.reserve(jl["paintWeights"].size());
                 for (const auto& weight : jl["paintWeights"]) {
@@ -2471,6 +2490,15 @@ bool SceneSerializer::LoadFromJson(const json& root,
             water.basinDepth = jw.value("basinDepth", water.basinDepth);
             water.bankWidth = jw.value("bankWidth", water.bankWidth);
             water.bankErosion = jw.value("bankErosion", water.bankErosion);
+            water.underwaterTerrain = jw.value(
+                "underwaterTerrain", water.underwaterTerrain);
+            water.underwaterGrassCount = std::clamp(
+                jw.value("underwaterGrassCount",
+                         water.underwaterGrassCount), 0, 20000);
+            if (jw.contains("underwaterGrassColor")) {
+                water.underwaterGrassColor = glm::vec4(
+                    Vec3FromJson(jw.at("underwaterGrassColor")), 1.0f);
+            }
             water.width = jw.value("width", water.width);
             water.depth = jw.value("depth", water.depth);
             water.waveHeight = jw.value("waveHeight", water.waveHeight);

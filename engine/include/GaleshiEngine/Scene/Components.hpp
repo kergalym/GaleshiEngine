@@ -236,6 +236,12 @@ struct LandscapeComponent {
     int sizeZ = 100;
     float scale = 1.0f;
     std::vector<float> heights;
+    // Generated bed owned by a water body. Excluded from landscape carving
+    // and used only for the water's own vegetation.
+    bool waterBed = false;
+    // Per-vertex auto vegetation exclusion. 1 suppresses generated trees and
+    // grass at that vertex; painted instances are unaffected.
+    std::vector<uint8_t> vegetationMask;
     // Runtime-only base heights captured before the first water erosion.
     // Not serialized; used by the editor to re-carve after water edits.
     std::vector<float> erosionBaseHeights;
@@ -597,6 +603,12 @@ struct WaterComponent {
     float basinDepth = 1.5f;   // depression depth below the water surface
     float bankWidth = 1.5f;    // eroded shore width in world units
     float bankErosion = 0.35f; // 0..1 bank height noise
+
+    // The water body owns a generated child terrain at the basin bed with a
+    // dedicated vegetation instance set.
+    bool  underwaterTerrain = true;
+    int   underwaterGrassCount = 240;
+    glm::vec4 underwaterGrassColor{0.08f, 0.32f, 0.20f, 1.0f};
 
     // World-space extent of the surface.
     float width = 20.0f;

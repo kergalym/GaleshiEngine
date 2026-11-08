@@ -553,6 +553,7 @@ float WaterEdgeDistance(const Galeshi::WaterComponent& water,
 
         for (auto lh : registry.view<Galeshi::LandscapeComponent>()) {
             auto& lc = registry.get<Galeshi::LandscapeComponent>(lh);
+            if (lc.waterBed) continue;
             auto* meshComponent = registry.try_get<Galeshi::MeshComponent>(lh);
             if (!meshComponent || !meshComponent->mesh) continue;
             if (lc.sizeX < 2 || lc.sizeZ < 2 ||
@@ -682,5 +683,255 @@ float WaterEdgeDistance(const Galeshi::WaterComponent& water,
         }
 
         water->terrainCarved = true;
+        EnsureUnderwaterTerrain(waterEntity);
+        RebuildWaterVegetationMasks();
+    }
+
+    void GaleshiEditorApp::EnsureUnderwaterTerrain(entt::entity waterEntity) {
+        if (!m_scene.Registry().valid(waterEntity)) return;
+        auto& registry = m_scene.Registry();
+        auto* water = registry.try_get<Galeshi::WaterComponent>(waterEntity);
+        if (!water) return;
+
+        entt::entity bedHandle = entt::null;
+        for (auto h : registry.view<Galeshi::ParentComponent,
+                                    Galeshi::LandscapeComponent>()) {
+            if (registry.get<Galeshi::ParentComponent>(h).parent ==
+                    waterEntity &&
+                registry.get<Galeshi::LandscapeComponent>(h).waterBed) {
+                bedHandle = h;
+                break;
+            }
+        }
+
+        if (!water->underwaterTerrain) {
+            if (bedHandle != entt::null) {
+                m_scene.DestroyEntity(
+                    Galeshi::Entity(bedHandle, &m_scene));
+            }
+            return;
+        }
+
+        Galeshi::Entity bed;
+        if (bedHandle == entt::null) {
+            bed = m_scene.CreateEntity("UnderwaterTerrain");
+            bed.AddComponent<Galeshi::ParentComponent>(
+                Galeshi::ParentComponent{waterEntity});
+            bed.AddComponent<Galeshi::TransformComponent>();
+        } else {
+            bed = Galeshi::Entity(bedHandle, &m_scene);
+        }
+
+        const float width = std::max(water->width, 0.1f);
+        const float depth = std::max(water->depth, 0.1f);
+        const float basinDepth = std::max(water->basinDepth, 0.05f);
+        const int cells = 64;
+        const float cell = std::max(
+            std::max(width, depth) / static_cast<float>(cells), 0.01f);
+        const int sizeX = std::clamp(
+            static_cast<int>(std::ceil(width / cell)) + 1, 2, 129);
+        const int sizeZ = std::clamp(
+            static_cast<int>(std::ceil(depth / cell)) + 1, 2, 129);
+        const size_t expected =
+            static_cast<size_t>(sizeX) * static_cast<size_t>(sizeZ);
+
+        auto& tf = bed.GetComponent<Galeshi::TransformComponent>();
+        tf.position = {0.0f, -basinDepth, 0.0f};
+        tf.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        tf.scale = glm::vec3(1.0f);
+
+        auto& lc = bed.HasComponent<Galeshi::LandscapeComponent>()
+            ? bed.GetComponent<Galeshi::LandscapeComponent>()
+            : bed.AddComponent<Galeshi::LandscapeComponent>();
+        lc.waterBed = true;
+        lc.sizeX = sizeX;
+        lc.sizeZ = sizeZ;
+        lc.scale = cell;
+        lc.heights.assign(expected, 0.0f);
+        lc.paintWeights.assign(expected, 1.0f);
+        lc.vegetationMask.assign(expected, 0);
+        lc.erosionBaseHeights.clear();
+        lc.erosionBasePaintWeights.clear();
+        lc.hasErosionBase = false;
+        lc.hasErosionPaintBase = false;
+        lc.layers.clear();
+        lc.layerWeights.clear();
+        lc.activeLayer = 0;
+
+        // The seed matches the landscape carve so the bed noise follows the
+        // same profile and stays just above the carved main landscape.
+        const float seed = static_cast<float>(
+            entt::to_integral(waterEntity) % 1024u) * 0.6180339f;
+        for (int z = 0; z < sizeZ; ++z) {
+            for (int x = 0; x < sizeX; ++x) {
+                const size_t index =
+                    static_cast<size_t>(z) * sizeX + x;
+                const float localX =
+                    (x - sizeX / 2.0f) * cell;
+                const float localZ =
+                    (z - sizeZ / 2.0f) * cell;
+                const glm::vec2 uv(localX / width + 0.5f,
+                                   localZ / depth + 0.5f);
+                const float edgeDistance =
+                    WaterEdgeDistance(*water, uv, seed);
+                const float noise = WaterValueNoise(
+                    uv * 17.0f + glm::vec2(seed * 1.7f, seed * 3.1f));
+                lc.heights[index] =
+                    basinDepth * 0.28f * (1.0f - noise) + 0.02f;
+                // Own vegetation only where the water body covers the bed.
+                lc.vegetationMask[index] =
+                    edgeDistance > 0.0f ? 1 : 0;
+            }
+        }
+
+        auto& meshComponent =
+            bed.HasComponent<Galeshi::MeshComponent>()
+                ? bed.GetComponent<Galeshi::MeshComponent>()
+                : bed.AddComponent<Galeshi::MeshComponent>();
+        if (!meshComponent.mesh) {
+            meshComponent.mesh = std::make_shared<Galeshi::Mesh>();
+        }
+        meshComponent.sourceAssetPath.clear();
+        meshComponent.primitiveType = "landscape";
+        Galeshi::LandscapeMesh::Rebuild(lc, *meshComponent.mesh);
+
+        auto& materialComponent =
+            bed.HasComponent<Galeshi::MaterialComponent>()
+                ? bed.GetComponent<Galeshi::MaterialComponent>()
+                : bed.AddComponent<Galeshi::MaterialComponent>();
+        if (!materialComponent.material) {
+            materialComponent.material = std::make_shared<Galeshi::Material>();
+        }
+        auto& material = *materialComponent.material;
+        material.name = "UnderwaterTerrain_Material";
+        material.landscapeBlend = true;
+        material.landscapeAlbedoSrgb = true;
+        material.landscapeOrmSrgb = false;
+        material.landscapeNormalSrgb = false;
+        material.metallicFactor = 0.0f;
+        material.roughnessFactor = 1.0f;
+        material.normalStrength = 1.0f;
+        if (m_assets) {
+            auto shoreAlbedo = m_assets->LoadTexture(
+                "assets/textures/T_Water_Shore_Albedo.png", true);
+            auto shoreOrm = m_assets->LoadTexture(
+                "assets/textures/T_Water_Shore_ORM.png", false);
+            auto shoreNormal = m_assets->LoadTexture(
+                "assets/textures/T_Water_Shore_Normal.png", false);
+            if (shoreAlbedo && shoreAlbedo != m_assets->WhiteTexture()) {
+                material.landscapeAlbedoMap = shoreAlbedo;
+            }
+            if (shoreOrm && shoreOrm != m_assets->WhiteTexture()) {
+                material.landscapeOrmMap = shoreOrm;
+            }
+            if (shoreNormal && shoreNormal != m_assets->WhiteTexture()) {
+                material.landscapeNormalMap = shoreNormal;
+            }
+        }
+
+        auto& vegetation =
+            bed.HasComponent<Galeshi::VegetationComponent>()
+                ? bed.GetComponent<Galeshi::VegetationComponent>()
+                : bed.AddComponent<Galeshi::VegetationComponent>();
+        vegetation.enabled = true;
+        vegetation.castShadows = false;
+        vegetation.grassCastShadows = false;
+        vegetation.treeCount = 0;
+        vegetation.grassCount = std::clamp(
+            water->underwaterGrassCount, 0, 20000);
+        vegetation.grassMinScale = 0.75f;
+        vegetation.grassMaxScale = 1.40f;
+        vegetation.slopeLimit = 2.0f;
+        vegetation.seed = 1337u;
+        vegetation.trunkColor = {0.12f, 0.20f, 0.10f, 1.0f};
+        vegetation.canopyColor = water->underwaterGrassColor;
+        vegetation.grassColor = water->underwaterGrassColor;
+        vegetation.treeTypes.clear();
+        vegetation.hideDefaultInstances = false;
+        vegetation.dirty = true;
+        Galeshi::VegetationGenerator::Generate(lc, vegetation);
+
+        spdlog::info(
+            "[Water] Underwater terrain: {}x{} bed, {} grass instances",
+            sizeX, sizeZ, vegetation.grassInstances.size());
+    }
+
+    void GaleshiEditorApp::RebuildWaterVegetationMasks() {
+        auto& registry = m_scene.Registry();
+
+        for (auto lh : registry.view<Galeshi::LandscapeComponent>()) {
+            auto& lc = registry.get<Galeshi::LandscapeComponent>(lh);
+            if (lc.waterBed) continue;
+            const size_t expected =
+                static_cast<size_t>(lc.sizeX) * lc.sizeZ;
+            if (expected == 0) continue;
+            if (lc.vegetationMask.size() != expected) {
+                lc.vegetationMask.assign(expected, 0);
+            } else {
+                std::fill(lc.vegetationMask.begin(),
+                          lc.vegetationMask.end(), 0);
+            }
+        }
+
+        for (auto wh : registry.view<Galeshi::WaterComponent>()) {
+            auto& water = registry.get<Galeshi::WaterComponent>(wh);
+            if (!water.terrainCarved ||
+                water.width < 1e-4f || water.depth < 1e-4f) {
+                continue;
+            }
+            const glm::mat4 waterWorld = EntityWorldMatrix(wh);
+            const glm::mat4 waterModel =
+                waterWorld * glm::scale(
+                    glm::mat4(1.0f),
+                    glm::vec3(water.width, 1.0f, water.depth));
+            const glm::mat4 waterInv = glm::inverse(waterModel);
+            const float seed = static_cast<float>(
+                entt::to_integral(wh) % 1024u) * 0.6180339f;
+
+            for (auto lh : registry.view<Galeshi::LandscapeComponent>()) {
+                auto& lc = registry.get<Galeshi::LandscapeComponent>(lh);
+                if (lc.waterBed) continue;
+                const size_t expected =
+                    static_cast<size_t>(lc.sizeX) * lc.sizeZ;
+                if (lc.heights.size() != expected ||
+                    lc.vegetationMask.size() != expected) {
+                    continue;
+                }
+                const glm::mat4 landscapeWorld = EntityWorldMatrix(lh);
+                bool changed = false;
+                for (int z = 0; z < lc.sizeZ; ++z) {
+                    for (int x = 0; x < lc.sizeX; ++x) {
+                        const size_t index =
+                            static_cast<size_t>(z) * lc.sizeX + x;
+                        const glm::vec3 local(
+                            (x - lc.sizeX / 2.0f) * lc.scale,
+                            lc.heights[index],
+                            (z - lc.sizeZ / 2.0f) * lc.scale);
+                        const glm::vec3 world = glm::vec3(
+                            landscapeWorld * glm::vec4(local, 1.0f));
+                        const glm::vec3 waterLocal = glm::vec3(
+                            waterInv * glm::vec4(world, 1.0f));
+                        const glm::vec2 uv(
+                            waterLocal.x + 0.5f,
+                            waterLocal.z + 0.5f);
+                        if (uv.x < 0.0f || uv.x > 1.0f ||
+                            uv.y < 0.0f || uv.y > 1.0f) {
+                            continue;
+                        }
+                        if (WaterEdgeDistance(water, uv, seed) <= 0.0f) {
+                            lc.vegetationMask[index] = 1;
+                            changed = true;
+                        }
+                    }
+                }
+                if (changed) {
+                    if (auto* vegetation =
+                            registry.try_get<Galeshi::VegetationComponent>(
+                                lh)) {
+                        vegetation->dirty = true;
+                    }
+                }
+            }
+        }
     }
 

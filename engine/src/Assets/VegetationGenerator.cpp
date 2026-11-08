@@ -20,6 +20,22 @@ bool ValidPlacement(const LandscapeComponent& landscape,
                     float x, float z, float slopeMultiplier = 1.0f) {
     if (std::abs(x) > landscape.sizeX * 0.5f * landscape.scale) return false;
     if (std::abs(z) > landscape.sizeZ * 0.5f * landscape.scale) return false;
+    const size_t expected =
+        static_cast<size_t>(landscape.sizeX) * landscape.sizeZ;
+    if (landscape.vegetationMask.size() == expected) {
+        const int ix = std::clamp(
+            static_cast<int>(std::floor(
+                x / landscape.scale + landscape.sizeX * 0.5f)),
+            0, landscape.sizeX - 1);
+        const int iz = std::clamp(
+            static_cast<int>(std::floor(
+                z / landscape.scale + landscape.sizeZ * 0.5f)),
+            0, landscape.sizeZ - 1);
+        if (landscape.vegetationMask[
+                static_cast<size_t>(iz) * landscape.sizeX + ix] != 0) {
+            return false;
+        }
+    }
     return SlopeAt(landscape, x, z) <= vegetation.slopeLimit * slopeMultiplier;
 }
 

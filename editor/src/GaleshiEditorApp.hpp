@@ -728,6 +728,14 @@ void DrawDetails();
     // in the landscape component for the current editor session.
     void ApplyWaterErosion(entt::entity waterEntity);
 
+    // Creates or refreshes the child terrain owned by a water body, including
+    // its own vegetation instance set. Does not modify the main landscape.
+    void EnsureUnderwaterTerrain(entt::entity waterEntity);
+
+    // Recomputes the auto-vegetation exclusion masks from all carved water
+    // bodies so land grass/trees do not spawn on the submerged bed.
+    void RebuildWaterVegetationMasks();
+
     // State.
     Galeshi::Scene          m_scene;
     Galeshi::Camera         m_camera;

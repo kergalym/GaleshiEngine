@@ -65,13 +65,18 @@
 
         // Apply pending procedural water erosion after the scene is fully
         // loaded. A saved scene with a carved landscape has terrainCarved set
-        // and is skipped, so reloading cannot deepen the basin twice.
+        // and is skipped, so reloading cannot deepen the basin twice. The
+        // water-owned underwater terrain is refreshed either way.
         for (auto h : m_scene.Registry().view<Galeshi::WaterComponent>()) {
             auto& water = m_scene.Registry().get<Galeshi::WaterComponent>(h);
-            if (water.enabled && water.carveLandscape && !water.terrainCarved) {
+            if (water.enabled && water.carveLandscape &&
+                !water.terrainCarved) {
                 ApplyWaterErosion(h);
+            } else if (water.terrainCarved) {
+                EnsureUnderwaterTerrain(h);
             }
         }
+        RebuildWaterVegetationMasks();
 
         // The view and effect set may have changed completely; never reuse a
         // TAA history from the previous scene/camera.
@@ -704,6 +709,35 @@
                     "Carves a basin under the water, builds an eroded bank, "
                     "rebuilds the landscape mesh and regenerates vegetation.");
             }
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Underwater Terrain")) {
+            bool underwaterTerrain = water.underwaterTerrain;
+            if (ImGui::Checkbox("Create Underwater Terrain",
+                                &underwaterTerrain)) {
+                PushHistory();
+                water.underwaterTerrain = underwaterTerrain;
+                EnsureUnderwaterTerrain(entity);
+                RebuildWaterVegetationMasks();
+            }
+            ImGui::DragInt("Grass Count", &water.underwaterGrassCount,
+                           1.0f, 0, 20000);
+            ImGui::ColorEdit3("Grass Color",
+                              glm::value_ptr(water.underwaterGrassColor));
+            if (ImGui::Button("Rebuild Underwater Terrain")) {
+                PushHistory();
+                EnsureUnderwaterTerrain(entity);
+                RebuildWaterVegetationMasks();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Creates a child terrain at the basin bed with its own "
+                    "vegetation instances. Land vegetation is excluded from "
+                    "the submerged footprint.");
+            }
+            ImGui::TextDisabled(
+                "The bed is a child entity and owns its own grass set.");
             ImGui::TreePop();
         }
 
