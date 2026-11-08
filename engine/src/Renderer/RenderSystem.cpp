@@ -684,6 +684,13 @@ void RenderSystem::SetLodBias(float bias) {
     m_lodBias = std::clamp(bias, 0.1f, 8.0f);
 }
 
+void RenderSystem::ResetSceneState() {
+    ResetOcclusionState();
+    m_prevModels.clear();
+    m_prevViewProj = glm::mat4(1.0f);
+    m_hasPrevViewProj = false;
+}
+
 void RenderSystem::ResetOcclusionState() {
     for (auto& entry : m_occlusionStates) {
         if (bgfx::isValid(entry.second.query)) {

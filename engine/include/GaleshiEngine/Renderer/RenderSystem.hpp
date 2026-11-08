@@ -29,6 +29,9 @@ public:
     ViewMode GetViewMode() const { return m_viewMode; }
     State SaveState() const;
     void RestoreState(const State& state);
+    // Drop per-scene renderer state (occlusion queries, previous transforms,
+    // motion-vector history) after the ECS registry has been cleared.
+    void ResetSceneState();
     void Render(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height);
     // Renders a small depth-only occluder map and updates the previous-frame
     // occlusion queries. Must be submitted before the main scene view.

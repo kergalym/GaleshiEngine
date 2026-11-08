@@ -335,6 +335,11 @@
 
 
     void GaleshiEditorApp::BuildTestScene() {
+        if (!m_assets) return;
+        StopPlayForSceneChange();
+        UnloadSceneContent(false);
+        ResetSceneStateForReplacement();
+
         auto sun = m_scene.CreateEntity("Sun");
         auto& dl = sun.HasComponent<Galeshi::DirectionalLightComponent>()
                    ? sun.GetComponent<Galeshi::DirectionalLightComponent>()
@@ -486,5 +491,7 @@
         auto emitter = m_scene.CreateEntity("FireParticles");
         emitter.AddComponent<Galeshi::ParticleEmitterComponent>();
         emitter.GetComponent<Galeshi::TransformComponent>().position = {4.5f, 0.2f, -1.5f};
+
+        if (m_serializer) PushHistory();
     }
 

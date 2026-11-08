@@ -199,6 +199,12 @@ private:
     // and textures actually destroyed.
     void UnloadSceneContent(bool pushUndoSnapshot = true);
 
+    // Reset scene-level state that survives an ECS registry clear (audio
+    // buses, camera state, global post-process, TAA history, IBL, history,
+    // UI references). Call after UnloadSceneContent and before building or
+    // loading another scene.
+    void ResetSceneStateForReplacement();
+
     void DrawLoadingModal();
 
     // -------------------------------------------------------------------

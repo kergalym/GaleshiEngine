@@ -184,7 +184,8 @@
         }
 
         StopPlayForSceneChange();
-        m_editor.ClearSelection();
+        UnloadSceneContent(false);
+        ResetSceneStateForReplacement();
         StartAsyncLoad(normalized);
     }
 
@@ -200,20 +201,7 @@
         // Skip the intermediate undo snapshot; the empty scene gets a clean
         // snapshot after all scene-level state has been reset below.
         UnloadSceneContent(false);
-
-        m_scene.AudioBuses().fill(Galeshi::AudioBusSettings{});
-        m_scene.CameraState() = Galeshi::SceneCameraState{};
-        m_scene.GlobalPostProcess() = Galeshi::PostProcessSettings{};
-        m_scene.SetHasGlobalPostProcess(false);
-        m_postProcess.ResetTaaHistory();
-        m_iblGenerated = false;
-        m_lastIblSun = {999.0f, 999.0f, 999.0f};
-
-        m_history.clear();
-        m_historyIndex = -1;
-        m_uiCanvasEntity = entt::null;
-        m_uiWidgetIndex = -1;
-        m_lastViewportTexture = BGFX_INVALID_HANDLE;
+        ResetSceneStateForReplacement();
         RestoreEditorCamera();
 
         PushHistory();

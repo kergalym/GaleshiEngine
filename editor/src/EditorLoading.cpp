@@ -201,7 +201,11 @@
 
         m_scene.Registry().clear();
         m_assets->Clear(true);
+        if (m_render) m_render->ResetSceneState();
         if (m_particles) m_particles->Reset();
+        m_postProcess.ResetTaaHistory();
+        m_iblGenerated = false;
+        m_lastIblSun = {999.0f, 999.0f, 999.0f};
         m_lastViewportTexture = BGFX_INVALID_HANDLE;
 
         m_history.clear();
@@ -212,6 +216,25 @@
         if (pushUndoSnapshot && m_serializer) {
             PushHistory(); // empty-scene snapshot for Undo/Redo
         }
+    }
+
+
+
+    void GaleshiEditorApp::ResetSceneStateForReplacement() {
+        m_scene.AudioBuses().fill(Galeshi::AudioBusSettings{});
+        m_scene.CameraState() = Galeshi::SceneCameraState{};
+        m_scene.GlobalPostProcess() = Galeshi::PostProcessSettings{};
+        m_scene.SetHasGlobalPostProcess(false);
+        m_postProcess.ResetTaaHistory();
+        m_iblGenerated = false;
+        m_lastIblSun = {999.0f, 999.0f, 999.0f};
+
+        m_history.clear();
+        m_historyIndex = -1;
+        m_currentScenePath.clear();
+        m_uiCanvasEntity = entt::null;
+        m_uiWidgetIndex = -1;
+        m_lastViewportTexture = BGFX_INVALID_HANDLE;
     }
 
 
