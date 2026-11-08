@@ -34,7 +34,8 @@ void GaleshiEditorApp::DrawBoneAttachmentSettings(entt::entity character) {
         m_boneAttachBone.clear();
     }
     if (m_boneAttachEntity != entt::null &&
-        !registry.valid(m_boneAttachEntity)) {
+        (!registry.valid(m_boneAttachEntity) ||
+         m_boneAttachEntity == character)) {
         m_boneAttachEntity = entt::null;
     }
 
@@ -81,27 +82,47 @@ void GaleshiEditorApp::DrawBoneAttachmentSettings(entt::entity character) {
             "character, not the Player wrapper.");
     }
 
-    const std::string label =
+    // All scene entities are valid targets except the character that owns
+    // the bone. EnTT ids keep duplicate names selectable.
+    std::vector<std::pair<std::string, entt::entity>> entities;
+    for (const Galeshi::Entity& entity : m_scene.AllEntities()) {
+        if (entity.Handle() == character) continue;
+        entities.emplace_back(EntityLabel(m_scene, entity.Handle()),
+                              entity.Handle());
+    }
+    std::sort(entities.begin(), entities.end(),
+              [](const auto& a, const auto& b) {
+                  if (a.first != b.first) return a.first < b.first;
+                  return static_cast<uint32_t>(a.second) <
+                         static_cast<uint32_t>(b.second);
+              });
+
+    const std::string selectedLabel =
         m_boneAttachEntity == entt::null
-            ? "(Drag an entity here)"
+            ? "(Select Entity)"
             : EntityLabel(m_scene, m_boneAttachEntity);
-    ImGui::Button(label.c_str(), ImVec2(-1.0f, 0.0f));
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::BeginCombo("##attachment_entity",
+                          selectedLabel.c_str())) {
+        if (ImGui::Selectable("(Select Entity)",
+                              m_boneAttachEntity == entt::null)) {
+            m_boneAttachEntity = entt::null;
+        }
+        for (const auto& [name, entity] : entities) {
+            ImGui::PushID(static_cast<int>(
+                static_cast<uint32_t>(entity)));
+            const bool selected = m_boneAttachEntity == entity;
+            if (ImGui::Selectable(name.c_str(), selected)) {
+                m_boneAttachEntity = entity;
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
-            "Drag an entity from the Outliner to attach it to the selected "
-            "bone. Its current world transform is preserved.");
-    }
-    if (ImGui::BeginDragDropTarget()) {
-        if (const ImGuiPayload* payload =
-                ImGui::AcceptDragDropPayload("ENTITY")) {
-            const entt::entity dragged =
-                *static_cast<const entt::entity*>(payload->Data);
-            if (dragged != entt::null && dragged != character &&
-                registry.valid(dragged)) {
-                m_boneAttachEntity = dragged;
-            }
-        }
-        ImGui::EndDragDropTarget();
+            "Select any scene entity except this character. Its current "
+            "world transform is preserved when attached.");
     }
 
     const bool canAttach = m_boneAttachEntity != entt::null &&
