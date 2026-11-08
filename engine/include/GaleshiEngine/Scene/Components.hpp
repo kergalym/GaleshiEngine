@@ -511,10 +511,24 @@ struct PostProcessVolumeComponent {
 
     PostProcessSettings settings;
 
-    // DoF is off globally by default. A volume opts into it so adding a
-    // post-process volume immediately produces the intended look.
+    // A volume is an explicit "full post-processing" override. Enable all
+    // standard effects when one is added so it does not silently switch off
+    // effects that were active in the scene. Stylized grading (palette) and
+    // the debug invert pass stay opt-in; FXAA is redundant with SMAA/TAA.
     PostProcessVolumeComponent() {
+        settings.bloomEnabled = true;
         settings.dofEnabled = true;
+        settings.motionBlurEnabled = true;
+        settings.ssaoEnabled = true;
+        settings.ssrEnabled = true;
+        settings.ssgiEnabled = true;
+        settings.smaaEnabled = true;
+        settings.taaEnabled = true;
+        settings.godRaysEnabled = true;
+        settings.atmosphereEnabled = true;
+        settings.fogEnabled = true;
+        settings.fogVolumetric = true;
+        settings.atmosphereIntensity = 8.0f;
     }
 };
 

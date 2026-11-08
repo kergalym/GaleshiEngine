@@ -57,7 +57,6 @@
             m_postProcess.SetAtmosphereEnabled(pp.atmosphereEnabled);
             m_postProcess.SetFogEnabled(pp.fogEnabled);
             m_postProcess.SetFogVolumetric(pp.fogVolumetric);
-            m_postProcess.SetInvertEnabled(pp.invertEnabled);
             spdlog::info("[Scene] Restored global post-process settings "
                          "(environment palette={}, amount={})",
                          pp.environmentPaletteEnabled,
@@ -97,7 +96,6 @@
         s.atmosphereEnabled  = m_postProcess.AtmosphereEnabled();
         s.fogEnabled         = m_postProcess.FogEnabled();
         s.fogVolumetric      = m_postProcess.FogVolumetric();
-        s.invertEnabled      = m_postProcess.InvertEnabled();
         return s;
     }
 
@@ -149,7 +147,6 @@
         global.atmosphereEnabled = m_postProcess.AtmosphereEnabled();
         global.fogEnabled        = m_postProcess.FogEnabled();
         global.fogVolumetric     = m_postProcess.FogVolumetric();
-        global.invertEnabled     = m_postProcess.InvertEnabled();
         return global;
     }
 
@@ -651,11 +648,9 @@
             ImGui::TreePop();
         }
 
-        ImGui::Checkbox("Invert Colors", &s.invertEnabled);
-
         if (ImGui::Button("Reset Post-Process Settings")) {
-            volume.settings = Galeshi::PostProcessSettings{};
-            volume.settings.dofEnabled = true;
+            // Restore the full-effects defaults used when a volume is added.
+            volume.settings = Galeshi::PostProcessVolumeComponent{}.settings;
         }
     }
 

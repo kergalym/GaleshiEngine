@@ -1157,15 +1157,6 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     }
                 }
 
-                // 15. Invert (View 47)
-                if (pp.invertEnabled) {
-                    if (bgfx::isValid(m_postProcess.RenderInvert(
-                            m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
-                            47, renderW, renderH))) {
-                        m_postProcess.SwapFbos();
-                    }
-                }
-
                 // Store the unjittered camera matrix for the next frame's
                 // motion blur and TAA reprojection.
                 m_postProcess.SetPrevViewProj(taaVP);

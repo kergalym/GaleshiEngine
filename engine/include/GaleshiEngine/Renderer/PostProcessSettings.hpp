@@ -133,8 +133,6 @@ struct PostProcessSettings {
     float     fogAnisotropy     = 0.55f;
     int       fogSteps          = 24;
 
-    // Invert
-    bool invertEnabled = false;
 };
 
 } // namespace Galeshi

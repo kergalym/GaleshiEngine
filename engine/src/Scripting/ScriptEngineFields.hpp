@@ -45,7 +45,6 @@ inline constexpr PostProcessBoolField kPostProcessBools[] = {
     {"atmosphere", &PostProcessSettings::atmosphereEnabled},
     {"fog", &PostProcessSettings::fogEnabled},
     {"fog_volumetric", &PostProcessSettings::fogVolumetric},
-    {"invert", &PostProcessSettings::invertEnabled},
 };
 
 inline constexpr PostProcessFloatField kPostProcessFloats[] = {

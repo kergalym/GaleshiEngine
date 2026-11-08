@@ -123,10 +123,6 @@ public:
         float exposure, float contrast, float saturation,
         float gradeContrast, float gradeSaturation);
     bgfx::TextureHandle RenderFxaa(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height);
-    bgfx::TextureHandle RenderInvert(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height);
-
-    bool InvertEnabled() const { return m_invertEnabled; }
-    void SetInvertEnabled(bool v) { m_invertEnabled = v; }
     bool FxaaEnabled() const { return m_fxaaEnabled; }
     void SetFxaaEnabled(bool v) { m_fxaaEnabled = v; }
     bool SsaoEnabled() const { return m_ssaoEnabled; }
@@ -219,7 +215,6 @@ private:
     void EnsureAOFbo(uint16_t w, uint16_t h, float resolutionScale);
 
     bgfx::ProgramHandle m_program     = BGFX_INVALID_HANDLE;
-    bgfx::ProgramHandle m_invertProg  = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_fxaaProg    = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_lightingProg= BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_aoSampleProg   = BGFX_INVALID_HANDLE;
@@ -332,7 +327,6 @@ private:
     bool m_historyValid = false;
 
     uint16_t m_width = 0, m_height = 0;
-    bool m_invertEnabled = false;
     bool m_fxaaEnabled   = false;
     bool m_ssaoEnabled   = false;
     bool m_ssrEnabled    = false;

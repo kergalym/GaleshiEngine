@@ -515,7 +515,6 @@
         pp.atmosphereEnabled = m_postProcess.AtmosphereEnabled();
         pp.fogEnabled = m_postProcess.FogEnabled();
         pp.fogVolumetric = m_postProcess.FogVolumetric();
-        pp.invertEnabled = m_postProcess.InvertEnabled();
         m_scene.SetHasGlobalPostProcess(true);
     }
 

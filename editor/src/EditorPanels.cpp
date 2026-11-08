@@ -812,8 +812,6 @@
 
             menuToggle("Bloom", pp.bloomEnabled,
                        &Galeshi::PostProcessManager::SetBloomEnabled);
-            menuToggle("Invert Colors", pp.invertEnabled,
-                       &Galeshi::PostProcessManager::SetInvertEnabled);
             menuToggle("FXAA", pp.fxaaEnabled,
                        &Galeshi::PostProcessManager::SetFxaaEnabled);
             if (ImGui::BeginMenu("Ambient Occlusion")) {
@@ -868,14 +866,12 @@
                             &m_showEnvironmentPalette);
             ImGui::Separator();
             if (ImGui::MenuItem("Reset All Effects")) {
-                pp.invertEnabled = false;
                 pp.fxaaEnabled = false;
                 pp.ssaoEnabled = false;
                 pp.ssrEnabled = false;
                 pp.ssgiEnabled = false;
                 pp.fogEnabled = false;
                 pp.fogVolumetric = false;
-                m_postProcess.SetInvertEnabled(false);
                 m_postProcess.SetFxaaEnabled(false);
                 m_postProcess.SetSsaoEnabled(false);
                 m_postProcess.SetSsrEnabled(false);

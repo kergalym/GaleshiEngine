@@ -75,15 +75,6 @@ void PostProcessManager::Init() {
         }
     }
 
-    // Invert
-    {
-        auto vs = LoadBinShader("shaders/vs_fullscreen.bin");
-        auto fs = LoadBinShader("shaders/fs_invert.bin");
-        if (bgfx::isValid(vs) && bgfx::isValid(fs)) {
-            m_invertProg = bgfx::createProgram(vs, fs, true);
-        }
-    }
-
     // FXAA
     {
         auto vs = LoadBinShader("shaders/vs_fullscreen.bin");
@@ -525,7 +516,7 @@ void PostProcessManager::Shutdown() {
     auto destroyTex  = [](bgfx::TextureHandle& h) { if (bgfx::isValid(h)) { bgfx::destroy(h); h = BGFX_INVALID_HANDLE; } };
     auto destroyFbo  = [](bgfx::FrameBufferHandle& h) { if (bgfx::isValid(h)) { bgfx::destroy(h); h = BGFX_INVALID_HANDLE; } };
 
-    destroyProg(m_program); destroyProg(m_invertProg); destroyProg(m_fxaaProg);
+    destroyProg(m_program); destroyProg(m_fxaaProg);
     destroyProg(m_lightingProg);
     destroyProg(m_lightCullingProg);
     if (bgfx::isValid(m_tileLightBuffer)) bgfx::destroy(m_tileLightBuffer);
@@ -1338,19 +1329,6 @@ bgfx::TextureHandle PostProcessManager::RenderFxaa(bgfx::TextureHandle color, bg
     bgfx::submit(viewId, m_fxaaProg);
     return m_pingColor;
 }
-
-bgfx::TextureHandle PostProcessManager::RenderInvert(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
-    if (!bgfx::isValid(m_invertProg)) return BGFX_INVALID_HANDLE;
-    bgfx::setViewFrameBuffer(viewId, targetFbo);
-    bgfx::setViewRect(viewId, 0, 0, width, height);
-    bgfx::setTexture(0, s_texColor, color);
-    bgfx::setVertexBuffer(0, m_vbh);
-    bgfx::setIndexBuffer(m_ibh);
-    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
-    bgfx::submit(viewId, m_invertProg);
-    return m_pingColor;
-}
-
 
 bgfx::TextureHandle PostProcessManager::RenderSmaa(bgfx::TextureHandle color, bgfx::ViewId viewId, uint16_t w, uint16_t h) {
     if (!bgfx::isValid(m_smaaEdgeProg) || !bgfx::isValid(m_smaaBlendProg) || !bgfx::isValid(s_smaaEdges)) return BGFX_INVALID_HANDLE;

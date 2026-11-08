@@ -589,8 +589,7 @@ json PostProcessSettingsToJson(const PostProcessSettings& s) {
         {"fogMaxDistance", s.fogMaxDistance},
         {"fogSunScattering", s.fogSunScattering},
         {"fogAnisotropy", s.fogAnisotropy},
-        {"fogSteps", s.fogSteps},
-        {"invertEnabled", s.invertEnabled}
+        {"fogSteps", s.fogSteps}
     };
 }
 
@@ -699,7 +698,6 @@ void PostProcessSettingsFromJson(const json& js, PostProcessSettings& s) {
     s.fogSteps = js.value("fogSteps", s.fogSteps);
     if (s.fogSteps < 1) s.fogSteps = 1;
     if (s.fogSteps > 64) s.fogSteps = 64;
-    s.invertEnabled = js.value("invertEnabled", s.invertEnabled);
 }
 
 std::string TexturePath(const std::shared_ptr<Texture>& texture) {
