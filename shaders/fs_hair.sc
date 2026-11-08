@@ -27,7 +27,9 @@ void main()
 {
     // The source is the copied opaque depth. It uses the same NDC
     // convention as the scene pass, so no Y flip is needed here.
-    vec2 screenUV = v_clip.xy / max(v_clip.w, 0.0001) * 0.5 + 0.5;
+    vec2 screenUV = vec2(
+        v_clip.x / max(v_clip.w, 0.0001) * 0.5 + 0.5,
+        0.5 - v_clip.y / max(v_clip.w, 0.0001) * 0.5);
     float sceneDepth = texture2D(s_hairDepth, screenUV).r;
     // Compare in clip-space depth, the same space as the copied depth buffer.
     // This avoids reconstructing view depth and is robust for ribbons that

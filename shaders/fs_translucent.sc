@@ -127,7 +127,9 @@ void main()
 {
     // The HDR target is color-only in the transparent pass, so compare
     // against the copied opaque depth manually.
-    vec2 screenUV = v_clip.xy / max(v_clip.w, 0.0001) * 0.5 + 0.5;
+    vec2 screenUV = vec2(
+        v_clip.x / max(v_clip.w, 0.0001) * 0.5 + 0.5,
+        0.5 - v_clip.y / max(v_clip.w, 0.0001) * 0.5);
     float sceneDepth = texture2D(s_translucentDepth, screenUV).r;
     float fragmentDepth = v_clip.z / max(v_clip.w, 0.0001);
     if (fragmentDepth > sceneDepth + 0.0008) discard;

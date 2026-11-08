@@ -46,7 +46,9 @@ float valueNoise(vec2 p)
 
 void main()
 {
-    vec2 screenUV = v_clip.xy / max(v_clip.w, 0.0001) * 0.5 + 0.5;
+    vec2 screenUV = vec2(
+        v_clip.x / max(v_clip.w, 0.0001) * 0.5 + 0.5,
+        0.5 - v_clip.y / max(v_clip.w, 0.0001) * 0.5);
 
     // Manual depth test against the opaque G-buffer. The water is rendered
     // after the scene into a color-only target, so it cannot use hardware
