@@ -74,6 +74,7 @@
                 ApplyWaterErosion(h);
             } else if (water.terrainCarved) {
                 EnsureUnderwaterTerrain(h);
+                RefreshWaterShorePaint(h);
             }
             ApplyWaterShoreSettings(h);
         }

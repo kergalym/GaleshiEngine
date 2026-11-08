@@ -740,6 +740,11 @@ void DrawDetails();
     // water-bed materials. Cheap; safe to call while editing the sliders.
     void ApplyWaterShoreSettings(entt::entity waterEntity);
 
+    // Repaints the sand/gravel layer on an already-carved scene without
+    // touching the carved heights. Used on load for scenes saved before the
+    // shore paint rules changed.
+    void RefreshWaterShorePaint(entt::entity waterEntity);
+
     // State.
     Galeshi::Scene          m_scene;
     Galeshi::Camera         m_camera;

@@ -66,6 +66,17 @@ void ApplyShoreMaterialSettings(Galeshi::Material& material,
         std::clamp(water.shoreNormalStrength, 0.0f, 4.0f);
 }
 
+// The whole eroded bank is sand/gravel; only the outer edge blends back to
+// grass. Keeping most of the bank at full weight prevents the grass base
+// texture (and the grass instances above it) from tinting the shore green.
+float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
+    if (edgeDistance <= 0.0f) return 1.0f;
+    const float t = std::clamp(
+        edgeDistance / std::max(bankWidthUV, 1e-4f), 0.0f, 1.0f);
+    const float fade = std::clamp((t - 0.88f) / 0.12f, 0.0f, 1.0f);
+    return 1.0f - fade * fade * (3.0f - 2.0f * fade);
+}
+
 } // namespace
 
     // -------------------------------------------------------------------
@@ -673,23 +684,23 @@ void ApplyShoreMaterialSettings(Galeshi::Material& material,
                     lc.heights[index] = targetLocal.y;
 
                     // Paint the eroded shore/bed with the landscape's shore
-                    // layer. The water bed is fully sand/gravel; the bank
-                    // fades back into grass over its width.
-                    float shorePaint = 0.0f;
-                    if (edgeDistance <= 0.0f) {
-                        shorePaint = 1.0f;
-                    } else {
-                        float t = std::clamp(
-                            edgeDistance / std::max(bankWidthUV, 1e-4f),
-                            0.0f, 1.0f);
-                        t = std::clamp(
-                            t + (erosionNoise - 0.5f) * bankErosion,
-                            0.0f, 1.0f);
-                        shorePaint = 1.0f - t * t * (3.0f - 2.0f * t);
-                    }
+                    // layer. The whole bank is sand/gravel, with only a
+                    // narrow blend back to grass at its outer edge.
+                    const float shorePaint =
+                        ShorePaintWeight(edgeDistance, bankWidthUV);
                     if (index < lc.paintWeights.size()) {
                         lc.paintWeights[index] = std::max(
                             lc.paintWeights[index], shorePaint);
+                    }
+                    if (lc.activeLayer >= 0 &&
+                        lc.activeLayer <
+                            static_cast<int>(lc.layerWeights.size()) &&
+                        lc.layerWeights[static_cast<size_t>(
+                            lc.activeLayer)].size() == lc.heights.size()) {
+                        auto& layerWeights = lc.layerWeights[
+                            static_cast<size_t>(lc.activeLayer)];
+                        layerWeights[index] = std::max(
+                            layerWeights[index], shorePaint);
                     }
                 }
             }
@@ -909,6 +920,10 @@ void ApplyShoreMaterialSettings(Galeshi::Material& material,
             const glm::mat4 waterInv = glm::inverse(waterModel);
             const float seed = static_cast<float>(
                 entt::to_integral(wh) % 1024u) * 0.6180339f;
+            const float minDim =
+                std::max(std::min(water.width, water.depth), 0.001f);
+            const float bankWidthUV = std::clamp(
+                water.bankWidth / minDim, 0.02f, 0.30f);
 
             for (auto lh : registry.view<Galeshi::LandscapeComponent>()) {
                 auto& lc = registry.get<Galeshi::LandscapeComponent>(lh);
@@ -940,7 +955,8 @@ void ApplyShoreMaterialSettings(Galeshi::Material& material,
                             uv.y < 0.0f || uv.y > 1.0f) {
                             continue;
                         }
-                        if (WaterEdgeDistance(water, uv, seed) <= 0.0f) {
+                        if (WaterEdgeDistance(water, uv, seed) <=
+                            bankWidthUV) {
                             lc.vegetationMask[index] = 1;
                             changed = true;
                         }
@@ -980,6 +996,91 @@ void ApplyShoreMaterialSettings(Galeshi::Material& material,
             ApplyShoreMaterialSettings(
                 *materialComponent->material, *water,
                 std::max(lc.sizeX, lc.sizeZ) * lc.scale);
+        }
+    }
+
+    void GaleshiEditorApp::RefreshWaterShorePaint(
+        entt::entity waterEntity) {
+        if (!m_scene.Registry().valid(waterEntity)) return;
+        auto& registry = m_scene.Registry();
+        auto* water = registry.try_get<Galeshi::WaterComponent>(waterEntity);
+        if (!water || water->width < 1e-4f || water->depth < 1e-4f) {
+            return;
+        }
+
+        const float minDim =
+            std::max(std::min(water->width, water->depth), 0.001f);
+        const float bankWidthUV = std::clamp(
+            water->bankWidth / minDim, 0.02f, 0.30f);
+        const float seed = static_cast<float>(
+            entt::to_integral(waterEntity) % 1024u) * 0.6180339f;
+        const glm::mat4 waterWorld = EntityWorldMatrix(waterEntity);
+        const glm::mat4 waterModel =
+            waterWorld * glm::scale(
+                glm::mat4(1.0f),
+                glm::vec3(water->width, 1.0f, water->depth));
+        const glm::mat4 waterInv = glm::inverse(waterModel);
+
+        for (auto lh : registry.view<Galeshi::LandscapeComponent>()) {
+            auto& lc = registry.get<Galeshi::LandscapeComponent>(lh);
+            if (lc.waterBed) continue;
+            const size_t expected =
+                static_cast<size_t>(lc.sizeX) * lc.sizeZ;
+            if (lc.heights.size() != expected ||
+                lc.paintWeights.size() != expected) {
+                continue;
+            }
+            const glm::mat4 landscapeWorld = EntityWorldMatrix(lh);
+            bool changed = false;
+            for (int z = 0; z < lc.sizeZ; ++z) {
+                for (int x = 0; x < lc.sizeX; ++x) {
+                    const size_t index =
+                        static_cast<size_t>(z) * lc.sizeX + x;
+                    const glm::vec3 local(
+                        (x - lc.sizeX / 2.0f) * lc.scale,
+                        lc.heights[index],
+                        (z - lc.sizeZ / 2.0f) * lc.scale);
+                    const glm::vec3 world = glm::vec3(
+                        landscapeWorld * glm::vec4(local, 1.0f));
+                    const glm::vec3 waterLocal = glm::vec3(
+                        waterInv * glm::vec4(world, 1.0f));
+                    const glm::vec2 uv(
+                        waterLocal.x + 0.5f,
+                        waterLocal.z + 0.5f);
+                    if (uv.x < 0.0f || uv.x > 1.0f ||
+                        uv.y < 0.0f || uv.y > 1.0f) {
+                        continue;
+                    }
+                    const float edgeDistance =
+                        WaterEdgeDistance(*water, uv, seed);
+                    if (edgeDistance > bankWidthUV) continue;
+                    const float shorePaint =
+                        ShorePaintWeight(edgeDistance, bankWidthUV);
+                    if (lc.paintWeights[index] < shorePaint) {
+                        lc.paintWeights[index] = shorePaint;
+                        changed = true;
+                    }
+                    if (lc.activeLayer >= 0 &&
+                        lc.activeLayer <
+                            static_cast<int>(lc.layerWeights.size()) &&
+                        lc.layerWeights[static_cast<size_t>(
+                            lc.activeLayer)].size() == expected &&
+                        lc.layerWeights[static_cast<size_t>(
+                            lc.activeLayer)][index] < shorePaint) {
+                        lc.layerWeights[static_cast<size_t>(
+                            lc.activeLayer)][index] = shorePaint;
+                        changed = true;
+                    }
+                }
+            }
+            if (changed) {
+                auto* meshComponent =
+                    registry.try_get<Galeshi::MeshComponent>(lh);
+                if (meshComponent && meshComponent->mesh) {
+                    Galeshi::LandscapeMesh::UpdatePaintWeights(
+                        lc, *meshComponent->mesh);
+                }
+            }
         }
     }
 
