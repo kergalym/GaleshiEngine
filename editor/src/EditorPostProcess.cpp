@@ -84,6 +84,8 @@
         // TAA history from the previous scene/camera.
         m_postProcess.ResetTaaHistory();
         m_waterSubmerged.clear();
+        m_bubbleAccumulator = 0.0f;
+        if (m_fluid) m_fluid->Reset();
     }
 
 

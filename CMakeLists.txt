@@ -45,6 +45,33 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(CompilerWarnings)
 include(Dependencies)
 
+find_package(OpenMP REQUIRED)
+
+# SPlisHSPlasH: physically based fluid simulation (splash droplets, foam and
+# underwater bubbles). Build only its libraries; the GUI/examples are unused.
+set(SPH_LIBS_ONLY ON CACHE BOOL "" FORCE)
+set(USE_PYTHON_BINDINGS OFF CACHE BOOL "" FORCE)
+set(USE_OpenMP OFF CACHE BOOL "" FORCE)
+set(USE_AVX OFF CACHE BOOL "" FORCE)
+set(USE_THIRD_PARTY_METHODS OFF CACHE BOOL "" FORCE)
+set(USE_PERFORMANCE_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+set(USE_DOUBLE_PRECISION OFF CACHE BOOL "" FORCE)
+add_subdirectory(thirdparty/SPlisHSPlasH EXCLUDE_FROM_ALL)
+
+# SPlisHSPlasH sets these cache variables for its standalone tools. Restore
+# the engine layout before creating engine/editor/runtime targets.
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin" CACHE PATH "" FORCE)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib" CACHE PATH "" FORCE)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib" CACHE PATH "" FORCE)
+foreach(_cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${_cfg}
+        "${CMAKE_BINARY_DIR}/bin" CACHE PATH "" FORCE)
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${_cfg}
+        "${CMAKE_BINARY_DIR}/lib" CACHE PATH "" FORCE)
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${_cfg}
+        "${CMAKE_BINARY_DIR}/lib" CACHE PATH "" FORCE)
+endforeach()
+
 add_subdirectory(engine)
 add_subdirectory(editor)
 add_subdirectory(runtime)

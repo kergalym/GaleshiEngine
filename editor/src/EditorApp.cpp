@@ -424,6 +424,12 @@
         m_render->Init(m_assets.get());
         m_particles = std::make_unique<Galeshi::ParticleSystem>();
         m_particles->Init();
+        m_fluid = std::make_unique<Galeshi::FluidSimulation>();
+        if (!m_fluid->Init()) {
+            spdlog::warn("[Fluid] SPlisHSPlasH splash simulation unavailable");
+            m_fluid.reset();
+        }
+        m_bubbleAccumulator = 0.0f;
         m_postProcess.Init();
         ConfigureProfilerViewNames();
         m_render->SetDeferredEnabled(true);

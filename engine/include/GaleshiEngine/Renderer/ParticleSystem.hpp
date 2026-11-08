@@ -52,6 +52,17 @@ public:
                     float sizeScale = 1.0f,
                     const glm::vec3& waterColor = glm::vec3(1.0f));
 
+    // Replaces the externally simulated (SPlisHSPlasH) splash particle view.
+    // The fluid solver owns motion; this only uploads positions for rendering.
+    void SetFluidParticles(const std::vector<glm::vec3>& positions,
+                           const std::vector<glm::vec3>& velocities,
+                           const std::vector<uint8_t>& active,
+                           const glm::vec3& waterColor);
+
+    // Adds one rising air bubble. It pops at surfaceY.
+    void EmitBubble(const glm::vec3& position, float surfaceY,
+                    float radius = 1.0f);
+
 private:
     struct Particle {
         glm::vec3 position{0.0f};
@@ -94,6 +105,8 @@ private:
     std::vector<Particle> m_splashDroplets;
     std::vector<Particle> m_splashFoam;
     std::vector<Particle> m_splashMist;
+    std::vector<Particle> m_fluidParticles;
+    std::vector<Particle> m_bubbles;
     std::mt19937        m_rng{0x9E3779B9u};
     size_t              m_totalParticles = 0;
 
@@ -103,6 +116,7 @@ private:
     bgfx::TextureHandle m_splashDropletTex = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_splashFoamTex = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_splashMistTex = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_bubbleTex = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_texUniform   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_paramsUniform = BGFX_INVALID_HANDLE;
 };

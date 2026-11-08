@@ -41,6 +41,7 @@ target_include_directories(GaleshiEngine
 
 target_compile_definitions(GaleshiEngine
     PUBLIC GLM_ENABLE_EXPERIMENTAL
+    PUBLIC USE_CompactNSearch
     PRIVATE GALESHI_SCRIPT_INCLUDE_DIR="${CMAKE_SOURCE_DIR}/engine/include")
 
 
@@ -59,6 +60,8 @@ target_link_libraries(GaleshiEngine
         bimg_encode
         bx
         Jolt
+        SPlisHSPlasH
+        OpenMP::OpenMP_CXX
         ${CMAKE_DL_LIBS}
     PRIVATE
         assimp::assimp

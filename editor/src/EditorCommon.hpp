@@ -11,6 +11,7 @@
 #include "GaleshiEngine/Renderer/RayPick.hpp"
 #include "GaleshiEngine/Renderer/DebugRenderer.hpp"
 #include "GaleshiEngine/Renderer/ParticleSystem.hpp"
+#include "GaleshiEngine/Fluid/FluidSimulation.hpp"
 #include "GaleshiEngine/Scene/Scene.hpp"
 #include "GaleshiEngine/Scene/SceneSerializer.hpp"
 #include "GaleshiEngine/Assets/AssetManager.hpp"

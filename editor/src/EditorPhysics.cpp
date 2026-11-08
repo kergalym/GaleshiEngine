@@ -1194,6 +1194,31 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
             return;
         }
 
+        const auto isPlayerBody = [&](entt::entity entity) {
+            entt::entity current = entity;
+            for (int depth = 0; depth < 64 && current != entt::null;
+                 ++depth) {
+                if (registry.all_of<Galeshi::PlayerTagComponent>(current)) {
+                    return true;
+                }
+                if (const auto* name = registry.try_get<
+                        Galeshi::NameComponent>(current);
+                    name && name->name == "Player") {
+                    return true;
+                }
+                if (!registry.all_of<Galeshi::ParentComponent>(current)) {
+                    break;
+                }
+                current = registry.get<Galeshi::ParentComponent>(
+                    current).parent;
+            }
+            return false;
+        };
+
+        bool playerUnderwater = false;
+        glm::vec3 bubblePosition(0.0f);
+        float bubbleSurfaceY = 0.0f;
+
         for (auto e : registry.view<Galeshi::RigidBodyComponent,
                                     Galeshi::TransformComponent>()) {
             auto& rb = registry.get<Galeshi::RigidBodyComponent>(e);
@@ -1245,6 +1270,13 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
                     (volume.surfaceY - bottom) / bodyHeight, 0.0f, 1.0f);
                 if (submerged <= 0.001f) continue;
 
+                if (isPlayerBody(e) && submerged > 0.55f) {
+                    playerUnderwater = true;
+                    bubblePosition = center +
+                        glm::vec3(0.0f, halfHeight * 0.35f, 0.0f);
+                    bubbleSurfaceY = volume.surfaceY;
+                }
+
                 const float mass = std::max(rb.mass, 0.01f);
                 // Buoyancy counteracts gravity for the submerged part. Drag
                 // is applied as an impulse so the next physics step uses it.
@@ -1269,13 +1301,26 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
                     const float speed = 2.0f + impact * 0.50f;
                     const float sizeScale = std::clamp(
                         halfHeight * 0.9f, 0.7f, 1.6f);
-                    const glm::vec3 splashTint = glm::mix(
+                    m_fluidColor = glm::mix(
                         volume.water->foamColor,
                         volume.water->shallowColor, 0.35f);
-                    m_particles->EmitSplash(
-                        glm::vec3(center.x, volume.surfaceY + 0.02f,
-                                  center.z),
-                        count, speed, sizeScale, splashTint);
+                    if (!m_fluidColor.r && !m_fluidColor.g &&
+                        !m_fluidColor.b) {
+                        m_fluidColor = glm::vec3(0.55f, 0.80f, 0.95f);
+                    }
+                    if (m_fluid) {
+                        m_fluid->SpawnSplash(
+                            glm::vec3(center.x, volume.surfaceY + 0.02f,
+                                      center.z),
+                            velocity,
+                            0.55f + impact * 0.12f,
+                            volume.surfaceY, count);
+                    } else {
+                        m_particles->EmitSplash(
+                            glm::vec3(center.x, volume.surfaceY + 0.02f,
+                                      center.z),
+                            count, speed, sizeScale, m_fluidColor);
+                    }
                     if (volume.water->ripples.size() >= 16) {
                         volume.water->ripples.erase(
                             volume.water->ripples.begin());
@@ -1300,6 +1345,23 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
             if (!inWater) {
                 m_waterSubmerged[e] = false;
             }
+        }
+
+        if (m_fluid) {
+            m_fluid->Update(dt);
+            m_particles->SetFluidParticles(
+                m_fluid->Positions(), m_fluid->Velocities(),
+                m_fluid->Active(), m_fluidColor);
+        }
+
+        if (playerUnderwater) {
+            m_bubbleAccumulator += dt;
+            while (m_bubbleAccumulator >= 0.10f) {
+                m_bubbleAccumulator -= 0.10f;
+                m_particles->EmitBubble(bubblePosition, bubbleSurfaceY, 1.0f);
+            }
+        } else {
+            m_bubbleAccumulator = 0.0f;
         }
     }
 

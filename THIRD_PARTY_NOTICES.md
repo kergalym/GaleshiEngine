@@ -66,6 +66,7 @@ their source distributions:
 | GLM | MIT |
 | Assimp | BSD-3-Clause |
 | Jolt Physics | MIT |
+| SPlisHSPlasH | MIT |
 | RecastNavigation | zlib |
 | EnTT | MIT |
 | spdlog | MIT |

@@ -96,7 +96,7 @@ float SmoothStep(float edge0, float edge1, float x) {
     return t * t * (3.0f - 2.0f * t);
 }
 
-// 0 = droplet, 1 = foam bubbles, 2 = mist puff.
+// 0 = droplet, 1 = foam bubbles, 2 = mist puff, 3 = air bubble.
 bgfx::TextureHandle CreateSplashTexture(int size, int kind) {
     std::vector<uint32_t> pixels(
         static_cast<size_t>(size) * static_cast<size_t>(size));
@@ -134,7 +134,7 @@ bgfx::TextureHandle CreateSplashTexture(int size, int kind) {
                     std::sqrt((u - 0.5f) * (u - 0.5f) +
                               (v - 0.5f) * (v - 0.5f)));
                 alpha = std::max(alpha, center * 0.55f);
-            } else {
+            } else if (kind == 2) {
                 const float d = std::sqrt(
                     (u - 0.5f) * (u - 0.5f) * 1.7f +
                     (v - 0.5f) * (v - 0.5f) * 1.7f);
@@ -144,6 +144,17 @@ bgfx::TextureHandle CreateSplashTexture(int size, int kind) {
                     0.35f * ValueNoise2D(u * 11.0f + 3.1f,
                                          v * 11.0f + 7.7f);
                 alpha = cloud * (0.25f + 0.75f * n);
+            } else {
+                const float d = std::sqrt(
+                    (u - 0.5f) * (u - 0.5f) +
+                    (v - 0.5f) * (v - 0.5f));
+                const float outer = 1.0f - SmoothStep(0.32f, 0.48f, d);
+                const float inner = 1.0f - SmoothStep(0.22f, 0.34f, d);
+                alpha = std::max(0.0f, outer - inner * 0.82f);
+                const float hx = u - 0.37f;
+                const float hy = v - 0.36f;
+                alpha = std::max(alpha, 1.0f - SmoothStep(
+                    0.0f, 0.10f, std::sqrt(hx * hx + hy * hy)));
             }
             alpha = glm::clamp(alpha, 0.0f, 1.0f);
             const uint32_t a = static_cast<uint32_t>(alpha * 255.0f + 0.5f);
@@ -194,9 +205,11 @@ void ParticleSystem::Init() {
     m_splashDropletTex = CreateSplashTexture(64, 0);
     m_splashFoamTex = CreateSplashTexture(128, 1);
     m_splashMistTex = CreateSplashTexture(128, 2);
+    m_bubbleTex = CreateSplashTexture(64, 3);
     if (!bgfx::isValid(m_splashDropletTex) ||
         !bgfx::isValid(m_splashFoamTex) ||
-        !bgfx::isValid(m_splashMistTex)) {
+        !bgfx::isValid(m_splashMistTex) ||
+        !bgfx::isValid(m_bubbleTex)) {
         spdlog::warn("[ParticleSystem] Splash sprites unavailable; "
                      "using the soft fallback sprite");
     }
@@ -223,6 +236,10 @@ void ParticleSystem::Shutdown() {
         bgfx::destroy(m_splashMistTex);
         m_splashMistTex = BGFX_INVALID_HANDLE;
     }
+    if (bgfx::isValid(m_bubbleTex)) {
+        bgfx::destroy(m_bubbleTex);
+        m_bubbleTex = BGFX_INVALID_HANDLE;
+    }
     if (bgfx::isValid(m_texUniform)) {
         bgfx::destroy(m_texUniform);
         m_texUniform = BGFX_INVALID_HANDLE;
@@ -235,6 +252,8 @@ void ParticleSystem::Shutdown() {
     m_splashDroplets.clear();
     m_splashFoam.clear();
     m_splashMist.clear();
+    m_fluidParticles.clear();
+    m_bubbles.clear();
     m_totalParticles = 0;
 }
 
@@ -243,6 +262,8 @@ void ParticleSystem::Reset() {
     m_splashDroplets.clear();
     m_splashFoam.clear();
     m_splashMist.clear();
+    m_fluidParticles.clear();
+    m_bubbles.clear();
     m_totalParticles = 0;
 }
 
@@ -368,6 +389,55 @@ void ParticleSystem::EmitSplash(const glm::vec3& position, int count,
     });
 }
 
+void ParticleSystem::SetFluidParticles(
+    const std::vector<glm::vec3>& positions,
+    const std::vector<glm::vec3>& velocities,
+    const std::vector<uint8_t>& active,
+    const glm::vec3& waterColor) {
+    m_fluidParticles.clear();
+    const size_t count = std::min(
+        positions.size(), std::min(velocities.size(), active.size()));
+    m_fluidParticles.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+        if (!active[i]) continue;
+        Particle p;
+        p.position = positions[i];
+        p.velocity = velocities[i];
+        p.age = 0.0f;
+        p.lifetime = 1.0f;
+        const float speed = glm::length(velocities[i]);
+        p.sizeScale = 0.55f + std::min(speed * 0.06f, 0.75f);
+        p.tint = glm::vec4(
+            glm::mix(glm::vec3(1.0f), glm::clamp(
+                waterColor, glm::vec3(0.0f), glm::vec3(1.0f)), 0.30f),
+            0.85f);
+        m_fluidParticles.push_back(p);
+    }
+}
+
+void ParticleSystem::EmitBubble(const glm::vec3& position, float surfaceY,
+                                float radius) {
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+    Particle p;
+    const float angle = unit(m_rng) * 6.2831853f;
+    const float radial = std::sqrt(unit(m_rng)) * 0.22f * radius;
+    p.position = position +
+        glm::vec3(std::cos(angle) * radial,
+                  unit(m_rng) * 0.16f * radius,
+                  std::sin(angle) * radial);
+    p.velocity = glm::vec3(
+        (unit(m_rng) - 0.5f) * 0.12f,
+        0.35f + unit(m_rng) * 0.55f,
+        (unit(m_rng) - 0.5f) * 0.12f);
+    p.lifetime = std::max(
+        0.15f, (surfaceY - p.position.y) / std::max(p.velocity.y, 0.05f));
+    p.age = 0.0f;
+    p.sizeScale = (0.55f + unit(m_rng) * 0.9f) * radius;
+    p.tint = glm::vec4(0.72f, 0.90f, 1.0f, 0.55f);
+    p.killY = surfaceY;
+    m_bubbles.push_back(p);
+}
+
 void ParticleSystem::PruneRuntimes(Scene& scene) {
     auto& reg = scene.Registry();
     for (auto it = m_emitters.begin(); it != m_emitters.end();) {
@@ -426,9 +496,24 @@ void ParticleSystem::Update(Scene& scene, float dt) {
     updateSplashLayer(m_splashDroplets);
     updateSplashLayer(m_splashFoam);
     updateSplashLayer(m_splashMist);
-    m_totalParticles += m_splashDroplets.size() +
-                        m_splashFoam.size() +
-                        m_splashMist.size();
+
+    // Rising air bubbles pop at the water surface.
+    for (auto it = m_bubbles.begin(); it != m_bubbles.end();) {
+        Particle& p = *it;
+        p.age += dt;
+        if (p.age >= p.lifetime || p.position.y >= p.killY) {
+            *it = m_bubbles.back();
+            m_bubbles.pop_back();
+            continue;
+        }
+        p.velocity.y += 0.18f * dt;
+        p.velocity.x = std::sin(p.age * 11.0f + p.position.z * 3.0f) * 0.08f;
+        p.velocity.z = std::cos(p.age * 9.0f + p.position.x * 3.0f) * 0.08f;
+        p.velocity *= std::max(0.0f, 1.0f - 0.7f * dt);
+        p.position += p.velocity * dt;
+        ++it;
+    }
+    m_totalParticles += m_fluidParticles.size() + m_bubbles.size();
 }
 
 void ParticleSystem::UpdateEmitter(Scene& scene, entt::entity entity,
@@ -513,7 +598,9 @@ void ParticleSystem::Render(Scene& scene, const Camera& camera,
 
     size_t totalParticles = m_splashDroplets.size() +
                             m_splashFoam.size() +
-                            m_splashMist.size();
+                            m_splashMist.size() +
+                            m_fluidParticles.size() +
+                            m_bubbles.size();
     for (auto entity : view) {
         auto it = m_emitters.find(entity);
         if (it != m_emitters.end()) {
@@ -638,6 +725,19 @@ void ParticleSystem::Render(Scene& scene, const Camera& camera,
         m_splashMist, 0.16f, 0.020f,
         {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 0.0f},
         mistTex ? m_splashMistTex : m_whiteTex, mistTex);
+
+    // SPlisHSPlasH splash droplets: positions come from the fluid solver.
+    submitParticles(
+        m_fluidParticles, 0.085f, 0.085f,
+        {1.0f, 1.0f, 1.0f, 0.95f},
+        {1.0f, 1.0f, 1.0f, 0.95f},
+        dropletTex ? m_splashDropletTex : m_whiteTex, dropletTex);
+
+    const bool bubbleTex = bgfx::isValid(m_bubbleTex);
+    submitParticles(
+        m_bubbles, 0.055f, 0.018f,
+        {1.0f, 1.0f, 1.0f, 0.90f}, {1.0f, 1.0f, 1.0f, 0.0f},
+        bubbleTex ? m_bubbleTex : m_whiteTex, bubbleTex);
 }
 
 } // namespace Galeshi

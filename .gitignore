@@ -39,3 +39,5 @@ engine/assets/meshes/*
 .tools/
 dist/
 AGENTS.md
+# Local third-party sources (not committed)
+thirdparty/
