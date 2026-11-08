@@ -1,5 +1,23 @@
 # Local dependency patches
 
+## SPlisHSPlasH add_subdirectory compatibility
+
+`SPlisHSPlasH-cmake-module-path.patch` changes one line in
+`thirdparty/SPlisHSPlasH/CMakeLists.txt` so its own CMake modules are found
+when the library is added with `add_subdirectory` from GaleshiEngine.
+Upstream uses `CMAKE_SOURCE_DIR`, which points at the engine root in that
+configuration.
+
+Apply it inside the local `thirdparty/SPlisHSPlasH` checkout:
+
+```sh
+cd thirdparty/SPlisHSPlasH
+git apply /path/to/GaleshiEngine/patches/SPlisHSPlasH-cmake-module-path.patch
+```
+
+The `thirdparty/` tree is intentionally not committed; only this patch and the
+engine-side integration are tracked.
+
 ## bgfx Vulkan cubemap workaround
 
 `bgfx-vulkan-cubemap-workaround.patch` fixes cubemap `resolve`/`createView`
