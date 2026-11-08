@@ -202,7 +202,7 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
         auto& skel = view.get<SkeletalComponent>(handle);
         if (skel.sourcePath.empty()) continue;
 
-        auto targetModel = assets.LoadModel(skel.sourcePath);
+        const auto& targetModel = assets.LoadModelRef(skel.sourcePath);
         auto* machine =
             scene.Registry().try_get<AnimationStateMachineComponent>(handle);
 
@@ -302,7 +302,7 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
         auto sampleState = [&](const AnimationState& state, float time,
                                std::vector<glm::mat4>& out) {
             const std::string path = animationPathForState(state);
-            auto animationModel = assets.LoadModel(path);
+            const auto& animationModel = assets.LoadModelRef(path);
             if (!animationModel.hasAnimation ||
                 animationModel.animationNames.empty()) {
                 static std::unordered_set<std::string> warnedSources;
@@ -365,7 +365,7 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
 
         AnimationState& state = machine->states[machine->currentState];
         const std::string currentPath = animationPathForState(state);
-        auto currentModel = assets.LoadModel(currentPath);
+        const auto& currentModel = assets.LoadModelRef(currentPath);
         const int clip = ResolveClipIndex(currentModel, state);
         const float duration = ClipDuration(currentModel, clip);
         machine->currentClipDuration = duration;
@@ -382,7 +382,7 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
             AnimationState& previous =
                 machine->states[machine->previousState];
             const std::string previousPath = animationPathForState(previous);
-            auto previousModel = assets.LoadModel(previousPath);
+            const auto& previousModel = assets.LoadModelRef(previousPath);
             const int previousClip = ResolveClipIndex(previousModel, previous);
             const float previousDuration = ClipDuration(previousModel,
                                                         previousClip);

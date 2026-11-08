@@ -74,6 +74,9 @@ public:
     };
     
     LoadedModel LoadModel(const std::string& path);
+    // Cached access for per-frame users (animation, rendering). Avoids copying
+    // the full model description and its bone maps every frame.
+    const LoadedModel& LoadModelRef(const std::string& path);
     // Import through Assimp once and pin the result for later scene loads.
     // Scene loads never populate this cache; they only consume it.
     LoadedModel ImportModel(const std::string& path);

@@ -1347,7 +1347,7 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
                                  const glm::vec4& canopyTint) {
             std::vector<CustomTreeDraw> draws;
             if (path.empty()) return draws;
-            auto treeModel = m_assets->LoadModel(path);
+            const auto& treeModel = m_assets->LoadModelRef(path);
             draws.reserve(treeModel.meshes.size());
             const bool useOverride =
                 HasTreeTextureOverride(overrideMaterial);
@@ -1545,7 +1545,7 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
                                    const std::vector<VegetationLeafSet>* leafSets) {
             std::vector<CustomTreeShadowDraw> draws;
             if (path.empty()) return draws;
-            auto treeModel = m_assets->LoadModel(path);
+            const auto& treeModel = m_assets->LoadModelRef(path);
             draws.reserve(treeModel.meshes.size());
             const bool useOverride =
                 HasTreeTextureOverride(overrideMaterial);

@@ -2548,6 +2548,26 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
 
 }
 
+const AssetManager::LoadedModel& AssetManager::LoadModelRef(
+    const std::string& originalPath) {
+    static const LoadedModel kEmpty;
+    if (originalPath.empty()) return kEmpty;
+    const std::string path = MakeRelativePath(originalPath);
+    auto it = m_models.find(path);
+    if (it != m_models.end()) return it->second;
+
+    auto imported = m_importedModels.find(path);
+    if (imported != m_importedModels.end()) {
+        const auto result = m_models.emplace(path, imported->second);
+        return result.first->second;
+    }
+
+    // Let the value API populate both caches, then return the stable entry.
+    LoadModel(path);
+    it = m_models.find(path);
+    return it != m_models.end() ? it->second : kEmpty;
+}
+
 void AssetManager::UpdateAnimation(const LoadedModel& model, float time,
                                    std::vector<glm::mat4>& outBoneMatrices) {
     UpdateAnimationClip(model, 0, time, outBoneMatrices);

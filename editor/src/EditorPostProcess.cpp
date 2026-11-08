@@ -851,7 +851,7 @@
                     m_scene.Registry().get<Galeshi::SkeletalComponent>(
                         character);
                 if (!skeleton.sourcePath.empty()) {
-                    auto model = m_assets->LoadModel(skeleton.sourcePath);
+                    const auto& model = m_assets->LoadModelRef(skeleton.sourcePath);
                     bones.reserve(model.boneMap.size());
                     for (const auto& [name, index] : model.boneMap) {
                         if (index >= 0 && index < 255) {
