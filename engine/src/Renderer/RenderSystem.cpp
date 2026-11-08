@@ -377,6 +377,9 @@ void RenderSystem::Init(AssetManager* assets) {
     m_assets = assets;
     m_program = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_pbr.bin");
     m_gbufferProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_gbuffer.bin");
+    m_unlitProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_unlit.bin");
+    m_wireframeProg = ShaderManager::LoadProgram(
+        "shaders/vs_pbr.bin", "shaders/fs_wireframe.bin");
     m_shadowProg = ShaderManager::LoadProgram("shaders/vs_shadow.bin", "shaders/fs_shadow.bin");
     m_shadowSkinnedProg = ShaderManager::LoadProgram(
         "shaders/vs_shadow_skinned.bin", "shaders/fs_shadow.bin");
@@ -498,6 +501,8 @@ void RenderSystem::Shutdown() {
 
     if (bgfx::isValid(m_program)) bgfx::destroy(m_program);
     if (bgfx::isValid(m_gbufferProg)) bgfx::destroy(m_gbufferProg);
+    if (bgfx::isValid(m_unlitProg)) bgfx::destroy(m_unlitProg);
+    if (bgfx::isValid(m_wireframeProg)) bgfx::destroy(m_wireframeProg);
     if (bgfx::isValid(m_shadowProg)) bgfx::destroy(m_shadowProg);
     if (bgfx::isValid(m_shadowSkinnedProg)) bgfx::destroy(m_shadowSkinnedProg);
     if (bgfx::isValid(m_shadowPointProg)) bgfx::destroy(m_shadowPointProg);
@@ -583,6 +588,32 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(u_landscapeParams)) bgfx::destroy(u_landscapeParams);
     if (bgfx::isValid(s_brdfLUT)) bgfx::destroy(s_brdfLUT);
     m_program = BGFX_INVALID_HANDLE;
+    m_unlitProg = BGFX_INVALID_HANDLE;
+    m_wireframeProg = BGFX_INVALID_HANDLE;
+}
+
+RenderSystem::State RenderSystem::SaveState() const {
+    State state;
+    state.viewMode = m_viewMode;
+    state.deferred = m_deferred;
+    state.skipGlass = m_skipGlass;
+    state.lodEnabled = m_lodEnabled;
+    state.lodBias = m_lodBias;
+    state.occlusionEnabled = m_occlusionEnabled;
+    state.prevViewProj = m_prevViewProj;
+    state.hasPrevViewProj = m_hasPrevViewProj;
+    return state;
+}
+
+void RenderSystem::RestoreState(const State& state) {
+    m_viewMode = state.viewMode;
+    m_deferred = state.deferred;
+    m_skipGlass = state.skipGlass;
+    m_lodEnabled = state.lodEnabled;
+    m_lodBias = state.lodBias;
+    SetOcclusionCullingEnabled(state.occlusionEnabled);
+    m_prevViewProj = state.prevViewProj;
+    m_hasPrevViewProj = state.hasPrevViewProj;
 }
 
 void RenderSystem::SetOcclusionCullingEnabled(bool enabled) {
@@ -871,6 +902,10 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
     if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
     if (!m_assets) return;
 
+    const bool wireframe = m_viewMode == ViewMode::Wireframe;
+    const bool unlit = m_viewMode == ViewMode::Unlit;
+    const bool lit = !wireframe && !unlit;
+
     // Forward PBR is also used by the planar-reflection pass. The default
     // plane constant keeps all fragments during the normal scene pass; only
     // the reflection pass enables the mirrored half-space clip.
@@ -888,7 +923,10 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
     bgfx::setViewRect(viewId, 0, 0, width, height);
     // In deferred mode the G-buffer world position must be exactly zero for
     // sky pixels; fs_lighting uses worldPos == 0 as the sky sentinel.
-    const uint32_t clearColor = (m_deferred && bgfx::isValid(m_gbufferProg)) ? 0x00000000u : 0x232629ffu;
+    const uint32_t clearColor = (lit && m_deferred &&
+                                 bgfx::isValid(m_gbufferProg))
+        ? 0x00000000u
+        : (lit ? 0x232629ffu : 0x05070bffu);
     bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, clearColor, 1.0f, 0);
 
     glm::vec3 lightDir{-0.4f, -0.8f, -0.5f}, lightCol{1.0f}, p = camera.Position();
@@ -931,7 +969,7 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         initIdentity = true;
     }
 
-    const bool canInstanceStatic =
+    const bool canInstanceStatic = lit &&
         bgfx::isValid(m_instancedProg) &&
         (!m_deferred || bgfx::isValid(m_instancedGbufferProg));
     std::unordered_map<MeshMaterialKey, MeshInstanceBatch, MeshMaterialKeyHash>
@@ -994,9 +1032,9 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         // sub-meshes otherwise decimate separately and lose character
         // detail), but Details exposes per-mesh enable/bias/force controls.
         const bool autoLodRequested =
-            mc.forcedLod < 0 && m_lodEnabled && mc.lodEnabled &&
+            lit && mc.forcedLod < 0 && m_lodEnabled && mc.lodEnabled &&
             !modelMoved && !scene.Registry().all_of<SoftBodyComponent>(h);
-        const bool forcedLodRequested = mc.forcedLod >= 0;
+        const bool forcedLodRequested = lit && mc.forcedLod >= 0;
         if (!hasSkeleton && (autoLodRequested || forcedLodRequested)) {
             mc.mesh->EnsureLods();
             if (forcedLodRequested) {
@@ -1063,20 +1101,34 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
 
         bgfx::setUniform(u_prevModel, glm::value_ptr(previousModel));
         bgfx::setTransform(glm::value_ptr(model));
-        BindMaterial(*matc.material);
+        if (!wireframe) BindMaterial(*matc.material);
 
         bgfx::setVertexBuffer(0, mc.mesh->VB());
-        bgfx::setIndexBuffer(mc.mesh->IB());
-        // Imported meshes are CCW-front. Single-sided materials cull their
-        // backfaces; two-sided materials keep them and the fragment shaders
-        // flip the normals for those fragments.
-        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
-                       BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA |
-                       FaceState(!matc.material->backfaceCulling));
-        if (m_deferred && bgfx::isValid(m_gbufferProg)) {
-            bgfx::submit(viewId, m_gbufferProg);
+        if (wireframe) {
+            const bgfx::IndexBufferHandle lineIB = mc.mesh->WireframeIB();
+            if (!bgfx::isValid(lineIB)) continue;
+            bgfx::setIndexBuffer(lineIB, 0,
+                                 mc.mesh->WireframeIndexCount());
+            bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                           BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS |
+                           BGFX_STATE_PT_LINES);
+            bgfx::submit(viewId, m_wireframeProg);
         } else {
-            bgfx::submit(viewId, m_program);
+            bgfx::setIndexBuffer(mc.mesh->IB());
+            // Imported meshes are CCW-front. Single-sided materials cull
+            // their backfaces; two-sided materials keep them and the
+            // fragment shaders flip normals for those fragments.
+            bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A |
+                           BGFX_STATE_WRITE_Z |
+                           BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA |
+                           FaceState(!matc.material->backfaceCulling));
+            if (unlit) {
+                bgfx::submit(viewId, m_unlitProg);
+            } else if (m_deferred && bgfx::isValid(m_gbufferProg)) {
+                bgfx::submit(viewId, m_gbufferProg);
+            } else {
+                bgfx::submit(viewId, m_program);
+            }
         }
     }
 
@@ -1096,7 +1148,7 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         }
     }
 
-    RenderVegetation(scene, frustum, viewId);
+    if (lit) RenderVegetation(scene, frustum, viewId);
 
     // Store the current transforms for the next frame's object motion vectors.
     for (auto handle : scene.Registry().view<TransformComponent, MeshComponent>()) {

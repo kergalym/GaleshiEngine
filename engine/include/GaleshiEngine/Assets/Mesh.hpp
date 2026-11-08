@@ -33,6 +33,11 @@ public:
     uint32_t IndexCount() const { return m_indexCount; }
     bool     Valid() const { return bgfx::isValid(m_vb) && bgfx::isValid(m_ib); }
 
+    // Unique triangle edges for the viewport wireframe mode. Built lazily
+    // from LOD0 and destroyed with the mesh buffers.
+    bgfx::IndexBufferHandle WireframeIB();
+    uint32_t WireframeIndexCount() const { return m_wireframeIndexCount; }
+
     const std::vector<Vertex>&   Vertices() const { return m_vertices; }
     const std::vector<uint32_t>& Indices()  const { return m_indices; }
 
@@ -61,7 +66,9 @@ private:
 
     bgfx::DynamicVertexBufferHandle m_vb = BGFX_INVALID_HANDLE;
     bgfx::IndexBufferHandle  m_ib = BGFX_INVALID_HANDLE;
+    bgfx::IndexBufferHandle  m_wireframeIB = BGFX_INVALID_HANDLE;
     uint32_t m_indexCount = 0;
+    uint32_t m_wireframeIndexCount = 0;
     std::vector<Vertex>   m_vertices;
     std::vector<uint32_t> m_indices;
     std::vector<LodLevel> m_lods;

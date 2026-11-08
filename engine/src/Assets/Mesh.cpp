@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <limits>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace Galeshi {
 
@@ -74,9 +75,12 @@ void Mesh::Destroy() {
     DestroyLods();
     if (bgfx::isValid(m_vb)) bgfx::destroy(m_vb);
     if (bgfx::isValid(m_ib)) bgfx::destroy(m_ib);
+    if (bgfx::isValid(m_wireframeIB)) bgfx::destroy(m_wireframeIB);
     m_vb = BGFX_INVALID_HANDLE;
     m_ib = BGFX_INVALID_HANDLE;
+    m_wireframeIB = BGFX_INVALID_HANDLE;
     m_indexCount = 0;
+    m_wireframeIndexCount = 0;
     m_vertices.clear();
     m_indices.clear();
     m_lodsGenerated = false;
@@ -183,6 +187,44 @@ void Mesh::Upload(const std::vector<Vertex>& vertices, const std::vector<uint32_
     m_indexCount = static_cast<uint32_t>(indices.size());
     m_vertices   = *uploadVertices;
     m_indices    = indices;
+}
+
+bgfx::IndexBufferHandle Mesh::WireframeIB() {
+    if (bgfx::isValid(m_wireframeIB)) return m_wireframeIB;
+    if (m_indices.size() < 3) return BGFX_INVALID_HANDLE;
+
+    std::unordered_set<uint64_t> edges;
+    std::vector<uint32_t> lines;
+    edges.reserve(m_indices.size());
+    lines.reserve(m_indices.size() * 2);
+
+    auto addEdge = [&](uint32_t a, uint32_t b) {
+        if (a == b) return;
+        const uint32_t first = std::min(a, b);
+        const uint32_t second = std::max(a, b);
+        const uint64_t key =
+            (static_cast<uint64_t>(first) << 32) | second;
+        if (!edges.insert(key).second) return;
+        lines.push_back(a);
+        lines.push_back(b);
+    };
+
+    for (size_t i = 0; i + 2 < m_indices.size(); i += 3) {
+        const uint32_t a = m_indices[i];
+        const uint32_t b = m_indices[i + 1];
+        const uint32_t c = m_indices[i + 2];
+        addEdge(a, b);
+        addEdge(b, c);
+        addEdge(c, a);
+    }
+
+    if (lines.empty()) return BGFX_INVALID_HANDLE;
+    m_wireframeIB = bgfx::createIndexBuffer(
+        bgfx::copy(lines.data(),
+                   static_cast<uint32_t>(lines.size() * sizeof(uint32_t))),
+        BGFX_BUFFER_INDEX32);
+    m_wireframeIndexCount = static_cast<uint32_t>(lines.size());
+    return m_wireframeIB;
 }
 
 void Mesh::BuildLods() {

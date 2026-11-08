@@ -337,6 +337,26 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
     }
 
 
+    void GaleshiEditorApp::SetViewportViewMode(ViewportViewMode mode) {
+        if (mode == m_viewportViewMode) return;
+
+        // Keep the renderer setup from before the diagnostic view. While
+        // F1/F2 are active their pass restores this snapshot after every
+        // frame; F3 restores it as the active state again.
+        if (m_viewportViewMode == ViewportViewMode::Lit &&
+            mode != ViewportViewMode::Lit && m_render) {
+            m_savedRenderState = m_render->SaveState();
+            m_viewModeStateSaved = true;
+        }
+        m_viewportViewMode = mode;
+
+        if (mode == ViewportViewMode::Lit && m_viewModeStateSaved) {
+            if (m_render) m_render->RestoreState(m_savedRenderState);
+            m_viewModeStateSaved = false;
+        }
+    }
+
+
     void GaleshiEditorApp::DrawViewport() {
         spdlog::trace("[Main] DrawViewport");
         m_uiOverlayHovered = false;
@@ -352,6 +372,22 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
             if (m_editor.isPlaying && ImGui::GetIO().KeyShift &&
                 ImGui::IsKeyPressed(ImGuiKey_F1)) {
                 SetViewportInputFocus(false);
+            }
+        }
+        if (!m_isGameMode && !ImGui::GetIO().WantTextInput) {
+            // Keep view-mode keys global to the editor viewport. Requiring
+            // hover/focus made F3 unreliable after the viewport had been
+            // clicked or the mouse moved away. Shift+F1 remains the focus
+            // release shortcut, so F1 only switches when Shift is not held.
+            if (!ImGui::GetIO().KeyShift &&
+                ImGui::IsKeyPressed(ImGuiKey_F1)) {
+                SetViewportViewMode(ViewportViewMode::Wireframe);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_F2)) {
+                SetViewportViewMode(ViewportViewMode::Unlit);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_F3)) {
+                SetViewportViewMode(ViewportViewMode::Lit);
             }
         }
         ImGui::PopStyleVar();
@@ -1099,7 +1135,8 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
         // Debug rendering (View 50). Editor-only overlays (grid, axes,
         // nav/AI debug, lights and post-process-volume bounds) are hidden
         // while Play is active, but collision-shape wireframes remain visible.
-        if (m_debug && !m_isGameMode && m_framebuffer) {
+        if (m_debug && !m_isGameMode && m_framebuffer &&
+            m_viewportViewMode == ViewportViewMode::Lit) {
             m_debug->Begin();
             Galeshi::Entity sel = m_editor.Selected(&m_scene);
             if (!m_editor.isPlaying) {
@@ -1436,6 +1473,25 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
             m_render->RenderGlass(m_scene, m_camera, 49, renderW, renderH);
         }
 
+        // View modes are diagnostic passes over the final scene image. They
+        // reuse the viewport color/depth targets at view 50 (after post and
+        // glass, before the ImGui copy at 51), and deliberately omit shadows,
+        // lighting and post-processing.
+        if (renderThisFrame && m_framebuffer &&
+            bgfx::isValid(m_framebuffer->Handle()) &&
+            m_viewportViewMode != ViewportViewMode::Lit) {
+            const Galeshi::RenderSystem::State savedState =
+                m_viewModeStateSaved
+                    ? m_savedRenderState
+                    : m_render->SaveState();
+            m_render->SetViewMode(
+                static_cast<Galeshi::RenderSystem::ViewMode>(
+                    m_viewportViewMode));
+            bgfx::setViewFrameBuffer(50, m_framebuffer->Handle());
+            m_render->Render(m_scene, m_camera, 50, renderW, renderH);
+            m_render->RestoreState(savedState);
+        }
+
         // Set when the 2D UI canvas overlay handles the click this frame.
         bool uiOverlayConsumed = false;
 
@@ -1473,9 +1529,19 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
 
                 const bool renderPassesPaused =
                     !m_realtimeRendering && !m_isGameMode;
-                const char* realtimeText = renderPassesPaused
-                    ? "Render passes: PAUSED (scene running)"
-                    : "Render passes: Realtime";
+                const char* viewModeName =
+                    m_viewportViewMode == ViewportViewMode::Wireframe
+                        ? "Wireframe"
+                        : (m_viewportViewMode == ViewportViewMode::Unlit
+                               ? "Unlit"
+                               : "Lit");
+                char renderStatus[128];
+                std::snprintf(
+                    renderStatus, sizeof(renderStatus),
+                    "View: %s | Render passes: %s", viewModeName,
+                    renderPassesPaused ? "PAUSED (scene running)"
+                                       : "Realtime");
+                const char* realtimeText = renderStatus;
 
                 const float lineHeight = ImGui::GetTextLineHeight();
                 const ImVec2 padding(8.0f, 5.0f);

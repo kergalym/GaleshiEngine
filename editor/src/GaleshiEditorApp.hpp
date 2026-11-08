@@ -772,9 +772,16 @@ void DrawDetails();
     bgfx::FrameBufferHandle m_shadowFbos[3] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
     bgfx::FrameBufferHandle m_pointShadowFbos[6] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
 
+    enum class ViewportViewMode { Lit, Unlit, Wireframe };
+
+    void SetViewportViewMode(ViewportViewMode mode);
+
     uint16_t    m_viewportW = 0, m_viewportH = 0;
     bool        m_viewportHovered = false;
     bool        m_viewportInputFocused = false;
+    ViewportViewMode m_viewportViewMode = ViewportViewMode::Lit;
+    Galeshi::RenderSystem::State m_savedRenderState;
+    bool        m_viewModeStateSaved = false;
     bool        m_editorLooking = false;
     bool        m_editorLookDragging = false;
     int         m_editorLookSkipFrames = 0;

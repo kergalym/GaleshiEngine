@@ -9,9 +9,26 @@ namespace Galeshi {
 class Scene; class Camera; class AssetManager; class Frustum; class Material;
 class RenderSystem {
 public:
+    enum class ViewMode { Lit, Unlit, Wireframe };
+
+    struct State {
+        ViewMode viewMode = ViewMode::Lit;
+        bool deferred = false;
+        bool skipGlass = false;
+        bool lodEnabled = true;
+        float lodBias = 1.0f;
+        bool occlusionEnabled = true;
+        glm::mat4 prevViewProj{1.0f};
+        bool hasPrevViewProj = false;
+    };
+
     RenderSystem(); ~RenderSystem();
     void Init(AssetManager* assets);
     void Shutdown();
+    void SetViewMode(ViewMode mode) { m_viewMode = mode; }
+    ViewMode GetViewMode() const { return m_viewMode; }
+    State SaveState() const;
+    void RestoreState(const State& state);
     void Render(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height);
     // Renders a small depth-only occluder map and updates the previous-frame
     // occlusion queries. Must be submitted before the main scene view.
@@ -107,6 +124,7 @@ private:
     void ResetOcclusionState();
 
     AssetManager* m_assets = nullptr;
+    ViewMode m_viewMode = ViewMode::Lit;
     bool m_deferred = false;
     bool m_skipGlass = false;
     bool m_lodEnabled = true;
@@ -140,6 +158,8 @@ private:
 
     bgfx::ProgramHandle m_program      = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_gbufferProg  = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_unlitProg    = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_wireframeProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_shadowProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_shadowSkinnedProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_shadowPointProg = BGFX_INVALID_HANDLE;
