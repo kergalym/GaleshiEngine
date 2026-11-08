@@ -184,6 +184,11 @@ struct RigidBodyComponent {
 
     // Runtime handle to Jolt body; 0xFFFFFFFF = not created.
     uint32_t   bodyId     = 0xFFFFFFFFu;
+
+    // Runtime-only: skip writing the Jolt body pose back into this entity's
+    // transform. Used by the Ground entity when its body is a landscape
+    // heightfield (the entity transform is only an authoring placeholder).
+    bool       syncTransform = true;
 };
 
 enum class ColliderShapeType {

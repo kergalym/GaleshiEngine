@@ -597,6 +597,10 @@
             m_cpuProfile.scriptsMs = ProfileElapsedMs(scriptsStart, ProfileClock::now());
         }
 
+        // Buoyancy/drag and entry splashes use the velocity the scripts just
+        // applied, before the next fixed physics step.
+        UpdateWaterInteraction(dt);
+
         {
             const auto aiStart = ProfileClock::now();
             Galeshi::AISystem::Update(m_scene, dt, m_navSystem.get());

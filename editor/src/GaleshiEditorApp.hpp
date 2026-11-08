@@ -708,6 +708,11 @@ void DrawDetails();
     // one yet. Called when Play starts.
     void EnsurePhysicsBodies();
 
+    // Replaces the Ground box body with a Jolt heightfield sampled from the
+    // main landscape. The Ground entity keeps its authored Transform while
+    // Jolt drives the actual collision surface.
+    void RebuildGroundHeightfield();
+
     // -------------------------------------------------------------------
     // Spawn a cube with a Jolt rigid body attached.
     // Always use this for physics cubes — it wires RigidBodyComponent,
@@ -744,6 +749,10 @@ void DrawDetails();
     // touching the carved heights. Used on load for scenes saved before the
     // shore paint rules changed.
     void RefreshWaterShorePaint(entt::entity waterEntity);
+
+    // Buoyancy, drag and entry splashes for dynamic bodies inside a water
+    // body. Runs after scripts so jump/movement velocity is already applied.
+    void UpdateWaterInteraction(float dt);
 
     // State.
     Galeshi::Scene          m_scene;
@@ -793,6 +802,8 @@ void DrawDetails();
     std::unique_ptr<Galeshi::ContentBrowser>  m_browser;
     std::unique_ptr<Galeshi::SceneSerializer> m_serializer;
     std::unique_ptr<Galeshi::EnginePhysicsSystem>   m_physics;
+    // Runtime body submersion state used for water entry splashes.
+    std::unordered_map<entt::entity, bool>          m_waterSubmerged;
     std::unique_ptr<Galeshi::NavigationSystem> m_navSystem;
     std::unique_ptr<Galeshi::DebugRenderer> m_debug;
     std::unique_ptr<Galeshi::ParticleSystem> m_particles;

@@ -13,6 +13,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/HeightFieldShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/ShapeCast.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
@@ -264,6 +265,7 @@ struct EnginePhysicsSystem::Impl {
     ContactListenerImpl contactListener;
     std::unordered_map<uint32_t, entt::entity> bodyToEntity;
     std::unordered_map<entt::entity, RagdollRuntime> ragdolls;
+    JPH::BodyID defaultGroundId;
     float accumulator = 0.0f;
     bool initialized = false;
 };
@@ -299,14 +301,16 @@ bool EnginePhysicsSystem::Init() {
     m_impl->contactListener.bodyToEntity = &m_impl->bodyToEntity;
     m_impl->physicsSystem->SetContactListener(&m_impl->contactListener);
 
-    // Static ground plane: top surface at y=0.
+    // Static ground plane: top surface at y=0. Removed as soon as a
+    // landscape heightfield replaces it.
     JPH::BodyCreationSettings ground(
         new JPH::BoxShape(JPH::Vec3(50.0f, 0.5f, 50.0f)),
         JPH::RVec3(0.0f, -0.5f, 0.0f),
         JPH::Quat::sIdentity(),
         JPH::EMotionType::Static,
         LAYER_NON_MOVING);
-    m_impl->bodyInterface->CreateAndAddBody(ground, JPH::EActivation::DontActivate);
+    m_impl->defaultGroundId = m_impl->bodyInterface->CreateAndAddBody(
+        ground, JPH::EActivation::DontActivate);
 
     m_impl->initialized = true;
     return true;
@@ -324,6 +328,7 @@ void EnginePhysicsSystem::Shutdown() {
     m_impl->tempAllocator.reset();
     m_impl->bodyToEntity.clear();
     m_impl->ragdolls.clear();
+    m_impl->defaultGroundId = JPH::BodyID();
     m_impl->accumulator = 0.0f;
     {
         std::lock_guard<std::mutex> lock(
@@ -451,11 +456,101 @@ uint32_t EnginePhysicsSystem::CreateCapsule(float halfHeight, float radius, cons
     return rawId;
 }
 
-uint32_t EnginePhysicsSystem::CreateCollider(const ColliderComponent& collider,
-                                             const RigidBodyComponent& body,
-                                             const glm::vec3& position,
-                                             const glm::quat& rotation,
-                                             entt::entity entity) {
+uint32_t EnginePhysicsSystem::CreateHeightfield(
+    const LandscapeComponent& landscape,
+    const glm::mat4& world,
+    entt::entity entity,
+    float friction) {
+    if (!m_impl->initialized) return 0xFFFFFFFFu;
+    if (landscape.sizeX < 2 || landscape.sizeZ < 2 ||
+        landscape.heights.size() !=
+            static_cast<size_t>(landscape.sizeX) * landscape.sizeZ) {
+        return 0xFFFFFFFFu;
+    }
+
+    // Jolt heightfields are square. Pad the smaller axis with the no-collision
+    // sentinel so rectangular landscapes keep their exact footprint.
+    const uint32_t sampleCount = static_cast<uint32_t>(
+        std::max(landscape.sizeX, landscape.sizeZ));
+    if (sampleCount > 4096) {
+        spdlog::warn("[Physics] Landscape heightfield too large ({} samples)",
+                     sampleCount);
+        return 0xFFFFFFFFu;
+    }
+    std::vector<float> samples(
+        static_cast<size_t>(sampleCount) * sampleCount,
+        JPH::HeightFieldShapeConstants::cNoCollisionValue);
+    for (int z = 0; z < landscape.sizeZ; ++z) {
+        for (int x = 0; x < landscape.sizeX; ++x) {
+            const float height =
+                landscape.heights[static_cast<size_t>(z) * landscape.sizeX + x];
+            samples[static_cast<size_t>(z) * sampleCount +
+                    static_cast<size_t>(x)] =
+                std::isfinite(height) ? height : 0.0f;
+        }
+    }
+
+    glm::vec3 worldScale(
+        glm::length(glm::vec3(world[0])),
+        glm::length(glm::vec3(world[1])),
+        glm::length(glm::vec3(world[2])));
+    worldScale.x = std::max(worldScale.x, 1e-4f);
+    worldScale.y = std::max(worldScale.y, 1e-4f);
+    worldScale.z = std::max(worldScale.z, 1e-4f);
+    const float cell = std::max(landscape.scale, 1e-4f);
+    const float cellX = cell * worldScale.x;
+    const float cellZ = cell * worldScale.z;
+    const float offsetX = -landscape.sizeX * 0.5f * cellX;
+    const float offsetZ = -landscape.sizeZ * 0.5f * cellZ;
+
+    JPH::HeightFieldShapeSettings settings(
+        samples.data(),
+        JPH::Vec3(offsetX, 0.0f, offsetZ),
+        JPH::Vec3(cellX, worldScale.y, cellZ),
+        sampleCount);
+    settings.mBlockSize = 4;
+    settings.mBitsPerSample = 8;
+    JPH::ShapeSettings::ShapeResult result = settings.Create();
+    if (result.HasError()) {
+        spdlog::error("[Physics] Heightfield creation failed: {}",
+                      result.GetError());
+        return 0xFFFFFFFFu;
+    }
+
+    const glm::quat rotation =
+        glm::normalize(glm::quat_cast(glm::mat3(world)));
+    const glm::vec3 position(world[3]);
+    JPH::BodyCreationSettings bodySettings(
+        result.Get().GetPtr(),
+        JPH::RVec3(position.x, position.y, position.z),
+        JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w),
+        JPH::EMotionType::Static, LAYER_NON_MOVING);
+    bodySettings.mFriction = std::max(friction, 0.0f);
+    bodySettings.mRestitution = 0.0f;
+    bodySettings.mAllowSleeping = true;
+
+    const JPH::BodyID id = m_impl->bodyInterface->CreateAndAddBody(
+        bodySettings, JPH::EActivation::DontActivate);
+    if (id.IsInvalid()) return 0xFFFFFFFFu;
+    const uint32_t rawId = id.GetIndexAndSequenceNumber();
+    if (entity != entt::null) m_impl->bodyToEntity[rawId] = entity;
+
+    // The internal y=0 fallback plane would hide every carved basin. Once a
+    // real landscape heightfield exists it is no longer needed.
+    if (!m_impl->defaultGroundId.IsInvalid()) {
+        m_impl->bodyInterface->RemoveBody(m_impl->defaultGroundId);
+        m_impl->bodyInterface->DestroyBody(m_impl->defaultGroundId);
+        m_impl->defaultGroundId = JPH::BodyID();
+    }
+    return rawId;
+}
+
+uint32_t EnginePhysicsSystem::CreateCollider(
+    const ColliderComponent& collider,
+    const RigidBodyComponent& body,
+    const glm::vec3& position,
+    const glm::quat& rotation,
+    entt::entity entity) {
     if (!m_impl->initialized) return 0xFFFFFFFFu;
 
     JPH::EMotionType motion = JPH::EMotionType::Dynamic;
@@ -1247,6 +1342,7 @@ void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene) {
         auto& tf = view.get<TransformComponent>(e);
 
         if (rb.bodyId == 0xFFFFFFFFu) continue;
+        if (!rb.syncTransform) continue;
         JPH::BodyID id(rb.bodyId);
         if (!m_impl->bodyInterface->IsAdded(id)) continue;
 
@@ -1293,6 +1389,7 @@ void EnginePhysicsSystem::SyncTransformsToECS(Scene& scene) {
         auto& rb = reg.get<RigidBodyComponent>(e);
         auto& tf = reg.get<TransformComponent>(e);
         if (rb.bodyId == 0xFFFFFFFFu) continue;
+        if (!rb.syncTransform) continue;
         JPH::BodyID id(rb.bodyId);
         if (!m_impl->bodyInterface->IsAdded(id)) continue;
 

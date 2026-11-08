@@ -16,6 +16,7 @@ class AssetManager;
 struct ColliderComponent;
 struct RigidBodyComponent;
 struct SoftBodyComponent;
+struct LandscapeComponent;
 
 class EnginePhysicsSystem {
 public:
@@ -34,6 +35,15 @@ public:
     uint32_t CreateBox(const glm::vec3& halfExtents, const glm::vec3& position, entt::entity entity = entt::null, bool isStatic = false);
     uint32_t CreateSphere(float radius, const glm::vec3& position, entt::entity entity = entt::null, bool isStatic = false);
     uint32_t CreateCapsule(float halfHeight, float radius, const glm::vec3& position, entt::entity entity = entt::null, bool isStatic = false);
+
+    // Creates a static Jolt heightfield collider from a landscape height map.
+    // The heightfield is sampled in landscape-local space and placed at the
+    // supplied world matrix. Non-square maps are padded with no-collision
+    // samples because Jolt heightfields use a square sample grid.
+    uint32_t CreateHeightfield(const LandscapeComponent& landscape,
+                               const glm::mat4& world,
+                               entt::entity entity = entt::null,
+                               float friction = 0.8f);
 
     // Creates a body from an authored collider + rigid body. The collider
     // shape, offset and material are applied, and the rigid body controls

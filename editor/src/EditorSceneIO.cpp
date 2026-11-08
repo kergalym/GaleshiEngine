@@ -37,6 +37,7 @@
         // mistake serialization order for a new user edit.
         m_history[m_historyIndex] = m_serializer->SaveToString();
         if (m_particles) m_particles->Reset();
+        m_waterSubmerged.clear();
         ReleaseUnusedSceneAssets();
         m_isRestoringHistory = false;
     }
@@ -54,6 +55,7 @@
         m_serializer->LoadFromString(m_history[m_historyIndex]);
         m_history[m_historyIndex] = m_serializer->SaveToString();
         if (m_particles) m_particles->Reset();
+        m_waterSubmerged.clear();
         ReleaseUnusedSceneAssets();
         m_isRestoringHistory = false;
     }
@@ -120,6 +122,7 @@
         m_audio.StopAll();
         if (m_physics) m_physics->Reset();
         if (m_particles) m_particles->Reset();
+        m_waterSubmerged.clear();
 
         // The Play snapshot recreates every entity, invalidating the ASME
         // selection handle. Remember the character name so the editor can
@@ -165,6 +168,7 @@
             m_audio.StopAll();
             if (m_physics) m_physics->Reset();
             if (m_particles) m_particles->Reset();
+        m_waterSubmerged.clear();
         }
         m_lastViewportTexture = BGFX_INVALID_HANDLE;
     }

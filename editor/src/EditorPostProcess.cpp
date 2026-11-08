@@ -83,6 +83,7 @@
         // The view and effect set may have changed completely; never reuse a
         // TAA history from the previous scene/camera.
         m_postProcess.ResetTaaHistory();
+        m_waterSubmerged.clear();
     }
 
 

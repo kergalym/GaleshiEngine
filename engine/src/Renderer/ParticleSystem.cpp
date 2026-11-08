@@ -62,6 +62,103 @@ glm::vec3 RandomUnitVector(std::mt19937& rng) {
     return glm::vec3(0.0f, 1.0f, 0.0f);
 }
 
+float Hash01(uint32_t n) {
+    n = (n ^ 61u) ^ (n >> 16);
+    n *= 9u;
+    n ^= n >> 4;
+    n *= 0x27d4eb2du;
+    n ^= n >> 15;
+    return static_cast<float>(n & 0x00FFFFFFu) /
+           static_cast<float>(0x00FFFFFFu);
+}
+
+float ValueNoise2D(float x, float y) {
+    const int ix = static_cast<int>(std::floor(x));
+    const int iz = static_cast<int>(std::floor(y));
+    const float fx = x - static_cast<float>(ix);
+    const float fz = y - static_cast<float>(iz);
+    const float sx = fx * fx * (3.0f - 2.0f * fx);
+    const float sz = fz * fz * (3.0f - 2.0f * fz);
+    auto at = [](int x, int y) {
+        return Hash01(static_cast<uint32_t>(x) * 374761393u +
+                      static_cast<uint32_t>(y) * 668265263u);
+    };
+    const float a = at(ix, iz);
+    const float b = at(ix + 1, iz);
+    const float c = at(ix, iz + 1);
+    const float d = at(ix + 1, iz + 1);
+    return glm::mix(glm::mix(a, b, sx), glm::mix(c, d, sx), sz);
+}
+
+float SmoothStep(float edge0, float edge1, float x) {
+    const float t = glm::clamp((x - edge0) / (edge1 - edge0),
+                               0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+// 0 = droplet, 1 = foam bubbles, 2 = mist puff.
+bgfx::TextureHandle CreateSplashTexture(int size, int kind) {
+    std::vector<uint32_t> pixels(
+        static_cast<size_t>(size) * static_cast<size_t>(size));
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            const float u = (x + 0.5f) / static_cast<float>(size);
+            const float v = (y + 0.5f) / static_cast<float>(size);
+            float alpha = 0.0f;
+            if (kind == 0) {
+                // Teardrop-ish droplet with a bright core.
+                const float dx = (u - 0.5f) / 0.23f;
+                const float dy = (v - 0.55f) / 0.42f;
+                const float d = std::sqrt(dx * dx + dy * dy);
+                alpha = 1.0f - SmoothStep(0.45f, 1.0f, d);
+                alpha = std::max(alpha,
+                    0.55f * (1.0f - SmoothStep(0.0f, 0.45f, d)));
+            } else if (kind == 1) {
+                // Overlapping foam bubbles with soft rims.
+                struct Bubble { float x, y, r; };
+                static constexpr Bubble kBubbles[] = {
+                    {0.28f, 0.32f, 0.13f}, {0.62f, 0.27f, 0.09f},
+                    {0.55f, 0.60f, 0.16f}, {0.30f, 0.68f, 0.08f},
+                    {0.78f, 0.56f, 0.07f}, {0.46f, 0.44f, 0.06f},
+                    {0.20f, 0.50f, 0.05f}, {0.72f, 0.78f, 0.05f},
+                };
+                for (const Bubble& b : kBubbles) {
+                    const float d = std::sqrt(
+                        (u - b.x) * (u - b.x) + (v - b.y) * (v - b.y));
+                    const float rim = 1.0f -
+                        SmoothStep(b.r * 0.45f, b.r, d);
+                    alpha = std::max(alpha, rim * 0.95f);
+                }
+                const float center = 1.0f - SmoothStep(
+                    0.05f, 0.42f,
+                    std::sqrt((u - 0.5f) * (u - 0.5f) +
+                              (v - 0.5f) * (v - 0.5f)));
+                alpha = std::max(alpha, center * 0.55f);
+            } else {
+                const float d = std::sqrt(
+                    (u - 0.5f) * (u - 0.5f) * 1.7f +
+                    (v - 0.5f) * (v - 0.5f) * 1.7f);
+                const float cloud = 1.0f - SmoothStep(0.15f, 0.62f, d);
+                float n = ValueNoise2D(u * 5.0f, v * 5.0f);
+                n = 0.65f * n +
+                    0.35f * ValueNoise2D(u * 11.0f + 3.1f,
+                                         v * 11.0f + 7.7f);
+                alpha = cloud * (0.25f + 0.75f * n);
+            }
+            alpha = glm::clamp(alpha, 0.0f, 1.0f);
+            const uint32_t a = static_cast<uint32_t>(alpha * 255.0f + 0.5f);
+            pixels[static_cast<size_t>(y) * size + x] =
+                0x00FFFFFFu | (a << 24);
+        }
+    }
+    return bgfx::createTexture2D(
+        static_cast<uint16_t>(size), static_cast<uint16_t>(size),
+        false, 1, bgfx::TextureFormat::RGBA8,
+        BGFX_TEXTURE_NONE | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP,
+        bgfx::copy(pixels.data(),
+                   static_cast<uint32_t>(pixels.size() * sizeof(uint32_t))));
+}
+
 } // namespace
 
 ParticleSystem::ParticleSystem() = default;
@@ -93,6 +190,16 @@ void ParticleSystem::Init() {
     if (!bgfx::isValid(m_whiteTex)) {
         spdlog::error("[ParticleSystem] Failed to create white fallback texture");
     }
+
+    m_splashDropletTex = CreateSplashTexture(64, 0);
+    m_splashFoamTex = CreateSplashTexture(128, 1);
+    m_splashMistTex = CreateSplashTexture(128, 2);
+    if (!bgfx::isValid(m_splashDropletTex) ||
+        !bgfx::isValid(m_splashFoamTex) ||
+        !bgfx::isValid(m_splashMistTex)) {
+        spdlog::warn("[ParticleSystem] Splash sprites unavailable; "
+                     "using the soft fallback sprite");
+    }
 }
 
 void ParticleSystem::Shutdown() {
@@ -104,6 +211,18 @@ void ParticleSystem::Shutdown() {
         bgfx::destroy(m_whiteTex);
         m_whiteTex = BGFX_INVALID_HANDLE;
     }
+    if (bgfx::isValid(m_splashDropletTex)) {
+        bgfx::destroy(m_splashDropletTex);
+        m_splashDropletTex = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(m_splashFoamTex)) {
+        bgfx::destroy(m_splashFoamTex);
+        m_splashFoamTex = BGFX_INVALID_HANDLE;
+    }
+    if (bgfx::isValid(m_splashMistTex)) {
+        bgfx::destroy(m_splashMistTex);
+        m_splashMistTex = BGFX_INVALID_HANDLE;
+    }
     if (bgfx::isValid(m_texUniform)) {
         bgfx::destroy(m_texUniform);
         m_texUniform = BGFX_INVALID_HANDLE;
@@ -113,11 +232,17 @@ void ParticleSystem::Shutdown() {
         m_paramsUniform = BGFX_INVALID_HANDLE;
     }
     m_emitters.clear();
+    m_splashDroplets.clear();
+    m_splashFoam.clear();
+    m_splashMist.clear();
     m_totalParticles = 0;
 }
 
 void ParticleSystem::Reset() {
     m_emitters.clear();
+    m_splashDroplets.clear();
+    m_splashFoam.clear();
+    m_splashMist.clear();
     m_totalParticles = 0;
 }
 
@@ -133,6 +258,105 @@ void ParticleSystem::RemoveEmitter(entt::entity emitter) {
         ? m_totalParticles - it->second.particles.size()
         : 0;
     m_emitters.erase(it);
+}
+
+void ParticleSystem::EmitSplash(const glm::vec3& position, int count,
+                                float speed, float sizeScale) {
+    count = std::clamp(count, 0, 400);
+    if (count == 0) return;
+
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+    const glm::vec3 upward(0.0f, 1.0f, 0.0f);
+    const float scale = std::clamp(sizeScale, 0.25f, 4.0f);
+    const float killY = position.y - 0.04f;
+
+    auto emit = [&](std::vector<Particle>& target, int amount,
+                    auto&& setup) {
+        constexpr size_t kLayerCap = 4096;
+        if (target.size() + static_cast<size_t>(amount) > kLayerCap) {
+            const size_t drop = target.size() +
+                                static_cast<size_t>(amount) - kLayerCap;
+            target.erase(target.begin(),
+                         target.begin() +
+                             static_cast<std::ptrdiff_t>(drop));
+        }
+        for (int i = 0; i < amount; ++i) {
+            Particle p;
+            setup(p, unit);
+            p.age = 0.0f;
+            target.push_back(p);
+        }
+    };
+
+    const int droplets = std::max(1, count * 60 / 100);
+    const int foam = std::max(1, count * 25 / 100);
+    const int mist = std::max(1, count - droplets - foam);
+
+    // Fast crown droplets: small, bright, ballistic and depth-killed when
+    // they fall back through the water surface.
+    emit(m_splashDroplets, droplets,
+         [&](Particle& p, auto& rng) {
+        const float radius = std::sqrt(rng(m_rng)) * 0.45f * scale;
+        const float angle = rng(m_rng) * 6.2831853f;
+        p.position = position +
+            glm::vec3(std::cos(angle) * radius, 0.02f,
+                      std::sin(angle) * radius);
+        glm::vec3 dir = RandomUnitVector(m_rng);
+        dir.y = std::abs(dir.y) * 0.85f + 0.20f;
+        dir = glm::normalize(dir);
+        p.velocity = upward * (0.30f * speed) +
+                     dir * (speed * (0.60f + rng(m_rng) * 0.85f));
+        p.lifetime = 0.40f + rng(m_rng) * 0.65f;
+        p.sizeScale = scale * (0.22f + rng(m_rng) * 0.42f);
+        const float blue = 0.88f + rng(m_rng) * 0.12f;
+        p.tint = glm::vec4(0.72f + rng(m_rng) * 0.16f,
+                           blue, 1.0f, 0.78f + rng(m_rng) * 0.22f);
+        p.killY = killY;
+        p.gravityScale = 1.0f;
+        p.drag = 0.12f;
+    });
+
+    // Foam bubbles: low, wide, textured rings that form the splash crown.
+    emit(m_splashFoam, foam,
+         [&](Particle& p, auto& rng) {
+        const float radius = (0.18f + rng(m_rng) * 0.95f) * scale;
+        const float angle = rng(m_rng) * 6.2831853f;
+        const glm::vec3 outward(std::cos(angle), 0.0f, std::sin(angle));
+        p.position = position +
+            glm::vec3(outward.x * radius, 0.015f,
+                      outward.z * radius);
+        p.velocity = outward * (speed * (0.22f + rng(m_rng) * 0.58f)) +
+                     upward * (speed * (0.05f + rng(m_rng) * 0.24f));
+        p.lifetime = 0.40f + rng(m_rng) * 0.62f;
+        p.sizeScale = scale * (0.32f + rng(m_rng) * 0.55f);
+        p.tint = glm::vec4(0.94f + rng(m_rng) * 0.06f,
+                           0.98f + rng(m_rng) * 0.02f, 1.0f,
+                           0.68f + rng(m_rng) * 0.28f);
+        p.killY = killY;
+        p.gravityScale = 0.40f;
+        p.drag = 1.0f;
+    });
+
+    // Soft mist: low-alpha noise clouds that linger above the impact.
+    emit(m_splashMist, mist,
+         [&](Particle& p, auto& rng) {
+        const float radius = std::sqrt(rng(m_rng)) * 0.9f * scale;
+        const float angle = rng(m_rng) * 6.2831853f;
+        const glm::vec3 outward(std::cos(angle), 0.0f, std::sin(angle));
+        p.position = position +
+            glm::vec3(outward.x * radius, 0.10f + rng(m_rng) * 0.55f,
+                      outward.z * radius);
+        p.velocity = upward * (speed * (0.10f + rng(m_rng) * 0.28f)) +
+                     outward * (speed * (0.08f + rng(m_rng) * 0.30f));
+        p.lifetime = 0.95f + rng(m_rng) * 0.90f;
+        p.sizeScale = scale * (0.60f + rng(m_rng) * 0.95f);
+        p.tint = glm::vec4(0.68f + rng(m_rng) * 0.12f,
+                           0.82f + rng(m_rng) * 0.10f, 1.0f,
+                           0.10f + rng(m_rng) * 0.14f);
+        p.killY = -3.402823466e+38F;
+        p.gravityScale = 0.10f;
+        p.drag = 1.4f;
+    });
 }
 
 void ParticleSystem::PruneRuntimes(Scene& scene) {
@@ -166,6 +390,36 @@ void ParticleSystem::Update(Scene& scene, float dt) {
         UpdateEmitter(scene, entity, emitter, runtime, dt);
         m_totalParticles += runtime.particles.size();
     }
+
+    // Splash layers use separate runtime pools so they do not need a scene
+    // emitter entity and are never serialized.
+    auto updateSplashLayer = [&](std::vector<Particle>& particles) {
+        for (auto it = particles.begin(); it != particles.end();) {
+            Particle& p = *it;
+            p.age += dt;
+            if (p.age >= p.lifetime) {
+                *it = particles.back();
+                particles.pop_back();
+                continue;
+            }
+            p.velocity.y -= 9.81f * p.gravityScale * dt;
+            p.velocity *= std::max(0.0f, 1.0f - p.drag * dt);
+            p.position += p.velocity * dt;
+            if (p.killY > -1.0e30f && p.position.y < p.killY &&
+                p.velocity.y < 0.0f) {
+                *it = particles.back();
+                particles.pop_back();
+                continue;
+            }
+            ++it;
+        }
+    };
+    updateSplashLayer(m_splashDroplets);
+    updateSplashLayer(m_splashFoam);
+    updateSplashLayer(m_splashMist);
+    m_totalParticles += m_splashDroplets.size() +
+                        m_splashFoam.size() +
+                        m_splashMist.size();
 }
 
 void ParticleSystem::UpdateEmitter(Scene& scene, entt::entity entity,
@@ -248,7 +502,9 @@ void ParticleSystem::Render(Scene& scene, const Camera& camera,
     auto& reg = scene.Registry();
     auto view = reg.view<ParticleEmitterComponent>();
 
-    size_t totalParticles = 0;
+    size_t totalParticles = m_splashDroplets.size() +
+                            m_splashFoam.size() +
+                            m_splashMist.size();
     for (auto entity : view) {
         auto it = m_emitters.find(entity);
         if (it != m_emitters.end()) {
@@ -269,29 +525,29 @@ void ParticleSystem::Render(Scene& scene, const Camera& camera,
     bgfx::setViewTransform(viewId, glm::value_ptr(camera.View()),
                            glm::value_ptr(camera.Projection()));
 
-    // Each emitter is submitted as its own batch so it can bind its own
-    // particle texture (or the white fallback) to sampler slot 0.
-    for (auto entity : view) {
-        auto it = m_emitters.find(entity);
-        if (it == m_emitters.end() || it->second.particles.empty()) continue;
-
-        const auto& emitter = view.get<ParticleEmitterComponent>(entity);
-        const auto& particles = it->second.particles;
-
+    auto submitParticles = [&](const std::vector<Particle>& particles,
+                               float startSize, float endSize,
+                               const glm::vec4& startColor,
+                               const glm::vec4& endColor,
+                               bgfx::TextureHandle texture,
+                               bool useTexture) {
+        if (particles.empty()) return;
         uint32_t quads = static_cast<uint32_t>(
             std::min<size_t>(particles.size(), 1u << 20));
 
         // Clamp to what the transient buffers can currently hold.
-        const uint32_t availVerts = bgfx::getAvailTransientVertexBuffer(quads * 4, m_layout);
-        const uint32_t availIndices = bgfx::getAvailTransientIndexBuffer(quads * 6, true);
+        const uint32_t availVerts =
+            bgfx::getAvailTransientVertexBuffer(quads * 4, m_layout);
+        const uint32_t availIndices =
+            bgfx::getAvailTransientIndexBuffer(quads * 6, true);
         quads = std::min(quads, std::min(availVerts / 4, availIndices / 6));
-        if (quads == 0) continue;
+        if (quads == 0) return;
 
         bgfx::TransientVertexBuffer tvb;
         bgfx::TransientIndexBuffer tib;
         bgfx::allocTransientVertexBuffer(&tvb, quads * 4, m_layout);
         bgfx::allocTransientIndexBuffer(&tib, quads * 6, true);
-        if (!tvb.data || !tib.data) continue;
+        if (!tvb.data || !tib.data) return;
 
         auto* vertices = reinterpret_cast<Vertex*>(tvb.data);
         auto* indices = reinterpret_cast<uint32_t*>(tib.data);
@@ -301,8 +557,12 @@ void ParticleSystem::Render(Scene& scene, const Camera& camera,
             if (q >= quads) break;
 
             const float t = glm::clamp(p.age / p.lifetime, 0.0f, 1.0f);
-            const float size = glm::mix(emitter.startSize, emitter.endSize, t);
-            const glm::vec4 color = glm::mix(emitter.startColor, emitter.endColor, t);
+            const float size =
+                glm::mix(startSize, endSize, t) * p.sizeScale;
+            glm::vec4 color =
+                glm::mix(startColor, endColor, t) * p.tint;
+            color = glm::clamp(color, glm::vec4(0.0f),
+                               glm::vec4(1.0f));
             const uint32_t packed = PackColor(color);
 
             const glm::vec3 r = right * size;
@@ -322,12 +582,9 @@ void ParticleSystem::Render(Scene& scene, const Camera& camera,
             ++q;
         }
 
-        const bool useTexture = emitter.texture && emitter.texture->Valid();
-        const bgfx::TextureHandle tex =
-            useTexture ? emitter.texture->Handle() : m_whiteTex;
-
-        bgfx::setTexture(0, m_texUniform, tex);
-        const glm::vec4 particleParams(useTexture ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+        bgfx::setTexture(0, m_texUniform, texture);
+        const glm::vec4 particleParams(
+            useTexture ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
         bgfx::setUniform(m_paramsUniform, glm::value_ptr(particleParams));
 
         bgfx::setVertexBuffer(0, &tvb);
@@ -339,7 +596,39 @@ void ParticleSystem::Render(Scene& scene, const Camera& camera,
                                              BGFX_STATE_BLEND_INV_SRC_ALPHA) |
                        BGFX_STATE_MSAA);
         bgfx::submit(viewId, m_program);
+    };
+
+    // Each emitter is submitted as its own batch so it can bind its own
+    // particle texture (or the white fallback) to sampler slot 0.
+    for (auto entity : view) {
+        auto it = m_emitters.find(entity);
+        if (it == m_emitters.end() || it->second.particles.empty()) continue;
+
+        const auto& emitter = view.get<ParticleEmitterComponent>(entity);
+        const bool useTexture = emitter.texture && emitter.texture->Valid();
+        submitParticles(
+            it->second.particles, emitter.startSize, emitter.endSize,
+            emitter.startColor, emitter.endColor,
+            useTexture ? emitter.texture->Handle() : m_whiteTex,
+            useTexture);
     }
+
+    // Splash layers use dedicated procedural sprites.
+    const bool dropletTex = bgfx::isValid(m_splashDropletTex);
+    const bool foamTex = bgfx::isValid(m_splashFoamTex);
+    const bool mistTex = bgfx::isValid(m_splashMistTex);
+    submitParticles(
+        m_splashDroplets, 0.10f, 0.008f,
+        {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 0.0f},
+        dropletTex ? m_splashDropletTex : m_whiteTex, dropletTex);
+    submitParticles(
+        m_splashFoam, 0.12f, 0.010f,
+        {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 0.0f},
+        foamTex ? m_splashFoamTex : m_whiteTex, foamTex);
+    submitParticles(
+        m_splashMist, 0.16f, 0.020f,
+        {1.0f, 1.0f, 1.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 0.0f},
+        mistTex ? m_splashMistTex : m_whiteTex, mistTex);
 }
 
 } // namespace Galeshi

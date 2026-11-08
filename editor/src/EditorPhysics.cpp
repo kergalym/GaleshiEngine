@@ -298,11 +298,71 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
                      static_cast<uint32_t>(handle), cloth->softBodyId);
     }
 
+    void GaleshiEditorApp::RebuildGroundHeightfield() {
+        if (!m_physics) return;
+        auto& reg = m_scene.Registry();
+
+        entt::entity ground = entt::null;
+        entt::entity landscape = entt::null;
+        for (auto e : reg.view<Galeshi::NameComponent,
+                               Galeshi::RigidBodyComponent,
+                               Galeshi::TransformComponent>()) {
+            const auto& name = reg.get<Galeshi::NameComponent>(e).name;
+            if (name == "Ground") {
+                ground = e;
+                break;
+            }
+        }
+        if (ground == entt::null) return;
+
+        for (auto e : reg.view<Galeshi::LandscapeComponent,
+                               Galeshi::MeshComponent>()) {
+            const auto& lc = reg.get<Galeshi::LandscapeComponent>(e);
+            if (lc.waterBed) continue;
+            landscape = e;
+            const auto* name = reg.try_get<Galeshi::NameComponent>(e);
+            if (name && name->name == "Landscape") break;
+        }
+        if (landscape == entt::null) return;
+
+        auto& rb = reg.get<Galeshi::RigidBodyComponent>(ground);
+        if (rb.motionType != Galeshi::RigidBodyComponent::MotionType::Static) {
+            return;
+        }
+        auto& lc = reg.get<Galeshi::LandscapeComponent>(landscape);
+        if (lc.heights.empty()) return;
+
+        if (rb.bodyId != 0xFFFFFFFFu) {
+            m_physics->DestroyBody(rb.bodyId);
+            rb.bodyId = 0xFFFFFFFFu;
+        }
+
+        const auto* collider =
+            reg.try_get<Galeshi::ColliderComponent>(ground);
+        const float friction = collider ? collider->friction : 0.8f;
+        const glm::mat4 world = EntityWorldMatrix(landscape);
+        rb.bodyId = m_physics->CreateHeightfield(lc, world, ground, friction);
+        rb.syncTransform = rb.bodyId == 0xFFFFFFFFu;
+        if (rb.bodyId != 0xFFFFFFFFu) {
+            spdlog::info(
+                "[Physics] Ground uses landscape heightfield ({}x{} samples)",
+                lc.sizeX, lc.sizeZ);
+        } else {
+            spdlog::warn("[Physics] Landscape heightfield failed; "
+                         "falling back to the authored Ground box");
+        }
+    }
+
     // Creates runtime bodies for every authored collider that does not have
     // one yet. Called when Play starts.
     void GaleshiEditorApp::EnsurePhysicsBodies() {
         if (!m_physics) return;
         auto& reg = m_scene.Registry();
+
+        // The authored Ground box is replaced by terrain collision so carved
+        // banks and the underwater bed are walkable.
+        RebuildGroundHeightfield();
+
         auto softView = reg.view<Galeshi::SoftBodyComponent,
                                  Galeshi::MeshComponent>();
         for (auto e : softView) {
@@ -716,6 +776,7 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
         EnsureUnderwaterTerrain(waterEntity);
         RebuildWaterVegetationMasks();
         ApplyWaterShoreSettings(waterEntity);
+        if (m_editor.isPlaying) RebuildGroundHeightfield();
     }
 
     void GaleshiEditorApp::EnsureUnderwaterTerrain(entt::entity waterEntity) {
@@ -1080,6 +1141,139 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
                     Galeshi::LandscapeMesh::UpdatePaintWeights(
                         lc, *meshComponent->mesh);
                 }
+            }
+        }
+    }
+
+    void GaleshiEditorApp::UpdateWaterInteraction(float dt) {
+        if (!m_physics || !m_particles || dt <= 0.0f) return;
+        auto& registry = m_scene.Registry();
+
+        struct WaterVolume {
+            const Galeshi::WaterComponent* water = nullptr;
+            glm::mat4 invModel{1.0f};
+            float surfaceY = 0.0f;
+            float seed = 0.0f;
+        };
+        std::vector<WaterVolume> volumes;
+        for (auto e : registry.view<Galeshi::WaterComponent>()) {
+            const auto& water =
+                registry.get<Galeshi::WaterComponent>(e);
+            if (!water.enabled || water.width < 1e-4f ||
+                water.depth < 1e-4f) {
+                continue;
+            }
+            const glm::mat4 world = EntityWorldMatrix(e);
+            const glm::mat4 model =
+                world * glm::scale(glm::mat4(1.0f),
+                                   glm::vec3(water.width, 1.0f,
+                                             water.depth));
+            WaterVolume volume;
+            volume.water = &water;
+            volume.invModel = glm::inverse(model);
+            volume.surfaceY = glm::vec3(world[3]).y;
+            volume.seed = static_cast<float>(
+                entt::to_integral(e) % 1024u) * 0.6180339f;
+            volumes.push_back(volume);
+        }
+        if (volumes.empty()) {
+            m_waterSubmerged.clear();
+            return;
+        }
+
+        for (auto e : registry.view<Galeshi::RigidBodyComponent,
+                                    Galeshi::TransformComponent>()) {
+            auto& rb = registry.get<Galeshi::RigidBodyComponent>(e);
+            if (rb.bodyId == 0xFFFFFFFFu ||
+                rb.motionType !=
+                    Galeshi::RigidBodyComponent::MotionType::Dynamic) {
+                continue;
+            }
+            const glm::mat4 world = EntityWorldMatrix(e);
+            const glm::vec3 center(world[3]);
+
+            float halfHeight = 0.5f;
+            if (const auto* collider =
+                    registry.try_get<Galeshi::ColliderComponent>(e)) {
+                switch (collider->shapeType) {
+                case Galeshi::ColliderShapeType::Sphere:
+                    halfHeight = std::max(collider->radius, 0.01f);
+                    break;
+                case Galeshi::ColliderShapeType::Capsule:
+                    halfHeight = std::max(
+                        collider->halfHeight + collider->radius, 0.01f);
+                    break;
+                case Galeshi::ColliderShapeType::Box:
+                default:
+                    halfHeight = std::max(
+                        collider->halfExtents.y, 0.01f);
+                    break;
+                }
+            }
+            const float bottom = center.y - halfHeight;
+            const float top = center.y + halfHeight;
+            const float bodyHeight = std::max(top - bottom, 0.05f);
+
+            bool inWater = false;
+            for (const WaterVolume& volume : volumes) {
+                const glm::vec3 local = glm::vec3(
+                    volume.invModel * glm::vec4(center, 1.0f));
+                const glm::vec2 uv(local.x + 0.5f, local.z + 0.5f);
+                if (uv.x < 0.0f || uv.x > 1.0f ||
+                    uv.y < 0.0f || uv.y > 1.0f) {
+                    continue;
+                }
+                if (WaterEdgeDistance(*volume.water, uv, volume.seed) >
+                    0.0f) {
+                    continue;
+                }
+
+                const float submerged = std::clamp(
+                    (volume.surfaceY - bottom) / bodyHeight, 0.0f, 1.0f);
+                if (submerged <= 0.001f) continue;
+
+                const float mass = std::max(rb.mass, 0.01f);
+                // Buoyancy counteracts gravity for the submerged part. Drag
+                // is applied as an impulse so the next physics step uses it.
+                if (rb.useGravity) {
+                    m_physics->AddImpulse(
+                        rb.bodyId,
+                        glm::vec3(0.0f,
+                                  9.81f * mass * submerged * dt,
+                                  0.0f));
+                }
+                const glm::vec3 velocity =
+                    m_physics->GetLinearVelocity(rb.bodyId);
+                m_physics->AddImpulse(
+                    rb.bodyId,
+                    -velocity * (mass * 3.0f * submerged * dt));
+
+                if (!m_waterSubmerged[e]) {
+                    const float impact = std::max(0.0f, -velocity.y);
+                    const int count = std::clamp(
+                        120 + static_cast<int>(impact * 26.0f + mass * 10.0f),
+                        120, 400);
+                    const float speed = 2.0f + impact * 0.50f;
+                    const float sizeScale = std::clamp(
+                        halfHeight * 0.9f, 0.7f, 1.6f);
+                    m_particles->EmitSplash(
+                        glm::vec3(center.x, volume.surfaceY + 0.02f,
+                                  center.z),
+                        count, speed, sizeScale);
+                    const auto* name =
+                        registry.try_get<Galeshi::NameComponent>(e);
+                    spdlog::debug(
+                        "[Water] Splash: '{}' count={} impact={:.2f}",
+                        name ? name->name : std::to_string(
+                            static_cast<uint32_t>(e)),
+                        count, impact);
+                }
+                m_waterSubmerged[e] = true;
+                inWater = true;
+                break;
+            }
+            if (!inWater) {
+                m_waterSubmerged[e] = false;
             }
         }
     }

@@ -46,12 +46,27 @@ public:
     // Drops live particles and runtime state for one deleted emitter.
     void RemoveEmitter(entt::entity emitter);
 
+    // One-shot water splash. Particles are simulated/rendered separately from
+    // scene emitters and are not serialized.
+    void EmitSplash(const glm::vec3& position, int count, float speed,
+                    float sizeScale = 1.0f);
+
 private:
     struct Particle {
         glm::vec3 position{0.0f};
         glm::vec3 velocity{0.0f};
         float     age      = 0.0f;
         float     lifetime = 1.0f;
+        // Per-particle scale and tint used by splash droplets; emitters leave
+        // them at 1.0.
+        float     sizeScale = 1.0f;
+        glm::vec4 tint{1.0f};
+        // Splash droplets are removed when they fall back through the water
+        // surface. Emitters use -FLT_MAX (no kill plane).
+        float     killY = -3.402823466e+38F;
+        // Per-particle splash dynamics. Emitters use their component values.
+        float     gravityScale = 1.0f;
+        float     drag = 0.35f;
     };
 
     struct EmitterRuntime {
@@ -73,12 +88,20 @@ private:
     bgfx::ProgramHandle m_program = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout  m_layout;
     std::unordered_map<entt::entity, EmitterRuntime> m_emitters;
+    // Splash layers are rendered with dedicated procedural sprites so the
+    // effect reads as droplets, foam and mist instead of soft blobs.
+    std::vector<Particle> m_splashDroplets;
+    std::vector<Particle> m_splashFoam;
+    std::vector<Particle> m_splashMist;
     std::mt19937        m_rng{0x9E3779B9u};
     size_t              m_totalParticles = 0;
 
     // Texture resources: 1x1 white fallback used when an emitter has no
     // texture, plus the sampler/parameter uniforms shared by the shader.
     bgfx::TextureHandle m_whiteTex     = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_splashDropletTex = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_splashFoamTex = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_splashMistTex = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_texUniform   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle m_paramsUniform = BGFX_INVALID_HANDLE;
 };
