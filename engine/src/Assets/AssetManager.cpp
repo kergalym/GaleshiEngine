@@ -3249,25 +3249,47 @@ std::shared_ptr<Mesh> AssetManager::CreateGrassMesh() {
     std::vector<Vertex> verts;
     std::vector<uint32_t> indices;
 
-    auto addBlade = [&](const glm::vec3& right, const glm::vec3& normal) {
-        const uint32_t base = static_cast<uint32_t>(verts.size());
-        const glm::vec3 center(0.0f);
-        const float width = 0.16f;
-        const float height = 0.85f;
-        const glm::vec3 p0 = center - right * width;
-        const glm::vec3 p1 = center + right * width;
-        const glm::vec3 p2 = center + right * width * 0.45f + glm::vec3(0.0f, height, 0.0f);
-        const glm::vec3 p3 = center - right * width * 0.45f + glm::vec3(0.0f, height, 0.0f);
-        verts.push_back(VegetationVertex(p0, normal, right, {0.0f, 0.0f}));
-        verts.push_back(VegetationVertex(p1, normal, right, {1.0f, 0.0f}));
-        verts.push_back(VegetationVertex(p2, normal, right, {1.0f, 1.0f}));
-        verts.push_back(VegetationVertex(p3, normal, right, {0.0f, 1.0f}));
-        indices.push_back(base + 0); indices.push_back(base + 1); indices.push_back(base + 2);
-        indices.push_back(base + 0); indices.push_back(base + 2); indices.push_back(base + 3);
+    // A grass instance is a small rosette of tapered, slightly bent cards.
+    // The old three wide vertical quads read as solid spikes at close range.
+    auto addBlade = [&](float yaw, float offsetX, float offsetZ,
+                        float height, float width, float bend) {
+        const float c = std::cos(yaw);
+        const float s = std::sin(yaw);
+        const glm::vec3 right(c, 0.0f, s);
+        const glm::vec3 leanDir(-s, 0.0f, c);
+        const glm::vec3 normal = glm::normalize(
+            glm::vec3(0.0f, 0.85f, 0.0f) + leanDir * 0.25f);
+        const glm::vec3 base(offsetX, 0.0f, offsetZ);
+        const glm::vec3 mid = base + leanDir * (bend * 0.45f) +
+                              glm::vec3(0.0f, height * 0.55f, 0.0f);
+        const glm::vec3 tip = base + leanDir * bend +
+                              glm::vec3(0.0f, height, 0.0f);
+        const float midWidth = width * 0.62f;
+        const uint32_t first = static_cast<uint32_t>(verts.size());
+        verts.push_back(VegetationVertex(base - right * width, normal, right,
+                                         {0.0f, 0.0f}));
+        verts.push_back(VegetationVertex(base + right * width, normal, right,
+                                         {1.0f, 0.0f}));
+        verts.push_back(VegetationVertex(mid - right * midWidth, normal, right,
+                                         {0.0f, 0.55f}));
+        verts.push_back(VegetationVertex(mid + right * midWidth, normal, right,
+                                         {1.0f, 0.55f}));
+        verts.push_back(VegetationVertex(tip, normal, right, {0.5f, 1.0f}));
+        indices.push_back(first + 0); indices.push_back(first + 1); indices.push_back(first + 3);
+        indices.push_back(first + 0); indices.push_back(first + 3); indices.push_back(first + 2);
+        indices.push_back(first + 2); indices.push_back(first + 3); indices.push_back(first + 4);
     };
-    addBlade(glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.35f, 1.0f));
-    addBlade(glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(1.0f, 0.35f, 0.0f));
-    addBlade(glm::normalize(glm::vec3(1.0f, 0.0f, 1.0f)), glm::vec3(0.0f, 1.0f, 0.0f));
+    constexpr float goldenAngle = 2.39996323f;
+    for (int i = 0; i < 7; ++i) {
+        const float t = static_cast<float>(i) / 7.0f;
+        const float yaw = goldenAngle * static_cast<float>(i);
+        const float radius = 0.025f + 0.055f * t;
+        const float height = 0.42f + 0.20f * (1.0f - t);
+        const float width = 0.028f + 0.012f * t;
+        const float bend = 0.025f + 0.055f * t;
+        addBlade(yaw, std::cos(yaw) * radius, std::sin(yaw) * radius,
+                 height, width, bend);
+    }
 
     m_grassMesh = std::make_shared<Mesh>();
     m_grassMesh->Upload(verts, indices);

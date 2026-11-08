@@ -2,6 +2,40 @@
 
 namespace {
 
+struct DirectionalLightSelection {
+    entt::entity primary = entt::null;
+    entt::entity secondary = entt::null;
+};
+
+// A scene can author a sun plus a weaker fill. The renderer used to take the
+// first registry entry, which made the fill cast the only shadow and left the
+// sun ignored. Pick the brightest light as the primary and keep the next one
+// as an unshadowed fill.
+DirectionalLightSelection SelectDirectionalLights(Galeshi::Scene& scene) {
+    auto view = scene.Registry()
+        .view<Galeshi::DirectionalLightComponent>();
+    DirectionalLightSelection result;
+    float bestScore = -1.0f;
+    float secondScore = -1.0f;
+    for (auto e : view) {
+        const auto& dl = view.get<Galeshi::DirectionalLightComponent>(e);
+        const float luminance =
+            0.2126f * dl.color.r + 0.7152f * dl.color.g +
+            0.0722f * dl.color.b;
+        const float score = std::max(dl.intensity, 0.0f) * luminance;
+        if (score > bestScore) {
+            result.secondary = result.primary;
+            secondScore = bestScore;
+            result.primary = e;
+            bestScore = score;
+        } else if (score > secondScore) {
+            result.secondary = e;
+            secondScore = score;
+        }
+    }
+    return result;
+}
+
 bool RayTriangleIntersect(const glm::vec3& origin, const glm::vec3& direction,
                           const glm::vec3& a, const glm::vec3& b,
                           const glm::vec3& c, float& outT) {
@@ -441,15 +475,16 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
 
             const auto pssmStart = ProfileClock::now();
             // --- PSSM SHADOW PASS ---
-            auto lview = m_scene.Registry().view<Galeshi::DirectionalLightComponent>();
+            const DirectionalLightSelection dirLights =
+                SelectDirectionalLights(m_scene);
             glm::mat4 lightMtx0, lightMtx1, lightMtx2;
             float cascadeSplits[4] = {15.0f, 40.0f, 100.0f, 0.0f}; // Fallback
             float cascadeNormalOffsets[4] = {0.0f, 0.0f, 0.0f, 0.0f};
             float cascadeDepthBias[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
-            if (!lview.empty()) {
-                auto lh = *lview.begin();
-                auto& dl = lview.get<Galeshi::DirectionalLightComponent>(lh);
+            if (dirLights.primary != entt::null) {
+                auto& dl = m_scene.Registry()
+                    .get<Galeshi::DirectionalLightComponent>(dirLights.primary);
                 glm::vec3 lightDir = glm::normalize(dl.direction);
 
                 // 1. Calculate Cascade Splits (Practical Split Scheme).
@@ -712,12 +747,21 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
             if (m_render->DeferredEnabled()) {
                 glm::vec3 ldir{-0.4f,-0.8f,-0.5f}, lcol{1.0f};
                 float lint = 1.2f;
-                auto lview = m_scene.Registry().view<Galeshi::DirectionalLightComponent>();
-                if (!lview.empty()) {
-                    auto h = *lview.begin();
-                    ldir = lview.get<Galeshi::DirectionalLightComponent>(h).direction;
-                    lcol = lview.get<Galeshi::DirectionalLightComponent>(h).color;
-                    lint = lview.get<Galeshi::DirectionalLightComponent>(h).intensity;
+                glm::vec3 ldir2{0.0f,-1.0f,0.0f}, lcol2{0.0f};
+                float lint2 = 0.0f;
+                if (dirLights.primary != entt::null) {
+                    const auto& dl = m_scene.Registry()
+                        .get<Galeshi::DirectionalLightComponent>(dirLights.primary);
+                    ldir = dl.direction;
+                    lcol = dl.color;
+                    lint = dl.intensity;
+                }
+                if (dirLights.secondary != entt::null) {
+                    const auto& dl = m_scene.Registry()
+                        .get<Galeshi::DirectionalLightComponent>(dirLights.secondary);
+                    ldir2 = dl.direction;
+                    lcol2 = dl.color;
+                    lint2 = dl.intensity;
                 }
                 waterSunDir[0] = -ldir.x;
                 waterSunDir[1] = -ldir.y;
@@ -731,6 +775,8 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                 float camPos[4] = {cp.x, cp.y, cp.z, 1.0f};
                 float lDirA[4]  = {ldir.x, ldir.y, ldir.z, 0.0f};
                 float lColA[4]  = {lcol.r, lcol.g, lcol.b, lint};
+                float lDirB[4]  = {ldir2.x, ldir2.y, ldir2.z, 0.0f};
+                float lColB[4]  = {lcol2.r, lcol2.g, lcol2.b, lint2};
 
                 // Rebuild the sky IBL when the sun direction changes. Views
                 // 190/200+ are sorted after the lighting pass, so the current
@@ -766,6 +812,7 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                 float slPos[4][4] = {};
                 float slDir[4][4] = {};
                 float slCol[4][4] = {};
+                float slCone[4][4] = {};
                 int slCount = 0;
                 auto slview = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::SpotLightComponent>();
                 for (auto h : slview) {
@@ -780,7 +827,11 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     slDir[slCount][0] = dir.x;
                     slDir[slCount][1] = dir.y;
                     slDir[slCount][2] = dir.z;
-                    slDir[slCount][3] = cos(glm::radians(sl.innerConeAngle));
+                    float cosInner = cos(glm::radians(sl.innerConeAngle));
+                    float cosOuter = cos(glm::radians(sl.outerConeAngle));
+                    slDir[slCount][3] = cosInner;
+                    slCone[slCount][0] = cosOuter;
+                    slCone[slCount][1] = 1.0f / std::max(cosInner - cosOuter, 1e-4f);
                     slCol[slCount][0] = sl.color.r;
                     slCol[slCount][1] = sl.color.g;
                     slCol[slCount][2] = sl.color.b;
@@ -865,10 +916,10 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     invViewProj,
                     cascadeSplits,
                     cascadeNormalOffsets, cascadeDepthBias, pssmParams,
-                    camPos, lDirA, lColA,
+                    camPos, lDirA, lColA, lDirB, lColB,
                     fogColorDensity, fogParams, fogParams2,
                     plPosA, plColA, plCount,
-                    slPos, slDir, slCol, slCount,
+                    slPos, slDir, slCol, slCone, slCount,
                     20, renderW, renderH);
 
                 // Particles are drawn after lighting into the HDR output

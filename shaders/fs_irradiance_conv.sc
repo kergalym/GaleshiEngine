@@ -56,6 +56,11 @@ void main()
         }
     }
 
-    irradiance = (irradiance / sampleCount) * PI;
+    // UE4 bakes the 1/PI of Diffuse_Lambert into its SH irradiance
+    // coefficients (see SetupSkyIrradianceEnvironmentMapConstantsFromSkyIrradiance),
+    // so the lookup stores cosine-weighted average radiance, not the raw
+    // irradiance integral. Keeping the same convention makes
+    // "albedo * irradiance" the correct Lambert diffuse response.
+    irradiance = irradiance / sampleCount;
     gl_FragColor = vec4(irradiance, 1.0);
 }

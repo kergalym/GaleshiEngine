@@ -40,31 +40,26 @@ uniform vec4 u_landscapeParams;
 
 #define PI 3.14159265359
 
-float ggxNdf(vec3 normal, vec3 halfDir, float roughness)
+// UE4 BRDF.ush: GGX / Trowbridge-Reitz with a2 = Pow4(Roughness).
+float D_GGX(float a2, float NoH)
 {
-    float alpha = roughness * roughness;
-    float alphaSq = alpha * alpha;
-    float ndh = max(dot(normal, halfDir), 0.0);
-    float denom = ndh * ndh * (alphaSq - 1.0) + 1.0;
-    return alphaSq / (PI * max(denom * denom, 0.000001));
+    float d = (NoH * a2 - NoH) * NoH + 1.0;
+    return a2 / max(PI * d * d, 0.000001);
 }
 
-float smithG1(float ndv, float roughness)
+// UE4 BRDF.ush: height-correlated joint Smith approximation.
+float Vis_SmithJointApprox(float a2, float NoV, float NoL)
 {
-    float k = (roughness + 1.0) * (roughness + 1.0) * 0.125;
-    return ndv / max(ndv + k * (1.0 - ndv), 0.000001);
+    float a = sqrt(a2);
+    float Vis_SmithV = NoL * (NoV * (1.0 - a) + a);
+    float Vis_SmithL = NoV * (NoL * (1.0 - a) + a);
+    return 0.5 / max(Vis_SmithV + Vis_SmithL, 0.000001);
 }
 
-float smithG2(vec3 normal, vec3 viewDir, vec3 lightDir, float roughness)
+vec3 F_Schlick(vec3 F0, float VoH)
 {
-    float ndv = max(dot(normal, viewDir), 0.0);
-    float ndl = max(dot(normal, lightDir), 0.0);
-    return smithG1(ndv, roughness) * smithG1(ndl, roughness);
-}
-
-vec3 fresnelTerm(float vdh, vec3 f0)
-{
-    return mix(f0, vec3_splat(1.0), pow(clamp(1.0 - vdh, 0.0, 1.0), 5.0));
+    float Fc = pow(1.0 - VoH, 5.0);
+    return saturate(50.0 * F0.g) * Fc + (1.0 - Fc) * F0;
 }
 
 void main()
@@ -151,35 +146,33 @@ void main()
 
     vec3 F0 = mix(vec3_splat(0.04 * specular), albedo, metallic);
 
-    float specDistribution = ggxNdf(N, H, rough);
-    float specGeometry = smithG2(N, V, L, rough);
-    vec3 specFresnel = fresnelTerm(max(dot(H, V), 0.0), F0);
+    float a2 = rough * rough;
+    a2 *= a2;
+    float NoV = saturate(abs(dot(N, V)) + 0.00001);
+    float NoL = saturate(dot(N, L));
+    vec3 specularDirect = D_GGX(a2, saturate(dot(N, H))) *
+        Vis_SmithJointApprox(a2, NoV, NoL) *
+        F_Schlick(F0, saturate(dot(H, V)));
 
-    vec3 numerator = specDistribution * specGeometry * specFresnel;
-    float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
-    vec3 specularDirect = numerator / denominator;
-
-    vec3 kS = specFresnel;
-    vec3 kD = (vec3_splat(1.0) - kS) * (1.0 - metallic);
-
-    float NdL = max(dot(N, L), 0.0);
     vec3 radiance = u_lightColorIntensity.rgb * u_lightColorIntensity.a;
-
-    vec3 direct = (kD * albedo / PI + specularDirect) * radiance * NdL;
+    vec3 direct = (albedo * (1.0 - metallic) / PI + specularDirect) * radiance * NoL;
 
     // Simple IBL (safe)
     vec2 envUV = N.xy * 0.5 + 0.5;
     vec3 irradiance = texture2D(s_irradianceMap, envUV).rgb;
-    vec3 diffuseIBL = irradiance * albedo;
+    vec3 diffuseIBL = irradiance * albedo * (1.0 - metallic);
 
     vec3 R = reflect(-V, N);
     vec2 specUV = R.xy * 0.5 + 0.5;
     vec3 prefilteredColor = texture2D(s_envMap, specUV).rgb;
-    float NdotV = max(dot(N, V), 0.0);
+    float NdotV = saturate(abs(dot(N, V)) + 0.00001);
     vec2 brdf = texture2D(s_brdfLUT, vec2(NdotV, rough)).xy;
-    vec3 specularIBL = prefilteredColor * (F0 * brdf.x + brdf.y);
+    vec3 specularIBL = prefilteredColor *
+        (F0 * brdf.x + saturate(50.0 * F0.g) * brdf.y);
+    float specularOcclusion = saturate(
+        pow(NdotV + occlusion, rough * rough) - 1.0 + occlusion);
 
-    vec3 ambient = (diffuseIBL * (1.0 - metallic) + specularIBL + albedo * 0.05) * occlusion;
+    vec3 ambient = diffuseIBL * occlusion + specularIBL * specularOcclusion;
 
     vec3 color = ambient + direct + emissive;
 

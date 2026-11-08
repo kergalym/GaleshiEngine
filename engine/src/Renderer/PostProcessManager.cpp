@@ -114,6 +114,8 @@ void PostProcessManager::Init() {
             u_pssmParams = bgfx::createUniform("u_pssmParams", bgfx::UniformType::Vec4);
             u_lightDir    = bgfx::createUniform("u_lightDirection",     bgfx::UniformType::Vec4);
             u_lightCol    = bgfx::createUniform("u_lightColorIntensity",bgfx::UniformType::Vec4);
+            u_lightDir2   = bgfx::createUniform("u_lightDirection2",    bgfx::UniformType::Vec4);
+            u_lightCol2   = bgfx::createUniform("u_lightColorIntensity2",bgfx::UniformType::Vec4);
             u_fogColorDensity = bgfx::createUniform("u_fogColorDensity", bgfx::UniformType::Vec4);
             u_fogParams   = bgfx::createUniform("u_fogParams", bgfx::UniformType::Vec4);
             u_fogParams2  = bgfx::createUniform("u_fogParams2", bgfx::UniformType::Vec4);
@@ -135,6 +137,7 @@ void PostProcessManager::Init() {
             u_slPos       = bgfx::createUniform("u_spotLightPosRadius",  bgfx::UniformType::Vec4, 4);
             u_slDir       = bgfx::createUniform("u_spotLightDirInner",   bgfx::UniformType::Vec4, 4);
             u_slCol       = bgfx::createUniform("u_spotLightColorOuter", bgfx::UniformType::Vec4, 4);
+            u_spotLightCone = bgfx::createUniform("u_spotLightCone",     bgfx::UniformType::Vec4, 4);
             u_slCnt       = bgfx::createUniform("u_spotLightCount",      bgfx::UniformType::Vec4);
             
             s_spotShadowMap0 = bgfx::createUniform("s_spotShadowMap0", bgfx::UniformType::Sampler);
@@ -591,11 +594,12 @@ void PostProcessManager::Shutdown() {
     destroyUni(u_camPos); destroyUni(u_cascadeSplits); destroyUni(u_cascadeNormalOffsets);
     destroyUni(u_cascadeDepthBias); destroyUni(u_pssmParams);
     destroyUni(u_lightDir); destroyUni(u_lightCol);
+    destroyUni(u_lightDir2); destroyUni(u_lightCol2);
     destroyUni(u_fogColorDensity); destroyUni(u_fogParams); destroyUni(u_fogParams2);
     destroyUni(s_albedoMr); destroyUni(s_normalRough); destroyUni(s_worldPos); destroyUni(s_materialTex); destroyUni(s_materialFeatures);
     destroyUni(s_shadowMap0); destroyUni(s_shadowMap1); destroyUni(s_shadowMap2); destroyUni(u_lightVP0); destroyUni(u_lightVP1); destroyUni(u_lightVP2); 
     destroyUni(u_plPos); destroyUni(u_plCol); destroyUni(u_plCnt);
-    destroyUni(u_slPos); destroyUni(u_slDir); destroyUni(u_slCol); destroyUni(u_slCnt); if (bgfx::isValid(m_pointShadowFbos[0])) {
+    destroyUni(u_slPos); destroyUni(u_slDir); destroyUni(u_slCol); destroyUni(u_spotLightCone); destroyUni(u_slCnt); if (bgfx::isValid(m_pointShadowFbos[0])) {
         for(int i=0; i<6; ++i) { bgfx::destroy(m_pointShadowFbos[i]); }
     }
     for(int i=0; i<4; ++i) { 
@@ -837,10 +841,11 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     const float cascadeDepthBias[4],
     const float pssmParams[4],
     const float camPos[4], const float lightDir[4], const float lightColorIntensity[4],
+    const float lightDir2[4], const float lightColorIntensity2[4],
     const float fogColorDensity[4], const float fogParams[4],
     const float fogParams2[4],
     const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
-    const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], int spotLightCount,
+    const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], const float spotLightCone[][4], int spotLightCount,
     bgfx::ViewId viewId, uint16_t width, uint16_t height)
 {
     if (!bgfx::isValid(m_lightingProg) || width == 0 || height == 0) {
@@ -866,6 +871,8 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::setUniform(u_pssmParams, pssmParams);
     bgfx::setUniform(u_lightDir, lightDir);
     bgfx::setUniform(u_lightCol, lightColorIntensity);
+    bgfx::setUniform(u_lightDir2, lightDir2);
+    bgfx::setUniform(u_lightCol2, lightColorIntensity2);
     bgfx::setUniform(u_fogColorDensity, fogColorDensity);
     bgfx::setUniform(u_fogParams, fogParams);
     bgfx::setUniform(u_fogParams2, fogParams2);
@@ -931,6 +938,7 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
         bgfx::setUniform(u_slPos, spotLightPosRadius, 4);
         bgfx::setUniform(u_slDir, spotLightDirInner, 4);
         bgfx::setUniform(u_slCol, spotLightColorOuter, 4);
+        bgfx::setUniform(u_spotLightCone, spotLightCone, 4);
     }
     float slArr[4] = { float(spotLightCount), 0, 0, 0 };
     bgfx::setUniform(u_slCnt, slArr);

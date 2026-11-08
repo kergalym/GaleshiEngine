@@ -38,17 +38,14 @@ vec3 ggxMicroNormal(vec2 uvPair, vec3 normal, float roughness)
     return normalize(tangent * local.x + bitangent * local.y + normal * local.z);
 }
 
-float smithOne(float ndv, float roughness)
+// UE4 BRDF.ush: height-correlated joint Smith approximation. The
+// split-sum LUT must use the same visibility term as direct lighting.
+float Vis_SmithJointApprox(float a2, float NoV, float NoL)
 {
-    float k = 0.5 * roughness * roughness * roughness * roughness;
-    return ndv / max(ndv + k * (1.0 - ndv), 0.000001);
-}
-
-float smithBoth(vec3 normal, vec3 viewDir, vec3 lightDir, float roughness)
-{
-    float ndv = max(dot(normal, viewDir), 0.0);
-    float ndl = max(dot(normal, lightDir), 0.0);
-    return smithOne(ndv, roughness) * smithOne(ndl, roughness);
+    float a = sqrt(a2);
+    float Vis_SmithV = NoL * (NoV * (1.0 - a) + a);
+    float Vis_SmithL = NoV * (NoL * (1.0 - a) + a);
+    return 0.5 / max(Vis_SmithV + Vis_SmithL, 0.000001);
 }
 
 vec2 integrateBrdf(float ndv, float roughness)
@@ -68,8 +65,11 @@ vec2 integrateBrdf(float ndv, float roughness)
 
         float ndh = max(microNormal.z, 0.000001);
         float vdh = max(dot(viewDir, microNormal), 0.0);
-        float g = smithBoth(normal, viewDir, lightDir, roughness);
-        float visibility = (g * vdh) / (ndh * ndv);
+        float a2 = roughness * roughness;
+        a2 *= a2;
+        float vis = Vis_SmithJointApprox(a2, ndv, ndl);
+        // G_Vis = G * VoH / (NoH * NoV), with G = 4 * NoV * NoL * Vis.
+        float visibility = 4.0 * ndl * vdh * vis / ndh;
         float fresnel = pow(1.0 - vdh, 5.0);
         sumA += (1.0 - fresnel) * visibility;
         sumB += fresnel * visibility;

@@ -27,6 +27,8 @@ uniform vec4 u_cascadeDepthBias;     // xyz = NDC depth bias per cascade
 uniform vec4 u_pssmParams;           // x=slope bias, y=PCF radius, z=normal slope, w=Y flip
 uniform vec4 u_lightDirection;
 uniform vec4 u_lightColorIntensity;
+uniform vec4 u_lightDirection2;
+uniform vec4 u_lightColorIntensity2;
 uniform vec4 u_fogColorDensity; // rgb = fog color, w = density
 uniform vec4 u_fogParams;      // x = height falloff, y = base height, z = start distance, w = max distance
 uniform vec4 u_fogParams2;     // x = sun scattering, y = anisotropy, z = volumetric, w = steps
@@ -48,6 +50,8 @@ BUFFER_RO(s_tileLights, uint, 15);
 uniform vec4 u_spotLightPosRadius[4];
 uniform vec4 u_spotLightDirInner[4];
 uniform vec4 u_spotLightColorOuter[4];
+// x = cos(outer cone), y = 1 / (cos(inner cone) - cos(outer cone)).
+uniform vec4 u_spotLightCone[4];
 uniform vec4 u_spotLightCount;
 uniform mat4 u_spotLightVP0;
 uniform mat4 u_spotLightVP1;
@@ -68,41 +72,51 @@ vec2 getPoissonDisk(int i) {
 
 
 
-float D_GGX(float NdotH, float roughness) {
-    float a = roughness * roughness;
-    float a2 = a * a;
-    float d = NdotH * NdotH * (a2 - 1.0) + 1.0;
+// UE4 BRDF.ush: GGX / Trowbridge-Reitz with a2 = Pow4(Roughness).
+float D_GGX(float a2, float NdotH) {
+    float d = (NdotH * a2 - NdotH) * NdotH + 1.0;
     return a2 / max(PI * d * d, 0.000001);
 }
-float G_Smith(float NdotV, float NdotL, float roughness) {
-    float r = roughness + 1.0; float k = (r * r) / 8.0;
-    return (NdotV / max(NdotV * (1.0 - k) + k, 0.000001)) * (NdotL / max(NdotL * (1.0 - k) + k, 0.000001));
-}
-vec3 F_Schlick(float VdotH, vec3 F0) {
-    return F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
+
+// UE4 BRDF.ush: height-correlated joint Smith approximation.
+float Vis_SmithJointApprox(float a2, float NdotV, float NdotL) {
+    float a = sqrt(a2);
+    float Vis_SmithV = NdotL * (NdotV * (1.0 - a) + a);
+    float Vis_SmithL = NdotV * (NdotL * (1.0 - a) + a);
+    return 0.5 / max(Vis_SmithV + Vis_SmithL, 0.000001);
 }
 
-vec3 fresnelRough(float ndv, vec3 f0, float roughness) {
-    vec3 ceiling = max(vec3(1.0 - roughness), f0);
-    float weight = pow(clamp(1.0 - ndv, 0.0, 1.0), 5.0);
-    return mix(f0, ceiling, weight);
+// UE4 BRDF.ush: F90 is derived from F0 so dielectrics keep the physically
+// plausible 2% reflectance floor at grazing angles.
+vec3 F_Schlick(vec3 F0, float VdotH) {
+    float Fc = pow(1.0 - VdotH, 5.0);
+    return saturate(50.0 * F0.g) * Fc + (1.0 - Fc) * F0;
 }
 
 vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, float specularStrength, vec3 L, vec3 radiance) {
     vec3 H = normalize(L + V);
-    float NdotL = max(dot(N, L), 0.0);
-    float NdotV = max(dot(N, V), 0.000001);
-    float NdotH = max(dot(N, H), 0.0);
-    float VdotH = max(dot(V, H), 0.0);
+    float NdotL = saturate(dot(N, L));
+    float NdotV = saturate(abs(dot(N, V)) + 0.00001);
+    float NdotH = saturate(dot(N, H));
+    float VdotH = saturate(dot(V, H));
     if (NdotL <= 0.0) return vec3(0.0);
     vec3 F0 = mix(vec3(0.04 * specularStrength), albedo, metallic);
-    float D = D_GGX(NdotH, rough);
-    float G = G_Smith(NdotV, NdotL, rough);
-    vec3 F  = F_Schlick(VdotH, F0);
-    vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.000001);
-    vec3 kD = (1.0 - F) * (1.0 - metallic);
-    vec3 diffuse = kD * albedo / PI;
+    float a2 = rough * rough;
+    a2 *= a2;
+    float D = D_GGX(a2, NdotH);
+    float Vis = Vis_SmithJointApprox(a2, NdotV, NdotL);
+    vec3 F = F_Schlick(F0, VdotH);
+    // UE4 DefaultLitBxDF: Lambert diffuse is not multiplied by (1-F).
+    vec3 diffuse = albedo * (1.0 - metallic) / PI;
+    vec3 specular = D * Vis * F;
     return (diffuse + specular) * radiance * NdotL;
+}
+
+// UE4 DynamicLightingCommon.ush: squared saturate mask. L points from the
+// surface to the light, so -SpotDirection is the light's forward axis.
+float SpotAttenuation(float3 L, float3 SpotDirection, vec2 SpotAngles) {
+    float mask = saturate((dot(L, -SpotDirection) - SpotAngles.x) * SpotAngles.y);
+    return mask * mask;
 }
 
 float calculateShadow(vec4 lightSpacePos, float NdotL, int cascadeIdx) {
@@ -511,26 +525,28 @@ void main()
     // Only ambient/IBL light is modulated; direct light keeps using shadow maps.
     float ao = saturate(texture2D(s_aoTex, uv).r) * saturate(matData.a);
 
-    // Physically correct IBL (Split-Sum)
+    // Physically correct IBL (split-sum). fs_irradiance_conv stores
+    // cosine-weighted average radiance to match UE4's SH irradiance
+    // convention, so the Lambert 1/PI is already folded into the lookup.
     vec3 F0 = mix(vec3(0.04 * materialSpecular), albedo, metallic);
-    float NdotV = max(dot(N, V), 0.000001);
-    
-    vec3 F = fresnelRough(NdotV, F0, rough);
-    vec3 kS = F;
-    vec3 kD = vec3(1.0) - kS;
-    kD *= 1.0 - metallic;
+    float NdotV = saturate(abs(dot(N, V)) + 0.00001);
 
-    // Diffuse IBL
     vec3 irradiance = textureCube(s_irradianceCube, N).rgb;
-    vec3 diffuseIBL = irradiance * albedo;
-    
-    // Specular IBL
+    vec3 diffuseIBL = irradiance * albedo * (1.0 - metallic);
+
     vec3 R = reflect(-V, N);
     vec3 prefilteredColor = textureCubeLod(s_prefilteredCube, R, rough * 4.0).rgb;
     vec2 brdf = envBrdfApprox(NdotV, rough);
-    vec3 specularIBL = prefilteredColor * (F * brdf.x + brdf.y);
-    
-    vec3 finalColor = (kD * diffuseIBL + specularIBL) * ao + (albedo * 0.05) * ao;
+    // UE4 EnvBRDF: the second split-sum term uses F90, not a constant 1.
+    vec3 specularIBL = prefilteredColor *
+        (F0 * brdf.x + saturate(50.0 * F0.g) * brdf.y);
+
+    // UE4 GetSpecularOcclusion: reflections are less occluded than diffuse
+    // as roughness and NdotV increase.
+    float specularOcclusion = saturate(
+        pow(NdotV + ao, rough * rough) - 1.0 + ao);
+
+    vec3 finalColor = diffuseIBL * ao + specularIBL * specularOcclusion;
 
     vec3 L_dir = normalize(-u_lightDirection.xyz);
     vec3 radiance_dir = u_lightColorIntensity.rgb * u_lightColorIntensity.a;
@@ -578,6 +594,16 @@ void main()
                       radiance_dir * sssVisibility * (1.0 - metallic) * 0.65;
     }
 
+    // Secondary directional fill. The primary light owns the PSSM
+    // cascades, so the fill stays unshadowed.
+    if (u_lightColorIntensity2.a > 0.0) {
+        vec3 L_fill = normalize(-u_lightDirection2.xyz);
+        vec3 radiance_fill =
+            u_lightColorIntensity2.rgb * u_lightColorIntensity2.a;
+        finalColor += calcLight(N, V, albedo, metallic, rough,
+                                materialSpecular, L_fill, radiance_fill);
+    }
+
     // 3. Point Lights (Tiled)
     uvec2 pixel = uvec2(gl_FragCoord.xy);
     uvec2 tile = pixel / 16u;
@@ -621,12 +647,9 @@ void main()
         if (dist <= radius) {
             vec3 L = toLight / dist;
             vec3 spotDir = normalize(u_spotLightDirInner[0].xyz);
-            float cos_inner = u_spotLightDirInner[0].w;
             float intensity = u_spotLightColorOuter[0].w;
             vec3 lightColor = u_spotLightColorOuter[0].rgb;
-            float spotEffect = dot(normalize(lightPos - wPos.xyz), spotDir);
-            float outerCone = cos(radians(90.0));
-            float spotFactor = smoothstep(outerCone, cos_inner, spotEffect);
+            float spotFactor = SpotAttenuation(L, spotDir, u_spotLightCone[0].xy);
             if (spotFactor > 0.0) {
                 float atten = 1.0 / (dist * dist + 1.0);
                 float window = saturate(1.0 - pow(dist / radius, 4.0));
@@ -655,12 +678,9 @@ void main()
         if (dist <= radius) {
             vec3 L = toLight / dist;
             vec3 spotDir = normalize(u_spotLightDirInner[1].xyz);
-            float cos_inner = u_spotLightDirInner[1].w;
             float intensity = u_spotLightColorOuter[1].w;
             vec3 lightColor = u_spotLightColorOuter[1].rgb;
-            float spotEffect = dot(normalize(lightPos - wPos.xyz), spotDir);
-            float outerCone = cos(radians(90.0));
-            float spotFactor = smoothstep(outerCone, cos_inner, spotEffect);
+            float spotFactor = SpotAttenuation(L, spotDir, u_spotLightCone[1].xy);
             if (spotFactor > 0.0) {
                 float atten = 1.0 / (dist * dist + 1.0);
                 float window = saturate(1.0 - pow(dist / radius, 4.0));
@@ -689,12 +709,9 @@ void main()
         if (dist <= radius) {
             vec3 L = toLight / dist;
             vec3 spotDir = normalize(u_spotLightDirInner[2].xyz);
-            float cos_inner = u_spotLightDirInner[2].w;
             float intensity = u_spotLightColorOuter[2].w;
             vec3 lightColor = u_spotLightColorOuter[2].rgb;
-            float spotEffect = dot(normalize(lightPos - wPos.xyz), spotDir);
-            float outerCone = cos(radians(90.0));
-            float spotFactor = smoothstep(outerCone, cos_inner, spotEffect);
+            float spotFactor = SpotAttenuation(L, spotDir, u_spotLightCone[2].xy);
             if (spotFactor > 0.0) {
                 float atten = 1.0 / (dist * dist + 1.0);
                 float window = saturate(1.0 - pow(dist / radius, 4.0));
@@ -723,12 +740,9 @@ void main()
         if (dist <= radius) {
             vec3 L = toLight / dist;
             vec3 spotDir = normalize(u_spotLightDirInner[3].xyz);
-            float cos_inner = u_spotLightDirInner[3].w;
             float intensity = u_spotLightColorOuter[3].w;
             vec3 lightColor = u_spotLightColorOuter[3].rgb;
-            float spotEffect = dot(normalize(lightPos - wPos.xyz), spotDir);
-            float outerCone = cos(radians(90.0));
-            float spotFactor = smoothstep(outerCone, cos_inner, spotEffect);
+            float spotFactor = SpotAttenuation(L, spotDir, u_spotLightCone[3].xy);
             if (spotFactor > 0.0) {
                 float atten = 1.0 / (dist * dist + 1.0);
                 float window = saturate(1.0 - pow(dist / radius, 4.0));

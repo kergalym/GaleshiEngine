@@ -14,10 +14,12 @@
 #include <spdlog/spdlog.h>
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <functional>
 #include <limits>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -58,6 +60,61 @@ namespace {
             }
         }
         return nullptr;
+    }
+
+    // Imported tree packs split trunk and canopy into material slots. The
+    // scene's single tree override is authored for bark and must not replace
+    // the leaf materials, otherwise foliage renders with a bark texture and
+    // loses its alpha cutouts.
+    bool IsFoliageMaterial(const std::shared_ptr<Material>& material) {
+        if (!material) return false;
+        std::string name;
+        name.reserve(material->name.size());
+        for (char c : material->name) {
+            name.push_back(static_cast<char>(
+                std::tolower(static_cast<unsigned char>(c))));
+        }
+        return name.find("leaf") != std::string::npos ||
+               name.find("leaves") != std::string::npos ||
+               name.find("foliage") != std::string::npos ||
+               name.find("needle") != std::string::npos ||
+               name.find("canopy") != std::string::npos;
+    }
+
+    // Leaf cards need alpha testing and two-sided shading regardless of how
+    // the imported material was flagged. Materials without a usable albedo
+    // fall back to another textured leaf slot, or to the vegetation canopy
+    // tint when the tree pack has no leaf texture at all.
+    std::shared_ptr<Material> MakeFoliageMaterial(
+        const std::shared_ptr<Material>& source,
+        const std::shared_ptr<Material>& fallback,
+        const glm::vec4& canopyTint) {
+        const std::shared_ptr<Material> base =
+            (source && source->albedoMap) ? source : fallback;
+        auto material = base
+            ? std::make_shared<Material>(*base)
+            : std::make_shared<Material>();
+        if (!material->albedoMap) {
+            material->albedoFactor = canopyTint;
+            material->name = "Vegetation Foliage";
+        }
+        material->alphaTest = true;
+        material->alphaCutoff = 0.35f;
+        material->alphaBlend = false;
+        material->twoSided = true;
+        material->backfaceCulling = false;
+        // Leaves are rough dielectrics. The default armour response would
+        // mirror the bright sky at grazing angles and turn the canopy white.
+        material->metallicFactor = 0.0f;
+        material->specularFactor = 0.1f;
+        material->roughnessFactor = 1.0f;
+        // Cheap two-sided foliage transmission: the deferred SSS path uses
+        // the canopy tint as the back-scattered color.
+        material->subsurfaceEnabled = true;
+        material->subsurfaceColor = glm::vec3(canopyTint);
+        material->subsurfaceStrength = 0.35f;
+        material->subsurfaceRadius = 1.0f;
+        return material;
     }
 
     // Leaf sets only require the three user textures. Empty slots fall back
@@ -1019,7 +1076,6 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         // force the blend varying to zero.
         const bool isLandscape =
             scene.Registry().all_of<LandscapeComponent>(root);
-
         // The occlusion pass tests static entities before this pass. Results
         // are one frame old, which keeps the query readback off the GPU
         // critical path.
@@ -1259,13 +1315,21 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
         };
         auto loadTreeDraws = [&](const std::string& path,
                                  const std::shared_ptr<Material>& overrideMaterial,
-                                 const std::vector<VegetationLeafSet>* leafSets) {
+                                 const std::vector<VegetationLeafSet>* leafSets,
+                                 const glm::vec4& canopyTint) {
             std::vector<CustomTreeDraw> draws;
             if (path.empty()) return draws;
             auto treeModel = m_assets->LoadModel(path);
             draws.reserve(treeModel.meshes.size());
             const bool useOverride =
                 HasTreeTextureOverride(overrideMaterial);
+            std::shared_ptr<Material> leafFallback;
+            for (const auto& candidate : treeModel.materials) {
+                if (IsFoliageMaterial(candidate) && candidate->albedoMap) {
+                    leafFallback = candidate;
+                    break;
+                }
+            }
             for (size_t i = 0; i < treeModel.meshes.size(); ++i) {
                 if (!treeModel.meshes[i] || !treeModel.meshes[i]->Valid()) continue;
                 std::shared_ptr<Material> material;
@@ -1279,15 +1343,22 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
                 if (!material && !treeModel.materials.empty()) {
                     material = treeModel.materials.front();
                 }
+                const bool foliage = IsFoliageMaterial(material);
+                std::shared_ptr<Material> baseMaterial;
+                if (foliage) {
+                    baseMaterial = MakeFoliageMaterial(
+                        material, leafFallback, canopyTint);
+                } else {
+                    baseMaterial = useOverride ? overrideMaterial : material;
+                }
                 std::shared_ptr<Material> leafOverride;
                 if (leafSets) {
                     leafOverride = FindLeafOverride(*leafSets, i);
                 }
-                const std::shared_ptr<Material> baseMaterial =
-                    useOverride ? overrideMaterial : material;
                 if (leafOverride) {
-                    material = ComposeLeafOverride(leafOverride,
-                                                   baseMaterial);
+                    material = MakeFoliageMaterial(
+                        ComposeLeafOverride(leafOverride, baseMaterial),
+                        leafFallback, canopyTint);
                 } else {
                     material = baseMaterial;
                 }
@@ -1360,7 +1431,8 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
 
         const std::vector<CustomTreeDraw> legacyTreeDraws =
             vegetation.treeTypes.empty()
-                ? loadTreeDraws(vegetation.treeMeshPath, nullptr, nullptr)
+                ? loadTreeDraws(vegetation.treeMeshPath, nullptr, nullptr,
+                                vegetation.canopyColor)
                 : std::vector<CustomTreeDraw>{};
 
         if (vegetation.treeTypes.empty()) {
@@ -1373,14 +1445,16 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
             for (const auto& type : vegetation.treeTypes) {
                 drawTreeBatch(type.generatedInstances,
                               loadTreeDraws(type.meshPath, type.material,
-                                            &type.leafSets));
+                                            &type.leafSets,
+                                            vegetation.canopyColor));
             }
         }
         if (!vegetation.treeTypes.empty()) {
             for (const auto& type : vegetation.treeTypes) {
                 drawTreeBatch(type.paintedInstances,
                               loadTreeDraws(type.meshPath, type.material,
-                                            &type.leafSets));
+                                            &type.leafSets,
+                                            vegetation.canopyColor));
             }
         }
         drawTreeBatch(vegetation.paintedTreeInstances, legacyTreeDraws);

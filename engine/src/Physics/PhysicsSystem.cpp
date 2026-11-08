@@ -264,6 +264,7 @@ struct EnginePhysicsSystem::Impl {
     ContactListenerImpl contactListener;
     std::unordered_map<uint32_t, entt::entity> bodyToEntity;
     std::unordered_map<entt::entity, RagdollRuntime> ragdolls;
+    float accumulator = 0.0f;
     bool initialized = false;
 };
 
@@ -323,6 +324,7 @@ void EnginePhysicsSystem::Shutdown() {
     m_impl->tempAllocator.reset();
     m_impl->bodyToEntity.clear();
     m_impl->ragdolls.clear();
+    m_impl->accumulator = 0.0f;
     {
         std::lock_guard<std::mutex> lock(
             m_impl->contactListener.eventMutex);
@@ -342,9 +344,22 @@ void EnginePhysicsSystem::Reset() {
 
 void EnginePhysicsSystem::Update(Scene& scene, float dt) {
     if (!m_impl->initialized) return;
-    constexpr int kCollisionSteps = 1;
-    m_impl->physicsSystem->Update(dt, kCollisionSteps,
-        m_impl->tempAllocator.get(), m_impl->jobSystem.get());
+
+    // Fixed simulation step. The first frame after a scene load can carry a
+    // multi-second delta while assets are decoded; stepping that directly
+    // lets a falling body tunnel through the ground in one update. Clamp and
+    // substep instead, and drop the backlog if the frame is still too slow.
+    constexpr float kFixedStep = 1.0f / 60.0f;
+    constexpr int kMaxSteps = 4;
+    m_impl->accumulator += std::clamp(dt, 0.0f, 0.25f);
+    int steps = 0;
+    while (m_impl->accumulator >= kFixedStep && steps < kMaxSteps) {
+        m_impl->physicsSystem->Update(kFixedStep, 1,
+            m_impl->tempAllocator.get(), m_impl->jobSystem.get());
+        m_impl->accumulator -= kFixedStep;
+        ++steps;
+    }
+    if (steps == kMaxSteps) m_impl->accumulator = 0.0f;
     SyncRagdollsToECS(scene);
 
     // Jolt invokes contact callbacks from worker threads. Deliver queued

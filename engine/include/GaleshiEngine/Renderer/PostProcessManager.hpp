@@ -72,10 +72,11 @@ public:
                                        const float cascadeDepthBias[4],
                                        const float pssmParams[4],
                                        const float camPos[4], const float lightDir[4], const float lightColorIntensity[4],
+                                       const float lightDir2[4], const float lightColorIntensity2[4],
                                        const float fogColorDensity[4], const float fogParams[4],
                                        const float fogParams2[4],
                                        const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
-                                       const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], int spotLightCount,
+                                       const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], const float spotLightCone[][4], int spotLightCount,
                                        bgfx::ViewId viewId, uint16_t width, uint16_t height);
 
     void RenderAmbientOcclusion(bgfx::TextureHandle worldPos, bgfx::TextureHandle normal,
@@ -187,6 +188,7 @@ public:
     bgfx::UniformHandle u_spotLightVP1 = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_spotLightVP2 = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_spotLightVP3 = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_spotLightCone = BGFX_INVALID_HANDLE;
     glm::mat4 GetPrevViewProj() const { return m_prevViewProj; }
     bool HasPrevViewProj() const { return m_prevViewProjValid; }
     void SetPrevViewProj(const glm::mat4& m) { m_prevViewProj = m; m_prevViewProjValid = true; }
@@ -235,6 +237,8 @@ private:
     bgfx::UniformHandle u_camPos      = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lightDir    = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lightCol    = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lightDir2   = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lightCol2   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_fogColorDensity = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_fogParams   = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_fogParams2  = BGFX_INVALID_HANDLE;
