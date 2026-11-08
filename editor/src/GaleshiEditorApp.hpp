@@ -754,6 +754,11 @@ void DrawDetails();
     // body. Runs after scripts so jump/movement velocity is already applied.
     void UpdateWaterInteraction(float dt);
 
+    // Resolves the water-selected character bone for bubble emission.
+    bool BubbleOriginForWater(const Galeshi::WaterComponent& water,
+                              const glm::vec3& fallback,
+                              glm::vec3& origin);
+
     // State.
     Galeshi::Scene          m_scene;
     Galeshi::Camera         m_camera;
@@ -810,6 +815,9 @@ void DrawDetails();
     std::unique_ptr<Galeshi::FluidSimulation> m_fluid;
     float m_bubbleAccumulator = 0.0f;
     glm::vec3 m_fluidColor{0.55f, 0.80f, 0.95f};
+    std::unordered_map<entt::entity, float> m_bodyWaterSurfaceY;
+    std::unordered_map<entt::entity, entt::entity> m_bodyWaterEntity;
+    std::unordered_map<entt::entity, glm::vec2> m_bodyWaterUV;
     bgfx::TextureHandle m_shadowMaps[3] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
     bgfx::FrameBufferHandle m_shadowFbos[3] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
     bgfx::FrameBufferHandle m_pointShadowFbos[6] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };

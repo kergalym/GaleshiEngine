@@ -38,6 +38,9 @@
         m_history[m_historyIndex] = m_serializer->SaveToString();
         if (m_particles) m_particles->Reset();
         m_waterSubmerged.clear();
+        m_bodyWaterSurfaceY.clear();
+        m_bodyWaterEntity.clear();
+        m_bodyWaterUV.clear();
         ReleaseUnusedSceneAssets();
         m_isRestoringHistory = false;
     }
@@ -56,6 +59,9 @@
         m_history[m_historyIndex] = m_serializer->SaveToString();
         if (m_particles) m_particles->Reset();
         m_waterSubmerged.clear();
+        m_bodyWaterSurfaceY.clear();
+        m_bodyWaterEntity.clear();
+        m_bodyWaterUV.clear();
         ReleaseUnusedSceneAssets();
         m_isRestoringHistory = false;
     }
@@ -123,6 +129,9 @@
         if (m_physics) m_physics->Reset();
         if (m_particles) m_particles->Reset();
         m_waterSubmerged.clear();
+        m_bodyWaterSurfaceY.clear();
+        m_bodyWaterEntity.clear();
+        m_bodyWaterUV.clear();
 
         // The Play snapshot recreates every entity, invalidating the ASME
         // selection handle. Remember the character name so the editor can
@@ -169,6 +178,9 @@
             if (m_physics) m_physics->Reset();
             if (m_particles) m_particles->Reset();
         m_waterSubmerged.clear();
+        m_bodyWaterSurfaceY.clear();
+        m_bodyWaterEntity.clear();
+        m_bodyWaterUV.clear();
         }
         m_lastViewportTexture = BGFX_INVALID_HANDLE;
     }

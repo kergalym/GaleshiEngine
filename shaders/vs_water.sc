@@ -4,6 +4,8 @@ $output v_worldPos, v_normal, v_uv, v_clip, v_viewZ, v_wave
 
 uniform vec4 u_waterParams0; // x = time, y = height, z = scale, w = speed
 uniform vec4 u_waterFlow;    // xy = flow direction
+uniform vec4 u_waterRipples[8]; // xy=uv, z=age, w=strength
+uniform vec4 u_waterRippleCount;
 uniform vec4 u_cameraPosition;
 uniform vec4 u_cameraForward;
 
@@ -31,6 +33,32 @@ void main()
     float dhdz = amp * (0.55 * cos(p1) * flow.y * f1 +
                         0.30 * cos(p2) * side.y * f2 +
                         0.15 * cos(p3) * (flow.y + side.y) * f3 * 0.7071);
+
+    // Radial ring deformation from body impacts. This is the actual water
+    // plane displacement; fs_water adds the matching foam ring.
+    float rippleHeight = 0.0;
+    float rippleDx = 0.0;
+    float rippleDz = 0.0;
+    for (int i = 0; i < 8; ++i) {
+        if (float(i) >= u_waterRippleCount.x) break;
+        vec4 ripple = u_waterRipples[i];
+        vec2 delta = a_texcoord0 - ripple.xy;
+        float dist = length(delta);
+        float age = max(ripple.z, 0.0);
+        float radius = 0.006 + age * 0.085;
+        float band = exp(-pow((dist - radius) / 0.045, 2.0)) *
+                     exp(-age * 1.5) * ripple.w;
+        float phase = (dist - radius) * 70.0;
+        float ampR = band * 0.028;
+        rippleHeight += sin(phase) * ampR;
+        float slope = cos(phase) * 70.0 * ampR;
+        vec2 direction = delta / max(dist, 1e-4);
+        rippleDx += direction.x * slope;
+        rippleDz += direction.y * slope;
+    }
+    h += rippleHeight;
+    dhdx += rippleDx;
+    dhdz += rippleDz;
 
     world.y += h;
     v_worldPos = world;

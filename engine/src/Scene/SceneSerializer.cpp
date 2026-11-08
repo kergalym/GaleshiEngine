@@ -1411,6 +1411,8 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
                 {"underwaterTerrain", w.underwaterTerrain},
                 {"underwaterGrassCount", w.underwaterGrassCount},
                 {"underwaterGrassColor", Vec3ToJson(glm::vec3(w.underwaterGrassColor))},
+                {"bubbleCharacter", w.bubbleCharacter},
+                {"bubbleBone", w.bubbleBone},
                 {"shoreDetailSize", w.shoreDetailSize},
                 {"shoreDetailStrength", w.shoreDetailStrength},
                 {"shoreDetailOctave", w.shoreDetailOctave},
@@ -2515,6 +2517,10 @@ bool SceneSerializer::LoadFromJson(const json& root,
                 water.underwaterGrassColor = glm::vec4(
                     Vec3FromJson(jw.at("underwaterGrassColor")), 1.0f);
             }
+            water.bubbleCharacter = jw.value(
+                "bubbleCharacter", water.bubbleCharacter);
+            water.bubbleBone = jw.value(
+                "bubbleBone", water.bubbleBone);
             water.shoreDetailSize = std::clamp(
                 jw.value("shoreDetailSize", water.shoreDetailSize),
                 0.05f, 200.0f);

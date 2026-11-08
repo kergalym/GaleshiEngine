@@ -622,6 +622,11 @@ struct WaterComponent {
     int   underwaterGrassCount = 240;
     glm::vec4 underwaterGrassColor{0.08f, 0.32f, 0.20f, 1.0f};
 
+    // Character skeleton bone used as the bubble emitter when the player is
+    // underwater. Empty uses the player body center.
+    std::string bubbleCharacter;
+    std::string bubbleBone;
+
     // Carved shore material detail. Detail Size is the world-space size of
     // one macro texture tile; the octave adds a higher-frequency pass.
     float shoreDetailSize = 6.0f;

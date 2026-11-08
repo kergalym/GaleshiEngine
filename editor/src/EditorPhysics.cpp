@@ -1145,6 +1145,71 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
         }
     }
 
+    bool GaleshiEditorApp::BubbleOriginForWater(
+        const Galeshi::WaterComponent& water, const glm::vec3& fallback,
+        glm::vec3& origin) {
+        origin = fallback;
+        if (water.bubbleBone.empty() || !m_assets) return false;
+        auto& registry = m_scene.Registry();
+
+        entt::entity character = entt::null;
+        if (!water.bubbleCharacter.empty()) {
+            for (auto e : registry.view<Galeshi::NameComponent,
+                                        Galeshi::SkeletalComponent>()) {
+                if (registry.get<Galeshi::NameComponent>(e).name ==
+                    water.bubbleCharacter) {
+                    character = e;
+                    break;
+                }
+            }
+        }
+        if (character == entt::null) {
+            for (auto e : registry.view<Galeshi::SkeletalComponent>()) {
+                if (registry.all_of<Galeshi::PlayerTagComponent>(e)) {
+                    character = e;
+                    break;
+                }
+                const auto* name =
+                    registry.try_get<Galeshi::NameComponent>(e);
+                if (name && name->name == "Player") {
+                    character = e;
+                    break;
+                }
+            }
+        }
+        if (character == entt::null) {
+            auto view = registry.view<Galeshi::SkeletalComponent>();
+            if (!view.empty()) character = *view.begin();
+        }
+        if (character == entt::null) return false;
+
+        auto& skeleton =
+            registry.get<Galeshi::SkeletalComponent>(character);
+        if (skeleton.sourcePath.empty()) return false;
+        auto model = m_assets->LoadModel(skeleton.sourcePath);
+        const auto boneIt = model.boneMap.find(water.bubbleBone);
+        if (boneIt == model.boneMap.end()) return false;
+        const int boneIndex = boneIt->second;
+        if (boneIndex < 0 ||
+            static_cast<size_t>(boneIndex) >=
+                skeleton.boneMatrices.size()) {
+            return false;
+        }
+        const auto offsetIt =
+            model.boneOffsetMatrices.find(water.bubbleBone);
+        if (offsetIt == model.boneOffsetMatrices.end()) return false;
+
+        // The palette stores pose * inverseBind. Recover the bone's model
+        // transform and place it in world space.
+        const glm::mat4 bindWorld = glm::inverse(offsetIt->second);
+        const glm::mat4 boneWorld =
+            EntityWorldMatrix(character) *
+            skeleton.boneMatrices[static_cast<size_t>(boneIndex)] *
+            bindWorld;
+        origin = glm::vec3(boneWorld[3]);
+        return true;
+    }
+
     void GaleshiEditorApp::UpdateWaterInteraction(float dt) {
         if (!m_physics || !m_particles || dt <= 0.0f) return;
         auto& registry = m_scene.Registry();
@@ -1164,6 +1229,7 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
         }
 
         struct WaterVolume {
+            entt::entity entity = entt::null;
             Galeshi::WaterComponent* water = nullptr;
             glm::mat4 invModel{1.0f};
             float surfaceY = 0.0f;
@@ -1182,6 +1248,7 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
                                    glm::vec3(water.width, 1.0f,
                                              water.depth));
             WaterVolume volume;
+            volume.entity = e;
             volume.water = &water;
             volume.invModel = glm::inverse(model);
             volume.surfaceY = glm::vec3(world[3]).y;
@@ -1218,6 +1285,7 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
         bool playerUnderwater = false;
         glm::vec3 bubblePosition(0.0f);
         float bubbleSurfaceY = 0.0f;
+        const Galeshi::WaterComponent* bubbleWater = nullptr;
 
         for (auto e : registry.view<Galeshi::RigidBodyComponent,
                                     Galeshi::TransformComponent>()) {
@@ -1227,6 +1295,7 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
                     Galeshi::RigidBodyComponent::MotionType::Dynamic) {
                 continue;
             }
+            const bool wasSubmerged = m_waterSubmerged[e];
             const glm::mat4 world = EntityWorldMatrix(e);
             const glm::vec3 center(world[3]);
 
@@ -1272,10 +1341,15 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
 
                 if (isPlayerBody(e) && submerged > 0.55f) {
                     playerUnderwater = true;
+                    bubbleWater = volume.water;
                     bubblePosition = center +
                         glm::vec3(0.0f, halfHeight * 0.35f, 0.0f);
                     bubbleSurfaceY = volume.surfaceY;
                 }
+
+                m_bodyWaterSurfaceY[e] = volume.surfaceY;
+                m_bodyWaterEntity[e] = volume.entity;
+                m_bodyWaterUV[e] = uv;
 
                 const float mass = std::max(rb.mass, 0.01f);
                 // Buoyancy counteracts gravity for the submerged part. Drag
@@ -1343,6 +1417,67 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
                 break;
             }
             if (!inWater) {
+                if (wasSubmerged) {
+                    const glm::vec3 exitVelocity =
+                        m_physics->GetLinearVelocity(rb.bodyId);
+                    if (exitVelocity.y > 0.30f) {
+                        const auto surfaceIt =
+                            m_bodyWaterSurfaceY.find(e);
+                        const float surfaceY = surfaceIt !=
+                            m_bodyWaterSurfaceY.end()
+                                ? surfaceIt->second : center.y;
+                        const int count = std::clamp(
+                            70 + static_cast<int>(exitVelocity.y * 22.0f),
+                            70, 220);
+                        const glm::vec3 spawn(
+                            center.x, surfaceY + 0.02f, center.z);
+                        auto waterIt = m_bodyWaterEntity.find(e);
+                        Galeshi::WaterComponent* lastWater = nullptr;
+                        if (waterIt != m_bodyWaterEntity.end() &&
+                            registry.valid(waterIt->second)) {
+                            lastWater = registry.try_get<
+                                Galeshi::WaterComponent>(waterIt->second);
+                        }
+                        if (lastWater) {
+                            m_fluidColor = glm::mix(
+                                lastWater->foamColor,
+                                lastWater->shallowColor, 0.35f);
+                        }
+                        if (m_fluid) {
+                            m_fluid->SpawnSplash(
+                                spawn, exitVelocity,
+                                0.40f + exitVelocity.y * 0.08f,
+                                surfaceY, count);
+                        } else {
+                            m_particles->EmitSplash(
+                                spawn, count, 1.6f + exitVelocity.y * 0.3f,
+                                std::clamp(halfHeight, 0.7f, 1.6f),
+                                m_fluidColor);
+                        }
+                        if (lastWater) {
+                            const auto uvIt = m_bodyWaterUV.find(e);
+                            if (uvIt != m_bodyWaterUV.end()) {
+                                if (lastWater->ripples.size() >= 16) {
+                                    lastWater->ripples.erase(
+                                        lastWater->ripples.begin());
+                                }
+                                lastWater->ripples.push_back(
+                                    Galeshi::WaterRipple{
+                                        uvIt->second, 0.0f,
+                                        std::clamp(0.30f +
+                                            exitVelocity.y * 0.07f,
+                                            0.25f, 1.2f)});
+                            }
+                        }
+                        const auto* name =
+                            registry.try_get<Galeshi::NameComponent>(e);
+                        spdlog::debug(
+                            "[Water] Exit splash: '{}' count={} vy={:.2f}",
+                            name ? name->name : std::to_string(
+                                static_cast<uint32_t>(e)),
+                            count, exitVelocity.y);
+                    }
+                }
                 m_waterSubmerged[e] = false;
             }
         }
@@ -1355,6 +1490,13 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
         }
 
         if (playerUnderwater) {
+            if (bubbleWater) {
+                glm::vec3 boneOrigin;
+                if (BubbleOriginForWater(
+                        *bubbleWater, bubblePosition, boneOrigin)) {
+                    bubblePosition = boneOrigin;
+                }
+            }
             m_bubbleAccumulator += dt;
             while (m_bubbleAccumulator >= 0.10f) {
                 m_bubbleAccumulator -= 0.10f;

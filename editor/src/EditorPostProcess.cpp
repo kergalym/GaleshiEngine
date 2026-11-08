@@ -84,6 +84,9 @@
         // TAA history from the previous scene/camera.
         m_postProcess.ResetTaaHistory();
         m_waterSubmerged.clear();
+        m_bodyWaterSurfaceY.clear();
+        m_bodyWaterEntity.clear();
+        m_bodyWaterUV.clear();
         m_bubbleAccumulator = 0.0f;
         if (m_fluid) m_fluid->Reset();
     }
@@ -776,6 +779,118 @@
             }
             ImGui::TextDisabled(
                 "The bed is a child entity and owns its own grass set.");
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Underwater Bubbles")) {
+            std::vector<std::pair<std::string, entt::entity>> characters;
+            for (auto e : m_scene.Registry().view<
+                     Galeshi::SkeletalComponent>()) {
+                std::string name = "Character";
+                if (const auto* nc = m_scene.Registry().try_get<
+                        Galeshi::NameComponent>(e)) {
+                    name = nc->name;
+                }
+                characters.emplace_back(std::move(name), e);
+            }
+            std::sort(characters.begin(), characters.end(),
+                      [](const auto& a, const auto& b) {
+                          return a.first < b.first;
+                      });
+
+            const std::string currentCharacter =
+                water.bubbleCharacter.empty()
+                    ? std::string("Auto (Player)")
+                    : water.bubbleCharacter;
+            if (ImGui::BeginCombo("Character##bubble",
+                                  currentCharacter.c_str())) {
+                if (ImGui::Selectable(
+                        "Auto (Player)",
+                        water.bubbleCharacter.empty())) {
+                    PushHistory();
+                    water.bubbleCharacter.clear();
+                }
+                for (const auto& entry : characters) {
+                    const bool selected =
+                        water.bubbleCharacter == entry.first;
+                    if (ImGui::Selectable(entry.first.c_str(), selected)) {
+                        PushHistory();
+                        water.bubbleCharacter = entry.first;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Skeletal character used for the underwater bubble "
+                    "emitter.");
+            }
+
+            entt::entity character = entt::null;
+            for (const auto& entry : characters) {
+                if (water.bubbleCharacter == entry.first) {
+                    character = entry.second;
+                    break;
+                }
+            }
+            if (character == entt::null) {
+                for (const auto& entry : characters) {
+                    if (entry.first == "Player") {
+                        character = entry.second;
+                        break;
+                    }
+                }
+            }
+            if (character == entt::null && !characters.empty()) {
+                character = characters.front().second;
+            }
+
+            std::vector<std::string> bones;
+            if (character != entt::null && m_assets) {
+                const auto& skeleton =
+                    m_scene.Registry().get<Galeshi::SkeletalComponent>(
+                        character);
+                if (!skeleton.sourcePath.empty()) {
+                    auto model = m_assets->LoadModel(skeleton.sourcePath);
+                    bones.reserve(model.boneMap.size());
+                    for (const auto& [name, index] : model.boneMap) {
+                        if (index >= 0 && index < 255) {
+                            bones.push_back(name);
+                        }
+                    }
+                    std::sort(bones.begin(), bones.end());
+                }
+            }
+
+            const std::string currentBone =
+                water.bubbleBone.empty()
+                    ? std::string("(Body Center)")
+                    : water.bubbleBone;
+            if (ImGui::BeginCombo("Bubble Bone##bubble",
+                                  currentBone.c_str())) {
+                if (ImGui::Selectable(
+                        "(Body Center)", water.bubbleBone.empty())) {
+                    PushHistory();
+                    water.bubbleBone.clear();
+                }
+                for (const std::string& bone : bones) {
+                    const bool selected = water.bubbleBone == bone;
+                    if (ImGui::Selectable(bone.c_str(), selected)) {
+                        PushHistory();
+                        water.bubbleBone = bone;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "The selected bone is the bubble spawn location while "
+                    "the player is underwater.");
+            }
+            if (bones.empty()) {
+                ImGui::TextDisabled(
+                    "Select a skeletal character to list armature bones.");
+            }
             ImGui::TreePop();
         }
 
