@@ -1,63 +1,83 @@
 $input v_texcoord0
 #include <bgfx_shader.sh>
 
-SAMPLER2D(s_texColor, 0);
-SAMPLER2D(s_history, 1);
-SAMPLER2D(s_texDepth, 2);
-SAMPLER2D(s_taaMotion, 3);
+SAMPLER2D(s_texColor,   0);
+SAMPLER2D(s_history,    1);
+SAMPLER2D(s_texDepth,   2);
+SAMPLER2D(s_taaMotion,  3);
 
 uniform mat4 u_prevViewProj;
 uniform mat4 u_taaInvViewProj;
-uniform vec4 u_taaParams;    // x = blend factor
+uniform vec4 u_taaParams;    // x = current-frame blend
 uniform vec4 u_taaTexelSize; // xy = 1/width, 1/height
+
+vec2 Reproject(vec2 uv, float depth, vec2 motion) {
+    // Per-object velocity is already in UV space. Objects with no motion
+    // vector (sky, forward fallback) use camera reprojection from depth.
+    if (depth < 0.999999 && dot(motion, motion) > 0.0) {
+        return uv + motion;
+    }
+
+    vec4 clip = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
+    vec4 world = mul(u_taaInvViewProj, clip);
+    world.xyz /= max(world.w, 0.000001);
+
+    vec4 prevClip = mul(u_prevViewProj, world);
+    return vec2(
+        (prevClip.x / max(prevClip.w, 0.000001)) * 0.5 + 0.5,
+        0.5 - (prevClip.y / max(prevClip.w, 0.000001)) * 0.5);
+}
 
 void main() {
     vec2 uv = v_texcoord0;
+    vec2 texel = u_taaTexelSize.xy;
+
     vec4 current = texture2D(s_texColor, uv);
     float depth = texture2D(s_texDepth, uv).r;
 
-    // Geometry uses the per-object motion vector. If the vector is absent
-    // (sky, forward fallback), reconstruct the world position and fall back
-    // to camera reprojection.
+    // Dilate the motion vector over a 3x3 neighborhood so a thin foreground
+    // edge cannot resolve against background history and smear.
     vec2 motion = texture2D(s_taaMotion, uv).xy;
-    vec2 prevUV = uv;
-    if (depth < 0.999999 && (motion.x != 0.0 || motion.y != 0.0)) {
-        prevUV += motion;
-    } else {
-        vec4 clip = vec4(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
-        vec4 world = mul(u_taaInvViewProj, clip);
-        world.xyz /= max(world.w, 0.000001);
-        vec4 prevClip = mul(u_prevViewProj, world);
-        prevUV = vec2((prevClip.x / max(prevClip.w, 0.000001)) * 0.5 + 0.5,
-                      0.5 - (prevClip.y / max(prevClip.w, 0.000001)) * 0.5);
+    float bestLength = dot(motion, motion);
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            vec2 sampleMotion = texture2D(
+                s_taaMotion, uv + vec2(float(x), float(y)) * texel).xy;
+            float lengthSq = dot(sampleMotion, sampleMotion);
+            if (lengthSq > bestLength) {
+                bestLength = lengthSq;
+                motion = sampleMotion;
+            }
+        }
     }
 
-    // If the history sample is off-screen, return the current frame.
-    if (prevUV.x < 0.0 || prevUV.x > 1.0 || prevUV.y < 0.0 || prevUV.y > 1.0) {
+    vec2 prevUV = Reproject(uv, depth, motion);
+    if (prevUV.x < 0.0 || prevUV.x > 1.0 ||
+        prevUV.y < 0.0 || prevUV.y > 1.0) {
         gl_FragColor = current;
         return;
     }
-    
-    vec4 history = texture2D(s_history, prevUV);
-    
-    // AABB variance clipping prevents ghosting.
-    // Compute the min/max color in the 3x3 neighborhood.
-    vec3 minC = current.rgb, maxC = current.rgb;
-    vec2 texel = u_taaTexelSize.xy;
-    for(int i = -1; i <= 1; ++i) {
-        for(int j = -1; j <= 1; ++j) {
-            vec3 c = texture2D(s_texColor, uv + vec2(float(i), float(j)) * texel).rgb;
+
+    vec3 history = texture2D(s_history, prevUV).rgb;
+
+    // Neighborhood AABB clipping removes the most visible ghosting while
+    // retaining the temporal accumulation that resolves sub-pixel jitter.
+    vec3 minC = current.rgb;
+    vec3 maxC = current.rgb;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            vec3 c = texture2D(
+                s_texColor,
+                uv + vec2(float(x), float(y)) * texel).rgb;
             minC = min(minC, c);
             maxC = max(maxC, c);
         }
     }
-    
-    // Clamp history to the current neighborhood to prevent smearing.
-    history.rgb = clamp(history.rgb, minC, maxC);
-    
-    // u_taaParams.x is the current-frame contribution. A small value keeps
-    // most of the accumulated history, which is what actually resolves the
-    // sub-pixel jitter introduced by the renderer.
+
+    history = clamp(history, minC, maxC);
+
+    // A small current-frame contribution keeps history from accumulating
+    // indefinitely; a large contribution rejects it under fast motion.
     float blend = clamp(u_taaParams.x, 0.01, 1.0);
-    gl_FragColor = vec4(mix(history.rgb, current.rgb, blend), 1.0);
+    gl_FragColor = vec4(mix(history, current.rgb, blend), 1.0);
 }

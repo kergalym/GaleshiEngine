@@ -40,12 +40,15 @@ vec3 sampleSSGI(vec2 uv, vec3 centerWp, vec3 centerN) {
     float centerDepth = viewDepth(centerWp);
     vec3 accumulated = vec3(0.0);
     float totalWeight = 0.0;
+
+    // u_ssgiSource.zw is one texel in the half-resolution SSGI target.
     vec2 texel = u_ssgiSource.zw;
 
-    // 3x3 bilateral gathering suppresses the half-resolution ray noise while
-    // preserving depth/normal discontinuities.
-    for (int y = -1; y <= 1; ++y) {
-        for (int x = -1; x <= 1; ++x) {
+    // 5x5 bilateral gathering. A wider footprint removes half-resolution
+    // ray noise while the depth/normal rejection keeps character silhouettes
+    // and geometry edges from bleeding into the background.
+    for (int y = -2; y <= 2; ++y) {
+        for (int x = -2; x <= 2; ++x) {
             vec2 sampleUV = uv + vec2(float(x), float(y)) * texel;
             vec4 sampleWp = texture2D(s_worldPos, sampleUV);
             if (sampleWp.w < 0.5) continue;
@@ -53,11 +56,12 @@ vec3 sampleSSGI(vec2 uv, vec3 centerWp, vec3 centerN) {
             vec3 sampleN = normalize(
                 texture2D(s_ssrNormal, sampleUV).rgb * 2.0 - 1.0);
             float sampleDepth = viewDepth(sampleWp.xyz);
-            float depthWeight = 1.0 - saturate(
-                abs(sampleDepth - centerDepth) / 0.75);
-            float normalWeight = pow(max(dot(sampleN, centerN), 0.0), 4.0);
-            float spatialWeight = exp(-float(x * x + y * y) * 0.35);
-            float weight = depthWeight * normalWeight * spatialWeight;
+            float depthDelta = abs(sampleDepth - centerDepth);
+            float depthWeight = exp2(-depthDelta * 8.0);
+            float normalWeight = pow(max(dot(sampleN, centerN), 0.0), 16.0);
+            float spatialWeight = exp2(-float(x * x + y * y) * 0.35);
+            float weight = max(depthWeight * normalWeight * spatialWeight,
+                               0.0);
             accumulated += texture2D(s_ssgi, sampleUV).rgb * weight;
             totalWeight += weight;
         }

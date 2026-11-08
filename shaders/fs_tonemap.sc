@@ -8,14 +8,16 @@ uniform vec4 u_colorParams;
 uniform vec4 u_gradeParams;
 
 // ACES fitted transform (Stephen Hill fit of the RRT + ODT).
+// GLSL mat3 constructors fill columns: these values are deliberately in
+// column-major order.
 const mat3 ACESInputMat = mat3(
-    0.59719, 0.07600, 0.02840,
-    0.35458, 0.90834, 0.13383,
-    0.04823, 0.01566, 0.83777);
+    0.59719, 0.35458, 0.04823,
+    0.07600, 0.90834, 0.01566,
+    0.02840, 0.13383, 0.83777);
 const mat3 ACESOutputMat = mat3(
-    1.60475, -0.10208, -0.00327,
-   -0.53108,  1.10813, -0.07276,
-   -0.07367, -0.00605,  1.07602);
+     1.60475, -0.53108, -0.07367,
+    -0.10208,  1.10813, -0.00605,
+    -0.00327, -0.07276,  1.07602);
 
 vec3 RRTAndODTFit(vec3 v) {
     vec3 a = v * (v + 0.0245786) - 0.000090537;
@@ -24,6 +26,9 @@ vec3 RRTAndODTFit(vec3 v) {
 }
 
 vec3 ACESFitted(vec3 color) {
+    // Negative HDR values can appear after chromatic post effects. Feeding
+    // them into the rational fit produces NaN/flat saturated pixels.
+    color = max(color, vec3_splat(0.0));
     color = ACESInputMat * color;
     color = RRTAndODTFit(color);
     color = ACESOutputMat * color;
@@ -42,7 +47,8 @@ void main() {
 
     // Scene-referred grading runs before the filmic curve, matching the
     // Unreal-style pipeline. LUT-style palette grading stays after tonemap.
-    color *= u_colorParams.x;
+    color *= max(u_colorParams.x, 0.0);
+    color = max(color, vec3_splat(0.0));
     color = sceneContrast(color, u_gradeParams.x);
     float gradingLuma = dot(color, vec3(0.2126, 0.7152, 0.0722));
     color = mix(vec3(gradingLuma), color, u_gradeParams.y);
