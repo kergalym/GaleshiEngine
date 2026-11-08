@@ -270,6 +270,9 @@ struct LandscapeComponent {
     std::string baseRoughnessPath;
     std::string baseOcclusionPath;
     std::string baseNormalPath;
+    // Output resolution of the procedurally baked albedo/ORM/normal maps.
+    // Square so the three maps stay aligned; 2048 matches the old maximum.
+    int bakedTextureSize = 2048;
     // Last baked textures written under the project's textures directory.
     std::string bakedAlbedoPath;
     std::string bakedOrmPath;

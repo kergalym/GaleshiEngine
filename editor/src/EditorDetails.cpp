@@ -1053,6 +1053,31 @@ void GaleshiEditorApp::DrawDetails() {
                 }
             }
 
+            {
+                const int bakeSizes[] = {1024, 2048, 4096, 8192};
+                const char* bakeSizeLabels[] = {
+                    "1K (1024)", "2K (2048)", "4K (4096)", "8K (8192)"};
+                int bakeSizeIndex = 1; // default 2048
+                for (int i = 0; i < IM_ARRAYSIZE(bakeSizes); ++i) {
+                    if (landscape.bakedTextureSize == bakeSizes[i]) {
+                        bakeSizeIndex = i;
+                        break;
+                    }
+                }
+                ImGui::SetNextItemWidth(160.0f);
+                if (ImGui::Combo("Texture Dimension",
+                                 &bakeSizeIndex, bakeSizeLabels,
+                                 IM_ARRAYSIZE(bakeSizeLabels))) {
+                    PushHistory();
+                    landscape.bakedTextureSize = bakeSizes[bakeSizeIndex];
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Resolution of the generated albedo, ORM and normal "
+                        "maps. Square output; higher sizes take longer and "
+                        "use more VRAM.");
+                }
+            }
             if (ImGui::Button("Bake Layer Textures")) {
                 PushHistory();
                 BakeLandscapeTextures(selected[0]);

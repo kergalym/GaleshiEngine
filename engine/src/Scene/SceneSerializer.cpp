@@ -1169,6 +1169,7 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
                  m_assets.MakeRelativePath(lc.baseOcclusionPath)},
                 {"baseNormalPath",
                  m_assets.MakeRelativePath(lc.baseNormalPath)},
+                {"bakedTextureSize", lc.bakedTextureSize},
                 {"bakedAlbedoPath",
                  m_assets.MakeRelativePath(lc.bakedAlbedoPath)},
                 {"bakedOrmPath",
@@ -2106,6 +2107,9 @@ bool SceneSerializer::LoadFromJson(const json& root,
                 jl.value("baseOcclusionPath", std::string{}));
             landscape.baseNormalPath = m_assets.ResolvePath(
                 jl.value("baseNormalPath", std::string{}));
+            landscape.bakedTextureSize = std::clamp(
+                jl.value("bakedTextureSize", landscape.bakedTextureSize),
+                256, 8192);
             landscape.bakedAlbedoPath = m_assets.ResolvePath(
                 jl.value("bakedAlbedoPath", std::string{}));
             landscape.bakedOrmPath = m_assets.ResolvePath(

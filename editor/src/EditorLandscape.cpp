@@ -276,7 +276,7 @@
         }
 
         const int outputSize = std::clamp(
-            std::max(landscape.sizeX, landscape.sizeZ) * 4, 256, 2048);
+            landscape.bakedTextureSize, 256, 8192);
         LandscapeImage outputAlbedo;
         LandscapeImage outputOrm;
         LandscapeImage outputNormal;
