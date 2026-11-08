@@ -122,6 +122,8 @@ bool IsAudioAssetPath(const std::string& path);
 bool IsFontAssetPath(const std::string& path);
 bool IsCppCodeAssetPath(const std::string& path);
 bool IsShaderAssetPath(const std::string& path);
+
+bool IsMaterialScriptAssetPath(const std::string& path);
 bool IsVertexShaderSource(const std::string& source);
 bool IsCodeAssetPath(const std::string& path);
 

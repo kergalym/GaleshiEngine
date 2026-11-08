@@ -20,7 +20,8 @@
         m_codeEditorInitialized = true;
         m_codeEditorSyntaxErrors.clear();
         m_codeEditorLastSyntaxSource.clear();
-        m_codeEditorSyntaxDirty = !path.empty() && !shader;
+        m_codeEditorSyntaxDirty = !path.empty() && !shader &&
+                                  !IsMaterialScriptAssetPath(path);
         m_codeEditorLastEditTime = ImGui::GetTime();
         // The text input lives in a child window. Focusing only the parent
         // leaves the editor non-editable until it is clicked manually.
@@ -129,7 +130,8 @@
 
     void GaleshiEditorApp::StartCodeSyntaxCheck() {
         if (m_codeEditorSyntaxRunning || m_currentCodeFile.empty() ||
-            IsShaderAssetPath(m_currentCodeFile)) {
+            IsShaderAssetPath(m_currentCodeFile) ||
+            IsMaterialScriptAssetPath(m_currentCodeFile)) {
             m_codeEditorSyntaxDirty = false;
             return;
         }
@@ -629,7 +631,7 @@
                     : TextEditor::LanguageDefinition::Lua());
             m_codeEditor.SetPalette(TextEditor::GetDarkPalette());
             m_codeEditor.SetText(
-                "-- Select a .lua, .cpp, .glsl or .hlsl file from Content Browser");
+                "-- Select a .lua, .cpp, .glsl, .hlsl or .mat file from Content Browser");
             m_codeEditorInitialized = true;
         }
 
@@ -679,13 +681,13 @@
                     m_codeFilePicker.Open(
                         start.string(), "Open Code File",
                         {".lua", ".cpp", ".cc", ".cxx", ".hpp", ".h",
-                         ".glsl", ".hlsl"});
+                         ".glsl", ".hlsl", ".mat"});
                 }
                 ImGui::SameLine();
                 if (m_currentCodeFile.empty()) {
                     ImGui::TextDisabled(
-                        "No file opened. Double-click a .lua, .cpp, .glsl or "
-                        ".hlsl file in Content Browser, or use Open...");
+                        "No file opened. Double-click a .lua, .cpp, .glsl, "
+                        ".hlsl or .mat file in Content Browser, or use Open...");
                 } else {
                     const bool cppFile =
                         IsCppCodeAssetPath(m_currentCodeFile);
@@ -722,6 +724,13 @@
                                 if (!m_shaderPreviewError.empty()) {
                                     m_codeEditorTabRequest = 2;
                                 }
+                            } else if (IsMaterialScriptAssetPath(
+                                           m_currentCodeFile)) {
+                                const int updated =
+                                    ReapplyMaterialScripts(m_currentCodeFile);
+                                spdlog::info(
+                                    "[Material] Reapplied '{}' to {} slot(s)",
+                                    m_currentCodeFile, updated);
                             }
                             if (saved) m_focusCodeEditor = true;
                         } else {
@@ -740,6 +749,21 @@
                             } else {
                                 m_focusCodeEditor = true;
                             }
+                        } else if (IsMaterialScriptAssetPath(
+                                       m_currentCodeFile)) {
+                            if (m_codeEditor.IsTextChanged()) {
+                                std::ofstream out(m_currentCodeFile);
+                                if (out.is_open()) {
+                                    out << m_codeEditor.GetText();
+                                    out.close();
+                                }
+                            }
+                            const int updated =
+                                ReapplyMaterialScripts(m_currentCodeFile);
+                            spdlog::info(
+                                "[Material] Reapplied '{}' to {} slot(s)",
+                                m_currentCodeFile, updated);
+                            m_focusCodeEditor = true;
                         } else if (m_scripts.HotReload(m_currentCodeFile)) {
                             spdlog::info("[Editor] Reloaded {}",
                                          m_currentCodeFile);

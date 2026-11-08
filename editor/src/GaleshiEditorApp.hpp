@@ -663,6 +663,8 @@ void DrawDetails();
                              const std::string& path);
     int ApplyMaterialScriptToHierarchy(entt::entity root,
                                        const std::string& path);
+    // Reapplies an edited .mat to every material instance that uses it.
+    int ReapplyMaterialScripts(const std::string& path);
 
     Galeshi::Entity CreateMaterialSlotEntity(
         entt::entity parent, const std::string& name,

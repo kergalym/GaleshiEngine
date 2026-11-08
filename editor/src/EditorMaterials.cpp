@@ -55,3 +55,20 @@ int GaleshiEditorApp::ApplyMaterialScriptToHierarchy(entt::entity root,
     }
     return count;
 }
+
+int GaleshiEditorApp::ReapplyMaterialScripts(const std::string& path) {
+    if (!m_assets || path.empty()) return 0;
+    const std::string relative = m_assets->MakeRelativePath(path);
+    auto& registry = m_scene.Registry();
+    int count = 0;
+    for (entt::entity handle : registry.view<Galeshi::MaterialComponent>()) {
+        auto& slot = registry.get<Galeshi::MaterialComponent>(handle);
+        if (!slot.material || slot.material->masterScriptPath.empty()) continue;
+        if (m_assets->MakeRelativePath(slot.material->masterScriptPath) !=
+            relative) {
+            continue;
+        }
+        if (ApplyMaterialScript(slot, path)) ++count;
+    }
+    return count;
+}

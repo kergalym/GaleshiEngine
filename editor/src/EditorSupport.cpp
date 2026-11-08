@@ -74,6 +74,10 @@ bool IsShaderAssetPath(const std::string& path) {
     return extension == ".glsl" || extension == ".hlsl";
 }
 
+bool IsMaterialScriptAssetPath(const std::string& path) {
+    return AssetExtensionLower(path) == ".mat";
+}
+
 bool IsVertexShaderSource(const std::string& source) {
     return source.find("gl_Position") != std::string::npos &&
            source.find("gl_FragColor") == std::string::npos;
@@ -81,5 +85,5 @@ bool IsVertexShaderSource(const std::string& source) {
 
 bool IsCodeAssetPath(const std::string& path) {
     return AssetExtensionLower(path) == ".lua" || IsCppCodeAssetPath(path) ||
-           IsShaderAssetPath(path);
+           IsShaderAssetPath(path) || IsMaterialScriptAssetPath(path);
 }
