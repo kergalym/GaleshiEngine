@@ -2319,7 +2319,7 @@ void RenderSystem::RenderWater(Scene& scene, const Camera& camera,
         const float minWaterDim = std::max(
             std::min(water.width, water.depth), 0.001f);
         const float shoreWidthUV = std::clamp(
-            water.foamDistance * 4.0f / minWaterDim, 0.04f, 0.20f);
+            water.bankWidth / minWaterDim, 0.02f, 0.30f);
         const float body[4] = {
             static_cast<float>(water.bodyType),
             shoreWidthUV,

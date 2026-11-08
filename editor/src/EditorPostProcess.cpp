@@ -63,6 +63,16 @@
                          pp.environmentPaletteAmount);
         }
 
+        // Apply pending procedural water erosion after the scene is fully
+        // loaded. A saved scene with a carved landscape has terrainCarved set
+        // and is skipped, so reloading cannot deepen the basin twice.
+        for (auto h : m_scene.Registry().view<Galeshi::WaterComponent>()) {
+            auto& water = m_scene.Registry().get<Galeshi::WaterComponent>(h);
+            if (water.enabled && water.carveLandscape && !water.terrainCarved) {
+                ApplyWaterErosion(h);
+            }
+        }
+
         // The view and effect set may have changed completely; never reuse a
         // TAA history from the previous scene/camera.
         m_postProcess.ResetTaaHistory();
@@ -656,7 +666,7 @@
 
 
 
-    void GaleshiEditorApp::DrawWaterSettings(Galeshi::WaterComponent& water) {
+    void GaleshiEditorApp::DrawWaterSettings(Galeshi::WaterComponent& water, entt::entity entity) {
         ImGui::Checkbox("Enabled##water", &water.enabled);
         ImGui::SameLine();
         ImGui::Checkbox("Visible in Editor", &water.visibleInEditor);
@@ -671,8 +681,31 @@
                     std::clamp(bodyType, 0, 3));
             }
         }
+        ImGui::ColorEdit3("Color", glm::value_ptr(water.shallowColor));
+        ImGui::DragFloat("Transparency", &water.transparency,
+                         0.01f, 0.0f, 1.0f);
         ImGui::TextDisabled("The water surface is centered on the entity and "
                             "uses its Y position.");
+
+        if (ImGui::TreeNode("Terrain Erosion")) {
+            ImGui::Checkbox("Carve Landscape", &water.carveLandscape);
+            ImGui::DragFloat("Basin Depth", &water.basinDepth,
+                             0.05f, 0.0f, 100.0f);
+            ImGui::DragFloat("Bank Width", &water.bankWidth,
+                             0.05f, 0.05f, 100.0f);
+            ImGui::DragFloat("Bank Erosion", &water.bankErosion,
+                             0.01f, 0.0f, 2.0f);
+            if (ImGui::Button("Apply Terrain Erosion")) {
+                PushHistory();
+                ApplyWaterErosion(entity);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Carves a basin under the water, builds an eroded bank, "
+                    "rebuilds the landscape mesh and regenerates vegetation.");
+            }
+            ImGui::TreePop();
+        }
 
         ImGui::Separator();
         ImGui::Text("Presets");
@@ -767,8 +800,6 @@
                              0.01f, 0.0f, 10.0f);
             ImGui::DragFloat("Clarity", &water.clarity,
                              0.01f, 0.0f, 1.0f);
-            ImGui::DragFloat("Transparency", &water.transparency,
-                             0.01f, 0.0f, 1.0f);
             ImGui::TreePop();
         }
 
@@ -783,7 +814,6 @@
         }
 
         if (ImGui::TreeNode("Colors")) {
-            ImGui::ColorEdit3("Shallow", glm::value_ptr(water.shallowColor));
             ImGui::ColorEdit3("Deep", glm::value_ptr(water.deepColor));
             ImGui::ColorEdit3("Foam", glm::value_ptr(water.foamColor));
             ImGui::TreePop();

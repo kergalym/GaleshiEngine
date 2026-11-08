@@ -548,7 +548,7 @@ void GaleshiEditorApp::DrawDetails() {
             if (beginDetailsSection(
                     "Water", ImGuiTreeNodeFlags_DefaultOpen,
                     "water waves color depth foam reflection flow speed")) {
-                DrawWaterSettings(water);
+                DrawWaterSettings(water, sel.Handle());
             }
         }
 

@@ -1,6 +1,56 @@
 #include "GaleshiEditorApp.hpp"
+#include "GaleshiEngine/Assets/LandscapeMesh.hpp"
 
 
+
+
+namespace {
+
+float WaterHash21(glm::vec2 p) {
+    p = glm::fract(p * glm::vec2(123.34f, 456.21f));
+    p += glm::vec2(glm::dot(p, p + glm::vec2(45.32f)));
+    return glm::fract(p.x * p.y);
+}
+
+float WaterValueNoise(glm::vec2 p) {
+    const glm::vec2 i = glm::floor(p);
+    glm::vec2 f = glm::fract(p);
+    f = f * f * (3.0f - 2.0f * f);
+    const float a = WaterHash21(i);
+    const float b = WaterHash21(i + glm::vec2(1.0f, 0.0f));
+    const float c = WaterHash21(i + glm::vec2(0.0f, 1.0f));
+    const float d = WaterHash21(i + glm::vec2(1.0f, 1.0f));
+    return glm::mix(glm::mix(a, b, f.x), glm::mix(c, d, f.x), f.y);
+}
+
+// Signed distance from the procedural water edge in water-plane UV space.
+// Negative inside the water body, positive on the shore. Matches fs_water.sc.
+float WaterEdgeDistance(const Galeshi::WaterComponent& water,
+                        glm::vec2 uv, float seed) {
+    const glm::vec2 q = uv * 2.0f - 1.0f;
+    const float coast = WaterValueNoise(
+        uv * 8.0f + glm::vec2(seed * 3.1f, seed * 7.7f));
+    if (water.bodyType == Galeshi::WaterBodyType::River) {
+        glm::vec2 flow = water.flowDirection;
+        if (glm::dot(flow, flow) < 1e-8f) flow = glm::vec2(1.0f, 0.0f);
+        flow = glm::normalize(flow);
+        const bool alongU = std::abs(flow.x) >= std::abs(flow.y);
+        const float along = alongU ? q.x : q.y;
+        const float side = alongU ? q.y : q.x;
+        const float center =
+            std::sin(along * 3.2f + seed * 6.2831f) * 0.22f +
+            (WaterValueNoise(glm::vec2(along * 4.0f, seed)) - 0.5f) * 0.10f;
+        const float halfWidth = 0.12f * (0.85f + 0.30f * coast);
+        return std::abs(side - center) - halfWidth;
+    }
+    const float radius =
+        water.bodyType == Galeshi::WaterBodyType::Lake ? 0.68f :
+        (water.bodyType == Galeshi::WaterBodyType::Ocean ? 0.98f : 0.88f);
+    const float edge = radius + (coast - 0.5f) * 0.18f;
+    return glm::length(q) - edge;
+}
+
+} // namespace
 
     // -------------------------------------------------------------------
     // Scene Helpers
@@ -478,5 +528,100 @@
         emitter.GetComponent<Galeshi::TransformComponent>().position = {4.5f, 0.2f, -1.5f};
 
         if (m_serializer) PushHistory();
+    }
+
+    void GaleshiEditorApp::ApplyWaterErosion(entt::entity waterEntity) {
+        if (!m_scene.Registry().valid(waterEntity)) return;
+        auto& registry = m_scene.Registry();
+        auto* water = registry.try_get<Galeshi::WaterComponent>(waterEntity);
+        if (!water) return;
+
+        const glm::mat4 waterWorld = EntityWorldMatrix(waterEntity);
+        const glm::mat4 waterModel =
+            waterWorld * glm::scale(glm::mat4(1.0f),
+                                    glm::vec3(water->width, 1.0f, water->depth));
+        const glm::mat4 waterInv = glm::inverse(waterModel);
+        const float waterY = waterWorld[3].y;
+        const float minDim = std::max(
+            std::min(water->width, water->depth), 0.001f);
+        const float bankWidthUV = std::clamp(
+            water->bankWidth / minDim, 0.02f, 0.30f);
+        const float seed = static_cast<float>(
+            entt::to_integral(waterEntity) % 1024u) * 0.6180339f;
+        const float basinDepth = std::max(water->basinDepth, 0.0f);
+        const float bankErosion = std::max(water->bankErosion, 0.0f);
+
+        for (auto lh : registry.view<Galeshi::LandscapeComponent>()) {
+            auto& lc = registry.get<Galeshi::LandscapeComponent>(lh);
+            auto* meshComponent = registry.try_get<Galeshi::MeshComponent>(lh);
+            if (!meshComponent || !meshComponent->mesh) continue;
+            if (lc.sizeX < 2 || lc.sizeZ < 2 ||
+                lc.heights.size() != static_cast<size_t>(lc.sizeX) * lc.sizeZ) {
+                continue;
+            }
+
+            if (!lc.hasErosionBase) {
+                lc.erosionBaseHeights = lc.heights;
+                lc.hasErosionBase = true;
+            } else if (lc.erosionBaseHeights.size() == lc.heights.size()) {
+                lc.heights = lc.erosionBaseHeights;
+            }
+
+            const glm::mat4 landscapeWorld = EntityWorldMatrix(lh);
+            const glm::mat4 landscapeInv = glm::inverse(landscapeWorld);
+
+            for (int z = 0; z < lc.sizeZ; ++z) {
+                for (int x = 0; x < lc.sizeX; ++x) {
+                    const size_t index = static_cast<size_t>(z) * lc.sizeX + x;
+                    const glm::vec3 local(
+                        (x - lc.sizeX / 2.0f) * lc.scale,
+                        lc.heights[index],
+                        (z - lc.sizeZ / 2.0f) * lc.scale);
+                    const glm::vec3 world =
+                        glm::vec3(landscapeWorld * glm::vec4(local, 1.0f));
+                    const glm::vec3 waterLocal =
+                        glm::vec3(waterInv * glm::vec4(world, 1.0f));
+                    const glm::vec2 uv(waterLocal.x + 0.5f,
+                                       waterLocal.z + 0.5f);
+                    if (uv.x < -0.05f || uv.x > 1.05f ||
+                        uv.y < -0.05f || uv.y > 1.05f) {
+                        continue;
+                    }
+
+                    const float edgeDistance =
+                        WaterEdgeDistance(*water, uv, seed);
+                    if (edgeDistance > bankWidthUV) continue;
+
+                    const float erosionNoise = WaterValueNoise(
+                        uv * 17.0f + glm::vec2(seed * 1.7f, seed * 3.1f));
+                    const float bedY =
+                        waterY - basinDepth * (0.72f + 0.28f * erosionNoise);
+                    float targetWorldY = bedY;
+                    if (edgeDistance > 0.0f) {
+                        float t = std::clamp(
+                            edgeDistance / std::max(bankWidthUV, 1e-4f),
+                            0.0f, 1.0f);
+                        t = std::clamp(
+                            t + (erosionNoise - 0.5f) * bankErosion,
+                            0.0f, 1.0f);
+                        t = t * t * (3.0f - 2.0f * t);
+                        targetWorldY = glm::mix(bedY, world.y, t);
+                    }
+
+                    const glm::vec3 targetLocal = glm::vec3(
+                        landscapeInv * glm::vec4(
+                            world.x, targetWorldY, world.z, 1.0f));
+                    lc.heights[index] = targetLocal.y;
+                }
+            }
+
+            Galeshi::LandscapeMesh::Rebuild(lc, *meshComponent->mesh);
+            if (auto* vegetation =
+                    registry.try_get<Galeshi::VegetationComponent>(lh)) {
+                vegetation->dirty = true;
+            }
+        }
+
+        water->terrainCarved = true;
     }
 

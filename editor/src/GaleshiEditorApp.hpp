@@ -422,7 +422,7 @@ private:
 
     void DrawPostProcessVolumeSettings(Galeshi::PostProcessVolumeComponent& volume);
 
-    void DrawWaterSettings(Galeshi::WaterComponent& water);
+    void DrawWaterSettings(Galeshi::WaterComponent& water, entt::entity entity);
 
     void DrawGroomSettings(Galeshi::GroomComponent& groom);
 
@@ -722,6 +722,11 @@ void DrawDetails();
     Galeshi::Entity SpawnPhysicsCapsule(const std::string& name, glm::vec3 pos, float halfHeight, float radius);
 
     void BuildTestScene();
+
+    // Carves/erodes the landscape under the selected water body and rebuilds
+    // its mesh. Safe to call repeatedly; the pre-erosion heights are cached
+    // in the landscape component for the current editor session.
+    void ApplyWaterErosion(entt::entity waterEntity);
 
     // State.
     Galeshi::Scene          m_scene;

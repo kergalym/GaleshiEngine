@@ -236,6 +236,10 @@ struct LandscapeComponent {
     int sizeZ = 100;
     float scale = 1.0f;
     std::vector<float> heights;
+    // Runtime-only base heights captured before the first water erosion.
+    // Not serialized; used by the editor to re-carve after water edits.
+    std::vector<float> erosionBaseHeights;
+    bool hasErosionBase = false;
     // Legacy single-layer weights retained for scene migration.
     std::vector<float> paintWeights;
     // Unlimited painted material layers and their per-vertex weights.
@@ -585,6 +589,12 @@ struct WaterComponent {
     WaterBodyType bodyType = WaterBodyType::Sea;
     bool enabled = true;
     bool visibleInEditor = true;
+    // Terrain sculpting under/around this water body.
+    bool  carveLandscape = true;
+    bool  terrainCarved = false;
+    float basinDepth = 1.5f;   // depression depth below the water surface
+    float bankWidth = 1.5f;    // eroded shore width in world units
+    float bankErosion = 0.35f; // 0..1 bank height noise
 
     // World-space extent of the surface.
     float width = 20.0f;
