@@ -86,8 +86,6 @@ Implemented post-processing passes:
   [Cloth painting and simulation](docs/CLOTH.md).
 - Multithreaded job system.
 
-Joint and constraint interfaces are not exposed yet.
-
 ### AI and navigation
 
 - Recast/Detour NavMesh generation from scene meshes and landscape geometry.
