@@ -1186,7 +1186,7 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
         auto& skeleton =
             registry.get<Galeshi::SkeletalComponent>(character);
         if (skeleton.sourcePath.empty()) return false;
-        auto model = m_assets->LoadModel(skeleton.sourcePath);
+        const auto& model = m_assets->LoadModelRef(skeleton.sourcePath);
         const auto boneIt = model.boneMap.find(water.bubbleBone);
         if (boneIt == model.boneMap.end()) return false;
         const int boneIndex = boneIt->second;
