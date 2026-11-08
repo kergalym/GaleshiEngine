@@ -514,9 +514,16 @@ struct GaleshiScriptApi {
     bool (*ragdoll_active)(void* user, uint32_t entity) = nullptr;
     bool (*apply_ragdoll_impulse)(void* user, uint32_t entity,
                                   GaleshiScriptVec3 impulse) = nullptr;
+
+    // Attach an entity to a bone of a skeletal character. Position, rotation
+    // and scale getters/setters below operate in bone-local space while
+    // attached. Attach preserves the current world transform.
+    bool (*attach_to_bone)(void* user, uint32_t entity, uint32_t character,
+                           const char* bone) = nullptr;
+    bool (*detach_from_bone)(void* user, uint32_t entity) = nullptr;
 };
 
-inline constexpr uint32_t kGaleshiScriptApiVersion = 19;
+inline constexpr uint32_t kGaleshiScriptApiVersion = 20;
 
 inline float GaleshiInterpFactor(float deltaTime, float speed) {
     if (speed <= 0.0f) return 1.0f;

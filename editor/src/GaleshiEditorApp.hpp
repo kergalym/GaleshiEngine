@@ -55,6 +55,9 @@ class GaleshiEditorApp final : public Galeshi::Application {
     std::string m_outputLogSelection;
     entt::entity m_stateMachineEditorEntity = entt::null;
     entt::entity m_lastStateMachineSelection = entt::null;
+    entt::entity m_boneAttachCharacter = entt::null;
+    entt::entity m_boneAttachEntity = entt::null;
+    std::string m_boneAttachBone;
     int m_selectedAxis = 0;
     int m_rebindAxis = -1;
     int m_rebindBinding = -1;
@@ -425,6 +428,9 @@ private:
     void DrawWaterSettings(Galeshi::WaterComponent& water, entt::entity entity);
 
     void DrawGroomSettings(Galeshi::GroomComponent& groom);
+
+    // Bone attachments for skeletal characters.
+    void DrawBoneAttachmentSettings(entt::entity character);
 
     // -------------------------------------------------------------------
     // Audio

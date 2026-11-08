@@ -338,6 +338,8 @@ public:
         m_api.set_scale = &ScriptWorker::SetScale;
         m_api.get_parent = &ScriptWorker::GetParent;
         m_api.set_parent = &ScriptWorker::SetParent;
+        m_api.attach_to_bone = &ScriptWorker::AttachToBone;
+        m_api.detach_from_bone = &ScriptWorker::DetachFromBone;
         m_api.has_component = &ScriptWorker::HasComponent;
         m_api.get_axis_raw = &ScriptWorker::GetAxisRaw;
         m_api.is_mouse_button_down = &ScriptWorker::MouseButtonDown;
@@ -890,6 +892,22 @@ private:
                 CppWorkerRequest::SetParent, entity, nullptr, {},
                 0.0f, parent);
         return response.valid != 0;
+    }
+
+    static bool AttachToBone(void* user, uint32_t entity, uint32_t character,
+                             const char* bone) {
+        if (!user || !bone) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::AttachToBone, entity, bone, {},
+                      0.0f, character)
+            .valid != 0;
+    }
+
+    static bool DetachFromBone(void* user, uint32_t entity) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::DetachFromBone, entity)
+            .valid != 0;
     }
 
     static bool HasComponent(void* user, uint32_t entity,

@@ -1,4 +1,5 @@
 #include "GaleshiEngine/Animation/AnimationSystem.hpp"
+#include "GaleshiEngine/Animation/BoneAttachment.hpp"
 #include "GaleshiEngine/Assets/AssetManager.hpp"
 #include "GaleshiEngine/Scene/Scene.hpp"
 
@@ -414,6 +415,9 @@ void AnimationSystem::Update(Scene& scene, AssetManager& assets, float dt) {
         skel.activeAnimation = clip;
         skel.currentTime = machine->stateTime;
     }
+
+    // Bone-attached entities follow the palette sampled above.
+    BoneAttachmentSystem::Update(scene, assets);
 }
 
 } // namespace Galeshi

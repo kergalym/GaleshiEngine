@@ -1269,6 +1269,22 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
                 {"activeAnimation", skel.activeAnimation}
             };
         }
+        if (reg.all_of<BoneAttachmentComponent>(handle)) {
+            const auto& attachment =
+                reg.get<BoneAttachmentComponent>(handle);
+            json ja = {
+                {"boneName", attachment.boneName},
+                {"localPosition", Vec3ToJson(attachment.localPosition)},
+                {"localRotation", QuatToJson(attachment.localRotation)},
+                {"localScale", Vec3ToJson(attachment.localScale)}
+            };
+            const auto characterIt =
+                idByEntity.find(attachment.character);
+            if (characterIt != idByEntity.end()) {
+                ja["character"] = characterIt->second;
+            }
+            je["boneAttachment"] = std::move(ja);
+        }
         if (reg.all_of<AnimationStateMachineComponent>(handle)) {
             const auto& machine = reg.get<AnimationStateMachineComponent>(handle);
             json states = json::array();
@@ -2354,6 +2370,26 @@ bool SceneSerializer::LoadFromJson(const json& root,
                 }
             }
         }
+        if (je.contains("boneAttachment") &&
+            je["boneAttachment"].is_object()) {
+            const auto& ja = je["boneAttachment"];
+            auto& attachment =
+                e.AddComponent<BoneAttachmentComponent>();
+            attachment.boneName =
+                ja.value("boneName", std::string{});
+            if (ja.contains("localPosition")) {
+                attachment.localPosition =
+                    Vec3FromJson(ja.at("localPosition"));
+            }
+            if (ja.contains("localRotation")) {
+                attachment.localRotation =
+                    QuatFromJson(ja.at("localRotation"));
+            }
+            if (ja.contains("localScale")) {
+                attachment.localScale =
+                    Vec3FromJson(ja.at("localScale"));
+            }
+        }
         if (je.contains("animationStateMachine")) {
             const auto& jm = je["animationStateMachine"];
             auto& machine = e.AddComponent<AnimationStateMachineComponent>();
@@ -2918,6 +2954,38 @@ bool SceneSerializer::LoadFromJson(const json& root,
             m_scene.Registry().emplace_or_replace<ParentComponent>(
                 entry.entity.Handle(), ParentComponent{ parent });
         }
+    }
+
+    // Bone attachments reference characters by their stable saved id. Resolve
+    // them after all entities and parent links exist, and keep attached
+    // entities as world-space roots.
+    for (auto& entry : loaded) {
+        auto& reg = m_scene.Registry();
+        const entt::entity handle = entry.entity.Handle();
+        if (!reg.all_of<BoneAttachmentComponent>(handle)) continue;
+        auto& attachment = reg.get<BoneAttachmentComponent>(handle);
+        bool valid = false;
+        if (entry.source && entry.source->contains("boneAttachment") &&
+            (*entry.source)["boneAttachment"].is_object()) {
+            const auto& ja = (*entry.source)["boneAttachment"];
+            if (ja.contains("character") &&
+                ja["character"].is_number_integer()) {
+                const auto it = savedIdToEntity.find(
+                    ja["character"].get<int>());
+                if (it != savedIdToEntity.end() &&
+                    m_scene.Registry().valid(it->second)) {
+                    attachment.character = it->second;
+                    valid = true;
+                }
+            }
+        }
+        if (!valid || attachment.boneName.empty()) {
+            reg.remove<BoneAttachmentComponent>(handle);
+            spdlog::warn("[Scene] Removed invalid bone attachment from '{}'",
+                         entry.name);
+            continue;
+        }
+        reg.remove<ParentComponent>(handle);
     }
 
     // A malformed file must not create a parent cycle: several runtime

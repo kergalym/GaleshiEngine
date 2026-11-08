@@ -142,7 +142,7 @@ extern "C" void GaleshiScriptUpdate(float dt) {
 Current class wrappers cover:
 
 - `World` — create/destroy/find/valid, names, local position/rotation/scale,
-  parent/detach, component presence, velocity
+  parent/detach, bone attachment/detach, component presence, velocity
 - `Input` — key state, dead-zoned/raw axes, mouse buttons, position, delta,
   wheel
 - `Physics` — linear velocity, attach box/sphere/capsule, destroy body,

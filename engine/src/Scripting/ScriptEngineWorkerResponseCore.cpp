@@ -4,6 +4,7 @@
 #include "GaleshiEngine/Scene/Components.hpp"
 #include "GaleshiEngine/AI/BehaviorTree.hpp"
 #include "GaleshiEngine/Animation/AnimationSystem.hpp"
+#include "GaleshiEngine/Animation/BoneAttachment.hpp"
 #include "GaleshiEngine/Assets/AssetManager.hpp"
 #include "GaleshiEngine/Assets/LandscapeMesh.hpp"
 #include "GaleshiEngine/Assets/Material.hpp"
@@ -65,8 +66,11 @@ bool ScriptEngine::MakeWorkerCoreResponse(
                 static_cast<entt::entity>(request.entity);
             if (registry.valid(entity) &&
                 registry.all_of<TransformComponent>(entity)) {
+                const auto* attachment =
+                    registry.try_get<BoneAttachmentComponent>(entity);
                 const GaleshiScriptVec3 value = ToScriptVec3(
-                    registry.get<TransformComponent>(entity).position);
+                    attachment ? attachment->localPosition
+                               : registry.get<TransformComponent>(entity).position);
                 response.x = value.x;
                 response.y = value.y;
                 response.z = value.z;
@@ -81,8 +85,15 @@ bool ScriptEngine::MakeWorkerCoreResponse(
                 static_cast<entt::entity>(request.entity);
             if (registry.valid(entity) &&
                 registry.all_of<TransformComponent>(entity)) {
-                registry.get<TransformComponent>(entity).position =
+                const glm::vec3 position =
                     FromScriptVec3({request.x, request.y, request.z});
+                if (auto* attachment =
+                        registry.try_get<BoneAttachmentComponent>(entity)) {
+                    attachment->localPosition = position;
+                } else {
+                    registry.get<TransformComponent>(entity).position =
+                        position;
+                }
                 response.valid = 1;
             }
         }
@@ -216,8 +227,11 @@ bool ScriptEngine::MakeWorkerCoreResponse(
                 static_cast<entt::entity>(request.entity);
             if (registry.valid(entity) &&
                 registry.all_of<TransformComponent>(entity)) {
+                const auto* attachment =
+                    registry.try_get<BoneAttachmentComponent>(entity);
                 const glm::quat rotation =
-                    registry.get<TransformComponent>(entity).rotation;
+                    attachment ? attachment->localRotation
+                               : registry.get<TransformComponent>(entity).rotation;
                 response.x = rotation.x;
                 response.y = rotation.y;
                 response.z = rotation.z;
@@ -240,8 +254,13 @@ bool ScriptEngine::MakeWorkerCoreResponse(
                 } else {
                     rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
                 }
-                registry.get<TransformComponent>(entity).rotation =
-                    rotation;
+                if (auto* attachment =
+                        registry.try_get<BoneAttachmentComponent>(entity)) {
+                    attachment->localRotation = rotation;
+                } else {
+                    registry.get<TransformComponent>(entity).rotation =
+                        rotation;
+                }
                 response.valid = 1;
             }
         }
@@ -253,8 +272,11 @@ bool ScriptEngine::MakeWorkerCoreResponse(
                 static_cast<entt::entity>(request.entity);
             if (registry.valid(entity) &&
                 registry.all_of<TransformComponent>(entity)) {
+                const auto* attachment =
+                    registry.try_get<BoneAttachmentComponent>(entity);
                 const glm::vec3 scale =
-                    registry.get<TransformComponent>(entity).scale;
+                    attachment ? attachment->localScale
+                               : registry.get<TransformComponent>(entity).scale;
                 response.x = scale.x;
                 response.y = scale.y;
                 response.z = scale.z;
@@ -269,8 +291,13 @@ bool ScriptEngine::MakeWorkerCoreResponse(
                 static_cast<entt::entity>(request.entity);
             if (registry.valid(entity) &&
                 registry.all_of<TransformComponent>(entity)) {
-                registry.get<TransformComponent>(entity).scale =
-                    glm::vec3(request.x, request.y, request.z);
+                const glm::vec3 scale(request.x, request.y, request.z);
+                if (auto* attachment =
+                        registry.try_get<BoneAttachmentComponent>(entity)) {
+                    attachment->localScale = scale;
+                } else {
+                    registry.get<TransformComponent>(entity).scale = scale;
+                }
                 response.valid = 1;
             }
         }
@@ -322,9 +349,29 @@ bool ScriptEngine::MakeWorkerCoreResponse(
                 cursor = registry.get<ParentComponent>(cursor).parent;
             }
             if (cycle) break;
+            registry.remove<BoneAttachmentComponent>(entity);
             registry.emplace_or_replace<ParentComponent>(
                 entity, ParentComponent{parent});
             response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::AttachToBone:
+        if (m_scene && m_assets && request.text[0]) {
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            const entt::entity character =
+                static_cast<entt::entity>(request.other);
+            response.valid = BoneAttachmentSystem::Attach(
+                *m_scene, *m_assets, entity, character, request.text)
+                ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::DetachFromBone:
+        if (m_scene) {
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            response.valid =
+                BoneAttachmentSystem::Detach(*m_scene, entity) ? 1u : 0u;
         }
         break;
     case CppWorkerRequest::HasComponent:
@@ -341,6 +388,9 @@ bool ScriptEngine::MakeWorkerCoreResponse(
                  registry.all_of<TransformComponent>(entity)) ||
                 (key == "parent" &&
                  registry.all_of<ParentComponent>(entity)) ||
+                ((key == "bone_attachment" ||
+                  key == "boneattachment") &&
+                 registry.all_of<BoneAttachmentComponent>(entity)) ||
                 (key == "mesh" &&
                  registry.all_of<MeshComponent>(entity)) ||
                 (key == "material" &&

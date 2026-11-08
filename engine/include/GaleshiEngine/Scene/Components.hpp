@@ -73,6 +73,22 @@ struct SkeletalComponent {
     std::vector<glm::mat4> boneMatrices;
 };
 
+// Entity attached to a bone of a skeletal character. local* is the authored
+// transform relative to the bone; the runtime writes the resulting world
+// transform into the entity's TransformComponent.
+struct BoneAttachmentComponent {
+    entt::entity character = entt::null;
+    std::string boneName;
+    glm::vec3 localPosition{0.0f};
+    glm::quat localRotation{1.0f, 0.0f, 0.0f, 0.0f};
+    glm::vec3 localScale{1.0f};
+    // Runtime-only: last world matrix written by the attachment system. If
+    // another editor/tool changes TransformComponent, the change is folded
+    // back into the local transform instead of being overwritten next frame.
+    glm::mat4 appliedWorld{1.0f};
+    bool appliedWorldValid = false;
+};
+
 // ---------------------------------------------------------------------------
 // Animation state machine
 // ---------------------------------------------------------------------------

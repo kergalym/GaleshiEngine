@@ -224,6 +224,8 @@ enum class CppWorkerRequest : uint32_t {
     DestroyRagdoll = 201,
     RagdollActive = 202,
     ApplyRagdollImpulse = 203,
+    AttachToBone = 204,
+    DetachFromBone = 205,
 };
 
 constexpr std::size_t kCppWorkerTextSize = 512;

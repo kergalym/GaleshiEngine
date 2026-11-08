@@ -10,6 +10,7 @@ add_executable(GaleshiEditor
     src/EditorApp.cpp
     src/EditorAnimation.cpp
     src/EditorAssets.cpp
+    src/EditorAttachments.cpp
     src/EditorAudio.cpp
     src/EditorCamera.cpp
     src/EditorCodeEditor.cpp

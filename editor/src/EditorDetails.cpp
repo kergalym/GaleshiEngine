@@ -1,4 +1,5 @@
 #include "GaleshiEditorApp.hpp"
+#include "GaleshiEngine/Animation/BoneAttachment.hpp"
 
 
 
@@ -244,6 +245,15 @@ void GaleshiEditorApp::DrawDetails() {
             }
         }
 
+        // Bone sockets live on the skeletal character. Show this for the
+        // character root, its Player wrapper and any mesh selected under it.
+        if (!isCameraEntity && !selectedIsPlainCollisionShape) {
+            if (Galeshi::Entity skeletalRoot =
+                    FindSkeletalRootForReplacement(selectedHandle)) {
+                DrawBoneAttachmentSettings(skeletalRoot.Handle());
+            }
+        }
+
         // Cast Shadows is shared by the whole imported model. Find the
         // nearest model root above the current selection.
         entt::entity modelRoot = entt::null;
@@ -386,20 +396,64 @@ void GaleshiEditorApp::DrawDetails() {
                 "Transform", ImGuiTreeNodeFlags_DefaultOpen,
                 "position rotation scale uniform transform location orientation "
                 "detach collision shape")) {
-            glm::vec3 pos = selected[0].HasComponent<Galeshi::TransformComponent>() ? selected[0].GetComponent<Galeshi::TransformComponent>().position : glm::vec3(0.0f);
-            glm::vec3 scl = selected[0].HasComponent<Galeshi::TransformComponent>() ? selected[0].GetComponent<Galeshi::TransformComponent>().scale : glm::vec3(1.0f);
-            glm::vec3 rot = selected[0].HasComponent<Galeshi::TransformComponent>() ? glm::degrees(glm::eulerAngles(selected[0].GetComponent<Galeshi::TransformComponent>().rotation)) : glm::vec3(0.0f);
+            const bool boneAttached =
+                selected[0].HasComponent<Galeshi::BoneAttachmentComponent>();
+            auto* boneAttachment = boneAttached
+                ? reg.try_get<Galeshi::BoneAttachmentComponent>(
+                      selectedHandle)
+                : nullptr;
+            glm::vec3 pos = boneAttached && boneAttachment
+                ? boneAttachment->localPosition
+                : (selected[0].HasComponent<Galeshi::TransformComponent>()
+                       ? selected[0].GetComponent<Galeshi::TransformComponent>().position
+                       : glm::vec3(0.0f));
+            glm::vec3 scl = boneAttached && boneAttachment
+                ? boneAttachment->localScale
+                : (selected[0].HasComponent<Galeshi::TransformComponent>()
+                       ? selected[0].GetComponent<Galeshi::TransformComponent>().scale
+                       : glm::vec3(1.0f));
+            glm::vec3 rot = boneAttached && boneAttachment
+                ? glm::degrees(glm::eulerAngles(boneAttachment->localRotation))
+                : (selected[0].HasComponent<Galeshi::TransformComponent>()
+                       ? glm::degrees(glm::eulerAngles(
+                             selected[0].GetComponent<Galeshi::TransformComponent>().rotation))
+                       : glm::vec3(0.0f));
 
-            if (ImGui::DragFloat3("Position", glm::value_ptr(pos), 0.05f)) { for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().position = pos; }
+            if (ImGui::DragFloat3("Position", glm::value_ptr(pos), 0.05f)) {
+                for (auto e : selected) {
+                    if (boneAttached) {
+                        if (auto* a = m_scene.Registry().try_get<
+                                Galeshi::BoneAttachmentComponent>(e.Handle())) {
+                            a->localPosition = pos;
+                        }
+                    } else if (e.HasComponent<Galeshi::TransformComponent>()) {
+                        e.GetComponent<Galeshi::TransformComponent>().position = pos;
+                    }
+                }
+            }
 
-
-
-            if (ImGui::DragFloat3("Scale", glm::value_ptr(scl), 0.05f)) { for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().scale = scl; }
+            if (ImGui::DragFloat3("Scale", glm::value_ptr(scl), 0.05f)) {
+                for (auto e : selected) {
+                    if (boneAttached) {
+                        if (auto* a = m_scene.Registry().try_get<
+                                Galeshi::BoneAttachmentComponent>(e.Handle())) {
+                            a->localScale = scl;
+                        }
+                    } else if (e.HasComponent<Galeshi::TransformComponent>()) {
+                        e.GetComponent<Galeshi::TransformComponent>().scale = scl;
+                    }
+                }
+            }
             float uniformScale = scl.x;
             if (ImGui::DragFloat("Uniform Scale", &uniformScale, 0.05f)) {
                 scl = glm::vec3(uniformScale);
                 for (auto e : selected) {
-                    if (e.HasComponent<Galeshi::TransformComponent>()) {
+                    if (boneAttached) {
+                        if (auto* a = m_scene.Registry().try_get<
+                                Galeshi::BoneAttachmentComponent>(e.Handle())) {
+                            a->localScale = scl;
+                        }
+                    } else if (e.HasComponent<Galeshi::TransformComponent>()) {
                         e.GetComponent<Galeshi::TransformComponent>().scale = scl;
                     }
                 }
@@ -407,7 +461,29 @@ void GaleshiEditorApp::DrawDetails() {
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Sets X, Y and Z scale together.");
             }
-            if (ImGui::DragFloat3("Rotation", glm::value_ptr(rot), 1.0f)) { glm::quat q = glm::quat(glm::radians(rot)); for (auto e : selected) if (e.HasComponent<Galeshi::TransformComponent>()) e.GetComponent<Galeshi::TransformComponent>().rotation = q; }
+            if (ImGui::DragFloat3("Rotation", glm::value_ptr(rot), 1.0f)) {
+                const glm::quat q = glm::quat(glm::radians(rot));
+                for (auto e : selected) {
+                    if (boneAttached) {
+                        if (auto* a = m_scene.Registry().try_get<
+                                Galeshi::BoneAttachmentComponent>(e.Handle())) {
+                            a->localRotation = q;
+                        }
+                    } else if (e.HasComponent<Galeshi::TransformComponent>()) {
+                        e.GetComponent<Galeshi::TransformComponent>().rotation = q;
+                    }
+                }
+            }
+            if (boneAttached && boneAttachment) {
+                ImGui::TextDisabled(
+                    "Bone-local transform: %s",
+                    boneAttachment->boneName.c_str());
+                if (ImGui::Button("Detach from Bone")) {
+                    PushHistory();
+                    Galeshi::BoneAttachmentSystem::Detach(
+                        m_scene, selectedHandle);
+                }
+            }
 
             if (!selectedIsPlainCollisionShape &&
                 HasCollisionShapeParent(selectedHandle)) {

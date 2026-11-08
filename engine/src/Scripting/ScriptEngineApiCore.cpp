@@ -4,6 +4,7 @@
 #include "GaleshiEngine/Scene/Components.hpp"
 #include "GaleshiEngine/AI/BehaviorTree.hpp"
 #include "GaleshiEngine/Animation/AnimationSystem.hpp"
+#include "GaleshiEngine/Animation/BoneAttachment.hpp"
 #include "GaleshiEngine/Assets/AssetManager.hpp"
 #include "GaleshiEngine/Assets/LandscapeMesh.hpp"
 #include "GaleshiEngine/Assets/Material.hpp"
@@ -98,38 +99,53 @@ void ScriptEngine::BuildApiCore(ScriptApiBuildContext& context) {
         }
         return self;
     };
-    methods["position"] = [this, resolveTable, getTransform, makeVec3](sol::table self) {
+    auto attachmentFor = [this](entt::entity entity) {
+        if (!m_scene || entity == entt::null) return
+            static_cast<BoneAttachmentComponent*>(nullptr);
+        return m_scene->Registry().try_get<BoneAttachmentComponent>(entity);
+    };
+    methods["position"] = [this, resolveTable, getTransform, makeVec3, attachmentFor](sol::table self) {
         const entt::entity entity = resolveTable(self);
+        if (auto* attachment = attachmentFor(entity)) {
+            return makeVec3(attachment->localPosition);
+        }
         const TransformComponent* transform = getTransform(entity, false);
         return makeVec3(transform ? transform->position : glm::vec3(0.0f));
     };
-    methods["set_position"] = [resolveTable, getTransform, readVec3Args](
+    methods["set_position"] = [resolveTable, getTransform, readVec3Args, attachmentFor](
                                   sol::table self, sol::variadic_args args) {
         const entt::entity entity = resolveTable(self);
         glm::vec3 position{0.0f};
         if (entity == entt::null || !readVec3Args(args, position)) return self;
-        if (TransformComponent* transform = getTransform(entity, true)) {
+        if (auto* attachment = attachmentFor(entity)) {
+            attachment->localPosition = position;
+        } else if (TransformComponent* transform = getTransform(entity, true)) {
             transform->position = position;
         }
         return self;
     };
-    methods["translate"] = [resolveTable, getTransform, readVec3Args](
+    methods["translate"] = [resolveTable, getTransform, readVec3Args, attachmentFor](
                                sol::table self, sol::variadic_args args) {
         const entt::entity entity = resolveTable(self);
         glm::vec3 delta{0.0f};
         if (entity == entt::null || !readVec3Args(args, delta)) return self;
-        if (TransformComponent* transform = getTransform(entity, true)) {
+        if (auto* attachment = attachmentFor(entity)) {
+            attachment->localPosition += delta;
+        } else if (TransformComponent* transform = getTransform(entity, true)) {
             transform->position += delta;
         }
         return self;
     };
-    methods["rotation"] = [this, resolveTable, getTransform, makeQuat](sol::table self) {
+    methods["rotation"] = [this, resolveTable, getTransform, makeQuat, attachmentFor](sol::table self) {
         const entt::entity entity = resolveTable(self);
+        if (auto* attachment = attachmentFor(entity)) {
+            return makeQuat(attachment->localRotation);
+        }
         const TransformComponent* transform = getTransform(entity, false);
         return makeQuat(transform ? transform->rotation
                                   : glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
     };
-    methods["set_rotation"] = [resolveTable, getTransform, readQuat, readNumber](
+    methods["set_rotation"] = [resolveTable, getTransform, readQuat, readNumber, attachmentFor](
                                   sol::table self, sol::variadic_args args) {
         const entt::entity entity = resolveTable(self);
         if (entity == entt::null) return self;
@@ -154,49 +170,66 @@ void ScriptEngine::BuildApiCore(ScriptApiBuildContext& context) {
             if (ok) rotation = glm::quat(glm::radians(glm::vec3{x, y, z}));
         }
         if (!ok) return self;
-        if (TransformComponent* transform = getTransform(entity, true)) {
-            transform->rotation = glm::normalize(rotation);
+        const glm::quat normalized = glm::normalize(rotation);
+        if (auto* attachment = attachmentFor(entity)) {
+            attachment->localRotation = normalized;
+        } else if (TransformComponent* transform = getTransform(entity, true)) {
+            transform->rotation = normalized;
         }
         return self;
     };
-    methods["euler"] = [this, resolveTable, getTransform, makeVec3](sol::table self) {
+    methods["euler"] = [this, resolveTable, getTransform, makeVec3, attachmentFor](sol::table self) {
         const entt::entity entity = resolveTable(self);
+        if (auto* attachment = attachmentFor(entity)) {
+            return makeVec3(glm::degrees(glm::eulerAngles(
+                attachment->localRotation)));
+        }
         const TransformComponent* transform = getTransform(entity, false);
         if (!transform) return makeVec3(glm::vec3(0.0f));
         return makeVec3(glm::degrees(glm::eulerAngles(transform->rotation)));
     };
-    methods["set_euler"] = [resolveTable, getTransform, readVec3Args](
+    methods["set_euler"] = [resolveTable, getTransform, readVec3Args, attachmentFor](
                                sol::table self, sol::variadic_args args) {
         const entt::entity entity = resolveTable(self);
         glm::vec3 euler{0.0f};
         if (entity == entt::null || !readVec3Args(args, euler)) return self;
-        if (TransformComponent* transform = getTransform(entity, true)) {
-            transform->rotation = glm::normalize(
-                glm::quat(glm::radians(euler)));
+        const glm::quat rotation = glm::normalize(
+            glm::quat(glm::radians(euler)));
+        if (auto* attachment = attachmentFor(entity)) {
+            attachment->localRotation = rotation;
+        } else if (TransformComponent* transform = getTransform(entity, true)) {
+            transform->rotation = rotation;
         }
         return self;
     };
-    methods["scale"] = [resolveTable, getTransform, makeVec3](sol::table self) {
+    methods["scale"] = [resolveTable, getTransform, makeVec3, attachmentFor](sol::table self) {
         const entt::entity entity = resolveTable(self);
+        if (auto* attachment = attachmentFor(entity)) {
+            return makeVec3(attachment->localScale);
+        }
         const TransformComponent* transform = getTransform(entity, false);
         return makeVec3(transform ? transform->scale : glm::vec3(1.0f));
     };
-    methods["set_scale"] = [resolveTable, getTransform, readVec3Args](
+    methods["set_scale"] = [resolveTable, getTransform, readVec3Args, attachmentFor](
                                sol::table self, sol::variadic_args args) {
         const entt::entity entity = resolveTable(self);
         glm::vec3 scale{1.0f};
         if (entity == entt::null || !readVec3Args(args, scale)) return self;
-        if (TransformComponent* transform = getTransform(entity, true)) {
+        if (auto* attachment = attachmentFor(entity)) {
+            attachment->localScale = scale;
+        } else if (TransformComponent* transform = getTransform(entity, true)) {
             transform->scale = scale;
         }
         return self;
     };
-    methods["scale_by"] = [resolveTable, getTransform, readVec3Args](
+    methods["scale_by"] = [resolveTable, getTransform, readVec3Args, attachmentFor](
                               sol::table self, sol::variadic_args args) {
         const entt::entity entity = resolveTable(self);
         glm::vec3 scale{1.0f};
         if (entity == entt::null || !readVec3Args(args, scale)) return self;
-        if (TransformComponent* transform = getTransform(entity, true)) {
+        if (auto* attachment = attachmentFor(entity)) {
+            attachment->localScale *= scale;
+        } else if (TransformComponent* transform = getTransform(entity, true)) {
             transform->scale *= scale;
         }
         return self;
@@ -235,9 +268,49 @@ void ScriptEngine::BuildApiCore(ScriptApiBuildContext& context) {
             if (!registry.all_of<ParentComponent>(cursor)) break;
             cursor = registry.get<ParentComponent>(cursor).parent;
         }
+        // Bone attachment and hierarchy parenting are mutually exclusive.
+        registry.remove<BoneAttachmentComponent>(entity);
         registry.emplace_or_replace<ParentComponent>(entity,
                                                      ParentComponent{parent});
         return true;
+    };
+    methods["attach_to_bone"] = [this, resolveTable, resolve](
+                                    sol::table self, sol::object characterValue,
+                                    const std::string& bone) {
+        const entt::entity entity = resolveTable(self);
+        if (entity == entt::null || !m_scene || !m_assets || bone.empty()) {
+            return false;
+        }
+        const entt::entity character = resolve(characterValue);
+        return BoneAttachmentSystem::Attach(*m_scene, *m_assets, entity,
+                                            character, bone);
+    };
+    methods["detach_from_bone"] = [this, resolveTable](sol::table self) {
+        const entt::entity entity = resolveTable(self);
+        if (entity == entt::null || !m_scene) return false;
+        return BoneAttachmentSystem::Detach(*m_scene, entity);
+    };
+    methods["bone"] = [this, resolveTable](sol::table self) {
+        const entt::entity entity = resolveTable(self);
+        if (entity == entt::null || !m_scene) return std::string{};
+        auto& registry = m_scene->Registry();
+        const auto* attachment =
+            registry.try_get<BoneAttachmentComponent>(entity);
+        return attachment ? attachment->boneName : std::string{};
+    };
+    methods["attached_character"] = [this, resolveTable, makeEntity](
+                                        sol::table self) -> sol::object {
+        const entt::entity entity = resolveTable(self);
+        if (entity == entt::null || !m_scene) {
+            return sol::make_object(m_lua, sol::nil);
+        }
+        auto& registry = m_scene->Registry();
+        const auto* attachment =
+            registry.try_get<BoneAttachmentComponent>(entity);
+        if (!attachment || !registry.valid(attachment->character)) {
+            return sol::make_object(m_lua, sol::nil);
+        }
+        return makeEntity(static_cast<uint32_t>(attachment->character));
     };
     methods["detach"] = [this, resolveTable](sol::table self) {
         const entt::entity entity = resolveTable(self);
@@ -275,6 +348,9 @@ void ScriptEngine::BuildApiCore(ScriptApiBuildContext& context) {
         if (key == "name") return registry.all_of<NameComponent>(entity);
         if (key == "transform") return registry.all_of<TransformComponent>(entity);
         if (key == "parent") return registry.all_of<ParentComponent>(entity);
+        if (key == "bone_attachment" || key == "boneattachment") {
+            return registry.all_of<BoneAttachmentComponent>(entity);
+        }
         if (key == "mesh") return registry.all_of<MeshComponent>(entity);
         if (key == "material") return registry.all_of<MaterialComponent>(entity);
         if (key == "skeletal") return registry.all_of<SkeletalComponent>(entity);

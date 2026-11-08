@@ -104,6 +104,17 @@ public:
         return SetParent(entity, UINT32_MAX);
     }
 
+    bool AttachToBone(uint32_t entity, uint32_t character,
+                      const char* bone) const {
+        return m_api && m_api->attach_to_bone &&
+               m_api->attach_to_bone(m_api->user, entity, character, bone);
+    }
+
+    bool DetachFromBone(uint32_t entity) const {
+        return m_api && m_api->detach_from_bone &&
+               m_api->detach_from_bone(m_api->user, entity);
+    }
+
     bool HasComponent(uint32_t entity, const char* component) const {
         return m_api && m_api->has_component &&
                m_api->has_component(m_api->user, entity, component);
