@@ -415,13 +415,22 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
             // release shortcut, so F1 only switches when Shift is not held.
             if (!ImGui::GetIO().KeyShift &&
                 ImGui::IsKeyPressed(ImGuiKey_F1)) {
+                if (m_viewportViewMode != ViewportViewMode::Wireframe) {
+                    m_viewModeBeforeDiagnostic = m_viewportViewMode;
+                    m_viewModeDiagnosticActive = true;
+                }
                 SetViewportViewMode(ViewportViewMode::Wireframe);
             }
             if (ImGui::IsKeyPressed(ImGuiKey_F2)) {
                 SetViewportViewMode(ViewportViewMode::Unlit);
             }
             if (ImGui::IsKeyPressed(ImGuiKey_F3)) {
-                SetViewportViewMode(ViewportViewMode::Lit);
+                if (m_viewModeDiagnosticActive) {
+                    SetViewportViewMode(m_viewModeBeforeDiagnostic);
+                    m_viewModeDiagnosticActive = false;
+                } else {
+                    SetViewportViewMode(ViewportViewMode::Lit);
+                }
             }
         }
         ImGui::PopStyleVar();

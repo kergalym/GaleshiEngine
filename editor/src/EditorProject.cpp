@@ -566,6 +566,7 @@
                 if (m_recentProjects.empty()) {
                     ImGui::TextDisabled("No recent projects.");
                 } else {
+                    int removeRecentProject = -1;
                     for (size_t i = 0; i < m_recentProjects.size(); ++i) {
                         ImGui::PushID(static_cast<int>(i));
                         // Copy before AddRecentProject reorders the vector.
@@ -596,7 +597,21 @@
                         if (ImGui::IsItemHovered()) {
                             ImGui::SetTooltip("%s\nDouble-click to open.", projectPath.c_str());
                         }
+                        if (ImGui::BeginPopupContextItem(
+                                "recent_project_context")) {
+                            if (ImGui::MenuItem("Remove from List")) {
+                                removeRecentProject = static_cast<int>(i);
+                            }
+                            ImGui::EndPopup();
+                        }
                         ImGui::PopID();
+                    }
+                    if (removeRecentProject >= 0 &&
+                        removeRecentProject <
+                            static_cast<int>(m_recentProjects.size())) {
+                        m_recentProjects.erase(
+                            m_recentProjects.begin() + removeRecentProject);
+                        SaveRecentProjects();
                     }
                 }
                 ImGui::EndChild();
