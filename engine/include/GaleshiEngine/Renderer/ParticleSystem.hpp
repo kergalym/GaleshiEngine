@@ -49,7 +49,8 @@ public:
     // One-shot water splash. Particles are simulated/rendered separately from
     // scene emitters and are not serialized.
     void EmitSplash(const glm::vec3& position, int count, float speed,
-                    float sizeScale = 1.0f);
+                    float sizeScale = 1.0f,
+                    const glm::vec3& waterColor = glm::vec3(1.0f));
 
 private:
     struct Particle {

@@ -598,6 +598,13 @@ enum class WaterBodyType {
     Lake = 3,
 };
 
+// Runtime splash ripple used by the water shader. Not serialized.
+struct WaterRipple {
+    glm::vec2 uv{0.0f};
+    float age = 0.0f;
+    float strength = 0.0f;
+};
+
 struct WaterComponent {
     WaterBodyType bodyType = WaterBodyType::Sea;
     bool enabled = true;
@@ -656,6 +663,10 @@ struct WaterComponent {
     glm::vec3 shallowColor{0.08f, 0.42f, 0.46f};
     glm::vec3 deepColor{0.008f, 0.045f, 0.12f};
     glm::vec3 foamColor{0.92f, 0.96f, 1.0f};
+
+    // Runtime-only splash disturbances. The water shader renders expanding
+    // foam rings at these water-plane UV positions.
+    std::vector<WaterRipple> ripples;
 };
 
 // Procedural groom hair. The runtime generates guide curves from the scalp

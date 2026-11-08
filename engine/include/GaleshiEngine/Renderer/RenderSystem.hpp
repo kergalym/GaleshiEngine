@@ -217,6 +217,8 @@ private:
     bgfx::UniformHandle u_waterShallow = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_waterDeep = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_waterFoam = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_waterRipples = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_waterRippleCount = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_waterSceneColor = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_waterDepth = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_waterEnvCube = BGFX_INVALID_HANDLE;

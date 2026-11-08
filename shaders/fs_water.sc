@@ -20,6 +20,9 @@ uniform vec4 u_waterPlanar;    // x=enabled, y=plane height, z=strength
 uniform vec4 u_waterShallow;
 uniform vec4 u_waterDeep;
 uniform vec4 u_waterFoam;
+// xy = water-plane UV, z = age, w = strength.
+uniform vec4 u_waterRipples[8];
+uniform vec4 u_waterRippleCount;
 uniform vec4 u_cameraPosition;
 uniform vec4 u_lightDirection;
 uniform vec4 u_lightColorIntensity;
@@ -183,12 +186,28 @@ void main()
     color += u_lightColorIntensity.rgb * sunStrength *
              (glint * 1.6 + sparkle * 0.35);
 
+    // Expanding foam rings from body impacts. These are driven by the same
+    // water body that renders the surface, so splashes read as part of the
+    // simulation rather than a detached particle effect.
+    float rippleFoam = 0.0;
+    for (int i = 0; i < 8; ++i) {
+        if (float(i) >= u_waterRippleCount.x) break;
+        vec4 ripple = u_waterRipples[i];
+        float age = max(ripple.z, 0.0);
+        float radius = 0.006 + age * 0.085;
+        float dist = length(v_uv - ripple.xy);
+        float band = smoothstep(radius + 0.018, radius, dist) *
+                     smoothstep(radius - 0.018, radius, dist);
+        rippleFoam += band * exp(-age * 1.5) * ripple.w;
+    }
+
     // Shoreline foam plus foam on the highest wave crests.
     float shore = 1.0 - smoothstep(0.0, max(u_waterParams2.z, 0.01),
                                    thickness);
     float crest = smoothstep(waveHeight * 0.65, waveHeight * 1.0, v_wave);
     float foamNoise = valueNoise(v_worldPos.xz * 3.5 + flow * time * 0.22);
-    float foam = clamp((shore * 0.85 + crest * 0.35) *
+    float foam = clamp((shore * 0.85 + crest * 0.35 +
+                        rippleFoam * 1.8) *
                        u_waterParams2.w *
                        (0.40 + 0.60 * foamNoise), 0.0, 0.95);
     color = mix(color, u_waterFoam.rgb, foam * 0.88);

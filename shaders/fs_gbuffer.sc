@@ -42,7 +42,11 @@ void main()
         landscapeUV * max(u_landscapeDetail.x, 1.0) + vec2(0.37, 0.71);
     float landscapeDetailStrength =
         clamp(u_landscapeDetail.y, 0.0, 1.0);
-    vec4 a = texture2D(s_albedoMap, v_uv);
+    // Landscape base textures (albedo/normal/ORM) use the same world-scale
+    // UVs as the painted layer. This keeps the ground grain stable and avoids
+    // stretching one texture across the whole terrain.
+    vec2 baseUV = u_landscapeParams.x > 0.5 ? landscapeUV : v_uv;
+    vec4 a = texture2D(s_albedoMap, baseUV);
     if (landscapeBlend > 0.0) {
         vec4 layerAlbedo =
             texture2D(s_landscapeAlbedoMap, landscapeUV);
@@ -57,7 +61,7 @@ void main()
         }
         a = mix(a, layerAlbedo, landscapeBlend);
     }
-    float opacity = texture2D(s_opacityMap, v_uv).r;
+    float opacity = texture2D(s_opacityMap, baseUV).r;
     // Only texture alpha drives the cutout. Legacy FBX materials often carry
     // a fractional albedo/opacity factor (e.g. cornea transparency) while
     // their opacity map is fully white; multiplying the factor in would
@@ -69,14 +73,14 @@ void main()
     float cutoff = u_materialFlags.w > 0.5 ? u_materialParams.z : 0.0;
     if (alpha < cutoff) discard;
 
-    vec4 mr = texture2D(s_metallicRoughnessMap, v_uv);
+    vec4 mr = texture2D(s_metallicRoughnessMap, baseUV);
     float metallic = mr.b * u_metallicFactor.r;
     float rough    = mr.g * u_roughnessFactor.r;
     if (u_materialFlags.x > 0.5) {
-        metallic = texture2D(s_metallicMap, v_uv).r * u_metallicFactor.r;
+        metallic = texture2D(s_metallicMap, baseUV).r * u_metallicFactor.r;
     }
     if (u_materialFlags.y > 0.5) {
-        rough = texture2D(s_roughnessMap, v_uv).r * u_roughnessFactor.r;
+        rough = texture2D(s_roughnessMap, baseUV).r * u_roughnessFactor.r;
     }
     if (landscapeBlend > 0.0) {
         vec4 layerOrm = texture2D(s_landscapeOrmMap, landscapeUV);
@@ -110,28 +114,47 @@ void main()
 
     // Tangent-space normal mapping. If the mesh has no tangent data the
     // geometric normal is kept instead of producing NaNs.
-    // Build the tangent frame from screen-space derivatives. This respects
-    // mirrored UV islands and works for meshes without authored tangents
-    // (the armour and sword meshes), unlike a fixed vertex tangent with an
-    // assumed bitangent sign.
-    vec3 dp1 = dFdx(v_worldPos);
-    vec3 dp2 = dFdy(v_worldPos);
-    // The shore normal map is tiled, so its tangent frame must follow the
-    // tiled UVs rather than the raw landscape UV.
-    vec2 normalUV = landscapeBlend > 0.0 ? landscapeUV : v_uv;
-    vec2 duv1 = dFdx(normalUV);
-    vec2 duv2 = dFdy(normalUV);
-    vec3 dp2perp = cross(dp2, N);
-    vec3 dp1perp = cross(N, dp1);
-    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
-    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
-    float maxLen = max(dot(T, T), dot(B, B));
-    if (maxLen > 1e-12) {
-        float invmax = inversesqrt(maxLen);
-        T *= invmax;
-        B *= invmax;
+    vec3 T = vec3(0.0);
+    vec3 B = vec3(0.0);
+    bool frameValid = false;
+    if (landscapeBlend > 0.0) {
+        // Landscape UVs are a stable planar projection. Use the authored
+        // tangent instead of screen-space derivatives: derivative frames make
+        // the tiled shore normal map swim while the camera moves.
+        float tangentLen2 = dot(v_tangent, v_tangent);
+        if (tangentLen2 > 1e-8) {
+            vec3 tangent = v_tangent * inversesqrt(tangentLen2);
+            T = tangent - N * dot(N, tangent);
+            float tlen2 = dot(T, T);
+            if (tlen2 > 1e-8) {
+                T *= inversesqrt(tlen2);
+                B = cross(T, N);
+                frameValid = true;
+            }
+        }
+    } else {
+        // Build the tangent frame from screen-space derivatives. This
+        // respects mirrored UV islands and works for meshes without authored
+        // tangents (the armour and sword meshes).
+        vec3 dp1 = dFdx(v_worldPos);
+        vec3 dp2 = dFdy(v_worldPos);
+        vec2 duv1 = dFdx(v_uv);
+        vec2 duv2 = dFdy(v_uv);
+        vec3 dp2perp = cross(dp2, N);
+        vec3 dp1perp = cross(N, dp1);
+        T = dp2perp * duv1.x + dp1perp * duv2.x;
+        B = dp2perp * duv1.y + dp1perp * duv2.y;
+        float maxLen = max(dot(T, T), dot(B, B));
+        if (maxLen > 1e-12) {
+            float invmax = inversesqrt(maxLen);
+            T *= invmax;
+            B *= invmax;
+            frameValid = true;
+        }
+    }
+    if (frameValid) {
         vec3 tangentNormal =
-            texture2D(s_normalMap, v_uv).xyz * 2.0 - 1.0;
+            texture2D(s_normalMap, baseUV).xyz * 2.0 - 1.0;
         if (landscapeBlend > 0.0) {
             vec3 layerNormal =
                 texture2D(s_landscapeNormalMap, landscapeUV).xyz *
@@ -153,7 +176,7 @@ void main()
         N = normalize(mat3(T, B, N) * tangentNormal);
     }
 
-    float occlusionValue = texture2D(s_occlusionMap, v_uv).r;
+    float occlusionValue = texture2D(s_occlusionMap, baseUV).r;
     if (landscapeBlend > 0.0) {
         float layerOcclusion =
             texture2D(s_landscapeOrmMap, landscapeUV).r;
@@ -162,10 +185,10 @@ void main()
     }
     float occlusion = mix(1.0, occlusionValue,
                           clamp(u_materialParams.y, 0.0, 1.0));
-    vec3 emissive = u_emissiveFactor.rgb * texture2D(s_emissiveMap, v_uv).rgb;
+    vec3 emissive = u_emissiveFactor.rgb * texture2D(s_emissiveMap, baseUV).rgb;
     // White fallback yields 1.0 (standard dielectric F0). A real specular
     // map modulates the dielectric reflectance in the lighting pass.
-    float specular = clamp(texture2D(s_specularMap, v_uv).r, 0.0, 1.0) *
+    float specular = clamp(texture2D(s_specularMap, baseUV).r, 0.0, 1.0) *
                      clamp(u_metallicFactor.y, 0.0, 1.0);
 
     gl_FragData[0] = vec4(albedo, metallic);          // RT0

@@ -77,7 +77,10 @@ void main()
         landscapeUV * max(u_landscapeDetail.x, 1.0) + vec2(0.37, 0.71);
     float landscapeDetailStrength =
         clamp(u_landscapeDetail.y, 0.0, 1.0);
-    vec4 albedoTex = texture2D(s_albedoMap, v_uv);
+    // Landscape base textures use the same world-scale UVs as the painted
+    // layer so the terrain grain is stable and not stretched.
+    vec2 baseUV = u_landscapeParams.x > 0.5 ? landscapeUV : v_uv;
+    vec4 albedoTex = texture2D(s_albedoMap, baseUV);
     if (landscapeBlend > 0.0) {
         vec4 layerAlbedo =
             texture2D(s_landscapeAlbedoMap, landscapeUV);
@@ -92,7 +95,7 @@ void main()
         }
         albedoTex = mix(albedoTex, layerAlbedo, landscapeBlend);
     }
-    float opacity = texture2D(s_opacityMap, v_uv).r;
+    float opacity = texture2D(s_opacityMap, baseUV).r;
     // Texture alpha only: legacy material factors must not turn a fully
     // opaque opacity map into a discarded surface.
     float alpha = albedoTex.a * opacity;
@@ -101,14 +104,14 @@ void main()
 
     vec3 albedo = u_albedoFactor.rgb * albedoTex.rgb;
 
-    vec4 mr = texture2D(s_metallicRoughnessMap, v_uv);
+    vec4 mr = texture2D(s_metallicRoughnessMap, baseUV);
     float metallic = mr.b * u_metallicFactor.x;
     float rough    = mr.g * u_roughnessFactor.x;
     if (u_materialFlags.x > 0.5) {
-        metallic = texture2D(s_metallicMap, v_uv).r * u_metallicFactor.x;
+        metallic = texture2D(s_metallicMap, baseUV).r * u_metallicFactor.x;
     }
     if (u_materialFlags.y > 0.5) {
-        rough = texture2D(s_roughnessMap, v_uv).r * u_roughnessFactor.x;
+        rough = texture2D(s_roughnessMap, baseUV).r * u_roughnessFactor.x;
     }
     if (landscapeBlend > 0.0) {
         vec4 layerOrm = texture2D(s_landscapeOrmMap, landscapeUV);
@@ -137,25 +140,46 @@ void main()
     vec3 N = normalize(v_normal);
     if (backFace) N = -N;
 
-    // Screen-space tangent frame: handles mirrored UV islands and meshes
-    // without authored tangents (e.g. the armour and sword). The old vertex
-    // tangent path assumed B = cross(N, T), which flips normal-map X/Y on
-    // mirrored UVs.
-    vec3 dp1 = dFdx(v_worldPos);
-    vec3 dp2 = dFdy(v_worldPos);
-    vec2 normalUV = landscapeBlend > 0.0 ? landscapeUV : v_uv;
-    vec2 duv1 = dFdx(normalUV);
-    vec2 duv2 = dFdy(normalUV);
-    vec3 dp2perp = cross(dp2, N);
-    vec3 dp1perp = cross(N, dp1);
-    vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
-    vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
-    float maxLen = max(dot(T, T), dot(B, B));
-    if (maxLen > 1e-12) {
-        float invmax = inversesqrt(maxLen);
-        T *= invmax;
-        B *= invmax;
-        vec3 tangentNormal = texture2D(s_normalMap, v_uv).xyz * 2.0 - 1.0;
+    // Tangent-space normal mapping.
+    vec3 T = vec3(0.0);
+    vec3 B = vec3(0.0);
+    bool frameValid = false;
+    if (landscapeBlend > 0.0) {
+        // Stable planar frame for the landscape; screen-space derivatives
+        // make the tiled shore normal map swim as the camera moves.
+        float tangentLen2 = dot(v_tangent, v_tangent);
+        if (tangentLen2 > 1e-8) {
+            vec3 tangent = v_tangent * inversesqrt(tangentLen2);
+            T = tangent - N * dot(N, tangent);
+            float tlen2 = dot(T, T);
+            if (tlen2 > 1e-8) {
+                T *= inversesqrt(tlen2);
+                B = cross(T, N);
+                frameValid = true;
+            }
+        }
+    } else {
+        // Screen-space tangent frame: handles mirrored UV islands and meshes
+        // without authored tangents (e.g. the armour and sword).
+        vec3 dp1 = dFdx(v_worldPos);
+        vec3 dp2 = dFdy(v_worldPos);
+        vec2 duv1 = dFdx(v_uv);
+        vec2 duv2 = dFdy(v_uv);
+        vec3 dp2perp = cross(dp2, N);
+        vec3 dp1perp = cross(N, dp1);
+        T = dp2perp * duv1.x + dp1perp * duv2.x;
+        B = dp2perp * duv1.y + dp1perp * duv2.y;
+        float maxLen = max(dot(T, T), dot(B, B));
+        if (maxLen > 1e-12) {
+            float invmax = inversesqrt(maxLen);
+            T *= invmax;
+            B *= invmax;
+            frameValid = true;
+        }
+    }
+    if (frameValid) {
+        vec3 tangentNormal =
+            texture2D(s_normalMap, baseUV).xyz * 2.0 - 1.0;
         if (landscapeBlend > 0.0) {
             vec3 layerNormal =
                 texture2D(s_landscapeNormalMap, landscapeUV).xyz *
@@ -177,7 +201,7 @@ void main()
         N = normalize(mul(mat3(T, B, N), tangentNormal));
     }
 
-    float occlusionValue = texture2D(s_occlusionMap, v_uv).r;
+    float occlusionValue = texture2D(s_occlusionMap, baseUV).r;
     if (landscapeBlend > 0.0) {
         float layerOcclusion =
             texture2D(s_landscapeOrmMap, landscapeUV).r;
@@ -186,9 +210,9 @@ void main()
     }
     float occlusion = mix(1.0, occlusionValue,
                           clamp(u_materialParams.y, 0.0, 1.0));
-    float specular = clamp(texture2D(s_specularMap, v_uv).r, 0.0, 1.0) *
+    float specular = clamp(texture2D(s_specularMap, baseUV).r, 0.0, 1.0) *
                      clamp(u_metallicFactor.y, 0.0, 1.0);
-    vec3 emissive = u_emissiveFactor.rgb * texture2D(s_emissiveMap, v_uv).rgb;
+    vec3 emissive = u_emissiveFactor.rgb * texture2D(s_emissiveMap, baseUV).rgb;
 
     vec3 V = normalize(u_cameraPosition.xyz - v_worldPos);
     vec3 L = normalize(-u_lightDirection.xyz);

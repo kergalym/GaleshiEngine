@@ -261,7 +261,8 @@ void ParticleSystem::RemoveEmitter(entt::entity emitter) {
 }
 
 void ParticleSystem::EmitSplash(const glm::vec3& position, int count,
-                                float speed, float sizeScale) {
+                                float speed, float sizeScale,
+                                const glm::vec3& waterColor) {
     count = std::clamp(count, 0, 400);
     if (count == 0) return;
 
@@ -269,6 +270,14 @@ void ParticleSystem::EmitSplash(const glm::vec3& position, int count,
     const glm::vec3 upward(0.0f, 1.0f, 0.0f);
     const float scale = std::clamp(sizeScale, 0.25f, 4.0f);
     const float killY = position.y - 0.04f;
+    const glm::vec3 base =
+        glm::clamp(waterColor, glm::vec3(0.0f), glm::vec3(1.0f));
+    const glm::vec3 dropletColor =
+        glm::mix(glm::vec3(1.0f), base, 0.35f);
+    const glm::vec3 foamColor =
+        glm::mix(glm::vec3(1.0f), base, 0.45f);
+    const glm::vec3 mistColor =
+        glm::mix(glm::vec3(0.85f, 0.92f, 1.0f), base, 0.30f);
 
     auto emit = [&](std::vector<Particle>& target, int amount,
                     auto&& setup) {
@@ -308,9 +317,9 @@ void ParticleSystem::EmitSplash(const glm::vec3& position, int count,
                      dir * (speed * (0.60f + rng(m_rng) * 0.85f));
         p.lifetime = 0.40f + rng(m_rng) * 0.65f;
         p.sizeScale = scale * (0.22f + rng(m_rng) * 0.42f);
-        const float blue = 0.88f + rng(m_rng) * 0.12f;
-        p.tint = glm::vec4(0.72f + rng(m_rng) * 0.16f,
-                           blue, 1.0f, 0.78f + rng(m_rng) * 0.22f);
+        p.tint = glm::vec4(
+            dropletColor * (0.82f + rng(m_rng) * 0.18f),
+            0.78f + rng(m_rng) * 0.22f);
         p.killY = killY;
         p.gravityScale = 1.0f;
         p.drag = 0.12f;
@@ -329,9 +338,9 @@ void ParticleSystem::EmitSplash(const glm::vec3& position, int count,
                      upward * (speed * (0.05f + rng(m_rng) * 0.24f));
         p.lifetime = 0.40f + rng(m_rng) * 0.62f;
         p.sizeScale = scale * (0.32f + rng(m_rng) * 0.55f);
-        p.tint = glm::vec4(0.94f + rng(m_rng) * 0.06f,
-                           0.98f + rng(m_rng) * 0.02f, 1.0f,
-                           0.68f + rng(m_rng) * 0.28f);
+        p.tint = glm::vec4(
+            foamColor * (0.92f + rng(m_rng) * 0.08f),
+            0.68f + rng(m_rng) * 0.28f);
         p.killY = killY;
         p.gravityScale = 0.40f;
         p.drag = 1.0f;
@@ -350,9 +359,9 @@ void ParticleSystem::EmitSplash(const glm::vec3& position, int count,
                      outward * (speed * (0.08f + rng(m_rng) * 0.30f));
         p.lifetime = 0.95f + rng(m_rng) * 0.90f;
         p.sizeScale = scale * (0.60f + rng(m_rng) * 0.95f);
-        p.tint = glm::vec4(0.68f + rng(m_rng) * 0.12f,
-                           0.82f + rng(m_rng) * 0.10f, 1.0f,
-                           0.10f + rng(m_rng) * 0.14f);
+        p.tint = glm::vec4(
+            mistColor * (0.88f + rng(m_rng) * 0.12f),
+            0.10f + rng(m_rng) * 0.14f);
         p.killY = -3.402823466e+38F;
         p.gravityScale = 0.10f;
         p.drag = 1.4f;

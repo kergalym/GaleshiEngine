@@ -510,6 +510,10 @@ void RenderSystem::Init(AssetManager* assets) {
     u_waterShallow = bgfx::createUniform("u_waterShallow", bgfx::UniformType::Vec4);
     u_waterDeep = bgfx::createUniform("u_waterDeep", bgfx::UniformType::Vec4);
     u_waterFoam = bgfx::createUniform("u_waterFoam", bgfx::UniformType::Vec4);
+    u_waterRipples = bgfx::createUniform(
+        "u_waterRipples", bgfx::UniformType::Vec4, 8);
+    u_waterRippleCount = bgfx::createUniform(
+        "u_waterRippleCount", bgfx::UniformType::Vec4);
     s_waterSceneColor = bgfx::createUniform("s_waterSceneColor", bgfx::UniformType::Sampler);
     s_waterDepth = bgfx::createUniform("s_waterDepth", bgfx::UniformType::Sampler);
     s_waterEnvCube = bgfx::createUniform("s_envCube", bgfx::UniformType::Sampler);
@@ -615,6 +619,8 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(u_waterShallow)) bgfx::destroy(u_waterShallow);
     if (bgfx::isValid(u_waterDeep)) bgfx::destroy(u_waterDeep);
     if (bgfx::isValid(u_waterFoam)) bgfx::destroy(u_waterFoam);
+    if (bgfx::isValid(u_waterRipples)) bgfx::destroy(u_waterRipples);
+    if (bgfx::isValid(u_waterRippleCount)) bgfx::destroy(u_waterRippleCount);
     if (bgfx::isValid(s_waterSceneColor)) bgfx::destroy(s_waterSceneColor);
     if (bgfx::isValid(s_waterDepth)) bgfx::destroy(s_waterDepth);
     if (bgfx::isValid(s_waterEnvCube)) bgfx::destroy(s_waterEnvCube);
@@ -2349,6 +2355,20 @@ void RenderSystem::RenderWater(Scene& scene, const Camera& camera,
         const float planar[4] = {usePlanar ? 1.0f : 0.0f,
                                  planarPlaneY, 1.0f, 0.0f};
 
+        const size_t rippleFirst = water.ripples.size() > 8
+            ? water.ripples.size() - 8 : 0;
+        const size_t rippleCount = water.ripples.size() - rippleFirst;
+        float rippleData[8 * 4] = {};
+        for (size_t i = 0; i < rippleCount; ++i) {
+            const WaterRipple& ripple = water.ripples[rippleFirst + i];
+            rippleData[i * 4 + 0] = ripple.uv.x;
+            rippleData[i * 4 + 1] = ripple.uv.y;
+            rippleData[i * 4 + 2] = ripple.age;
+            rippleData[i * 4 + 3] = ripple.strength;
+        }
+        const float rippleCountData[4] = {
+            static_cast<float>(rippleCount), 0.0f, 0.0f, 0.0f};
+
         bgfx::setUniform(u_waterParams0, p0);
         bgfx::setUniform(u_waterParams1, p1);
         bgfx::setUniform(u_waterParams2, p2);
@@ -2358,6 +2378,10 @@ void RenderSystem::RenderWater(Scene& scene, const Camera& camera,
         bgfx::setUniform(u_waterShallow, shallow);
         bgfx::setUniform(u_waterDeep, deep);
         bgfx::setUniform(u_waterFoam, foam);
+        bgfx::setUniform(u_waterRipples, rippleData,
+                         static_cast<uint16_t>(
+                             std::max<size_t>(rippleCount, 1)));
+        bgfx::setUniform(u_waterRippleCount, rippleCountData);
         bgfx::setUniform(u_waterPlanar, planar);
 
         bgfx::setTransform(glm::value_ptr(item.model));

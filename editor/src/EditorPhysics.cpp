@@ -1149,16 +1149,29 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
         if (!m_physics || !m_particles || dt <= 0.0f) return;
         auto& registry = m_scene.Registry();
 
+        // Age splash ripples even when no body is currently in the water.
+        for (auto e : registry.view<Galeshi::WaterComponent>()) {
+            auto& water = registry.get<Galeshi::WaterComponent>(e);
+            for (auto it = water.ripples.begin();
+                 it != water.ripples.end();) {
+                it->age += dt;
+                if (it->age > 3.0f) {
+                    it = water.ripples.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+
         struct WaterVolume {
-            const Galeshi::WaterComponent* water = nullptr;
+            Galeshi::WaterComponent* water = nullptr;
             glm::mat4 invModel{1.0f};
             float surfaceY = 0.0f;
             float seed = 0.0f;
         };
         std::vector<WaterVolume> volumes;
         for (auto e : registry.view<Galeshi::WaterComponent>()) {
-            const auto& water =
-                registry.get<Galeshi::WaterComponent>(e);
+            auto& water = registry.get<Galeshi::WaterComponent>(e);
             if (!water.enabled || water.width < 1e-4f ||
                 water.depth < 1e-4f) {
                 continue;
@@ -1256,10 +1269,22 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
                     const float speed = 2.0f + impact * 0.50f;
                     const float sizeScale = std::clamp(
                         halfHeight * 0.9f, 0.7f, 1.6f);
+                    const glm::vec3 splashTint = glm::mix(
+                        volume.water->foamColor,
+                        volume.water->shallowColor, 0.35f);
                     m_particles->EmitSplash(
                         glm::vec3(center.x, volume.surfaceY + 0.02f,
                                   center.z),
-                        count, speed, sizeScale);
+                        count, speed, sizeScale, splashTint);
+                    if (volume.water->ripples.size() >= 16) {
+                        volume.water->ripples.erase(
+                            volume.water->ripples.begin());
+                    }
+                    volume.water->ripples.push_back(
+                        Galeshi::WaterRipple{
+                            uv, 0.0f,
+                            std::clamp(0.35f + impact * 0.08f,
+                                       0.25f, 1.4f)});
                     const auto* name =
                         registry.try_get<Galeshi::NameComponent>(e);
                     spdlog::debug(
