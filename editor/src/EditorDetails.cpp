@@ -641,7 +641,7 @@ void GaleshiEditorApp::DrawDetails() {
                             "Groom Hair", ImGuiTreeNodeFlags_DefaultOpen,
                             "groom hair strands guides density length width "
                             "gravity stiffness color")) {
-                        DrawGroomSettings(groom);
+                        DrawGroomSettings(groom, sel.Handle());
                     }
                 } else if (ImGui::Button("+ Add Groom Hair")) {
                     PushHistory();

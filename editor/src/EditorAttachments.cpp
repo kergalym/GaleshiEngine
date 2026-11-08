@@ -125,8 +125,9 @@ void GaleshiEditorApp::DrawBoneAttachmentSettings(entt::entity character) {
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip(
-            "Select any scene entity except this character. Its current "
-            "world transform is preserved when attached.");
+            "Select any scene entity except this character. The entity "
+            "snaps to the bone and becomes a child of the character in the "
+            "Outliner.");
     }
 
     const bool canAttach = m_boneAttachEntity != entt::null &&

@@ -1,4 +1,5 @@
 #include "GaleshiEngine/Renderer/GroomSystem.hpp"
+#include "GaleshiEngine/Animation/BoneAttachment.hpp"
 
 #include "GaleshiEngine/Assets/AssetManager.hpp"
 #include "GaleshiEngine/Assets/Mesh.hpp"
@@ -187,6 +188,7 @@ uint64_t MakeGenerationKey(const GroomComponent& groom, entt::entity target,
     mixFloat(groom.groomDirection.y);
     mixFloat(groom.groomDirection.z);
     for (char c : groom.targetMeshName) MixKey(key, static_cast<uint64_t>(c));
+    for (char c : groom.targetBoneName) MixKey(key, static_cast<uint64_t>(c));
     return key;
 }
 
@@ -437,7 +439,8 @@ std::shared_ptr<GroomData> GenerateGroom(Scene& scene, entt::entity target,
 }
 
 void UpdateSimulation(Scene& scene, entt::entity target,
-                      const GroomComponent& groom, GroomData& data, float dt) {
+                      const GroomComponent& groom, GroomData& data, float dt,
+                      int forcedBoneIndex) {
     const auto& mc = scene.Registry().get<MeshComponent>(target);
     if (!mc.mesh || !mc.mesh->Valid() || data.strands.empty()) {
         data.boundsCenter = glm::vec3(0.0f);
@@ -456,7 +459,8 @@ void UpdateSimulation(Scene& scene, entt::entity target,
         glm::translate(glm::mat4(1.0f), groom.position) *
         glm::mat4_cast(groomRotation) *
         glm::scale(glm::mat4(1.0f), groom.scale);
-    entt::entity skeleton = FindSkeletonRoot(scene, target);
+    entt::entity skeleton =
+        BoneAttachmentSystem::FindAnimatingSkeleton(scene, target);
     const std::vector<glm::mat4>* bones = nullptr;
     if (skeleton != entt::null) {
         const auto& skel = scene.Registry().get<SkeletalComponent>(skeleton);
@@ -474,9 +478,15 @@ void UpdateSimulation(Scene& scene, entt::entity target,
 
     const bool simulate = groom.simulate;
     for (GroomStrand& strand : data.strands) {
-        const glm::mat4 skin = bones
-            ? BuildSkinMatrix(*bones, strand.boneIDs, strand.boneWeights)
-            : glm::mat4(1.0f);
+        const bool useForcedBone =
+            bones && forcedBoneIndex >= 0 &&
+            static_cast<size_t>(forcedBoneIndex) < bones->size();
+        const glm::mat4 skin = useForcedBone
+            ? (*bones)[static_cast<size_t>(forcedBoneIndex)]
+            : (bones
+                   ? BuildSkinMatrix(*bones, strand.boneIDs,
+                                     strand.boneWeights)
+                   : glm::mat4(1.0f));
         const glm::mat4 bindToWorld = targetWorld * groomLocal * skin;
 
         strand.restWorld.resize(strand.restLocal.size());
@@ -587,6 +597,27 @@ void GroomSystem::Update(Scene& scene, AssetManager& assets, float dt) {
             continue;
         }
 
+        int forcedBoneIndex = -1;
+        if (!groom.targetBoneName.empty()) {
+            const entt::entity skeleton =
+                BoneAttachmentSystem::FindAnimatingSkeleton(scene, target);
+            if (skeleton != entt::null) {
+                const auto& skel = reg.get<SkeletalComponent>(skeleton);
+                if (!skel.sourcePath.empty()) {
+                    const auto& model =
+                        assets.LoadModelRef(skel.sourcePath);
+                    const auto boneIt =
+                        model.boneMap.find(groom.targetBoneName);
+                    if (boneIt != model.boneMap.end() &&
+                        boneIt->second >= 0 &&
+                        static_cast<size_t>(boneIt->second) <
+                            skel.boneMatrices.size()) {
+                        forcedBoneIndex = boneIt->second;
+                    }
+                }
+            }
+        }
+
         const auto& targetMesh = reg.get<MeshComponent>(target);
         if (!targetMesh.mesh || !targetMesh.mesh->Valid()) {
             groom.runtime.reset();
@@ -607,7 +638,8 @@ void GroomSystem::Update(Scene& scene, AssetManager& assets, float dt) {
         groom.runtime->width = std::max(groom.width, 0.0001f);
         groom.runtime->rootWidth = std::max(groom.rootWidth, 0.0f);
         groom.runtime->tipWidth = std::max(groom.tipWidth, 0.0f);
-        UpdateSimulation(scene, target, groom, *groom.runtime, dt);
+        UpdateSimulation(scene, target, groom, *groom.runtime, dt,
+                         forcedBoneIndex);
     }
 }
 

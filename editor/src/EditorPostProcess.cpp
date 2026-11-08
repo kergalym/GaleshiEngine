@@ -1,4 +1,7 @@
 #include "GaleshiEditorApp.hpp"
+#include "GaleshiEngine/Animation/BoneAttachment.hpp"
+#include "GaleshiEngine/Assets/AssetManager.hpp"
+#include <algorithm>
 
 
 
@@ -1014,7 +1017,8 @@
 
 
 
-    void GaleshiEditorApp::DrawGroomSettings(Galeshi::GroomComponent& groom) {
+    void GaleshiEditorApp::DrawGroomSettings(Galeshi::GroomComponent& groom,
+                                             entt::entity entity) {
         ImGui::Checkbox("Enabled##groom", &groom.enabled);
         ImGui::SameLine();
         ImGui::Checkbox("Simulate", &groom.simulate);
@@ -1025,15 +1029,53 @@
                                 groom.runtime->strands.size());
         }
 
-        char targetBuffer[128];
-        std::snprintf(targetBuffer, sizeof(targetBuffer), "%s",
-                      groom.targetMeshName.c_str());
-        if (ImGui::InputText("Target Mesh", targetBuffer, sizeof(targetBuffer))) {
-            groom.targetMeshName = targetBuffer;
+        std::vector<std::string> bones;
+        if (m_assets) {
+            if (Galeshi::Entity skeletalRoot =
+                    FindSkeletalRootForReplacement(entity)) {
+                const entt::entity skeleton =
+                    Galeshi::BoneAttachmentSystem::FindAnimatingSkeleton(
+                        m_scene, skeletalRoot.Handle());
+                if (skeleton != entt::null) {
+                    const auto& skel = m_scene.Registry().get<
+                        Galeshi::SkeletalComponent>(skeleton);
+                    if (!skel.sourcePath.empty()) {
+                        const auto& model =
+                            m_assets->LoadModelRef(skel.sourcePath);
+                        bones.reserve(model.boneMap.size());
+                        for (const auto& [name, index] : model.boneMap) {
+                            if (index >= 0 && index < 255) bones.push_back(name);
+                        }
+                        std::sort(bones.begin(), bones.end());
+                    }
+                }
+            }
+        }
+        const std::string currentBone = groom.targetBoneName.empty()
+            ? "(Auto: mesh skin)"
+            : groom.targetBoneName;
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("Target Bone", currentBone.c_str())) {
+            if (ImGui::Selectable("(Auto: mesh skin)",
+                                  groom.targetBoneName.empty())) {
+                groom.targetBoneName.clear();
+            }
+            for (const std::string& bone : bones) {
+                if (ImGui::Selectable(bone.c_str(),
+                                      groom.targetBoneName == bone)) {
+                    groom.targetBoneName = bone;
+                }
+            }
+            ImGui::EndCombo();
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Leave empty to use this entity's mesh, or the "
-                              "highest descendant mesh of a character.");
+            ImGui::SetTooltip(
+                "Character bone used as the rigid target for the groom.\n"
+                "Auto follows the target mesh's per-vertex skin weights.");
+        }
+        if (bones.empty()) {
+            ImGui::TextDisabled(
+                "No character bones loaded; select the skeletal character.");
         }
 
         if (ImGui::TreeNodeEx("Transform",
@@ -1203,9 +1245,11 @@
         ImGui::SameLine();
         if (ImGui::Button("Reset Groom Settings")) {
             PushHistory();
-            auto target = groom.targetMeshName;
+            const auto targetMesh = groom.targetMeshName;
+            const auto targetBone = groom.targetBoneName;
             groom = Galeshi::GroomComponent{};
-            groom.targetMeshName = target;
+            groom.targetMeshName = targetMesh;
+            groom.targetBoneName = targetBone;
         }
     }
 

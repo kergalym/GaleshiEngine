@@ -58,7 +58,7 @@ Methods use Lua colon syntax:
 | `scale_by(x, y, z)` | Multiply local scale. |
 | `parent()` / `set_parent(entity)` | Parent access. `set_parent(nil)` detaches. |
 | `detach()` | Remove the parent component. |
-| `attach_to_bone(character, bone)` | Attach the entity to a bone of a skeletal character. The current world transform is preserved; Position/Rotation/Scale become bone-local. |
+| `attach_to_bone(character, bone)` | Snap the entity to a bone of a skeletal character. The entity becomes a child of the character; Position/Rotation/Scale become bone-local. |
 | `detach_from_bone()` | Detach from the bone and keep the current world transform. |
 | `bone()` / `attached_character()` | Bone name and character handle for an attached entity. |
 | `children()` | Array of child handles. |

@@ -1474,6 +1474,7 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
                 {"rotation", QuatToJson(g.rotation)},
                 {"scale", Vec3ToJson(g.scale)},
                 {"targetMeshName", g.targetMeshName},
+                {"targetBoneName", g.targetBoneName},
                 {"guideCount", g.guideCount},
                 {"strandsPerGuide", g.strandsPerGuide},
                 {"segments", g.segments},
@@ -2622,6 +2623,7 @@ bool SceneSerializer::LoadFromJson(const json& root,
                 groom.scale = Vec3FromJson(jg.at("scale"));
             }
             groom.targetMeshName = jg.value("targetMeshName", std::string{});
+            groom.targetBoneName = jg.value("targetBoneName", std::string{});
             groom.guideCount = jg.value("guideCount", groom.guideCount);
             groom.strandsPerGuide = jg.value("strandsPerGuide", groom.strandsPerGuide);
             groom.segments = jg.value("segments", groom.segments);
@@ -2991,7 +2993,11 @@ bool SceneSerializer::LoadFromJson(const json& root,
                          entry.name);
             continue;
         }
-        reg.remove<ParentComponent>(handle);
+        // Attached entities live under the character in the Outliner. Their
+        // Transform is in character space; BoneAttachment holds the bone
+        // offset and is refreshed by BoneAttachmentSystem::Update.
+        reg.emplace_or_replace<ParentComponent>(
+            handle, ParentComponent{attachment.character});
     }
 
     // A malformed file must not create a parent cycle: several runtime

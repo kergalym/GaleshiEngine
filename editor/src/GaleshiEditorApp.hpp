@@ -427,7 +427,7 @@ private:
 
     void DrawWaterSettings(Galeshi::WaterComponent& water, entt::entity entity);
 
-    void DrawGroomSettings(Galeshi::GroomComponent& groom);
+    void DrawGroomSettings(Galeshi::GroomComponent& groom, entt::entity entity);
 
     // Bone attachments for skeletal characters.
     void DrawBoneAttachmentSettings(entt::entity character);

@@ -82,11 +82,11 @@ struct BoneAttachmentComponent {
     glm::vec3 localPosition{0.0f};
     glm::quat localRotation{1.0f, 0.0f, 0.0f, 0.0f};
     glm::vec3 localScale{1.0f};
-    // Runtime-only: last world matrix written by the attachment system. If
-    // another editor/tool changes TransformComponent, the change is folded
-    // back into the local transform instead of being overwritten next frame.
-    glm::mat4 appliedWorld{1.0f};
-    bool appliedWorldValid = false;
+    // Runtime-only: last local-to-character matrix written by the attachment
+    // system. If another editor/tool changes TransformComponent, the change
+    // is folded back into bone space instead of being overwritten next frame.
+    glm::mat4 appliedLocal{1.0f};
+    bool appliedLocalValid = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -709,6 +709,9 @@ struct GroomComponent {
     // Optional target mesh name. Empty means "use this entity's mesh, or the
     // highest descendant mesh" (the head cap of a character).
     std::string targetMeshName;
+    // Optional character bone that the groom roots are rigidly bound to.
+    // Empty uses the target mesh's per-vertex skin weights.
+    std::string targetBoneName;
 
     // Groom topology.
     int guideCount = 96;

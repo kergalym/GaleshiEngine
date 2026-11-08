@@ -385,6 +385,7 @@ inline constexpr GroomVec3Field kGroomVec3s[] = {
 };
 inline constexpr GroomStringField kGroomStrings[] = {
     {"target_mesh_name", &GroomComponent::targetMeshName},
+    {"target_bone_name", &GroomComponent::targetBoneName},
 };
 
 struct NavAgentBoolField {
