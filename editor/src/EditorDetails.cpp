@@ -1154,13 +1154,21 @@ void GaleshiEditorApp::DrawDetails() {
                         "use more VRAM.");
                 }
             }
-            if (ImGui::Button("Bake Layer Textures")) {
+            if (ImGui::Button("Set Layer Texture Size")) {
                 PushHistory();
-                BakeLandscapeTextures(selected[0]);
+                SetLandscapeLayerTextureSize(
+                    selected[0], landscape.bakedTextureSize);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "Reallocates the layer paint masks and baked albedo/ORM/"
+                    "normal maps at the selected size. Brush radius stays in "
+                    "world units, so larger textures produce finer strokes.");
             }
             ImGui::SameLine();
             ImGui::TextDisabled(
-                "Suggested: paint a stroke to bake automatically.");
+                "Paint strokes update the high-resolution layer mask; the "
+                "baked maps refresh on mouse release.");
             ImGui::TextDisabled("%d x %d vertices, scale %.2f", landscape.sizeX, landscape.sizeZ, landscape.scale);
             if (m_editor.toolMode == Galeshi::EditorState::ToolMode::Select) {
                 ImGui::TextDisabled("Select a brush, then left-click and drag in the viewport.");

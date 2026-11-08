@@ -189,6 +189,9 @@
         m_activeGameCamera = entt::null;
         m_pendingLandscapeBake = entt::null;
         m_wasSculpting = false;
+        m_boneAttachCharacter = entt::null;
+        m_boneAttachEntity = entt::null;
+        m_boneAttachBone.clear();
         m_scripts.ClearUIEvents();
         m_scripts.ClearTriggerEvents();
         m_audio.StopAll();

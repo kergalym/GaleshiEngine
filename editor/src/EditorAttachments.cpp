@@ -32,12 +32,27 @@ void GaleshiEditorApp::DrawBoneAttachmentSettings(entt::entity character) {
         m_boneAttachCharacter = character;
         m_boneAttachEntity = entt::null;
         m_boneAttachBone.clear();
+        if (const auto* selection = registry.try_get<
+                Galeshi::BoneAttachmentSelectionComponent>(character)) {
+            m_boneAttachBone = selection->boneName;
+            m_boneAttachEntity = selection->entity;
+        }
     }
     if (m_boneAttachEntity != entt::null &&
         (!registry.valid(m_boneAttachEntity) ||
          m_boneAttachEntity == character)) {
         m_boneAttachEntity = entt::null;
     }
+    auto storeSelection = [&]() {
+        auto* selection = registry.try_get<
+            Galeshi::BoneAttachmentSelectionComponent>(character);
+        if (!selection) {
+            selection = &registry.emplace<
+                Galeshi::BoneAttachmentSelectionComponent>(character);
+        }
+        selection->boneName = m_boneAttachBone;
+        selection->entity = m_boneAttachEntity;
+    };
 
     const auto& skeleton =
         registry.get<Galeshi::SkeletalComponent>(character);
@@ -62,11 +77,13 @@ void GaleshiEditorApp::DrawBoneAttachmentSettings(entt::entity character) {
     if (ImGui::BeginCombo("##attachment_bone", currentBone.c_str())) {
         if (ImGui::Selectable("(Select Bone)", m_boneAttachBone.empty())) {
             m_boneAttachBone.clear();
+            storeSelection();
         }
         for (const std::string& bone : bones) {
             const bool selected = m_boneAttachBone == bone;
             if (ImGui::Selectable(bone.c_str(), selected)) {
                 m_boneAttachBone = bone;
+                storeSelection();
             }
         }
         ImGui::EndCombo();
@@ -111,6 +128,7 @@ void GaleshiEditorApp::DrawBoneAttachmentSettings(entt::entity character) {
         if (ImGui::Selectable("(Select Entity)",
                               m_boneAttachEntity == entt::null)) {
             m_boneAttachEntity = entt::null;
+            storeSelection();
         }
         for (const auto& [name, entity] : entities) {
             ImGui::PushID(static_cast<int>(
@@ -118,6 +136,7 @@ void GaleshiEditorApp::DrawBoneAttachmentSettings(entt::entity character) {
             const bool selected = m_boneAttachEntity == entity;
             if (ImGui::Selectable(name.c_str(), selected)) {
                 m_boneAttachEntity = entity;
+                storeSelection();
             }
             ImGui::PopID();
         }

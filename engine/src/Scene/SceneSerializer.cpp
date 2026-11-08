@@ -1140,7 +1140,9 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
                     {"normalMapPath", relLayerPath(layer.normalMap)},
                     {"albedoSrgb", layer.albedoSrgb},
                     {"ormSrgb", layer.ormSrgb},
-                    {"normalSrgb", layer.normalSrgb}
+                    {"normalSrgb", layer.normalSrgb},
+                    {"paintMaskPath",
+                     m_assets.MakeRelativePath(layer.paintMaskPath)}
                 });
             }
             json layerWeights = json::array();
@@ -1290,6 +1292,18 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
                 ja["character"] = characterIt->second;
             }
             je["boneAttachment"] = std::move(ja);
+        }
+        if (reg.all_of<BoneAttachmentSelectionComponent>(handle)) {
+            const auto& selection =
+                reg.get<BoneAttachmentSelectionComponent>(handle);
+            json js = {
+                {"boneName", selection.boneName}
+            };
+            const auto selectedIt = idByEntity.find(selection.entity);
+            if (selectedIt != idByEntity.end()) {
+                js["entity"] = selectedIt->second;
+            }
+            je["boneAttachmentSelection"] = std::move(js);
         }
         if (reg.all_of<AnimationStateMachineComponent>(handle)) {
             const auto& machine = reg.get<AnimationStateMachineComponent>(handle);
@@ -2077,6 +2091,8 @@ bool SceneSerializer::LoadFromJson(const json& root,
                     layer.ormSrgb = jlayer.value("ormSrgb", false);
                     layer.normalSrgb =
                         jlayer.value("normalSrgb", false);
+                    layer.paintMaskPath = m_assets.ResolvePath(
+                        jlayer.value("paintMaskPath", std::string{}));
                     layer.albedoMap =
                         loadLayerMap("albedoMapPath", layer.albedoSrgb);
                     layer.ormMap =
@@ -2396,6 +2412,13 @@ bool SceneSerializer::LoadFromJson(const json& root,
                 attachment.localScale =
                     Vec3FromJson(ja.at("localScale"));
             }
+        }
+        if (je.contains("boneAttachmentSelection") &&
+            je["boneAttachmentSelection"].is_object()) {
+            const auto& js = je["boneAttachmentSelection"];
+            auto& selection =
+                e.AddComponent<BoneAttachmentSelectionComponent>();
+            selection.boneName = js.value("boneName", std::string{});
         }
         if (je.contains("animationStateMachine")) {
             const auto& jm = je["animationStateMachine"];
@@ -2998,6 +3021,34 @@ bool SceneSerializer::LoadFromJson(const json& root,
         // offset and is refreshed by BoneAttachmentSystem::Update.
         reg.emplace_or_replace<ParentComponent>(
             handle, ParentComponent{attachment.character});
+    }
+
+    // Resolve the Bone Attachments UI selection (bone + target entity) after
+    // the stable entity ids have been mapped back to runtime handles.
+    for (auto& entry : loaded) {
+        auto& reg = m_scene.Registry();
+        const entt::entity handle = entry.entity.Handle();
+        if (!reg.all_of<BoneAttachmentSelectionComponent>(handle)) continue;
+        auto& selection =
+            reg.get<BoneAttachmentSelectionComponent>(handle);
+        selection.entity = entt::null;
+        if (entry.source &&
+            entry.source->contains("boneAttachmentSelection") &&
+            (*entry.source)["boneAttachmentSelection"].is_object()) {
+            const auto& js =
+                (*entry.source)["boneAttachmentSelection"];
+            if (js.contains("entity") && js["entity"].is_number_integer()) {
+                const auto it = savedIdToEntity.find(js["entity"].get<int>());
+                if (it != savedIdToEntity.end() &&
+                    m_scene.Registry().valid(it->second) &&
+                    it->second != handle) {
+                    selection.entity = it->second;
+                }
+            }
+        }
+        if (selection.boneName.empty() && selection.entity == entt::null) {
+            reg.remove<BoneAttachmentSelectionComponent>(handle);
+        }
     }
 
     // A malformed file must not create a parent cycle: several runtime

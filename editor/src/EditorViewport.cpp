@@ -1855,13 +1855,21 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                          (m_wasSculpting &&
                           ImGui::IsMouseDown(ImGuiMouseButton_Left)))) {
                         const bool erase = ImGui::GetIO().KeyAlt;
-                        if (Galeshi::LandscapeMesh::ApplyPaintBrush(
+                        const int vertexChanged =
+                            Galeshi::LandscapeMesh::ApplyPaintBrush(
                                 landscape, landscape.activeLayer,
                                 hit.localPosition.x,
                                 hit.localPosition.z, m_editor.brushRadius,
                                 m_editor.brushStrength,
                                 m_editor.brushFalloff,
-                                ImGui::GetIO().DeltaTime, erase) > 0) {
+                                ImGui::GetIO().DeltaTime, erase);
+                        const bool maskChanged = PaintLandscapeLayerMask(
+                            sel, landscape.activeLayer,
+                            hit.localPosition.x, hit.localPosition.z,
+                            m_editor.brushRadius, m_editor.brushStrength,
+                            m_editor.brushFalloff,
+                            ImGui::GetIO().DeltaTime, erase);
+                        if (vertexChanged > 0 || maskChanged) {
                             if (sel.HasComponent<Galeshi::MeshComponent>()) {
                                 auto& meshComponent =
                                     sel.GetComponent<Galeshi::MeshComponent>();

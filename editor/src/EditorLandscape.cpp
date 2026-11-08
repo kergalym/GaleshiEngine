@@ -8,8 +8,122 @@
 #define STBI_ONLY_TGA
 #include <stb_image.h>
 #include <png.h>
+#include <cstdint>
+#include <cstring>
+#include <fstream>
 
 
+
+namespace {
+
+float SampleLandscapeLayerMask(const Galeshi::LandscapeLayer& layer,
+                               float u, float v) {
+    if (layer.paintMaskSize < 2 ||
+        layer.paintMask.size() !=
+            static_cast<size_t>(layer.paintMaskSize) *
+                static_cast<size_t>(layer.paintMaskSize)) {
+        return -1.0f;
+    }
+    const int size = layer.paintMaskSize;
+    const float x = glm::clamp(u, 0.0f, 1.0f) *
+                    static_cast<float>(size - 1);
+    const float y = glm::clamp(v, 0.0f, 1.0f) *
+                    static_cast<float>(size - 1);
+    const int x0 = std::min(static_cast<int>(std::floor(x)), size - 1);
+    const int y0 = std::min(static_cast<int>(std::floor(y)), size - 1);
+    const int x1 = std::min(x0 + 1, size - 1);
+    const int y1 = std::min(y0 + 1, size - 1);
+    const float fx = x - static_cast<float>(x0);
+    const float fy = y - static_cast<float>(y0);
+    const auto sample = [&](int px, int py) {
+        return static_cast<float>(
+                   layer.paintMask[static_cast<size_t>(py) * size + px]) /
+               255.0f;
+    };
+    return glm::mix(
+        glm::mix(sample(x0, y0), sample(x1, y0), fx),
+        glm::mix(sample(x0, y1), sample(x1, y1), fx), fy);
+}
+
+std::vector<uint8_t> ResampleLandscapeMask(const std::vector<uint8_t>& source,
+                                           int sourceSize, int size) {
+    if (source.empty() || sourceSize < 2 || size < 2) return {};
+    std::vector<uint8_t> result(static_cast<size_t>(size) * size, 0);
+    for (int y = 0; y < size; ++y) {
+        const float v = (static_cast<float>(y) + 0.5f) /
+                        static_cast<float>(size);
+        for (int x = 0; x < size; ++x) {
+            const float u = (static_cast<float>(x) + 0.5f) /
+                            static_cast<float>(size);
+            const float sx = glm::clamp(u, 0.0f, 1.0f) *
+                             static_cast<float>(sourceSize - 1);
+            const float sy = glm::clamp(v, 0.0f, 1.0f) *
+                             static_cast<float>(sourceSize - 1);
+            const int x0 = std::min(static_cast<int>(std::floor(sx)),
+                                    sourceSize - 1);
+            const int y0 = std::min(static_cast<int>(std::floor(sy)),
+                                    sourceSize - 1);
+            const int x1 = std::min(x0 + 1, sourceSize - 1);
+            const int y1 = std::min(y0 + 1, sourceSize - 1);
+            const float fx = sx - static_cast<float>(x0);
+            const float fy = sy - static_cast<float>(y0);
+            const auto sample = [&](int px, int py) {
+                return static_cast<float>(
+                    source[static_cast<size_t>(py) * sourceSize + px]);
+            };
+            const float value = glm::mix(
+                glm::mix(sample(x0, y0), sample(x1, y0), fx),
+                glm::mix(sample(x0, y1), sample(x1, y1), fx), fy);
+            result[static_cast<size_t>(y) * size + x] =
+                static_cast<uint8_t>(glm::clamp(value, 0.0f, 255.0f));
+        }
+    }
+    return result;
+}
+
+bool LoadLandscapeMaskFile(const std::string& path, std::vector<uint8_t>& mask,
+                           int& size) {
+    mask.clear();
+    size = 0;
+    if (path.empty()) return false;
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) return false;
+    char magic[4] = {};
+    in.read(magic, sizeof(magic));
+    if (!in || std::memcmp(magic, "LMSK", 4) != 0) return false;
+    int32_t storedSize = 0;
+    in.read(reinterpret_cast<char*>(&storedSize), sizeof(storedSize));
+    if (!in || storedSize < 2 || storedSize > 8192) return false;
+    const size_t count = static_cast<size_t>(storedSize) * storedSize;
+    mask.resize(count);
+    in.read(reinterpret_cast<char*>(mask.data()),
+            static_cast<std::streamsize>(count));
+    if (!in) {
+        mask.clear();
+        return false;
+    }
+    size = storedSize;
+    return true;
+}
+
+bool SaveLandscapeMaskFile(const std::string& path,
+                           const std::vector<uint8_t>& mask, int size) {
+    if (path.empty() || size < 2 ||
+        mask.size() != static_cast<size_t>(size) * size) {
+        return false;
+    }
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out.is_open()) return false;
+    out.write("LMSK", 4);
+    const int32_t storedSize = size;
+    out.write(reinterpret_cast<const char*>(&storedSize),
+              sizeof(storedSize));
+    out.write(reinterpret_cast<const char*>(mask.data()),
+              static_cast<std::streamsize>(mask.size()));
+    return out.good();
+}
+
+} // namespace
 
     void GaleshiEditorApp::PaintVegetationAt(Galeshi::Entity landscapeEntity,
                            const Galeshi::LandscapeComponent& landscape,
@@ -176,6 +290,169 @@
 
 
 
+    bool GaleshiEditorApp::EnsureLandscapeLayerMasks(
+        Galeshi::Entity entity) {
+        if (!entity ||
+            !entity.HasComponent<Galeshi::LandscapeComponent>()) {
+            return false;
+        }
+        auto& landscape =
+            entity.GetComponent<Galeshi::LandscapeComponent>();
+        const int size = std::clamp(landscape.bakedTextureSize, 256, 8192);
+        const size_t expected =
+            static_cast<size_t>(landscape.sizeX) * landscape.sizeZ;
+        if (landscape.layerWeights.size() != landscape.layers.size()) {
+            landscape.layerWeights.resize(landscape.layers.size());
+        }
+        for (size_t i = 0; i < landscape.layers.size(); ++i) {
+            auto& layer = landscape.layers[i];
+            if (layer.paintMaskSize == size &&
+                layer.paintMask.size() ==
+                    static_cast<size_t>(size) * size) {
+                continue;
+            }
+
+            std::vector<uint8_t> source;
+            int sourceSize = layer.paintMaskSize;
+            if (layer.paintMask.size() ==
+                static_cast<size_t>(sourceSize) * sourceSize &&
+                sourceSize >= 2) {
+                source = layer.paintMask;
+            } else {
+                sourceSize = 0;
+                if (!layer.paintMaskPath.empty()) {
+                    LoadLandscapeMaskFile(layer.paintMaskPath, source,
+                                          sourceSize);
+                }
+            }
+
+            if (!source.empty() && sourceSize >= 2) {
+                layer.paintMask = sourceSize == size
+                    ? std::move(source)
+                    : ResampleLandscapeMask(source, sourceSize, size);
+            } else {
+                layer.paintMask.assign(
+                    static_cast<size_t>(size) * size, 0);
+                const std::vector<float>* weights =
+                    i < landscape.layerWeights.size() &&
+                            landscape.layerWeights[i].size() == expected
+                        ? &landscape.layerWeights[i]
+                        : nullptr;
+                for (int y = 0; y < size; ++y) {
+                    const float v = (static_cast<float>(y) + 0.5f) /
+                                    static_cast<float>(size);
+                    const float gz = v * static_cast<float>(landscape.sizeZ);
+                    for (int x = 0; x < size; ++x) {
+                        const float u = (static_cast<float>(x) + 0.5f) /
+                                        static_cast<float>(size);
+                        const float gx = u * static_cast<float>(landscape.sizeX);
+                        const float value = weights
+                            ? SampleLandscapeWeight(*weights, landscape.sizeX,
+                                                    landscape.sizeZ, gx, gz)
+                            : 0.0f;
+                        layer.paintMask[static_cast<size_t>(y) * size + x] =
+                            static_cast<uint8_t>(glm::clamp(
+                                value * 255.0f, 0.0f, 255.0f));
+                    }
+                }
+            }
+            layer.paintMaskSize = size;
+        }
+        return true;
+    }
+
+    bool GaleshiEditorApp::PaintLandscapeLayerMask(
+        Galeshi::Entity entity, int layer, float localX, float localZ,
+        float radius, float strength, float falloff, float dt, bool erase) {
+        if (!entity || radius <= 0.0f || dt <= 0.0f ||
+            !entity.HasComponent<Galeshi::LandscapeComponent>()) {
+            return false;
+        }
+        auto& landscape =
+            entity.GetComponent<Galeshi::LandscapeComponent>();
+        if (layer < 0 || layer >= static_cast<int>(landscape.layers.size())) {
+            return false;
+        }
+        if (!EnsureLandscapeLayerMasks(entity)) return false;
+        auto& paintLayer = landscape.layers[static_cast<size_t>(layer)];
+        const int size = paintLayer.paintMaskSize;
+        if (size < 2 ||
+            paintLayer.paintMask.size() !=
+                static_cast<size_t>(size) * size) {
+            return false;
+        }
+        const float scale = std::max(landscape.scale, 0.001f);
+        const float u = localX / (scale * landscape.sizeX) + 0.5f;
+        const float v = localZ / (scale * landscape.sizeZ) + 0.5f;
+        if (u < 0.0f || u > 1.0f || v < 0.0f || v > 1.0f) return false;
+
+        const float centerX = u * static_cast<float>(size) - 0.5f;
+        const float centerZ = v * static_cast<float>(size) - 0.5f;
+        const float radiusX = radius / (scale * landscape.sizeX) * size;
+        const float radiusZ = radius / (scale * landscape.sizeZ) * size;
+        const int minX = std::max(
+            0, static_cast<int>(std::floor(centerX - radiusX)));
+        const int maxX = std::min(
+            size - 1, static_cast<int>(std::ceil(centerX + radiusX)));
+        const int minZ = std::max(
+            0, static_cast<int>(std::floor(centerZ - radiusZ)));
+        const int maxZ = std::min(
+            size - 1, static_cast<int>(std::ceil(centerZ + radiusZ)));
+        const float exponent = glm::mix(0.25f, 2.0f,
+                                        glm::clamp(falloff, 0.0f, 1.0f));
+        const float direction = erase ? -1.0f : 1.0f;
+        const float amount = std::max(0.0f, strength) * dt;
+        int changed = 0;
+        for (int z = minZ; z <= maxZ; ++z) {
+            const float localZAtPixel =
+                ((static_cast<float>(z) + 0.5f) /
+                     static_cast<float>(size) -
+                 0.5f) *
+                landscape.sizeZ * scale;
+            for (int x = minX; x <= maxX; ++x) {
+                const float localXAtPixel =
+                    ((static_cast<float>(x) + 0.5f) /
+                         static_cast<float>(size) -
+                     0.5f) *
+                    landscape.sizeX * scale;
+                const float dx = localXAtPixel - localX;
+                const float dz = localZAtPixel - localZ;
+                const float distance = std::sqrt(dx * dx + dz * dz);
+                if (distance > radius) continue;
+                const float t = 1.0f - distance / radius;
+                const float weight = std::pow(
+                    glm::clamp(t, 0.0f, 1.0f), exponent);
+                const size_t index =
+                    static_cast<size_t>(z) * size + x;
+                const float before =
+                    static_cast<float>(paintLayer.paintMask[index]) / 255.0f;
+                const float after = glm::clamp(
+                    before + direction * amount * weight, 0.0f, 1.0f);
+                const uint8_t encoded =
+                    static_cast<uint8_t>(std::round(after * 255.0f));
+                if (encoded != paintLayer.paintMask[index]) {
+                    paintLayer.paintMask[index] = encoded;
+                    ++changed;
+                }
+            }
+        }
+        return changed > 0;
+    }
+
+    bool GaleshiEditorApp::SetLandscapeLayerTextureSize(
+        Galeshi::Entity entity, int size) {
+        if (!entity ||
+            !entity.HasComponent<Galeshi::LandscapeComponent>()) {
+            return false;
+        }
+        auto& landscape =
+            entity.GetComponent<Galeshi::LandscapeComponent>();
+        if (landscape.layers.empty()) return false;
+        landscape.bakedTextureSize = std::clamp(size, 256, 8192);
+        if (!EnsureLandscapeLayerMasks(entity)) return false;
+        return BakeLandscapeTextures(entity);
+    }
+
     bool GaleshiEditorApp::BakeLandscapeTextures(Galeshi::Entity entity) {
         if (!entity || !entity.HasComponent<Galeshi::LandscapeComponent>()) {
             return false;
@@ -274,6 +551,7 @@
                         static_cast<size_t>(landscape.sizeZ), 0.0f);
             }
         }
+        EnsureLandscapeLayerMasks(entity);
 
         const int outputSize = std::clamp(
             landscape.bakedTextureSize, 256, 8192);
@@ -316,9 +594,14 @@
                             expectedWeights) {
                         continue;
                     }
-                    weights[i] = SampleLandscapeWeight(
-                        landscape.layerWeights[i], landscape.sizeX,
-                        landscape.sizeZ, gx, gz);
+                    const auto& layer = landscape.layers[i];
+                    const float maskWeight =
+                        SampleLandscapeLayerMask(layer, u, v);
+                    weights[i] = maskWeight >= 0.0f
+                        ? maskWeight
+                        : SampleLandscapeWeight(
+                              landscape.layerWeights[i], landscape.sizeX,
+                              landscape.sizeZ, gx, gz);
                     layerWeightSum += weights[i];
                 }
                 float baseWeight =
@@ -486,6 +769,21 @@
             texturesDir / (baseName + "_orm.png");
         const std::filesystem::path normalPath =
             texturesDir / (baseName + "_normal.png");
+        for (size_t i = 0; i < landscape.layers.size(); ++i) {
+            auto& layer = landscape.layers[i];
+            if (layer.paintMaskPath.empty()) {
+                layer.paintMaskPath =
+                    (texturesDir /
+                     (baseName + "_layer" + std::to_string(i) + "_mask.lmask"))
+                        .string();
+            }
+            if (!SaveLandscapeMaskFile(layer.paintMaskPath,
+                                       layer.paintMask,
+                                       layer.paintMaskSize)) {
+                spdlog::warn("[Landscape] Could not save layer mask {}",
+                             layer.paintMaskPath);
+            }
+        }
         if (!SaveLandscapePng(albedoPath, outputAlbedo) ||
             !SaveLandscapePng(ormPath, outputOrm) ||
             !SaveLandscapePng(normalPath, outputNormal)) {

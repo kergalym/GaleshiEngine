@@ -484,6 +484,15 @@ private:
     static std::string SafeLandscapeTextureName(const std::string& name);
 
     bool BakeLandscapeTextures(Galeshi::Entity entity);
+    // Creates/resizes the per-layer texture-space paint masks and rebuilds
+    // the baked maps at the requested resolution.
+    bool SetLandscapeLayerTextureSize(Galeshi::Entity entity, int size);
+    // High-resolution brush stroke for the active layer mask.
+    bool PaintLandscapeLayerMask(Galeshi::Entity entity, int layer,
+                                 float localX, float localZ, float radius,
+                                 float strength, float falloff, float dt,
+                                 bool erase);
+    bool EnsureLandscapeLayerMasks(Galeshi::Entity entity);
 
     // -------------------------------------------------------------------
     // Details

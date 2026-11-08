@@ -89,6 +89,13 @@ struct BoneAttachmentComponent {
     bool appliedLocalValid = false;
 };
 
+// Editor selection state for the Bone Attachments controls. Stored on the
+// character so the chosen bone and target entity survive scene save/load.
+struct BoneAttachmentSelectionComponent {
+    std::string boneName;
+    entt::entity entity = entt::null;
+};
+
 // ---------------------------------------------------------------------------
 // Animation state machine
 // ---------------------------------------------------------------------------
@@ -250,6 +257,13 @@ struct LandscapeLayer {
     bool albedoSrgb = true;
     bool ormSrgb = false;
     bool normalSrgb = false;
+
+    // Texture-space paint mask for this layer. The vertex weights remain the
+    // low-resolution shader preview; this mask gives the baked textures their
+    // full brush resolution. Runtime-only except for the persisted path.
+    std::vector<uint8_t> paintMask;
+    int paintMaskSize = 0;
+    std::string paintMaskPath;
 };
 
 struct LandscapeComponent {
