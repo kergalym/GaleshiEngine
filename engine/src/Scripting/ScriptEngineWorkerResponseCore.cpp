@@ -367,11 +367,12 @@ bool ScriptEngine::MakeWorkerCoreResponse(
         }
         break;
     case CppWorkerRequest::DetachFromBone:
-        if (m_scene) {
+        if (m_scene && m_assets) {
             const entt::entity entity =
                 static_cast<entt::entity>(request.entity);
             response.valid =
-                BoneAttachmentSystem::Detach(*m_scene, entity) ? 1u : 0u;
+                BoneAttachmentSystem::Detach(*m_scene, *m_assets, entity)
+                    ? 1u : 0u;
         }
         break;
     case CppWorkerRequest::HasComponent:

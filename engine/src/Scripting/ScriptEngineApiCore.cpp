@@ -287,8 +287,8 @@ void ScriptEngine::BuildApiCore(ScriptApiBuildContext& context) {
     };
     methods["detach_from_bone"] = [this, resolveTable](sol::table self) {
         const entt::entity entity = resolveTable(self);
-        if (entity == entt::null || !m_scene) return false;
-        return BoneAttachmentSystem::Detach(*m_scene, entity);
+        if (entity == entt::null || !m_scene || !m_assets) return false;
+        return BoneAttachmentSystem::Detach(*m_scene, *m_assets, entity);
     };
     methods["bone"] = [this, resolveTable](sol::table self) {
         const entt::entity entity = resolveTable(self);

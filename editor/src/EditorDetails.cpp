@@ -481,7 +481,7 @@ void GaleshiEditorApp::DrawDetails() {
                 if (ImGui::Button("Detach from Bone")) {
                     PushHistory();
                     Galeshi::BoneAttachmentSystem::Detach(
-                        m_scene, selectedHandle);
+                        m_scene, *m_assets, selectedHandle);
                 }
             }
 

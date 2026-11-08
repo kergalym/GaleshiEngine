@@ -167,13 +167,24 @@ bool BoneAttachmentSystem::Attach(Scene& scene, AssetManager& assets,
     return true;
 }
 
-bool BoneAttachmentSystem::Detach(Scene& scene, entt::entity entity) {
+bool BoneAttachmentSystem::Detach(Scene& scene, AssetManager& assets,
+                                  entt::entity entity) {
     auto& registry = scene.Registry();
     if (entity == entt::null || !registry.valid(entity) ||
         !registry.all_of<BoneAttachmentComponent>(entity)) {
         return false;
     }
-    // The entity already owns its latest world transform; leave it in place.
+    auto& attachment = registry.get<BoneAttachmentComponent>(entity);
+    if (auto* transform = registry.try_get<TransformComponent>(entity)) {
+        // Bake the final bone-local transform into world space. Any dynamic
+        // body can now fall from the bone position with normal gravity.
+        glm::mat4 boneWorld;
+        if (BoneWorldMatrix(scene, assets, attachment.character,
+                            attachment.boneName, boneWorld)) {
+            SetWorldTransform(*transform,
+                              boneWorld * LocalMatrix(attachment));
+        }
+    }
     registry.remove<BoneAttachmentComponent>(entity);
     return true;
 }

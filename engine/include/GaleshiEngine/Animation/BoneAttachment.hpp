@@ -21,7 +21,7 @@ bool BoneWorldMatrix(Scene& scene, AssetManager& assets,
 bool Attach(Scene& scene, AssetManager& assets, entt::entity entity,
             entt::entity character, const std::string& bone);
 
-bool Detach(Scene& scene, entt::entity entity);
+bool Detach(Scene& scene, AssetManager& assets, entt::entity entity);
 
 void Update(Scene& scene, AssetManager& assets);
 

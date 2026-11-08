@@ -86,9 +86,13 @@ void GaleshiEditorApp::DrawBoneAttachmentSettings(entt::entity character) {
     // the bone. EnTT ids keep duplicate names selectable.
     std::vector<std::pair<std::string, entt::entity>> entities;
     for (const Galeshi::Entity& entity : m_scene.AllEntities()) {
-        if (entity.Handle() == character) continue;
-        entities.emplace_back(EntityLabel(m_scene, entity.Handle()),
-                              entity.Handle());
+        const entt::entity handle = entity.Handle();
+        // The character and everything below it belongs to the armature
+        // (child skeleton/mesh nodes and bones), not to the target list.
+        if (handle == character || IsDescendantOf(handle, character)) {
+            continue;
+        }
+        entities.emplace_back(EntityLabel(m_scene, handle), handle);
     }
     std::sort(entities.begin(), entities.end(),
               [](const auto& a, const auto& b) {
@@ -155,8 +159,8 @@ void GaleshiEditorApp::DrawBoneAttachmentSettings(entt::entity character) {
     if (!canDetach) ImGui::BeginDisabled();
     if (ImGui::Button("Detach")) {
         PushHistory();
-        if (Galeshi::BoneAttachmentSystem::Detach(m_scene,
-                                                  m_boneAttachEntity)) {
+        if (Galeshi::BoneAttachmentSystem::Detach(
+                m_scene, *m_assets, m_boneAttachEntity)) {
             spdlog::info("[BoneAttachment] Detached entity {}",
                          static_cast<uint32_t>(m_boneAttachEntity));
         }
