@@ -97,12 +97,15 @@ bool FluidSimulation::Init(int maxParticles, float particleRadius) {
 
     m_impl->simulation = SPH::Simulation::getCurrent();
     m_impl->simulation->init(static_cast<Real>(particleRadius), false);
-    m_impl->simulation->setSimulationMethod(
-        SPH::Simulation::ENUM_SIMULATION_PBF);
     m_impl->simulation->addFluidModel(
         "SplashFluid", static_cast<unsigned int>(maxParticles),
         m_impl->initPositions.data(), m_impl->initVelocities.data(),
         m_impl->objectIds.data(), 0u);
+    // The time-step constructor allocates its per-fluid simulation data and
+    // registers fields on the models, so it must be selected after the model
+    // exists.
+    m_impl->simulation->setSimulationMethod(
+        SPH::Simulation::ENUM_SIMULATION_PBF);
     m_impl->simulation->deferredInit();
 
     m_impl->model = m_impl->simulation->getFluidModel(0);
