@@ -75,6 +75,7 @@
             } else if (water.terrainCarved) {
                 EnsureUnderwaterTerrain(h);
             }
+            ApplyWaterShoreSettings(h);
         }
         RebuildWaterVegetationMasks();
 
@@ -712,6 +713,37 @@
             ImGui::TreePop();
         }
 
+        if (ImGui::TreeNode("Shore Material")) {
+            if (ImGui::DragFloat("Detail Size (m)",
+                                 &water.shoreDetailSize,
+                                 0.05f, 0.05f, 100.0f)) {
+                ApplyWaterShoreSettings(entity);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(
+                    "World-space size of one sand/gravel texture tile. "
+                    "Smaller values add finer grain.");
+            }
+            if (ImGui::DragFloat("Detail Strength",
+                                 &water.shoreDetailStrength,
+                                 0.01f, 0.0f, 1.0f)) {
+                ApplyWaterShoreSettings(entity);
+            }
+            if (ImGui::DragFloat("Detail Octave",
+                                 &water.shoreDetailOctave,
+                                 0.1f, 1.0f, 16.0f)) {
+                ApplyWaterShoreSettings(entity);
+            }
+            if (ImGui::DragFloat("Normal Strength",
+                                 &water.shoreNormalStrength,
+                                 0.01f, 0.0f, 4.0f)) {
+                ApplyWaterShoreSettings(entity);
+            }
+            ImGui::TextDisabled(
+                "Applies to carved banks and the underwater bed.");
+            ImGui::TreePop();
+        }
+
         if (ImGui::TreeNode("Underwater Terrain")) {
             bool underwaterTerrain = water.underwaterTerrain;
             if (ImGui::Checkbox("Create Underwater Terrain",
@@ -720,6 +752,7 @@
                 water.underwaterTerrain = underwaterTerrain;
                 EnsureUnderwaterTerrain(entity);
                 RebuildWaterVegetationMasks();
+                ApplyWaterShoreSettings(entity);
             }
             ImGui::DragInt("Grass Count", &water.underwaterGrassCount,
                            1.0f, 0, 20000);
@@ -729,6 +762,7 @@
                 PushHistory();
                 EnsureUnderwaterTerrain(entity);
                 RebuildWaterVegetationMasks();
+                ApplyWaterShoreSettings(entity);
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip(

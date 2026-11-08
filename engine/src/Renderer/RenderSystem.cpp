@@ -482,6 +482,7 @@ void RenderSystem::Init(AssetManager* assets) {
     u_materialParams = bgfx::createUniform("u_materialParams", bgfx::UniformType::Vec4);
     u_materialFlags = bgfx::createUniform("u_materialFlags", bgfx::UniformType::Vec4);
     u_landscapeParams = bgfx::createUniform("u_landscapeParams", bgfx::UniformType::Vec4);
+    u_landscapeDetail = bgfx::createUniform("u_landscapeDetail", bgfx::UniformType::Vec4);
     u_subsurfaceParams = bgfx::createUniform("u_subsurfaceParams", bgfx::UniformType::Vec4);
     u_shadowDepthOffset = bgfx::createUniform("u_shadowDepthOffset", bgfx::UniformType::Vec4);
     u_translucencyParams = bgfx::createUniform("u_translucencyParams", bgfx::UniformType::Vec4);
@@ -645,6 +646,7 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(s_landscapeOrmMap)) bgfx::destroy(s_landscapeOrmMap);
     if (bgfx::isValid(s_landscapeNormalMap)) bgfx::destroy(s_landscapeNormalMap);
     if (bgfx::isValid(u_landscapeParams)) bgfx::destroy(u_landscapeParams);
+    if (bgfx::isValid(u_landscapeDetail)) bgfx::destroy(u_landscapeDetail);
     if (bgfx::isValid(s_brdfLUT)) bgfx::destroy(s_brdfLUT);
     m_program = BGFX_INVALID_HANDLE;
     m_unlitProg = BGFX_INVALID_HANDLE;
@@ -1890,10 +1892,16 @@ void RenderSystem::BindMaterial(const Material& mat) {
     bgfx::setUniform(u_roughnessFactor, rgh);
     bgfx::setUniform(u_emissiveFactor, emi);
     const float landscapeParams[4] = {
-        mat.landscapeBlend ? 1.0f : 0.0f, 1.0f, 0.0f, 0.0f};
+        mat.landscapeBlend ? 1.0f : 0.0f, 1.0f,
+        std::max(mat.landscapeUvScale, 0.001f),
+        std::max(mat.landscapeNormalStrength, 0.0f)};
+    const float landscapeDetail[4] = {
+        std::max(mat.landscapeDetailScale, 1.0f),
+        std::clamp(mat.landscapeDetailStrength, 0.0f, 1.0f), 0.0f, 0.0f};
     bgfx::setUniform(u_materialParams, params);
     bgfx::setUniform(u_materialFlags, flags);
     bgfx::setUniform(u_landscapeParams, landscapeParams);
+    bgfx::setUniform(u_landscapeDetail, landscapeDetail);
     // Subsurface color is premultiplied by strength so a zero vector
     // disables the feature without an extra branch in the G-buffer.
     const float sss[4] = {

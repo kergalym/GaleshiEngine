@@ -736,6 +736,10 @@ void DrawDetails();
     // bodies so land grass/trees do not spawn on the submerged bed.
     void RebuildWaterVegetationMasks();
 
+    // Pushes the water's shore detail settings onto the carved landscape and
+    // water-bed materials. Cheap; safe to call while editing the sliders.
+    void ApplyWaterShoreSettings(entt::entity waterEntity);
+
     // State.
     Galeshi::Scene          m_scene;
     Galeshi::Camera         m_camera;

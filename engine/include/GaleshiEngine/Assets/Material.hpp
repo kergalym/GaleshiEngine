@@ -38,6 +38,13 @@ public:
     bool      landscapeOrmSrgb = false;
     bool      landscapeNormalSrgb = false;
     bool      landscapeBlend = false;
+    // Tiling and micro-detail for the landscape paint layer maps. The detail
+    // octave is a second, higher-frequency sample of the same maps used to
+    // break up the macro pattern on large shores.
+    float     landscapeUvScale = 1.0f;
+    float     landscapeDetailScale = 4.0f;
+    float     landscapeDetailStrength = 0.0f;
+    float     landscapeNormalStrength = 1.0f;
     float     metallicFactor   = 0.0f;
     // Scales the dielectric specular response. The optional specular map is
     // multiplied by this value. Default dielectric is 0.25 (F0 = 0.01).

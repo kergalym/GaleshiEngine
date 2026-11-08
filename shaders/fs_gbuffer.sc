@@ -15,6 +15,7 @@ SAMPLER2D(s_landscapeOrmMap,     14);
 SAMPLER2D(s_landscapeNormalMap,  15);
 
 uniform vec4 u_landscapeParams;
+uniform vec4 u_landscapeDetail;
 uniform vec4 u_albedoFactor;
 // x = metallic factor, y = specular strength
 uniform vec4 u_metallicFactor;
@@ -34,9 +35,26 @@ void main()
     float landscapeBlend = u_landscapeParams.x > 0.5
         ? clamp(v_landscapeBlend * u_landscapeParams.y, 0.0, 1.0)
         : 0.0;
+    // Macro tiling plus a second higher-frequency octave of the same maps.
+    // The octave breaks up the stretched pattern on large carved shores.
+    vec2 landscapeUV = v_uv * max(u_landscapeParams.z, 0.001);
+    vec2 landscapeDetailUV =
+        landscapeUV * max(u_landscapeDetail.x, 1.0) + vec2(0.37, 0.71);
+    float landscapeDetailStrength =
+        clamp(u_landscapeDetail.y, 0.0, 1.0);
     vec4 a = texture2D(s_albedoMap, v_uv);
     if (landscapeBlend > 0.0) {
-        vec4 layerAlbedo = texture2D(s_landscapeAlbedoMap, v_uv);
+        vec4 layerAlbedo =
+            texture2D(s_landscapeAlbedoMap, landscapeUV);
+        if (landscapeDetailStrength > 0.0) {
+            vec4 detailAlbedo =
+                texture2D(s_landscapeAlbedoMap, landscapeDetailUV);
+            layerAlbedo.rgb = clamp(
+                layerAlbedo.rgb +
+                    (detailAlbedo.rgb - vec3(0.5)) *
+                        landscapeDetailStrength,
+                0.0, 1.0);
+        }
         a = mix(a, layerAlbedo, landscapeBlend);
     }
     float opacity = texture2D(s_opacityMap, v_uv).r;
@@ -61,11 +79,21 @@ void main()
         rough = texture2D(s_roughnessMap, v_uv).r * u_roughnessFactor.r;
     }
     if (landscapeBlend > 0.0) {
-        vec4 layerOrm = texture2D(s_landscapeOrmMap, v_uv);
+        vec4 layerOrm = texture2D(s_landscapeOrmMap, landscapeUV);
+        float layerRoughness = layerOrm.g;
+        if (landscapeDetailStrength > 0.0) {
+            float detailRoughness =
+                texture2D(s_landscapeOrmMap, landscapeDetailUV).g;
+            layerRoughness = clamp(
+                layerRoughness +
+                    (detailRoughness - 0.5) *
+                        landscapeDetailStrength * 0.5,
+                0.0, 1.0);
+        }
         metallic = mix(
             metallic, layerOrm.b * u_metallicFactor.r, landscapeBlend);
         rough = mix(
-            rough, layerOrm.g * u_roughnessFactor.r, landscapeBlend);
+            rough, layerRoughness * u_roughnessFactor.r, landscapeBlend);
     }
     metallic = clamp(metallic, 0.0, 1.0);
     rough    = clamp(rough, 0.04, 1.0);
@@ -88,8 +116,11 @@ void main()
     // assumed bitangent sign.
     vec3 dp1 = dFdx(v_worldPos);
     vec3 dp2 = dFdy(v_worldPos);
-    vec2 duv1 = dFdx(v_uv);
-    vec2 duv2 = dFdy(v_uv);
+    // The shore normal map is tiled, so its tangent frame must follow the
+    // tiled UVs rather than the raw landscape UV.
+    vec2 normalUV = landscapeBlend > 0.0 ? landscapeUV : v_uv;
+    vec2 duv1 = dFdx(normalUV);
+    vec2 duv2 = dFdy(normalUV);
     vec3 dp2perp = cross(dp2, N);
     vec3 dp1perp = cross(N, dp1);
     vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
@@ -103,7 +134,18 @@ void main()
             texture2D(s_normalMap, v_uv).xyz * 2.0 - 1.0;
         if (landscapeBlend > 0.0) {
             vec3 layerNormal =
-                texture2D(s_landscapeNormalMap, v_uv).xyz * 2.0 - 1.0;
+                texture2D(s_landscapeNormalMap, landscapeUV).xyz *
+                    2.0 - 1.0;
+            if (landscapeDetailStrength > 0.0) {
+                vec2 detailNormal =
+                    (texture2D(s_landscapeNormalMap, landscapeDetailUV).xy *
+                        2.0 - 1.0) * u_landscapeDetail.x;
+                layerNormal = normalize(vec3(
+                    layerNormal.xy +
+                        detailNormal * landscapeDetailStrength * 0.5,
+                    layerNormal.z));
+            }
+            layerNormal.xy *= clamp(u_landscapeParams.w, 0.0, 4.0);
             tangentNormal = normalize(
                 mix(tangentNormal, layerNormal, landscapeBlend));
         }
@@ -113,7 +155,8 @@ void main()
 
     float occlusionValue = texture2D(s_occlusionMap, v_uv).r;
     if (landscapeBlend > 0.0) {
-        float layerOcclusion = texture2D(s_landscapeOrmMap, v_uv).r;
+        float layerOcclusion =
+            texture2D(s_landscapeOrmMap, landscapeUV).r;
         occlusionValue = mix(
             occlusionValue, layerOcclusion, landscapeBlend);
     }

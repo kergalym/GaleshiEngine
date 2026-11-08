@@ -50,6 +50,22 @@ float WaterEdgeDistance(const Galeshi::WaterComponent& water,
     return glm::length(q) - edge;
 }
 
+// One macro texture tile spans this many world units. Derived per
+// landscape/water-bed extent so the shore keeps a consistent grain size.
+void ApplyShoreMaterialSettings(Galeshi::Material& material,
+                                const Galeshi::WaterComponent& water,
+                                float extent) {
+    const float detailSize = std::max(water.shoreDetailSize, 0.05f);
+    material.landscapeUvScale =
+        std::max(extent / detailSize, 0.001f);
+    material.landscapeDetailScale =
+        std::clamp(water.shoreDetailOctave, 1.0f, 16.0f);
+    material.landscapeDetailStrength =
+        std::clamp(water.shoreDetailStrength, 0.0f, 1.0f);
+    material.landscapeNormalStrength =
+        std::clamp(water.shoreNormalStrength, 0.0f, 4.0f);
+}
+
 } // namespace
 
     // -------------------------------------------------------------------
@@ -604,6 +620,9 @@ float WaterEdgeDistance(const Galeshi::WaterComponent& water,
                         shoreNormal != m_assets->WhiteTexture()) {
                         material.landscapeNormalMap = shoreNormal;
                     }
+                    ApplyShoreMaterialSettings(
+                        material, *water,
+                        std::max(lc.sizeX, lc.sizeZ) * lc.scale);
                 }
             }
 
@@ -685,6 +704,7 @@ float WaterEdgeDistance(const Galeshi::WaterComponent& water,
         water->terrainCarved = true;
         EnsureUnderwaterTerrain(waterEntity);
         RebuildWaterVegetationMasks();
+        ApplyWaterShoreSettings(waterEntity);
     }
 
     void GaleshiEditorApp::EnsureUnderwaterTerrain(entt::entity waterEntity) {
@@ -828,6 +848,8 @@ float WaterEdgeDistance(const Galeshi::WaterComponent& water,
                 material.landscapeNormalMap = shoreNormal;
             }
         }
+        ApplyShoreMaterialSettings(
+            material, *water, std::max(sizeX, sizeZ) * cell);
 
         auto& vegetation =
             bed.HasComponent<Galeshi::VegetationComponent>()
@@ -932,6 +954,32 @@ float WaterEdgeDistance(const Galeshi::WaterComponent& water,
                     }
                 }
             }
+        }
+    }
+
+    void GaleshiEditorApp::ApplyWaterShoreSettings(
+        entt::entity waterEntity) {
+        if (!m_scene.Registry().valid(waterEntity)) return;
+        auto& registry = m_scene.Registry();
+        auto* water = registry.try_get<Galeshi::WaterComponent>(waterEntity);
+        if (!water) return;
+
+        for (auto lh : registry.view<Galeshi::LandscapeComponent>()) {
+            auto& lc = registry.get<Galeshi::LandscapeComponent>(lh);
+            if (lc.waterBed) {
+                const auto* parent =
+                    registry.try_get<Galeshi::ParentComponent>(lh);
+                if (!parent || parent->parent != waterEntity) continue;
+            }
+            auto* materialComponent =
+                registry.try_get<Galeshi::MaterialComponent>(lh);
+            if (!materialComponent || !materialComponent->material ||
+                !materialComponent->material->landscapeBlend) {
+                continue;
+            }
+            ApplyShoreMaterialSettings(
+                *materialComponent->material, *water,
+                std::max(lc.sizeX, lc.sizeZ) * lc.scale);
         }
     }
 

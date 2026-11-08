@@ -610,6 +610,13 @@ struct WaterComponent {
     int   underwaterGrassCount = 240;
     glm::vec4 underwaterGrassColor{0.08f, 0.32f, 0.20f, 1.0f};
 
+    // Carved shore material detail. Detail Size is the world-space size of
+    // one macro texture tile; the octave adds a higher-frequency pass.
+    float shoreDetailSize = 6.0f;
+    float shoreDetailStrength = 0.35f;
+    float shoreDetailOctave = 4.0f;
+    float shoreNormalStrength = 1.0f;
+
     // World-space extent of the surface.
     float width = 20.0f;
     float depth = 20.0f;

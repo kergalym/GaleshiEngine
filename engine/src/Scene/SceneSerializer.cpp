@@ -730,6 +730,10 @@ json MaterialToJson(const Material& m, const AssetManager& assets) {
         {"landscapeOrmSrgb", m.landscapeOrmSrgb},
         {"landscapeNormalSrgb", m.landscapeNormalSrgb},
         {"landscapeBlend", m.landscapeBlend},
+        {"landscapeUvScale", m.landscapeUvScale},
+        {"landscapeDetailScale", m.landscapeDetailScale},
+        {"landscapeDetailStrength", m.landscapeDetailStrength},
+        {"landscapeNormalStrength", m.landscapeNormalStrength},
         {"metallicFactor", m.metallicFactor},
         {"specularFactor", m.specularFactor},
         {"roughnessFactor", m.roughnessFactor},
@@ -807,6 +811,14 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     material->landscapeNormalSrgb =
         jm.value("landscapeNormalSrgb", false);
     material->landscapeBlend = jm.value("landscapeBlend", false);
+    material->landscapeUvScale =
+        std::max(jm.value("landscapeUvScale", 1.0f), 0.001f);
+    material->landscapeDetailScale =
+        std::max(jm.value("landscapeDetailScale", 4.0f), 1.0f);
+    material->landscapeDetailStrength = glm::clamp(
+        jm.value("landscapeDetailStrength", 0.0f), 0.0f, 1.0f);
+    material->landscapeNormalStrength = glm::clamp(
+        jm.value("landscapeNormalStrength", 1.0f), 0.0f, 4.0f);
     material->metallicFactor = jm.value("metallicFactor", 0.0f);
     material->specularFactor = glm::clamp(
         jm.value("specularFactor", 0.25f), 0.0f, 1.0f);
@@ -1399,6 +1411,10 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
                 {"underwaterTerrain", w.underwaterTerrain},
                 {"underwaterGrassCount", w.underwaterGrassCount},
                 {"underwaterGrassColor", Vec3ToJson(glm::vec3(w.underwaterGrassColor))},
+                {"shoreDetailSize", w.shoreDetailSize},
+                {"shoreDetailStrength", w.shoreDetailStrength},
+                {"shoreDetailOctave", w.shoreDetailOctave},
+                {"shoreNormalStrength", w.shoreNormalStrength},
                 {"width", w.width},
                 {"depth", w.depth},
                 {"waveHeight", w.waveHeight},
@@ -2499,6 +2515,18 @@ bool SceneSerializer::LoadFromJson(const json& root,
                 water.underwaterGrassColor = glm::vec4(
                     Vec3FromJson(jw.at("underwaterGrassColor")), 1.0f);
             }
+            water.shoreDetailSize = std::clamp(
+                jw.value("shoreDetailSize", water.shoreDetailSize),
+                0.05f, 200.0f);
+            water.shoreDetailStrength = glm::clamp(
+                jw.value("shoreDetailStrength",
+                         water.shoreDetailStrength), 0.0f, 1.0f);
+            water.shoreDetailOctave = glm::clamp(
+                jw.value("shoreDetailOctave",
+                         water.shoreDetailOctave), 1.0f, 16.0f);
+            water.shoreNormalStrength = glm::clamp(
+                jw.value("shoreNormalStrength",
+                         water.shoreNormalStrength), 0.0f, 4.0f);
             water.width = jw.value("width", water.width);
             water.depth = jw.value("depth", water.depth);
             water.waveHeight = jw.value("waveHeight", water.waveHeight);

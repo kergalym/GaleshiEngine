@@ -189,6 +189,7 @@ private:
     bgfx::UniformHandle u_materialParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_materialFlags = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_landscapeParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_landscapeDetail = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_subsurfaceParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_shadowDepthOffset = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_translucencyParams = BGFX_INVALID_HANDLE;
