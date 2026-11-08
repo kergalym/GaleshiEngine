@@ -364,6 +364,44 @@
         m_editor.camPitch = 0.55f;
         m_editor.camRadius = 8.0f;
 
+        // Neutral post-process for the material/physics test scene. Without
+        // this the editor falls back to any volume left in the scene (for
+        // example the MyGame volume), whose palette/atmosphere/fog tint the
+        // character and PBR spheres blue.
+        auto ppEntity = m_scene.CreateEntity("PostProcessVolume_Test");
+        auto& ppVolume =
+            ppEntity.AddComponent<Galeshi::PostProcessVolumeComponent>();
+        ppVolume.priority = 100;
+        ppVolume.size = {60.0f, 30.0f, 60.0f};
+        ppVolume.visibleInEditor = false;
+        ppEntity.GetComponent<Galeshi::TransformComponent>().position =
+            m_editor.camTarget;
+        auto& pp = ppVolume.settings;
+        pp.bloomEnabled = false;
+        pp.dofEnabled = false;
+        pp.motionBlurEnabled = false;
+        pp.exposure = 1.0f;
+        pp.contrast = 1.0f;
+        pp.saturation = 1.0f;
+        pp.colorExposure = 1.0f;
+        pp.colorContrast = 1.0f;
+        pp.colorSaturation = 1.0f;
+        pp.environmentPaletteEnabled = false;
+        pp.environmentPaletteAmount = 0.0f;
+        pp.vignetteIntensity = 0.0f;
+        pp.chromaticAberration = 0.0f;
+        pp.ssaoEnabled = false;
+        pp.ssgiEnabled = false;
+        pp.ssrEnabled = false;
+        pp.godRaysEnabled = false;
+        pp.atmosphereEnabled = false;
+        pp.fogEnabled = false;
+        pp.fogVolumetric = false;
+        pp.invertEnabled = false;
+        pp.smaaEnabled = true;
+        pp.fxaaEnabled = false;
+        pp.taaEnabled = false;
+
         const float sphereScale = 1.2f;
         const float sphereY = sphereScale * 0.5f;
         const float xSpacing = 2.8f;
