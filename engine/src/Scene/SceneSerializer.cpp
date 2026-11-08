@@ -1386,6 +1386,7 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
         if (reg.all_of<WaterComponent>(handle)) {
             const auto& w = reg.get<WaterComponent>(handle);
             je["water"] = {
+                {"bodyType", static_cast<int>(w.bodyType)},
                 {"enabled", w.enabled},
                 {"visibleInEditor", w.visibleInEditor},
                 {"width", w.width},
@@ -2456,6 +2457,8 @@ bool SceneSerializer::LoadFromJson(const json& root,
         if (je.contains("water") && je["water"].is_object()) {
             const auto& jw = je["water"];
             auto& water = e.AddComponent<WaterComponent>();
+            water.bodyType = static_cast<WaterBodyType>(
+                std::clamp(jw.value("bodyType", 0), 0, 3));
             water.enabled = jw.value("enabled", true);
             water.visibleInEditor = jw.value("visibleInEditor", true);
             water.width = jw.value("width", water.width);

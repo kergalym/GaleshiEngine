@@ -574,7 +574,15 @@ struct ParticleEmitterComponent {
 // Procedural water surface. The renderer builds a subdivided plane from this
 // component, displaces it with animated waves, and shades reflections,
 // screen-space refraction, depth absorption, foam, and sun glints.
+enum class WaterBodyType {
+    Sea = 0,
+    River = 1,
+    Ocean = 2,
+    Lake = 3,
+};
+
 struct WaterComponent {
+    WaterBodyType bodyType = WaterBodyType::Sea;
     bool enabled = true;
     bool visibleInEditor = true;
 

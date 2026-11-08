@@ -662,6 +662,15 @@
         ImGui::Checkbox("Visible in Editor", &water.visibleInEditor);
         ImGui::DragFloat("Width", &water.width, 0.1f, 0.1f, 10000.0f);
         ImGui::DragFloat("Depth", &water.depth, 0.1f, 0.1f, 10000.0f);
+        {
+            const char* bodyTypes[] = {"Sea", "River", "Ocean", "Lake"};
+            int bodyType = static_cast<int>(water.bodyType);
+            if (ImGui::Combo("Body Type", &bodyType, bodyTypes, 4)) {
+                PushHistory();
+                water.bodyType = static_cast<Galeshi::WaterBodyType>(
+                    std::clamp(bodyType, 0, 3));
+            }
+        }
         ImGui::TextDisabled("The water surface is centered on the entity and "
                             "uses its Y position.");
 
@@ -669,6 +678,7 @@
         ImGui::Text("Presets");
         if (ImGui::Button("Calm Lake")) {
             PushHistory();
+            water.bodyType = Galeshi::WaterBodyType::Lake;
             water.waveHeight = 0.12f;
             water.waveScale = 1.4f;
             water.waveSpeed = 0.55f;
@@ -687,6 +697,7 @@
         ImGui::SameLine();
         if (ImGui::Button("Ocean")) {
             PushHistory();
+            water.bodyType = Galeshi::WaterBodyType::Ocean;
             water.waveHeight = 0.48f;
             water.waveScale = 0.75f;
             water.waveSpeed = 1.25f;
@@ -705,6 +716,7 @@
         ImGui::SameLine();
         if (ImGui::Button("Tropical")) {
             PushHistory();
+            water.bodyType = Galeshi::WaterBodyType::Sea;
             water.waveHeight = 0.22f;
             water.waveScale = 1.15f;
             water.waveSpeed = 0.85f;

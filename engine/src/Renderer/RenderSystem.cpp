@@ -504,6 +504,7 @@ void RenderSystem::Init(AssetManager* assets) {
     u_waterParams2 = bgfx::createUniform("u_waterParams2", bgfx::UniformType::Vec4);
     u_waterParams3 = bgfx::createUniform("u_waterParams3", bgfx::UniformType::Vec4);
     u_waterFlow = bgfx::createUniform("u_waterFlow", bgfx::UniformType::Vec4);
+    u_waterBody = bgfx::createUniform("u_waterBody", bgfx::UniformType::Vec4);
     u_waterInvNearFar = bgfx::createUniform("u_waterInvNearFar", bgfx::UniformType::Vec4);
     u_waterShallow = bgfx::createUniform("u_waterShallow", bgfx::UniformType::Vec4);
     u_waterDeep = bgfx::createUniform("u_waterDeep", bgfx::UniformType::Vec4);
@@ -608,6 +609,7 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(u_waterParams2)) bgfx::destroy(u_waterParams2);
     if (bgfx::isValid(u_waterParams3)) bgfx::destroy(u_waterParams3);
     if (bgfx::isValid(u_waterFlow)) bgfx::destroy(u_waterFlow);
+    if (bgfx::isValid(u_waterBody)) bgfx::destroy(u_waterBody);
     if (bgfx::isValid(u_waterInvNearFar)) bgfx::destroy(u_waterInvNearFar);
     if (bgfx::isValid(u_waterShallow)) bgfx::destroy(u_waterShallow);
     if (bgfx::isValid(u_waterDeep)) bgfx::destroy(u_waterDeep);
@@ -2223,6 +2225,7 @@ void RenderSystem::RenderWater(Scene& scene, const Camera& camera,
         const WaterComponent* water = nullptr;
         glm::mat4 model{1.0f};
         float distanceSq = 0.0f;
+        float seed = 0.0f;
     };
     std::vector<WaterItem> items;
     items.reserve(8);
@@ -2267,6 +2270,8 @@ void RenderSystem::RenderWater(Scene& scene, const Camera& camera,
         item.model = world * glm::scale(glm::mat4(1.0f),
                                         glm::vec3(water.width, 1.0f, water.depth));
         item.distanceSq = glm::dot(center - camPos, center - camPos);
+        item.seed = static_cast<float>(
+            entt::to_integral(h) % 1024u) * 0.6180339f;
         items.push_back(item);
     }
 
@@ -2311,6 +2316,16 @@ void RenderSystem::RenderWater(Scene& scene, const Camera& camera,
         const float p3[4] = {water.clarity, water.transparency,
                              std::max(water.fresnelPower, 1.0f), water.sparkle};
         const float flow[4] = {water.flowDirection.x, water.flowDirection.y, 0.0f, 1.0f};
+        const float minWaterDim = std::max(
+            std::min(water.width, water.depth), 0.001f);
+        const float shoreWidthUV = std::clamp(
+            water.foamDistance * 4.0f / minWaterDim, 0.04f, 0.20f);
+        const float body[4] = {
+            static_cast<float>(water.bodyType),
+            shoreWidthUV,
+            0.12f,
+            item.seed
+        };
         const float shallow[4] = {water.shallowColor.r, water.shallowColor.g,
                                   water.shallowColor.b, 1.0f};
         const float deep[4] = {water.deepColor.r, water.deepColor.g,
@@ -2331,6 +2346,7 @@ void RenderSystem::RenderWater(Scene& scene, const Camera& camera,
         bgfx::setUniform(u_waterParams2, p2);
         bgfx::setUniform(u_waterParams3, p3);
         bgfx::setUniform(u_waterFlow, flow);
+        bgfx::setUniform(u_waterBody, body);
         bgfx::setUniform(u_waterShallow, shallow);
         bgfx::setUniform(u_waterDeep, deep);
         bgfx::setUniform(u_waterFoam, foam);

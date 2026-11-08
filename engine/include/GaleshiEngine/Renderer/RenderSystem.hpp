@@ -211,6 +211,7 @@ private:
     bgfx::UniformHandle u_waterParams2 = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_waterParams3 = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_waterFlow = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_waterBody = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_waterInvNearFar = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_waterShallow = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_waterDeep = BGFX_INVALID_HANDLE;
