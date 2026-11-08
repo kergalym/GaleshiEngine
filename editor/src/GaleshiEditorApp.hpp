@@ -657,6 +657,13 @@ void DrawDetails();
         std::unordered_map<const Galeshi::Material*,
                            std::shared_ptr<Galeshi::Material>>& clones);
 
+    // Applies a .mat master recipe to one material slot or every slot in the
+    // selected entity hierarchy. Returns the number of slots updated.
+    bool ApplyMaterialScript(Galeshi::MaterialComponent& slot,
+                             const std::string& path);
+    int ApplyMaterialScriptToHierarchy(entt::entity root,
+                                       const std::string& path);
+
     Galeshi::Entity CreateMaterialSlotEntity(
         entt::entity parent, const std::string& name,
         const std::shared_ptr<Galeshi::Material>& sourceMaterial);

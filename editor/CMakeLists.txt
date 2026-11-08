@@ -17,6 +17,7 @@ add_executable(GaleshiEditor
     src/EditorDetails.cpp
     src/EditorLandscape.cpp
     src/EditorLoading.cpp
+    src/EditorMaterials.cpp
     src/EditorMiscPanels.cpp
     src/EditorOutliner.cpp
     src/EditorPackage.cpp

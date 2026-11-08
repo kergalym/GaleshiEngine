@@ -657,6 +657,21 @@ function RunAlways(dt)
 end
 )LUA"
     },
+    {
+        "material_master",
+        "Master Material (.mat)",
+        "Declarative arithmetic recipe for material slots.",
+        "new_material.mat",
+        R"MAT({
+  "name": "Master Material",
+  "properties": {
+    "metallicFactor": { "mul": 1.0 },
+    "roughnessFactor": { "add": 0.0 },
+    "albedoFactor": { "mul": [1.0, 1.0, 1.0, 1.0] }
+  }
+}
+)MAT"
+    },
 };
 
 const ScriptTemplate* FindScriptTemplate(const std::string& id) {
@@ -1203,7 +1218,7 @@ std::string ContentBrowser::Draw() {
         m_importPicker.Open(m_current.string(), "Import Asset",
                             { ".gltf", ".glb", ".obj", ".dae",
                               ".png", ".jpg", ".wav", ".mp3",
-                              ".ttf", ".otf" });
+                              ".ttf", ".otf", ".mat" });
     }
     ImGui::Separator();
 
@@ -1287,6 +1302,8 @@ std::string ContentBrowser::Draw() {
                 label = "SND";
             } else if (ext == ".lua") {
                 label = "LUA";
+            } else if (ext == ".mat") {
+                label = "MAT";
             } else if (ext == ".cpp" || ext == ".cc" || ext == ".cxx" ||
                        ext == ".hpp" || ext == ".h") {
                 label = "C++";

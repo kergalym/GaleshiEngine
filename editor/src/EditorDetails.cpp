@@ -1941,7 +1941,7 @@ void GaleshiEditorApp::DrawDetails() {
             const size_t materialStateBefore = materialStateHash(m);
             ImGui::PushID(eid);
             const std::string materialKeywords =
-                std::string("material instance base used "
+                std::string("material instance base used master .mat script "
                             "albedo factor albedo sRGB color "
                             "space metallic factor roughness factor normal "
                             "strength occlusion strength "
@@ -1977,6 +1977,91 @@ void GaleshiEditorApp::DrawDetails() {
                                              const char* members) {
                     return showAllMaterialFields || showMaterialField(title, members);
                 };
+
+                // A .mat asset is a reusable master recipe. Applying it
+                // creates a new material instance whose base is the slot's
+                // previous material; the recipe only changes the properties
+                // listed in the file.
+                if (showMaterialGroup(
+                        "Master Material",
+                        "master material .mat script instance reapply clear "
+                        "all slots")) {
+                    std::string masterLabel = "(Drag a .mat file here)";
+                    if (!m.masterScriptPath.empty()) {
+                        masterLabel = std::filesystem::path(
+                                          m.masterScriptPath).filename().string();
+                    }
+                    ImGui::Button(masterLabel.c_str(), ImVec2(-1.0f, 0.0f));
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "Master material recipe (.mat). Drag it from the "
+                            "Content Browser, or use Reapply after editing "
+                            "the script.");
+                    }
+                    auto applyMaster = [&](const std::string& path) {
+                        if (path.empty() ||
+                            std::filesystem::path(path).extension() != ".mat") {
+                            return false;
+                        }
+                        PushHistory();
+                        if (!ApplyMaterialScript(matc, path)) {
+                            spdlog::warn(
+                                "[Material] Could not apply master script {}",
+                                path);
+                            return false;
+                        }
+                        ImGui::PopID();
+                        return true;
+                    };
+                    std::string pendingMasterPath;
+                    if (ImGui::BeginDragDropTarget()) {
+                        if (const ImGuiPayload* payload =
+                                ImGui::AcceptDragDropPayload(
+                                    "GALESHI_ASSET_PATH")) {
+                            const char* path =
+                                static_cast<const char*>(payload->Data);
+                            if (path) pendingMasterPath = path;
+                        }
+                        ImGui::EndDragDropTarget();
+                    }
+                    if (!pendingMasterPath.empty()) {
+                        if (applyMaster(pendingMasterPath)) return;
+                    }
+                    if (!m.masterScriptPath.empty()) {
+                        ImGui::TextDisabled("Master: %s",
+                                            m.masterScriptPath.c_str());
+                        if (ImGui::SmallButton("Reapply Master")) {
+                            if (applyMaster(m.masterScriptPath)) return;
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Apply to All Slots")) {
+                            PushHistory();
+                            const int count = ApplyMaterialScriptToHierarchy(
+                                selectedHandle, m.masterScriptPath);
+                            spdlog::info(
+                                "[Material] Applied master '{}' to {} slot(s)",
+                                m.masterScriptPath, count);
+                            ImGui::PopID();
+                            return;
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Clear Master")) {
+                            PushHistory();
+                            if (const auto base = m.base) {
+                                const std::string instanceName = m.name;
+                                m = *base;
+                                m.base = base;
+                                m.name = instanceName;
+                            }
+                            m.masterScriptPath.clear();
+                            m.sceneOverride = true;
+                            matc.isGlass = m.isGlass;
+                            ImGui::PopID();
+                            return;
+                        }
+                    }
+                    ImGui::Separator();
+                }
 
                 // Two Sided and Backface Culling are independent per-material
                 // settings; editing one must never change the other.

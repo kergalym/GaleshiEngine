@@ -121,6 +121,9 @@ public:
 
     std::string name = "Material";
     std::string sourcePath;
+    // Optional .mat master recipe. The material is an instance whose base is
+    // the source material and whose parameters were produced by this script.
+    std::string masterScriptPath;
 
     // True when this material has been edited in the scene and its values must
     // survive scene reloads instead of being refreshed from the glTF source.

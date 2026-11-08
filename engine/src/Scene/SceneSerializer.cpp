@@ -715,6 +715,7 @@ json MaterialToJson(const Material& m, const AssetManager& assets) {
     return {
         {"name", m.name},
         {"sourcePath", relStr(m.sourcePath)},
+        {"masterScriptPath", relStr(m.masterScriptPath)},
         {"sceneOverride", m.sceneOverride},
         {"albedoFactor", Vec4ToJson(m.albedoFactor)},
         {"albedoSrgb", m.albedoSrgb},
@@ -781,6 +782,11 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     auto material = std::make_shared<Material>();
     material->name = jm.value("name", std::string("Material"));
     material->sourcePath = jm.value("sourcePath", std::string{});
+    const std::string masterScript =
+        jm.value("masterScriptPath", std::string{});
+    material->masterScriptPath = masterScript.empty()
+        ? std::string{}
+        : assets.ResolvePath(masterScript);
     // Materials read from a scene file are scene state. Treat older files,
     // which have no flag, as overrides so loading never silently replaces
     // edits made in the editor.
