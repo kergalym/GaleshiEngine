@@ -14,7 +14,7 @@ uniform vec4 u_waterParams2; // x=depth fade, y=absorption,
 uniform vec4 u_waterParams3; // x=clarity, y=transparency,
                              // z=fresnel power, w=sparkle
 uniform vec4 u_waterFlow;    // xy=flow direction
-uniform vec4 u_waterBody;    // x=body type, y=shore width UV, z=river half-width UV, w=seed
+uniform vec4 u_waterBody;    // x=body type, y=reserved, z=river half-width UV, w=seed
 uniform vec4 u_waterInvNearFar; // x=1/near, y=1/far
 uniform vec4 u_waterPlanar;    // x=enabled, y=plane height, z=strength
 uniform vec4 u_waterShallow;
@@ -57,13 +57,11 @@ void main()
     // the eroded shore, later tinted with sand/foam.
     vec2 bodyUV = v_uv * 2.0 - 1.0;
     const float bodyType = u_waterBody.x;
-    const float shoreWidthUV = u_waterBody.y;
     const float riverHalfWidthUV = max(u_waterBody.z, 0.02);
     const float bodySeed = u_waterBody.w;
     float coastNoise = valueNoise(v_uv * 8.0 +
                                   vec2(bodySeed * 3.1, bodySeed * 7.7));
     float waterMask = 1.0;
-    float shoreMask = 1.0;
     if (bodyType > 0.5 && bodyType < 1.5) {
         vec2 flow = normalize(u_waterFlow.xy + vec2(0.0001, 0.0));
         bool alongU = abs(flow.x) >= abs(flow.y);
@@ -75,18 +73,14 @@ void main()
         float d = abs(side - center);
         waterMask = 1.0 - smoothstep(halfWidth - 0.015,
                                      halfWidth + 0.015, d);
-        shoreMask = 1.0 - smoothstep(halfWidth + shoreWidthUV - 0.015,
-                                     halfWidth + shoreWidthUV + 0.015, d);
     } else {
         float radius = bodyType > 2.5 ? 0.68 :
                        (bodyType > 1.5 ? 0.98 : 0.88);
         float edge = radius + (coastNoise - 0.5) * 0.18;
         float r = length(bodyUV);
         waterMask = 1.0 - smoothstep(edge - 0.01, edge + 0.01, r);
-        shoreMask = 1.0 - smoothstep(edge + shoreWidthUV - 0.01,
-                                     edge + shoreWidthUV + 0.01, r);
     }
-    if (shoreMask <= 0.0) discard;
+    if (waterMask <= 0.0) discard;
 
     // Manual depth test against the opaque G-buffer. The water is rendered
     // after the scene into a color-only target, so it cannot use hardware
@@ -202,12 +196,5 @@ void main()
     float alpha = mix(0.45, 0.94, depthMix) * u_waterParams3.y;
     alpha = clamp(alpha + fresnel * 0.18 + foam * 0.35, 0.04, 1.0);
 
-    // Eroded shore band: irregular sand/foam edge over the terrain.
-    float shoreBand = clamp(1.0 - waterMask, 0.0, 1.0) *
-                      clamp(shoreMask, 0.0, 1.0);
-    float sandNoise = valueNoise(v_uv * 26.0 + vec2(bodySeed, bodySeed * 0.37));
-    vec3 shoreSand = vec3(0.38, 0.33, 0.24) * (0.72 + 0.28 * sandNoise);
-    color = mix(color, shoreSand, shoreBand * 0.88);
-    alpha = mix(alpha, 0.92, shoreBand);
     gl_FragColor = vec4(color, alpha);
 }

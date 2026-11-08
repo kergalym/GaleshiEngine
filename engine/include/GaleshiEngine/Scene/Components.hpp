@@ -239,7 +239,9 @@ struct LandscapeComponent {
     // Runtime-only base heights captured before the first water erosion.
     // Not serialized; used by the editor to re-carve after water edits.
     std::vector<float> erosionBaseHeights;
+    std::vector<float> erosionBasePaintWeights;
     bool hasErosionBase = false;
+    bool hasErosionPaintBase = false;
     // Legacy single-layer weights retained for scene migration.
     std::vector<float> paintWeights;
     // Unlimited painted material layers and their per-vertex weights.

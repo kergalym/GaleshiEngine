@@ -566,6 +566,45 @@ float WaterEdgeDistance(const Galeshi::WaterComponent& water,
             } else if (lc.erosionBaseHeights.size() == lc.heights.size()) {
                 lc.heights = lc.erosionBaseHeights;
             }
+            if (!lc.hasErosionPaintBase) {
+                lc.erosionBasePaintWeights = lc.paintWeights;
+                lc.hasErosionPaintBase = true;
+            } else if (lc.erosionBasePaintWeights.size() ==
+                       lc.paintWeights.size()) {
+                lc.paintWeights = lc.erosionBasePaintWeights;
+            }
+
+            // The shore is drawn by the landscape itself. Bind the
+            // procedural sand/gravel layer; the paint weights below decide
+            // where it replaces the base grass.
+            if (m_assets) {
+                if (auto* materialComponent =
+                        registry.try_get<Galeshi::MaterialComponent>(lh);
+                    materialComponent && materialComponent->material) {
+                    auto& material = *materialComponent->material;
+                    material.landscapeBlend = true;
+                    material.landscapeAlbedoSrgb = true;
+                    material.landscapeOrmSrgb = false;
+                    material.landscapeNormalSrgb = false;
+                    auto shoreAlbedo = m_assets->LoadTexture(
+                        "assets/textures/T_Water_Shore_Albedo.png", true);
+                    auto shoreOrm = m_assets->LoadTexture(
+                        "assets/textures/T_Water_Shore_ORM.png", false);
+                    auto shoreNormal = m_assets->LoadTexture(
+                        "assets/textures/T_Water_Shore_Normal.png", false);
+                    if (shoreAlbedo &&
+                        shoreAlbedo != m_assets->WhiteTexture()) {
+                        material.landscapeAlbedoMap = shoreAlbedo;
+                    }
+                    if (shoreOrm && shoreOrm != m_assets->WhiteTexture()) {
+                        material.landscapeOrmMap = shoreOrm;
+                    }
+                    if (shoreNormal &&
+                        shoreNormal != m_assets->WhiteTexture()) {
+                        material.landscapeNormalMap = shoreNormal;
+                    }
+                }
+            }
 
             const glm::mat4 landscapeWorld = EntityWorldMatrix(lh);
             const glm::mat4 landscapeInv = glm::inverse(landscapeWorld);
@@ -612,6 +651,26 @@ float WaterEdgeDistance(const Galeshi::WaterComponent& water,
                         landscapeInv * glm::vec4(
                             world.x, targetWorldY, world.z, 1.0f));
                     lc.heights[index] = targetLocal.y;
+
+                    // Paint the eroded shore/bed with the landscape's shore
+                    // layer. The water bed is fully sand/gravel; the bank
+                    // fades back into grass over its width.
+                    float shorePaint = 0.0f;
+                    if (edgeDistance <= 0.0f) {
+                        shorePaint = 1.0f;
+                    } else {
+                        float t = std::clamp(
+                            edgeDistance / std::max(bankWidthUV, 1e-4f),
+                            0.0f, 1.0f);
+                        t = std::clamp(
+                            t + (erosionNoise - 0.5f) * bankErosion,
+                            0.0f, 1.0f);
+                        shorePaint = 1.0f - t * t * (3.0f - 2.0f * t);
+                    }
+                    if (index < lc.paintWeights.size()) {
+                        lc.paintWeights[index] = std::max(
+                            lc.paintWeights[index], shorePaint);
+                    }
                 }
             }
 
