@@ -161,6 +161,9 @@ private:
 
     bgfx::ProgramHandle m_program      = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_gbufferProg  = BGFX_INVALID_HANDLE;
+    // Landscape-only vertex path: no skinning or wind animation.
+    bgfx::ProgramHandle m_terrainProg = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_terrainGbufferProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_unlitProg    = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_wireframeProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_shadowProg = BGFX_INVALID_HANDLE;

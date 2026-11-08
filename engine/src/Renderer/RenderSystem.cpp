@@ -434,6 +434,10 @@ void RenderSystem::Init(AssetManager* assets) {
     m_assets = assets;
     m_program = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_pbr.bin");
     m_gbufferProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_gbuffer.bin");
+    m_terrainProg = ShaderManager::LoadProgram(
+        "shaders/vs_terrain.bin", "shaders/fs_pbr.bin");
+    m_terrainGbufferProg = ShaderManager::LoadProgram(
+        "shaders/vs_terrain.bin", "shaders/fs_gbuffer.bin");
     m_unlitProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_unlit.bin");
     m_wireframeProg = ShaderManager::LoadProgram(
         "shaders/vs_pbr.bin", "shaders/fs_wireframe.bin");
@@ -564,6 +568,8 @@ void RenderSystem::Shutdown() {
 
     if (bgfx::isValid(m_program)) bgfx::destroy(m_program);
     if (bgfx::isValid(m_gbufferProg)) bgfx::destroy(m_gbufferProg);
+    if (bgfx::isValid(m_terrainProg)) bgfx::destroy(m_terrainProg);
+    if (bgfx::isValid(m_terrainGbufferProg)) bgfx::destroy(m_terrainGbufferProg);
     if (bgfx::isValid(m_unlitProg)) bgfx::destroy(m_unlitProg);
     if (bgfx::isValid(m_wireframeProg)) bgfx::destroy(m_wireframeProg);
     if (bgfx::isValid(m_shadowProg)) bgfx::destroy(m_shadowProg);
@@ -1092,6 +1098,7 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         // instanced vertex shader has no skin/weight attributes and would
         // force the blend varying to zero.
         const bool isLandscape =
+            scene.Registry().all_of<LandscapeComponent>(h) ||
             scene.Registry().all_of<LandscapeComponent>(root);
         // The occlusion pass tests static entities before this pass. Results
         // are one frame old, which keeps the query readback off the GPU
@@ -1198,9 +1205,13 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
             if (unlit) {
                 bgfx::submit(viewId, m_unlitProg);
             } else if (m_deferred && bgfx::isValid(m_gbufferProg)) {
-                bgfx::submit(viewId, m_gbufferProg);
+                bgfx::submit(viewId,
+                    isLandscape && bgfx::isValid(m_terrainGbufferProg)
+                        ? m_terrainGbufferProg : m_gbufferProg);
             } else {
-                bgfx::submit(viewId, m_program);
+                bgfx::submit(viewId,
+                    isLandscape && bgfx::isValid(m_terrainProg)
+                        ? m_terrainProg : m_program);
             }
         }
     }
