@@ -809,7 +809,7 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     material->landscapeBlend = jm.value("landscapeBlend", false);
     material->metallicFactor = jm.value("metallicFactor", 0.0f);
     material->specularFactor = glm::clamp(
-        jm.value("specularFactor", 1.0f), 0.0f, 1.0f);
+        jm.value("specularFactor", 0.25f), 0.0f, 1.0f);
     material->roughnessFactor = jm.value("roughnessFactor", 1.0f);
     material->emissiveFactor = jm.contains("emissiveFactor")
         ? Vec3FromJson(jm.at("emissiveFactor")) : glm::vec3(0.0f);

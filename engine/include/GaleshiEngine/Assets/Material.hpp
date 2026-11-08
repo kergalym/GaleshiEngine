@@ -40,8 +40,8 @@ public:
     bool      landscapeBlend = false;
     float     metallicFactor   = 0.0f;
     // Scales the dielectric specular response. The optional specular map is
-    // multiplied by this value.
-    float     specularFactor   = 1.0f;
+    // multiplied by this value. Default dielectric is 0.25 (F0 = 0.01).
+    float     specularFactor   = 0.25f;
     // Standard opaque-material default.
     float     roughnessFactor  = 1.0f;
     float     normalStrength   = 1.0f;
