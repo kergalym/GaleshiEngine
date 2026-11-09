@@ -153,8 +153,8 @@ const bool swimming =
 Current class wrappers cover:
 
 - `World` — create/destroy/find/valid, names, local position/rotation/scale,
-  parent/detach, bone attachment/detach, component presence, velocity, and
-  per-entity runtime variables
+  parent/detach, bone attachment/detach, component presence, velocity,
+  per-entity runtime variables, and nested animation-entity lookup
 - `Input` — key state, dead-zoned/raw axes, mouse buttons, position, delta,
   wheel
 - `Physics` — linear velocity, attach box/sphere/capsule, destroy body,

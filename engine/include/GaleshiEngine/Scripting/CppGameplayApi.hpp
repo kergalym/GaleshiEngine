@@ -137,6 +137,12 @@ public:
             : fallback;
     }
 
+    uint32_t FindAnimationEntity(uint32_t root) const {
+        return m_api && m_api->find_animation_entity
+            ? m_api->find_animation_entity(m_api->user, root)
+            : UINT32_MAX;
+    }
+
     Vec3 Velocity(uint32_t entity) const {
         return m_api && m_api->get_velocity
             ? m_api->get_velocity(m_api->user, entity)

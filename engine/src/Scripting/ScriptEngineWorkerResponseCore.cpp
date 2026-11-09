@@ -503,6 +503,33 @@ bool ScriptEngine::MakeWorkerCoreResponse(
             if (it != variables.end()) response.x = it->second;
         }
         break;
+    case CppWorkerRequest::FindAnimationEntity:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity root =
+                static_cast<entt::entity>(request.entity);
+            if (!registry.valid(root)) break;
+
+            std::vector<entt::entity> pending{root};
+            for (size_t head = 0; head < pending.size() && head < 4096;
+                 ++head) {
+                const entt::entity current = pending[head];
+                if (!registry.valid(current)) continue;
+                if (registry.all_of<AnimationStateMachineComponent>(current)) {
+                    response.entity = static_cast<uint32_t>(current);
+                    response.valid = 1;
+                    break;
+                }
+                auto childView = registry.view<ParentComponent>();
+                for (entt::entity child : childView) {
+                    if (childView.get<ParentComponent>(child).parent ==
+                        current) {
+                        pending.push_back(child);
+                    }
+                }
+            }
+        }
+        break;
     case CppWorkerRequest::GetAxisRaw:
         response.x = m_getAxisRaw ? m_getAxisRaw(request.text) : 0.0f;
         break;

@@ -213,6 +213,17 @@ Variables are floats keyed by `(entity, name)`, are runtime-only, and are
 shared by every C++ hot-reload module in the same scene. A missing variable
 returns the fallback passed to `GetVariable`.
 
+A character skeleton is often nested under a body or wrapper root. Find its
+animation state machine without relying on an authored entity name:
+
+```cpp
+const uint32_t agent = g_api->ai.FindNavAgent();
+const uint32_t animation = g_api->world.FindAnimationEntity(agent);
+if (animation != UINT32_MAX) {
+    g_api->animation.SetParameter(animation, "Speed", 1.0f);
+}
+```
+
 ```cpp
 g_api->set_camera_mode(g_api->user, GALESHI_CAMERA_FIRST_PERSON);
 const int mode = g_api->get_camera_mode(g_api->user);

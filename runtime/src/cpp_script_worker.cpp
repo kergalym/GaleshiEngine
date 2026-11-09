@@ -344,6 +344,7 @@ public:
         m_api.add_component = &ScriptWorker::AddComponent;
         m_api.set_variable = &ScriptWorker::SetVariable;
         m_api.get_variable = &ScriptWorker::GetVariable;
+        m_api.find_animation_entity = &ScriptWorker::FindAnimationEntity;
         m_api.get_axis_raw = &ScriptWorker::GetAxisRaw;
         m_api.is_mouse_button_down = &ScriptWorker::MouseButtonDown;
         m_api.get_mouse_position = &ScriptWorker::GetMousePosition;
@@ -945,6 +946,13 @@ private:
             static_cast<ScriptWorker*>(user)->Request(
                 CppWorkerRequest::GetVariable, entity, name, {}, fallback);
         return response.x;
+    }
+
+    static uint32_t FindAnimationEntity(void* user, uint32_t root) {
+        if (!user || root == UINT32_MAX) return UINT32_MAX;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::FindAnimationEntity, root)
+            .entity;
     }
 
     static bool AttachBox(void* user, uint32_t entity,

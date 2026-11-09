@@ -532,9 +532,13 @@ struct GaleshiScriptApi {
                          float value) = nullptr;
     float (*get_variable)(void* user, uint32_t entity, const char* name,
                           float fallback) = nullptr;
+
+    // Finds the first entity at or below root that owns an animation state
+    // machine. Useful when a character is nested under a body/wrapper root.
+    uint32_t (*find_animation_entity)(void* user, uint32_t root) = nullptr;
 };
 
-inline constexpr uint32_t kGaleshiScriptApiVersion = 22;
+inline constexpr uint32_t kGaleshiScriptApiVersion = 23;
 
 inline float GaleshiInterpFactor(float deltaTime, float speed) {
     if (speed <= 0.0f) return 1.0f;

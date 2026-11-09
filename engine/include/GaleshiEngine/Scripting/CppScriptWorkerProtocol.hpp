@@ -229,6 +229,7 @@ enum class CppWorkerRequest : uint32_t {
     AddComponent = 206,
     SetVariable = 207,
     GetVariable = 208,
+    FindAnimationEntity = 209,
 };
 
 constexpr std::size_t kCppWorkerTextSize = 512;
