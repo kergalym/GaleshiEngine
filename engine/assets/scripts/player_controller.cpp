@@ -13,7 +13,6 @@ using Galeshi::Script::Quat;
 using Galeshi::Script::Vec3;
 
 constexpr const char* kPlayerName = "Player";
-constexpr const char* kPlayerVisualName = "PlayerVisual";
 constexpr const char* kBodyNames[] = {
     "PlayerPhysics",
     "CollisionCapsule",
@@ -22,6 +21,7 @@ constexpr const char* kBodyNames[] = {
 constexpr float kMoveSpeed = 8.0f;
 constexpr float kTurnSpeed = 1.5707963f; // 90 degrees/second in radians
 constexpr float kJumpImpulse = 8.0f;
+bool isSwim = false;
 
 Api* g_api = nullptr;
 uint32_t g_player = UINT32_MAX;
@@ -145,19 +145,12 @@ uint32_t FindBody(const Api& api, uint32_t player) {
 }
 
 uint32_t FindVisual(const Api& api, uint32_t player) {
-    const uint32_t visual = api.world.Find(kPlayerVisualName);
-    return api.world.Valid(visual) ? visual : player;
+    const uint32_t animation = api.world.FindAnimationEntity(player);
+    return animation != UINT32_MAX ? animation : player;
 }
 
-uint32_t FindAnimation(const Api& api, uint32_t player, uint32_t visual) {
-    if (api.world.HasComponent(player, "animation_state_machine")) {
-        return player;
-    }
-    if (api.world.Valid(visual) &&
-        api.world.HasComponent(visual, "animation_state_machine")) {
-        return visual;
-    }
-    return UINT32_MAX;
+uint32_t FindAnimation(const Api& api, uint32_t player) {
+    return api.world.FindAnimationEntity(player);
 }
 
 void AcquirePlayer(Api& api) {
@@ -171,7 +164,7 @@ void AcquirePlayer(Api& api) {
     }
     g_body = FindBody(api, g_player);
     g_visual = FindVisual(api, g_player);
-    g_animation = FindAnimation(api, g_player, g_visual);
+    g_animation = FindAnimation(api, g_player);
 }
 
 void RefreshEntities(Api& api) {
@@ -186,7 +179,7 @@ void RefreshEntities(Api& api) {
         g_visual = FindVisual(api, g_player);
     }
     if (g_animation == UINT32_MAX || !api.world.Valid(g_animation)) {
-        g_animation = FindAnimation(api, g_player, g_visual);
+        g_animation = FindAnimation(api, g_player);
     }
 }
 
@@ -211,6 +204,9 @@ extern "C" void GaleshiScriptUpdate(float dt) {
     }
     RefreshEntities(api);
     if (g_body == UINT32_MAX) return;
+
+    // Water triggers write this variable on the controller's player entity.
+    isSwim = api.world.GetVariable(g_player, "isSwim", 0.0f) > 0.5f;
 
     const float horizontal = api.input.Axis("Horizontal");
     const float vertical = api.input.Axis("Vertical");
@@ -270,5 +266,9 @@ extern "C" void GaleshiScriptUpdate(float dt) {
         const float speed = std::min(
             1.0f, std::sqrt(vx * vx + vz * vz) / kMoveSpeed);
         api.animation.SetParameter(g_animation, "Speed", speed);
+    }
+
+    if (g_animation != UINT32_MAX) {
+        api.animation.SetParameter(g_animation, "IsSwim", isSwim);
     }
 }

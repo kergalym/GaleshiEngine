@@ -11,7 +11,6 @@ using Galeshi::Script::Api;
 using Galeshi::Script::Vec3;
 
 constexpr const char* kTargetName = "Player";
-constexpr const char* kAgentVisualName = "AIVisual";
 constexpr float kMoveSpeed = 3.5f;
 constexpr float kChaseRadius = 20.0f;
 constexpr float kStopRadius = 1.0f;
@@ -23,15 +22,9 @@ Vec3 g_lastPosition{};
 bool g_hasLastPosition = false;
 
 uint32_t FindAnimation(const Api& api, uint32_t agent) {
-    if (api.world.HasComponent(agent, "animation_state_machine")) {
-        return agent;
-    }
-    const uint32_t visual = api.world.Find(kAgentVisualName);
-    if (api.world.Valid(visual) &&
-        api.world.HasComponent(visual, "animation_state_machine")) {
-        return visual;
-    }
-    return UINT32_MAX;
+    // The character hierarchy can be nested under a body/wrapper root. Find
+    // the animated skeleton without relying on an authored entity name.
+    return api.world.FindAnimationEntity(agent);
 }
 
 void AcquireAgent(Api& api) {
