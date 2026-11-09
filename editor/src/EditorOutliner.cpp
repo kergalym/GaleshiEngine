@@ -471,6 +471,28 @@
             tf.scale    = scl;
         };
 
+        // A failed/missing skeletal model can leave a saved entity hierarchy
+        // behind: mesh children without a valid MeshComponent and empty bone
+        // nodes. Hide that exploded subtree when the skeleton has no usable
+        // mesh left, while keeping the character root selectable.
+        auto HasValidMeshDescendant = [&](entt::entity root) {
+            auto meshView = reg.view<Galeshi::MeshComponent>();
+            for (entt::entity meshEntity : meshView) {
+                const auto& mesh = meshView.get<Galeshi::MeshComponent>(meshEntity);
+                if (!mesh.mesh || !mesh.mesh->Valid()) continue;
+
+                entt::entity current = meshEntity;
+                for (int depth = 0; current != entt::null && depth < 128;
+                     ++depth) {
+                    if (current == root) return true;
+                    if (!reg.all_of<Galeshi::ParentComponent>(current)) break;
+                    current =
+                        reg.get<Galeshi::ParentComponent>(current).parent;
+                }
+            }
+            return false;
+        };
+
         // Imported models are stored as an empty root with one mesh child per
         // material submesh. Those children only add noise to the Outliner, so
         // show the model root by itself. Skeletal roots can own non-mesh
@@ -519,6 +541,10 @@
                 }
                 children.push_back(child);
             });
+            if (reg.all_of<Galeshi::SkeletalComponent>(e) &&
+                !HasValidMeshDescendant(e)) {
+                children.clear();
+            }
             if (IsModelRoot(e, children)) {
                 // Imported model roots collapse their own mesh submeshes, but
                 // must keep non-mesh attachments visible. In particular, a
@@ -676,10 +702,6 @@
                         if (!isCycle) {
                             PushHistory();
 
-                            // Preserve the world pose when changing parents.
-                            const glm::mat4 world = GetWorldMatrix(dragged);
-                            const glm::mat4 parentWorld = GetWorldMatrix(e);
-
                             // 1) Detach from old parent
                             if (reg.all_of<Galeshi::ParentComponent>(dragged))
                                 reg.remove<Galeshi::ParentComponent>(dragged);
@@ -688,10 +710,15 @@
                             reg.emplace_or_replace<Galeshi::ParentComponent>(
                                 dragged, Galeshi::ParentComponent{ e });
 
-                            // 3) Convert the preserved world transform into
-                            // the new parent's local space.
-                            SetLocalFromMatrix(
-                                dragged, glm::inverse(parentWorld) * world);
+                            // 3) Reset the dragged child's local transform.
+                            // The attachment is authored relative to the new
+                            // parent, not to the old world position.
+                            if (reg.all_of<Galeshi::TransformComponent>(dragged)) {
+                                auto& tf = reg.get<Galeshi::TransformComponent>(dragged);
+                                tf.position = glm::vec3(0.0f);
+                                tf.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+                                tf.scale = glm::vec3(1.0f);
+                            }
                         } else {
                             spdlog::warn("[Outliner] Cannot reparent: would create a cycle.");
                         }
