@@ -1,6 +1,59 @@
 #include "GaleshiEditorApp.hpp"
 
+namespace {
 
+struct SceneProjectLocation {
+    std::filesystem::path root;
+    std::filesystem::path openPath;
+};
+
+SceneProjectLocation FindSceneProject(const std::string& scenePath) {
+    std::error_code ec;
+    std::filesystem::path absoluteScene =
+        std::filesystem::absolute(scenePath, ec);
+    if (ec) absoluteScene = scenePath;
+
+    const std::filesystem::path fallbackRoot =
+        absoluteScene.parent_path();
+    std::filesystem::path dir = fallbackRoot;
+    for (int depth = 0; depth < 8; ++depth) {
+        if (dir.empty() || dir == dir.root_path()) break;
+
+        std::error_code scanEc;
+        for (const auto& entry :
+             std::filesystem::directory_iterator(dir, scanEc)) {
+            if (!entry.is_regular_file(scanEc)) continue;
+            if (entry.path().extension() == ".gproj") {
+                return {dir, entry.path()};
+            }
+        }
+
+        const std::filesystem::path parent = dir.parent_path();
+        if (parent.empty() || parent == dir) break;
+        dir = parent;
+    }
+    return {fallbackRoot, absoluteScene};
+}
+
+bool IsInsideProject(const std::filesystem::path& scenePath,
+                     const std::filesystem::path& projectRoot) {
+    if (projectRoot.empty()) return false;
+
+    std::error_code ec;
+    const std::filesystem::path absoluteScene =
+        std::filesystem::absolute(scenePath, ec);
+    if (ec) return false;
+    const std::filesystem::path absoluteRoot =
+        std::filesystem::absolute(projectRoot, ec);
+    if (ec) return false;
+
+    const std::filesystem::path relative =
+        std::filesystem::relative(absoluteScene, absoluteRoot, ec);
+    return !ec && !relative.empty() &&
+           *relative.begin() != "..";
+}
+
+} // namespace
 
     // -------------------------------------------------------------------
     // Undo / Redo
@@ -202,6 +255,53 @@
         StopPlayForSceneChange();
         UnloadSceneContent(false);
         ResetSceneStateForReplacement();
+
+        // A scene can be loaded from another project through File -> Load
+        // Scene or Recent Scenes. Asset paths are project-relative, so the
+        // project root must follow the scene; otherwise every model/texture is
+        // resolved against the previously opened project.
+        const std::string currentProject =
+            Galeshi::ProjectManager::GetProjectPath();
+        SceneProjectLocation project;
+        if (IsInsideProject(normalized, currentProject)) {
+            project.root = currentProject;
+            project.openPath = normalized;
+        } else {
+            project = FindSceneProject(normalized);
+        }
+
+        const bool projectChanged =
+            currentProject.empty() ||
+            std::filesystem::path(currentProject).lexically_normal() !=
+                project.root.lexically_normal();
+        if (projectChanged) {
+            if (!Galeshi::ProjectManager::OpenProject(
+                    project.openPath.string())) {
+                spdlog::error(
+                    "[Editor] Could not switch project for scene '{}'",
+                    normalized);
+                return;
+            }
+
+            // Imported models are cached by relative path. Clear them when
+            // the root changes so models with equal relative paths are not
+            // silently reused from the previous project.
+            if (m_assets) {
+                m_assets->Clear(false);
+                m_assets->LoadImportCache();
+            }
+            if (m_browser) {
+                const std::filesystem::path assetsRoot =
+                    project.root / "assets";
+                std::error_code ec;
+                std::filesystem::create_directories(assetsRoot, ec);
+                m_browser->SetRoot(assetsRoot.string());
+            }
+            LoadRecentScenes();
+            spdlog::info("[Editor] Scene project root: {}",
+                         project.root.string());
+        }
+
         StartAsyncLoad(normalized);
     }
 

@@ -624,6 +624,10 @@ void DrawDetails();
     void EnsureTreeTypeMaterial(Galeshi::VegetationTreeType& type,
                                 int typeIndex);
 
+    void EnsureTreeMaterialOverrides(
+        Galeshi::VegetationTreeType& type,
+        const Galeshi::AssetManager::LoadedModel& model);
+
     void EnsureLeafMaterial(Galeshi::VegetationLeafSet& leaf,
                             int typeIndex, int leafIndex);
 

@@ -24,6 +24,9 @@ public:
 
     void Refresh();
 
+    // Switch the content root when the editor opens another project.
+    void SetRoot(const std::string& rootDir);
+
     // Folder currently shown in the browser. File-manager drops that land on
     // the Content Browser are imported here.
     const std::filesystem::path& CurrentDirectory() const { return m_current; }

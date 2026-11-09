@@ -1,6 +1,7 @@
 #include "GaleshiEditorApp.hpp"
 
-
+#include <algorithm>
+#include <memory>
 
     void GaleshiEditorApp::EnsureTreeTypeMaterial(Galeshi::VegetationTreeType& type,
                                 int typeIndex) {
@@ -15,6 +16,34 @@
 
 
 
+    void GaleshiEditorApp::EnsureTreeMaterialOverrides(
+                            Galeshi::VegetationTreeType& type,
+                            const Galeshi::AssetManager::LoadedModel& model) {
+        for (int materialIndex = 0;
+             materialIndex < static_cast<int>(model.materials.size());
+             ++materialIndex) {
+            const auto& imported = model.materials[
+                static_cast<size_t>(materialIndex)];
+            if (!imported || imported->name.empty()) continue;
+
+            const bool exists = std::any_of(
+                type.materialOverrides.begin(), type.materialOverrides.end(),
+                [materialIndex](const Galeshi::VegetationMaterialOverride& m) {
+                    return m.materialIndex == materialIndex && m.material;
+                });
+            if (exists) continue;
+
+            Galeshi::VegetationMaterialOverride overrideMat;
+            overrideMat.materialIndex = materialIndex;
+            overrideMat.material =
+                std::make_shared<Galeshi::Material>(*imported);
+            overrideMat.material->sceneOverride = true;
+            type.materialOverrides.push_back(std::move(overrideMat));
+        }
+    }
+
+
+
     void GaleshiEditorApp::EnsureLeafMaterial(Galeshi::VegetationLeafSet& leaf,
                             int typeIndex,  int leafIndex) {
         if (leaf.material) {
@@ -24,17 +53,21 @@
                 leaf.material->metallicFactor = 1.0f;
                 leaf.material->roughnessFactor = 1.0f;
             }
+            leaf.material->alphaTest = leaf.alphaTest;
+            leaf.material->twoSided = leaf.twoSided;
+            leaf.material->backfaceCulling = !leaf.twoSided;
             return;
         }
         leaf.material = std::make_shared<Galeshi::Material>();
         leaf.material->name = "Tree " + std::to_string(typeIndex + 1) +
                               " Leaf " + std::to_string(leafIndex + 1);
-        leaf.material->twoSided = true;
-        leaf.material->backfaceCulling = false;
+        leaf.material->twoSided = leaf.twoSided;
+        leaf.material->backfaceCulling = !leaf.twoSided;
         leaf.material->castsShadow = true;
         // Leaf textures commonly carry an alpha mask. The shader ignores
         // this when the alpha channel is fully opaque.
-        leaf.material->alphaTest = true;
+        leaf.material->alphaTest = leaf.alphaTest;
+        leaf.material->alphaBlend = false;
         leaf.material->alphaCutoff = 0.5f;
         leaf.material->sceneOverride = true;
     }
@@ -167,20 +200,20 @@
             typeIndex < static_cast<int>(vegetation.treeTypes.size())) {
             auto& type = vegetation.treeTypes[static_cast<size_t>(typeIndex)];
             if (type.meshPath != path) {
-                // Leaf overrides address mesh indices in the old model.
+                // Overrides address mesh/material indices in the old model.
                 type.leafSets.clear();
+                type.materialOverrides.clear();
             }
             type.meshPath = path;
-            // Imported source trees are commonly authored in centimeter-like
-            // units. Use 0.010 as the default multiplier instead of making
-            // the first drop gigantic.
-            type.scale = 0.010f;
+            // Keep the imported model's native size. Asset units are already
+            // baked into its vertices, so Size 1.0 is the real file scale.
+            type.scale = 1.0f;
             if (type.density <= 0.0f) type.density = 1.0f;
             EnsureTreeTypeMaterial(type, typeIndex);
         } else {
             Galeshi::VegetationTreeType type;
             type.meshPath = path;
-            type.scale = 0.010f;
+            type.scale = 1.0f;
             type.density = 1.0f;
             vegetation.treeTypes.push_back(std::move(type));
             const int newIndex =

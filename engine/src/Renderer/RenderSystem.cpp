@@ -51,38 +51,54 @@ namespace {
                 material->specularMap);
     }
 
-    std::shared_ptr<Material> FindLeafOverride(
+    const VegetationLeafSet* FindLeafSet(
         const std::vector<VegetationLeafSet>& leafSets, size_t meshIndex) {
         for (const auto& leaf : leafSets) {
-            if (leaf.meshIndex == static_cast<int>(meshIndex) &&
-                HasTreeTextureOverride(leaf.material)) {
-                return leaf.material;
+            if (leaf.meshIndex == static_cast<int>(meshIndex)) return &leaf;
+        }
+        return nullptr;
+    }
+
+    std::shared_ptr<Material> FindMaterialOverride(
+        const std::vector<VegetationMaterialOverride>& overrides,
+        int materialIndex) {
+        for (const auto& entry : overrides) {
+            if (entry.materialIndex == materialIndex && entry.material) {
+                return entry.material;
             }
         }
         return nullptr;
     }
 
-    // Imported tree packs split trunk and canopy into material slots. The
-    // scene's single tree override is authored for bark and must not replace
-    // the leaf materials, otherwise foliage renders with a bark texture and
-    // loses its alpha cutouts.
-    bool IsFoliageMaterial(const std::shared_ptr<Material>& material) {
-        if (!material) return false;
-        std::string name;
-        name.reserve(material->name.size());
-        for (char c : material->name) {
-            name.push_back(static_cast<char>(
-                std::tolower(static_cast<unsigned char>(c))));
+    // Apply explicit per-mesh flags without mutating the shared imported
+    // material. Unchecked alpha-test/two-sided means those features stay off,
+    // regardless of the material name or the source file's flags.
+    std::shared_ptr<Material> ApplyTreeMeshFlags(
+        const std::shared_ptr<Material>& source,
+        bool alphaTest,
+        bool twoSided) {
+        if (!source) {
+            auto material = std::make_shared<Material>();
+            material->alphaTest = alphaTest;
+            material->alphaBlend = false;
+            material->twoSided = twoSided;
+            material->backfaceCulling = !twoSided;
+            return material;
         }
-        return name.find("leaf") != std::string::npos ||
-               name.find("leaves") != std::string::npos ||
-               name.find("foliage") != std::string::npos ||
-               name.find("needle") != std::string::npos ||
-               name.find("canopy") != std::string::npos;
+        if (source->alphaTest == alphaTest &&
+            source->twoSided == twoSided &&
+            source->backfaceCulling == !twoSided) {
+            return source;
+        }
+        auto material = std::make_shared<Material>(*source);
+        material->alphaTest = alphaTest;
+        if (alphaTest) material->alphaBlend = false;
+        material->twoSided = twoSided;
+        material->backfaceCulling = !twoSided;
+        return material;
     }
 
-    // Leaf cards need alpha testing and two-sided shading regardless of how
-    // the imported material was flagged. Materials without a usable albedo
+    // Foliage shading is opt-in per mesh. Materials without a usable albedo
     // fall back to another textured leaf slot, or to the vegetation canopy
     // tint when the tree pack has no leaf texture at all.
     std::shared_ptr<Material> MakeFoliageMaterial(
@@ -98,11 +114,8 @@ namespace {
             material->albedoFactor = canopyTint;
             material->name = "Vegetation Foliage";
         }
-        material->alphaTest = true;
-        material->alphaCutoff = 0.35f;
-        material->alphaBlend = false;
-        material->twoSided = true;
-        material->backfaceCulling = false;
+        // Alpha-test and two-sidedness are explicit per-mesh flags. Foliage
+        // only supplies the canopy shading response here.
         // Leaves are rough dielectrics. The default armour response would
         // mirror the bright sky at grazing angles and turn the canopy white.
         material->metallicFactor = 0.0f;
@@ -1344,6 +1357,8 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
         auto loadTreeDraws = [&](const std::string& path,
                                  const std::shared_ptr<Material>& overrideMaterial,
                                  const std::vector<VegetationLeafSet>* leafSets,
+                                 const std::vector<VegetationMaterialOverride>*
+                                     materialOverrides,
                                  const glm::vec4& canopyTint) {
             std::vector<CustomTreeDraw> draws;
             if (path.empty()) return draws;
@@ -1352,43 +1367,51 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
             const bool useOverride =
                 HasTreeTextureOverride(overrideMaterial);
             std::shared_ptr<Material> leafFallback;
-            for (const auto& candidate : treeModel.materials) {
-                if (IsFoliageMaterial(candidate) && candidate->albedoMap) {
-                    leafFallback = candidate;
-                    break;
+            if (leafSets) {
+                for (const auto& leaf : *leafSets) {
+                    if (leaf.foliage && leaf.material &&
+                        leaf.material->albedoMap) {
+                        leafFallback = leaf.material;
+                        break;
+                    }
                 }
             }
             for (size_t i = 0; i < treeModel.meshes.size(); ++i) {
                 if (!treeModel.meshes[i] || !treeModel.meshes[i]->Valid()) continue;
-                std::shared_ptr<Material> material;
+                int materialIndex = -1;
                 if (i < treeModel.meshMaterialIndex.size()) {
-                    const int materialIndex = treeModel.meshMaterialIndex[i];
-                    if (materialIndex >= 0 &&
-                        materialIndex < static_cast<int>(treeModel.materials.size())) {
-                        material = treeModel.materials[static_cast<size_t>(materialIndex)];
-                    }
+                    materialIndex = treeModel.meshMaterialIndex[i];
+                }
+                std::shared_ptr<Material> material;
+                if (materialOverrides) {
+                    material = FindMaterialOverride(
+                        *materialOverrides, materialIndex);
+                }
+                if (!material && materialIndex >= 0 &&
+                    materialIndex <
+                        static_cast<int>(treeModel.materials.size())) {
+                    material = treeModel.materials[
+                        static_cast<size_t>(materialIndex)];
                 }
                 if (!material && !treeModel.materials.empty()) {
                     material = treeModel.materials.front();
                 }
-                const bool foliage = IsFoliageMaterial(material);
-                std::shared_ptr<Material> baseMaterial;
-                if (foliage) {
-                    baseMaterial = MakeFoliageMaterial(
-                        material, leafFallback, canopyTint);
-                } else {
-                    baseMaterial = useOverride ? overrideMaterial : material;
-                }
-                std::shared_ptr<Material> leafOverride;
-                if (leafSets) {
-                    leafOverride = FindLeafOverride(*leafSets, i);
-                }
-                if (leafOverride) {
-                    material = MakeFoliageMaterial(
-                        ComposeLeafOverride(leafOverride, baseMaterial),
-                        leafFallback, canopyTint);
-                } else {
-                    material = baseMaterial;
+
+                const VegetationLeafSet* leafSet =
+                    leafSets ? FindLeafSet(*leafSets, i) : nullptr;
+                if (leafSet) {
+                    if (HasTreeTextureOverride(leafSet->material)) {
+                        material = ComposeLeafOverride(
+                            leafSet->material, material);
+                    }
+                    if (leafSet->foliage) {
+                        material = MakeFoliageMaterial(
+                            material, leafFallback, canopyTint);
+                    }
+                    material = ApplyTreeMeshFlags(
+                        material, leafSet->alphaTest, leafSet->twoSided);
+                } else if (useOverride) {
+                    material = overrideMaterial;
                 }
                 draws.push_back({treeModel.meshes[i], material});
             }
@@ -1460,7 +1483,7 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
         const std::vector<CustomTreeDraw> legacyTreeDraws =
             vegetation.treeTypes.empty()
                 ? loadTreeDraws(vegetation.treeMeshPath, nullptr, nullptr,
-                                vegetation.canopyColor)
+                                nullptr, vegetation.canopyColor)
                 : std::vector<CustomTreeDraw>{};
 
         if (vegetation.treeTypes.empty()) {
@@ -1474,6 +1497,7 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
                 drawTreeBatch(type.generatedInstances,
                               loadTreeDraws(type.meshPath, type.material,
                                             &type.leafSets,
+                                            &type.materialOverrides,
                                             vegetation.canopyColor));
             }
         }
@@ -1482,6 +1506,7 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
                 drawTreeBatch(type.paintedInstances,
                               loadTreeDraws(type.meshPath, type.material,
                                             &type.leafSets,
+                                            &type.materialOverrides,
                                             vegetation.canopyColor));
             }
         }
@@ -1542,7 +1567,9 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
         };
         auto loadShadowDraws = [&](const std::string& path,
                                    const std::shared_ptr<Material>& overrideMaterial,
-                                   const std::vector<VegetationLeafSet>* leafSets) {
+                                   const std::vector<VegetationLeafSet>* leafSets,
+                                   const std::vector<VegetationMaterialOverride>*
+                                       materialOverrides) {
             std::vector<CustomTreeShadowDraw> draws;
             if (path.empty()) return draws;
             const auto& treeModel = m_assets->LoadModelRef(path);
@@ -1551,22 +1578,30 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
                 HasTreeTextureOverride(overrideMaterial);
             for (size_t i = 0; i < treeModel.meshes.size(); ++i) {
                 if (!treeModel.meshes[i] || !treeModel.meshes[i]->Valid()) continue;
-                bool twoSided = false;
+                int materialIndex = -1;
                 if (i < treeModel.meshMaterialIndex.size()) {
-                    const int materialIndex = treeModel.meshMaterialIndex[i];
-                    if (materialIndex >= 0 &&
-                        materialIndex < static_cast<int>(treeModel.materials.size()) &&
-                        treeModel.materials[static_cast<size_t>(materialIndex)]) {
-                        twoSided = !treeModel.materials[
-                            static_cast<size_t>(materialIndex)]->backfaceCulling;
-                    }
+                    materialIndex = treeModel.meshMaterialIndex[i];
                 }
-                std::shared_ptr<Material> leafOverride;
-                if (leafSets) {
-                    leafOverride = FindLeafOverride(*leafSets, i);
+                bool twoSided = false;
+                std::shared_ptr<Material> overrideMat;
+                if (materialOverrides) {
+                    overrideMat = FindMaterialOverride(
+                        *materialOverrides, materialIndex);
                 }
-                if (leafOverride) {
-                    twoSided = !leafOverride->backfaceCulling;
+                if (overrideMat) {
+                    twoSided = !overrideMat->backfaceCulling;
+                } else if (materialIndex >= 0 &&
+                           materialIndex <
+                               static_cast<int>(treeModel.materials.size()) &&
+                           treeModel.materials[
+                               static_cast<size_t>(materialIndex)]) {
+                    twoSided = !treeModel.materials[
+                        static_cast<size_t>(materialIndex)]->backfaceCulling;
+                }
+                const VegetationLeafSet* leafSet =
+                    leafSets ? FindLeafSet(*leafSets, i) : nullptr;
+                if (leafSet) {
+                    twoSided = leafSet->twoSided;
                 } else if (useOverride) {
                     twoSided = !overrideMaterial->backfaceCulling;
                 }
@@ -1595,7 +1630,8 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
 
         const std::vector<CustomTreeShadowDraw> legacyTreeDraws =
             vegetation.treeTypes.empty()
-                ? loadShadowDraws(vegetation.treeMeshPath, nullptr, nullptr)
+                ? loadShadowDraws(vegetation.treeMeshPath, nullptr, nullptr,
+                                  nullptr)
                 : std::vector<CustomTreeShadowDraw>{};
 
         if (vegetation.castShadows) {
@@ -1608,7 +1644,8 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
                     drawShadowBatch(type.generatedInstances,
                                     loadShadowDraws(type.meshPath,
                                                     type.material,
-                                                    &type.leafSets));
+                                                    &type.leafSets,
+                                                    &type.materialOverrides));
                 }
             }
             if (!vegetation.treeTypes.empty()) {
@@ -1616,7 +1653,8 @@ void RenderSystem::RenderVegetationShadows(Scene& scene, bgfx::ProgramHandle pro
                     drawShadowBatch(type.paintedInstances,
                                     loadShadowDraws(type.meshPath,
                                                     type.material,
-                                                    &type.leafSets));
+                                                    &type.leafSets,
+                                                    &type.materialOverrides));
                 }
             }
             drawShadowBatch(vegetation.paintedTreeInstances, legacyTreeDraws);

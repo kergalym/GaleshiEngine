@@ -709,6 +709,18 @@ ContentBrowser::ContentBrowser(std::string rootDir, AssetManager* assets)
     Refresh();
 }
 
+void ContentBrowser::SetRoot(const std::string& rootDir) {
+    std::error_code ec;
+    m_root = rootDir.empty() ? std::filesystem::current_path(ec)
+                             : std::filesystem::path(rootDir);
+    if (m_root.is_relative()) {
+        m_root = std::filesystem::absolute(m_root, ec);
+    }
+    std::filesystem::create_directories(m_root, ec);
+    m_current = m_root;
+    Refresh();
+}
+
 void ContentBrowser::SetDirectory(const std::string& path) {
     std::error_code ec;
     fs::path target = fs::path(path);

@@ -1364,9 +1364,17 @@ void GaleshiEditorApp::DrawDetails() {
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip(
                         "Multiplier of the model's native size. Dropped models "
-                        "start at 0.010.");
+                        "start at 1.000.");
                 }
 
+                Galeshi::AssetManager::LoadedModel treeModel;
+                if (!type.meshPath.empty()) {
+                    treeModel = m_assets->LoadModel(type.meshPath);
+                }
+
+                if (ImGui::BeginTabBar("##tree_type_tabs")) {
+                if (ImGui::BeginTabItem("Textures")) {
+                ImGui::PushID("textures_tab");
                 // Each authored tree species owns its own texture row. Leave
                 // the Landscape material texture row above untouched; this
                 // override is only used when at least one slot is assigned.
@@ -1409,15 +1417,12 @@ void GaleshiEditorApp::DrawDetails() {
                 }
 
                 if (ImGui::TreeNodeEx(
-                        "Leaf Textures",
+                        "Leaf / Mesh Overrides",
                         ImGuiTreeNodeFlags_DefaultOpen)) {
                     ImGui::TextDisabled(
-                        "Add one set per leaf mesh. Each set overrides only "
-                        "its target mesh; the trunk keeps the model material.");
-                    Galeshi::AssetManager::LoadedModel treeModel;
-                    if (!type.meshPath.empty()) {
-                        treeModel = m_assets->LoadModel(type.meshPath);
-                    }
+                        "Add one set per mesh that needs foliage/alpha/two-sided "
+                        "processing or texture overrides. Material names are "
+                        "not used.");
                     if (type.meshPath.empty()) {
                         ImGui::TextDisabled(
                             "Assign a tree model first, then add leaf sets.");
@@ -1542,25 +1547,39 @@ void GaleshiEditorApp::DrawDetails() {
                                     "ORM: R occlusion, G roughness, "
                                     "B metallic.");
 
-                                bool twoSided =
-                                    !leaf.material->backfaceCulling;
+                                bool foliage = leaf.foliage;
+                                if (ImGui::Checkbox("Foliage", &foliage)) {
+                                    PushHistory();
+                                    leaf.foliage = foliage;
+                                }
+                                if (ImGui::IsItemHovered()) {
+                                    ImGui::SetTooltip(
+                                        "Apply foliage shading (rough "
+                                        "dielectric response and canopy "
+                                        "subsurface tint).");
+                                }
+                                bool twoSided = leaf.twoSided;
                                 if (ImGui::Checkbox(
                                         "Two Sided", &twoSided)) {
                                     PushHistory();
+                                    leaf.twoSided = twoSided;
                                     leaf.material->twoSided = twoSided;
                                     leaf.material->backfaceCulling =
                                         !twoSided;
                                 }
-                                bool alphaCutout =
-                                    leaf.material->alphaTest;
+                                bool alphaCutout = leaf.alphaTest;
                                 if (ImGui::Checkbox(
                                         "Alpha Cutout",
                                         &alphaCutout)) {
                                     PushHistory();
+                                    leaf.alphaTest = alphaCutout;
                                     leaf.material->alphaTest =
                                         alphaCutout;
+                                    if (alphaCutout) {
+                                        leaf.material->alphaBlend = false;
+                                    }
                                 }
-                                if (leaf.material->alphaTest) {
+                                if (leaf.alphaTest) {
                                     ImGui::SetNextItemWidth(160.0f);
                                     ImGui::SliderFloat(
                                         "Alpha Cutoff",
@@ -1592,6 +1611,282 @@ void GaleshiEditorApp::DrawDetails() {
                         }
                     }
                     ImGui::TreePop();
+                }
+                ImGui::PopID();
+                ImGui::EndTabItem();
+                }
+
+                if (ImGui::BeginTabItem("Material")) {
+                    ImGui::PushID("material_tab");
+                    ImGui::TextDisabled(
+                        "Shared by every instance of this Tree Type. Edits are "
+                        "saved with the scene.");
+                    ImGui::TextDisabled(
+                        "Instances: %zu. Leaf / Mesh Overrides and Whole Tree "
+                        "Textures take precedence on their target meshes.",
+                        type.generatedInstances.size() +
+                            type.paintedInstances.size());
+                    ImGui::TextDisabled(
+                        "Editable copies keep the model's embedded textures; "
+                        "drop a texture on a slot to replace it.");
+                    if (type.meshPath.empty()) {
+                        ImGui::TextDisabled("Assign a tree model first.");
+                    } else if (treeModel.materials.empty()) {
+                        ImGui::TextDisabled(
+                            "The tree model has no materials.");
+                    } else {
+                        auto findOverride = [&](int materialIndex)
+                            -> Galeshi::VegetationMaterialOverride* {
+                            for (auto& overrideMat : type.materialOverrides) {
+                                if (overrideMat.materialIndex == materialIndex &&
+                                    overrideMat.material) {
+                                    return &overrideMat;
+                                }
+                            }
+                            return nullptr;
+                        };
+
+                        bool materialEdited = false;
+                        if (type.materialOverrides.empty()) {
+                            ImGui::TextDisabled(
+                                "Imported model materials are used directly.");
+                            if (ImGui::Button("Create Editable Materials")) {
+                                PushHistory();
+                                EnsureTreeMaterialOverrides(type, treeModel);
+                                materialEdited = true;
+                            }
+                        } else if (ImGui::Button(
+                                       "Reset to Imported Materials")) {
+                            PushHistory();
+                            type.materialOverrides.clear();
+                            materialEdited = true;
+                        }
+
+                        for (int materialIndex = 0;
+                             materialIndex <
+                             static_cast<int>(treeModel.materials.size());
+                             ++materialIndex) {
+                            const auto& imported =
+                                treeModel.materials[
+                                    static_cast<size_t>(materialIndex)];
+                            if (!imported || imported->name.empty()) continue;
+
+                            ImGui::PushID(materialIndex);
+                            ImGui::Separator();
+                            char header[256];
+                            std::snprintf(
+                                header, sizeof(header), "%s##tree_material",
+                                imported->name.c_str());
+                            if (ImGui::TreeNodeEx(
+                                    header,
+                                    ImGuiTreeNodeFlags_DefaultOpen)) {
+                                ImGui::TextDisabled(
+                                    "Imported material: %s",
+                                    imported->name.c_str());
+                                auto* overrideMat =
+                                    findOverride(materialIndex);
+                                if (!overrideMat) {
+                                    ImGui::TextDisabled(
+                                        "Using the imported material.");
+                                    if (ImGui::Button("Create Override")) {
+                                        PushHistory();
+                                        Galeshi::VegetationMaterialOverride
+                                            entry;
+                                        entry.materialIndex = materialIndex;
+                                        entry.material = std::make_shared<
+                                            Galeshi::Material>(*imported);
+                                        entry.material->sceneOverride = true;
+                                        type.materialOverrides.push_back(
+                                            std::move(entry));
+                                        materialEdited = true;
+                                    }
+                                } else {
+                                    auto& m = *overrideMat->material;
+                                    if (ImGui::Button("Reset This Material")) {
+                                        PushHistory();
+                                        *overrideMat->material = *imported;
+                                        overrideMat->material->sceneOverride =
+                                            true;
+                                        materialEdited = true;
+                                    }
+                                    ImGui::Separator();
+                                    if (ImGui::TreeNodeEx(
+                                            "Texture Maps",
+                                            ImGuiTreeNodeFlags_DefaultOpen)) {
+                                        DrawTextureSlot(
+                                            "Albedo Map", m.albedoMap, true,
+                                            &m.albedoSrgb, &materialEdited);
+                                        DrawTextureSlot(
+                                            "Normal Map", m.normalMap, false,
+                                            &m.normalSrgb, &materialEdited);
+                                        const auto* previousOrm =
+                                            m.metallicRoughnessMap.get();
+                                        DrawTextureSlot(
+                                            "Metallic/Roughness",
+                                            m.metallicRoughnessMap, false,
+                                            &m.metallicRoughnessSrgb,
+                                            &materialEdited);
+                                        if (m.metallicRoughnessMap.get() !=
+                                            previousOrm) {
+                                            if (m.metallicRoughnessMap) {
+                                                m.occlusionMap =
+                                                    m.metallicRoughnessMap;
+                                            } else if (
+                                                m.occlusionMap.get() ==
+                                                previousOrm) {
+                                                m.occlusionMap.reset();
+                                            }
+                                        }
+                                        DrawTextureSlot(
+                                            "Metallic Map", m.metallicMap,
+                                            false, &m.metallicSrgb,
+                                            &materialEdited);
+                                        DrawTextureSlot(
+                                            "Roughness Map", m.roughnessMap,
+                                            false, &m.roughnessSrgb,
+                                            &materialEdited);
+                                        DrawTextureSlot(
+                                            "Emissive Map", m.emissiveMap,
+                                            true, &m.emissiveSrgb,
+                                            &materialEdited);
+                                        DrawTextureSlot(
+                                            "Occlusion Map", m.occlusionMap,
+                                            false, &m.occlusionSrgb,
+                                            &materialEdited);
+                                        DrawTextureSlot(
+                                            "Opacity Map", m.opacityMap,
+                                            false, &m.opacitySrgb,
+                                            &materialEdited);
+                                        DrawTextureSlot(
+                                            "Specular Map", m.specularMap,
+                                            false, &m.specularSrgb,
+                                            &materialEdited);
+                                        ImGui::TextDisabled(
+                                            "ORM: R occlusion, G roughness, "
+                                            "B metallic.");
+                                        ImGui::TreePop();
+                                    }
+
+                                    ImGui::Separator();
+                                    if (ImGui::ColorEdit4(
+                                            "Albedo Factor",
+                                            glm::value_ptr(m.albedoFactor))) {
+                                        PushHistory();
+                                        materialEdited = true;
+                                    }
+                                    if (ImGui::SliderFloat(
+                                            "Metallic Factor",
+                                            &m.metallicFactor, 0.0f, 1.0f)) {
+                                        PushHistory();
+                                        materialEdited = true;
+                                    }
+                                    if (ImGui::SliderFloat(
+                                            "Specular Factor",
+                                            &m.specularFactor, 0.0f, 1.0f)) {
+                                        PushHistory();
+                                        materialEdited = true;
+                                    }
+                                    if (ImGui::SliderFloat(
+                                            "Roughness Factor",
+                                            &m.roughnessFactor, 0.04f, 1.0f)) {
+                                        PushHistory();
+                                        materialEdited = true;
+                                    }
+                                    if (ImGui::SliderFloat(
+                                            "Normal Strength",
+                                            &m.normalStrength, 0.0f, 2.0f)) {
+                                        PushHistory();
+                                        materialEdited = true;
+                                    }
+                                    if (ImGui::SliderFloat(
+                                            "Occlusion Strength",
+                                            &m.occlusionStrength, 0.0f, 1.0f)) {
+                                        PushHistory();
+                                        materialEdited = true;
+                                    }
+                                    if (ImGui::Checkbox(
+                                            "Alpha Test", &m.alphaTest)) {
+                                        PushHistory();
+                                        materialEdited = true;
+                                    }
+                                    if (ImGui::Checkbox(
+                                            "Alpha Blend", &m.alphaBlend)) {
+                                        PushHistory();
+                                        materialEdited = true;
+                                    }
+                                    if (ImGui::SliderFloat(
+                                            "Alpha Cutoff",
+                                            &m.alphaCutoff, 0.0f, 1.0f)) {
+                                        PushHistory();
+                                        materialEdited = true;
+                                    }
+                                    if (ImGui::Checkbox(
+                                            "Two Sided", &m.twoSided)) {
+                                        PushHistory();
+                                        materialEdited = true;
+                                    }
+                                    if (ImGui::Checkbox(
+                                            "Backface Culling",
+                                            &m.backfaceCulling)) {
+                                        PushHistory();
+                                        materialEdited = true;
+                                    }
+                                    if (ImGui::ColorEdit3(
+                                            "Emissive Color",
+                                            glm::value_ptr(m.emissiveFactor))) {
+                                        PushHistory();
+                                        materialEdited = true;
+                                    }
+                                    if (ImGui::Checkbox(
+                                            "Casts Shadow",
+                                            &m.castsShadow)) {
+                                        PushHistory();
+                                        materialEdited = true;
+                                    }
+                                    if (ImGui::TreeNodeEx(
+                                            "Subsurface",
+                                            ImGuiTreeNodeFlags_None)) {
+                                        if (ImGui::Checkbox(
+                                                "Enable Subsurface",
+                                                &m.subsurfaceEnabled)) {
+                                            PushHistory();
+                                            materialEdited = true;
+                                        }
+                                        if (m.subsurfaceEnabled) {
+                                            if (ImGui::ColorEdit3(
+                                                    "Subsurface Color",
+                                                    glm::value_ptr(
+                                                        m.subsurfaceColor))) {
+                                                PushHistory();
+                                                materialEdited = true;
+                                            }
+                                            if (ImGui::SliderFloat(
+                                                    "Subsurface Strength",
+                                                    &m.subsurfaceStrength,
+                                                    0.0f, 2.0f)) {
+                                                PushHistory();
+                                                materialEdited = true;
+                                            }
+                                            if (ImGui::SliderFloat(
+                                                    "Subsurface Radius",
+                                                    &m.subsurfaceRadius,
+                                                    0.01f, 5.0f)) {
+                                                PushHistory();
+                                                materialEdited = true;
+                                            }
+                                        }
+                                        ImGui::TreePop();
+                                    }
+                                }
+                                ImGui::TreePop();
+                            }
+                            ImGui::PopID();
+                        }
+                    }
+                    ImGui::PopID();
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
                 }
 
                 ImGui::TextDisabled("Painted: %zu",

@@ -379,14 +379,25 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
         // frame; F3 restores it as the active state again.
         if (m_viewportViewMode == ViewportViewMode::Lit &&
             mode != ViewportViewMode::Lit && m_render) {
+            // The renderer mode can be left stale by a previous diagnostic
+            // pass; save the actual normal state, not that stale mode.
+            m_render->SetViewMode(Galeshi::RenderSystem::ViewMode::Lit);
             m_savedRenderState = m_render->SaveState();
             m_viewModeStateSaved = true;
         }
         m_viewportViewMode = mode;
 
         if (mode == ViewportViewMode::Lit && m_viewModeStateSaved) {
-            if (m_render) m_render->RestoreState(m_savedRenderState);
+            if (m_render) {
+                m_render->RestoreState(m_savedRenderState);
+                // RestoreState is the source of truth for the normal pass.
+                // Keep the renderer's view mode explicitly in sync so a
+                // diagnostic pass can never survive F3.
+                m_render->SetViewMode(Galeshi::RenderSystem::ViewMode::Lit);
+            }
             m_viewModeStateSaved = false;
+            m_postProcess.ResetTaaHistory();
+            m_lastViewportTexture = BGFX_INVALID_HANDLE;
         }
     }
 
@@ -432,6 +443,11 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     SetViewportViewMode(ViewportViewMode::Lit);
                 }
             }
+        }
+        // Guard the normal path against a stale diagnostic view mode left in
+        // the renderer by an interrupted transition.
+        if (m_viewportViewMode == ViewportViewMode::Lit && m_render) {
+            m_render->SetViewMode(Galeshi::RenderSystem::ViewMode::Lit);
         }
         ImGui::PopStyleVar();
 

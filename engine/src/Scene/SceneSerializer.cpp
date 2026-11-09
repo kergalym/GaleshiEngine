@@ -1201,7 +1201,12 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
                 }
                 json leafSets = json::array();
                 for (const auto& leaf : type.leafSets) {
-                    json jl = {{"meshIndex", leaf.meshIndex}};
+                    json jl = {
+                        {"meshIndex", leaf.meshIndex},
+                        {"foliage", leaf.foliage},
+                        {"alphaTest", leaf.alphaTest},
+                        {"twoSided", leaf.twoSided}
+                    };
                     if (leaf.material) {
                         jl["material"] =
                             MaterialToJson(*leaf.material, m_assets);
@@ -1209,6 +1214,20 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
                     leafSets.push_back(std::move(jl));
                 }
                 jt["leafSets"] = std::move(leafSets);
+
+                json materialOverrides = json::array();
+                for (const auto& overrideMat : type.materialOverrides) {
+                    if (!overrideMat.material ||
+                        overrideMat.materialIndex < 0) {
+                        continue;
+                    }
+                    materialOverrides.push_back({
+                        {"materialIndex", overrideMat.materialIndex},
+                        {"material", MaterialToJson(
+                            *overrideMat.material, m_assets)}
+                    });
+                }
+                jt["materialOverrides"] = std::move(materialOverrides);
                 treeTypes.push_back(std::move(jt));
             }
             je["vegetation"] = {
@@ -2221,7 +2240,36 @@ bool SceneSerializer::LoadFromJson(const json& root,
                                 leaf.material->occlusionMap =
                                     leaf.material->metallicRoughnessMap;
                             }
+                            leaf.foliage = jl.value("foliage", true);
+                            leaf.alphaTest = jl.value(
+                                "alphaTest",
+                                leaf.material ? leaf.material->alphaTest
+                                              : true);
+                            leaf.twoSided = jl.value(
+                                "twoSided",
+                                leaf.material
+                                    ? !leaf.material->backfaceCulling
+                                    : true);
                             type.leafSets.push_back(std::move(leaf));
+                        }
+                    }
+                    type.materialOverrides.clear();
+                    if (jt.contains("materialOverrides") &&
+                        jt["materialOverrides"].is_array()) {
+                        for (const auto& jm : jt["materialOverrides"]) {
+                            VegetationMaterialOverride overrideMat;
+                            overrideMat.materialIndex =
+                                jm.value("materialIndex", -1);
+                            if (jm.contains("material") &&
+                                jm["material"].is_object()) {
+                                overrideMat.material = MaterialFromJson(
+                                    jm["material"], m_assets, type.meshPath);
+                            }
+                            if (overrideMat.material &&
+                                overrideMat.materialIndex >= 0) {
+                                type.materialOverrides.push_back(
+                                    std::move(overrideMat));
+                            }
                         }
                     }
                     vegetation.treeTypes.push_back(std::move(type));

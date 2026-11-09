@@ -316,6 +316,19 @@ struct LandscapeComponent {
 struct VegetationLeafSet {
     int meshIndex = -1;
     std::shared_ptr<Material> material;
+
+    // Explicit per-mesh processing. Material names are never inspected, so
+    // imported names remain free-form and localized.
+    bool foliage = true;
+    bool alphaTest = true;
+    bool twoSided = true;
+};
+
+// Editable copy of one imported tree-model material. Stored on the tree type
+// so every generated and painted instance uses the same material state.
+struct VegetationMaterialOverride {
+    int materialIndex = -1;
+    std::shared_ptr<Material> material;
 };
 
 // One independently configured tree species used by landscape vegetation.
@@ -335,6 +348,10 @@ struct VegetationTreeType {
     // Per-mesh leaf overrides. These take precedence over `material` on the
     // targeted mesh.
     std::vector<VegetationLeafSet> leafSets;
+
+    // Per-material edits of the imported model. The Material tab edits these
+    // copies; all instances of this tree type share them.
+    std::vector<VegetationMaterialOverride> materialOverrides;
 
     // Runtime-generated instances are deterministic from the vegetation seed
     // and are not serialized. Painted instances are authored by the brush and
