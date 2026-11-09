@@ -1,0 +1,28 @@
+--- a/src/renderer_vk.cpp
++++ b/src/renderer_vk.cpp
+@@ -1693,7 +1693,11 @@
+ 					&& customBorderColorFeatures.customBorderColors
+ 					;
+ 
+-				m_timerQuerySupport = m_deviceProperties.properties.limits.timestampComputeAndGraphics;
++				// [GaleshiEngine] NVIDIA 570.211.01 crashes inside
++				// vkCmdResetQueryPool/vkCmdWriteTimestamp at the same address
++				// on every scene reload/model drop. Disable GPU timer queries
++				// until the driver is fixed.
++				m_timerQuerySupport = false;
+ 
+ 				const bool indirectDrawSupport = true
+ 					&& m_deviceFeatures.multiDrawIndirect
+@@ -10023,9 +10027,9 @@
+ 		perfStats.cpuTimeEnd    = timeEnd;
+ 		perfStats.cpuTimerFreq  = timerFreq;
+ 		const TimerQueryVK::Result& result = m_gpuTimer.m_result[BGFX_CONFIG_MAX_VIEWS];
+-		perfStats.gpuTimeBegin  = result.m_begin;
+-		perfStats.gpuTimeEnd    = result.m_end;
+-		perfStats.gpuTimerFreq  = m_gpuTimer.m_frequency;
++		perfStats.gpuTimeBegin  = m_timerQuerySupport ? result.m_begin : 0;
++		perfStats.gpuTimeEnd    = m_timerQuerySupport ? result.m_end : 0;
++		perfStats.gpuTimerFreq  = m_timerQuerySupport ? m_gpuTimer.m_frequency : 0;
+ 		perfStats.numDraw       = statsKeyType[0];
+ 		perfStats.numCompute    = statsKeyType[1];
+ 		perfStats.numBlit       = _render->m_numBlitItems;

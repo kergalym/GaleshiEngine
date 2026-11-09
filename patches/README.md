@@ -40,3 +40,22 @@ git apply /path/to/GaleshiEngine/patches/bgfx-vulkan-cubemap-workaround.patch
 Re-apply the patch after recreating the CMake build directory. Do not replace
 it with `numLayers = 1` at call sites: the renderer itself must normalize cube
 views to six faces.
+
+## bgfx Vulkan GPU timer workaround
+
+`bgfx-vulkan-disable-gpu-timer.patch` disables `m_timerQuerySupport` in
+`renderer_vk.cpp`. NVIDIA driver `570.211.01` crashes at the same address
+inside `vkCmdResetQueryPool` / `vkCmdWriteTimestamp` (`TimerQueryVK::begin`)
+after scene reloads and model drops. Until the driver is fixed, GPU timer
+queries stay disabled; the profiler simply reports that GPU timers are
+unavailable.
+
+Apply it the same way:
+
+```sh
+cd build/release/_deps/bgfx-src/bgfx
+git apply /path/to/GaleshiEngine/patches/bgfx-vulkan-disable-gpu-timer.patch
+```
+
+Apply to both `build/release` and `build/debug` checkouts and re-apply after
+recreating the build directory.
