@@ -471,27 +471,91 @@
             tf.scale    = scl;
         };
 
-        // A failed/missing skeletal model can leave a saved entity hierarchy
-        // behind: mesh children without a valid MeshComponent and empty bone
-        // nodes. Hide that exploded subtree when the skeleton has no usable
-        // mesh left, while keeping the character root selectable.
-        auto HasValidMeshDescendant = [&](entt::entity root) {
-            auto meshView = reg.view<Galeshi::MeshComponent>();
-            for (entt::entity meshEntity : meshView) {
-                const auto& mesh = meshView.get<Galeshi::MeshComponent>(meshEntity);
-                if (!mesh.mesh || !mesh.mesh->Valid()) continue;
-
-                entt::entity current = meshEntity;
-                for (int depth = 0; current != entt::null && depth < 128;
-                     ++depth) {
-                    if (current == root) return true;
-                    if (!reg.all_of<Galeshi::ParentComponent>(current)) break;
-                    current =
-                        reg.get<Galeshi::ParentComponent>(current).parent;
+        // A missing/corrupt skeletal source leaves a saved child hierarchy
+        // with no valid mesh from that source. Detect it so the whole exploded
+        // subtree can be hidden instead of leaving stale bone/mesh children.
+        auto HasValidSourceMeshDescendant =
+            [&](entt::entity root, const std::string& sourcePath) {
+                if (sourcePath.empty() || !m_assets) return false;
+                const std::string source =
+                    m_assets->MakeRelativePath(sourcePath);
+                auto meshView = reg.view<Galeshi::MeshComponent>();
+                for (entt::entity meshEntity : meshView) {
+                    const auto& mesh =
+                        meshView.get<Galeshi::MeshComponent>(meshEntity);
+                    if (!mesh.mesh || !mesh.mesh->Valid() ||
+                        mesh.sourceAssetPath.empty()) {
+                        continue;
+                    }
+                    if (m_assets->MakeRelativePath(mesh.sourceAssetPath) !=
+                        source) {
+                        continue;
+                    }
+                    entt::entity current = meshEntity;
+                    for (int depth = 0; current != entt::null && depth < 128;
+                         ++depth) {
+                        if (current == root) return true;
+                        if (!reg.all_of<Galeshi::ParentComponent>(current)) {
+                            break;
+                        }
+                        current =
+                            reg.get<Galeshi::ParentComponent>(current).parent;
+                    }
                 }
-            }
-            return false;
-        };
+                return false;
+            };
+
+        // Hide stale children while keeping real attachments and any
+        // descendant that still owns usable content.
+        std::function<bool(entt::entity)> HasUsableOutlinerContent =
+            [&](entt::entity entity) -> bool {
+                if (!reg.valid(entity)) return false;
+                if (reg.all_of<Galeshi::MeshComponent>(entity)) {
+                    const auto& mesh =
+                        reg.get<Galeshi::MeshComponent>(entity);
+                    if (mesh.mesh && mesh.mesh->Valid()) return true;
+                }
+                if (reg.any_of<
+                        Galeshi::ModelComponent,
+                        Galeshi::SkeletalComponent,
+                        Galeshi::BoneAttachmentComponent,
+                        Galeshi::CameraComponent,
+                        Galeshi::DirectionalLightComponent,
+                        Galeshi::PointLightComponent,
+                        Galeshi::SpotLightComponent,
+                        Galeshi::RigidBodyComponent,
+                        Galeshi::ColliderComponent,
+                        Galeshi::LandscapeComponent,
+                        Galeshi::VegetationComponent,
+                        Galeshi::NavAgentComponent,
+                        Galeshi::SoftBodyComponent,
+                        Galeshi::AIControllerComponent,
+                        Galeshi::PlayerTagComponent,
+                        Galeshi::PerceptionComponent,
+                        Galeshi::BehaviorTreeComponent,
+                        Galeshi::AudioSourceComponent,
+                        Galeshi::AudioListenerComponent,
+                        Galeshi::PostProcessVolumeComponent,
+                        Galeshi::ParticleEmitterComponent,
+                        Galeshi::WaterComponent,
+                        Galeshi::GroomComponent,
+                        Galeshi::UICanvasComponent,
+                        Galeshi::RagdollComponent,
+                        Galeshi::LuaEntityComponent>(entity)) {
+                    return true;
+                }
+
+                bool usable = false;
+                reg.view<Galeshi::ParentComponent>().each(
+                    [&](auto child, auto& parentComponent) {
+                        if (usable ||
+                            parentComponent.parent != entity) {
+                            return;
+                        }
+                        usable = HasUsableOutlinerContent(child);
+                    });
+                return usable;
+            };
 
         // Imported models are stored as an empty root with one mesh child per
         // material submesh. Those children only add noise to the Outliner, so
@@ -541,9 +605,22 @@
                 }
                 children.push_back(child);
             });
-            if (reg.all_of<Galeshi::SkeletalComponent>(e) &&
-                !HasValidMeshDescendant(e)) {
-                children.clear();
+            if (const auto* skeleton =
+                    reg.try_get<Galeshi::SkeletalComponent>(e)) {
+                if (!skeleton->sourcePath.empty() &&
+                    !HasValidSourceMeshDescendant(e, skeleton->sourcePath)) {
+                    // The source skeleton failed to load: no child from it is
+                    // meaningful, so collapse the exploded hierarchy.
+                    children.clear();
+                } else {
+                    children.erase(
+                        std::remove_if(
+                            children.begin(), children.end(),
+                            [&](entt::entity child) {
+                                return !HasUsableOutlinerContent(child);
+                            }),
+                        children.end());
+                }
             }
             if (IsModelRoot(e, children)) {
                 // Imported model roots collapse their own mesh submeshes, but
