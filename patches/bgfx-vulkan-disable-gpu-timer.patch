@@ -1,5 +1,5 @@
---- a/src/renderer_vk.cpp
-+++ b/src/renderer_vk.cpp
+--- a/src/renderer_vk.cpp	2026-11-09 22:57:01.702445359 +0500
++++ b/src/renderer_vk.cpp	2026-11-09 22:57:01.700445333 +0500
 @@ -1693,7 +1693,11 @@
  					&& customBorderColorFeatures.customBorderColors
  					;
@@ -13,7 +13,7 @@
  
  				const bool indirectDrawSupport = true
  					&& m_deviceFeatures.multiDrawIndirect
-@@ -10023,9 +10027,9 @@
+@@ -10023,14 +10027,14 @@
  		perfStats.cpuTimeEnd    = timeEnd;
  		perfStats.cpuTimerFreq  = timerFreq;
  		const TimerQueryVK::Result& result = m_gpuTimer.m_result[BGFX_CONFIG_MAX_VIEWS];
@@ -26,3 +26,9 @@
  		perfStats.numDraw       = statsKeyType[0];
  		perfStats.numCompute    = statsKeyType[1];
  		perfStats.numBlit       = _render->m_numBlitItems;
+ 		perfStats.maxGpuLatency = maxGpuLatency;
+-		perfStats.gpuFrameNum   = result.m_frameNum;
++		perfStats.gpuFrameNum   = m_timerQuerySupport ? result.m_frameNum : 0;
+ 		bx::memCopy(perfStats.numPrims, statsNumPrimsRendered, sizeof(perfStats.numPrims) );
+ 		perfStats.gpuMemoryMax  = gpuMemoryAvailable;
+ 		perfStats.gpuMemoryUsed = gpuMemoryUsed;

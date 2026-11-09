@@ -568,7 +568,14 @@ void RenderSystem::Init(AssetManager* assets) {
     s_hairEnvCube = bgfx::createUniform("s_hairEnvCube", bgfx::UniformType::Sampler);
     
     s_boneMatrices = bgfx::createUniform("s_boneMatrices", bgfx::UniformType::Sampler);
-    m_boneTexture = bgfx::createTexture2D(4, kMaxBones, false, 1, bgfx::TextureFormat::RGBA32F);
+    // Bone rows are addressed by exact texel centers. Point sampling keeps
+    // the lookup exact and avoids relying on linear filtering of RGBA32F,
+    // which is optional in Vulkan and has triggered device-loss on NVIDIA.
+    m_boneTexture = bgfx::createTexture2D(
+        4, kMaxBones, false, 1, bgfx::TextureFormat::RGBA32F,
+        BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP |
+            BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT |
+            BGFX_SAMPLER_MIP_POINT);
 
     s_albedoMap = bgfx::createUniform("s_albedoMap", bgfx::UniformType::Sampler);
     s_metallicRoughnessMap = bgfx::createUniform("s_metallicRoughnessMap", bgfx::UniformType::Sampler);
