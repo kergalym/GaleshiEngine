@@ -95,9 +95,47 @@ Galeshi.world.find_all([name])         -- array of entities
 Galeshi.world.all([name])              -- alias of find_all
 Galeshi.world.exists(entity)           -- boolean
 Galeshi.world.destroy(entity)          -- boolean
+Galeshi.world.add_component(entity, "water") -- add WaterComponent
 Galeshi.world.count()                  -- named entities in the scene
 Galeshi.world.clear_script_entities()  -- remove entities spawned by Lua
 ```
+
+`add_component` currently supports `"water"`. It turns a script-created
+entity into a water body:
+
+```lua
+local water = Galeshi.world.create("Water")
+Galeshi.world.add_component(water, "water")
+```
+
+### Per-entity Lua scripts
+
+Attach a Lua script to a selected entity by dropping the `.lua` file on the
+**Script** field in Details. The script runs in its own environment and may
+define:
+
+```lua
+function OnStart(entity)
+    -- called once after the script is loaded or reloaded
+end
+
+function OnUpdate(entity, dt)
+    -- called every frame; entity is a raw entity id
+end
+```
+
+Both callbacks are optional. The entity id can be wrapped with
+`Galeshi.world.entity(id)` when entity methods are needed. A script can create
+entities and add water in `OnStart`:
+
+```lua
+function OnStart(entity)
+    local water = Galeshi.world.create("Water")
+    Galeshi.world.add_component(water, "water")
+end
+```
+
+C++ hot-reload scripts are project-wide modules, not per-entity scripts.
 
 ### `Galeshi.input`
 

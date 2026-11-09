@@ -454,6 +454,15 @@ struct AIControllerComponent {
     std::string scriptPath = "assets/scripts/ai_controller.lua";
 };
 
+// Per-entity Lua script. Unlike AIControllerComponent this is not tied to the
+// AI update loop: the script may define OnStart(entityId) and
+// OnUpdate(entityId, dt). Attach it by dropping a .lua file on the Script
+// field in the selected entity's Details panel.
+struct ScriptComponent {
+    std::string scriptPath;
+    bool enabled = true;
+};
+
 // Tag used by perception and gameplay code to identify the player.  The Lua
 // `new_physics_cube` helper adds this automatically for an entity named
 // "Player"; the editor also offers it for manually authored actors.

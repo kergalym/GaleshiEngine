@@ -203,6 +203,7 @@
         }
 
         m_scene.Registry().clear();
+        m_scripts.ClearEntityScripts();
         m_assets->Clear(true);
         if (m_render) m_render->ResetSceneState();
         if (m_particles) m_particles->Reset();

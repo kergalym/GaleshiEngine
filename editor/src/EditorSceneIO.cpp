@@ -85,6 +85,7 @@ bool IsInsideProject(const std::filesystem::path& scenePath,
         m_isRestoringHistory = true;
         m_suppressHistory = true;
         m_editor.ClearSelection();
+        m_scripts.ClearEntityScripts();
         m_serializer->LoadFromString(m_history[m_historyIndex]);
         // Normalize the restored snapshot so the next comparison does not
         // mistake serialization order for a new user edit.
@@ -109,6 +110,7 @@ bool IsInsideProject(const std::filesystem::path& scenePath,
         m_isRestoringHistory = true;
         m_suppressHistory = true;
         m_editor.ClearSelection();
+        m_scripts.ClearEntityScripts();
         m_serializer->LoadFromString(m_history[m_historyIndex]);
         m_history[m_historyIndex] = m_serializer->SaveToString();
         if (m_particles) m_particles->Reset();
@@ -206,6 +208,7 @@ bool IsInsideProject(const std::filesystem::path& scenePath,
 
         if (m_serializer && m_historyIndex >= 0 &&
             m_historyIndex < static_cast<int>(m_history.size())) {
+            m_scripts.ClearEntityScripts();
             m_serializer->LoadFromString(m_history[m_historyIndex]);
         }
 

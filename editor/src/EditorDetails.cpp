@@ -2695,6 +2695,67 @@ void GaleshiEditorApp::DrawDetails() {
             }
         }
 
+        // Per-entity Lua script field. Drop a .lua asset here to attach it.
+        if (!selectedIsPlainCollisionShape) {
+            const bool hasScript =
+                selected[0].HasComponent<Galeshi::ScriptComponent>();
+            if (beginDetailsSection(
+                    "Script", ImGuiTreeNodeFlags_DefaultOpen,
+                    "script lua entity onstart onupdate path")) {
+                if (hasScript) {
+                    auto& script =
+                        selected[0].GetComponent<Galeshi::ScriptComponent>();
+                    char path[512];
+                    std::snprintf(path, sizeof(path), "%s",
+                                  script.scriptPath.c_str());
+                    ImGui::SetNextItemWidth(-1.0f);
+                    if (ImGui::InputText("##script_path", path,
+                                         sizeof(path))) {
+                        script.scriptPath = path;
+                    }
+                    if (ImGui::BeginDragDropTarget()) {
+                        if (const ImGuiPayload* payload =
+                                ImGui::AcceptDragDropPayload(
+                                    "GALESHI_ASSET_PATH")) {
+                            const char* dropped =
+                                static_cast<const char*>(payload->Data);
+                            if (dropped) {
+                                AttachScriptToEntity(selectedHandle, dropped);
+                            }
+                        }
+                        ImGui::EndDragDropTarget();
+                    }
+                    ImGui::Checkbox("Enabled##script", &script.enabled);
+                    ImGui::TextDisabled(
+                        "Callbacks: OnStart(entity) and OnUpdate(entity, dt).");
+                    if (ImGui::Button("Remove Script")) {
+                        PushHistory();
+                        selected[0].RemoveComponent<
+                            Galeshi::ScriptComponent>();
+                    }
+                } else {
+                    ImGui::Button("Drop .lua script here##script_attach",
+                                  ImVec2(-1.0f, 34.0f));
+                    if (ImGui::BeginDragDropTarget()) {
+                        if (const ImGuiPayload* payload =
+                                ImGui::AcceptDragDropPayload(
+                                    "GALESHI_ASSET_PATH")) {
+                            const char* dropped =
+                                static_cast<const char*>(payload->Data);
+                            if (dropped) {
+                                AttachScriptToEntity(selectedHandle, dropped);
+                            }
+                        }
+                        ImGui::EndDragDropTarget();
+                    }
+                    ImGui::TextDisabled(
+                        "Drop a Lua script from the Content Browser.\n"
+                        "The script can define OnStart(entity) and "
+                        "OnUpdate(entity, dt).");
+                }
+            }
+        }
+
         // The AI & Gameplay section is only relevant for AI agents (both the
         // Behavior Tree and Lua Patrol templates add NavAgentComponent).
         const bool isAiAgent =

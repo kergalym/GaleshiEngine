@@ -447,8 +447,27 @@ bool ScriptEngine::MakeWorkerCoreResponse(
                 (key == "ui_canvas" &&
                  registry.all_of<UICanvasComponent>(entity)) ||
                 (key == "animation_state_machine" &&
-                 registry.all_of<AnimationStateMachineComponent>(entity))
+                 registry.all_of<AnimationStateMachineComponent>(entity)) ||
+                (key == "script" &&
+                 registry.all_of<ScriptComponent>(entity)) ||
+                (key == "lua_script" &&
+                 registry.all_of<ScriptComponent>(entity))
                 ? 1u : 0u;
+        }
+        break;
+    case CppWorkerRequest::AddComponent:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (!registry.valid(entity)) break;
+            const std::string key = NormalizeKey(request.text);
+            if (key == "water") {
+                if (!registry.all_of<WaterComponent>(entity)) {
+                    registry.emplace<WaterComponent>(entity);
+                }
+                response.valid = 1;
+            }
         }
         break;
     case CppWorkerRequest::GetAxisRaw:

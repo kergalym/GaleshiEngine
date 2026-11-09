@@ -376,6 +376,9 @@ void ScriptEngine::BuildApiCore(ScriptApiBuildContext& context) {
         if (key == "groom" || key == "groom_hair") return registry.all_of<GroomComponent>(entity);
         if (key == "ui_canvas") return registry.all_of<UICanvasComponent>(entity);
         if (key == "animation_state_machine") return registry.all_of<AnimationStateMachineComponent>(entity);
+        if (key == "script" || key == "lua_script") {
+            return registry.all_of<ScriptComponent>(entity);
+        }
         if (key == "lua_entity") return registry.all_of<LuaEntityComponent>(entity);
         return false;
     };
@@ -450,6 +453,21 @@ void ScriptEngine::BuildApiCore(ScriptApiBuildContext& context) {
         if (entity == entt::null) return false;
         DestroyEntity(entity);
         return true;
+    };
+    world["add_component"] = [this, resolve](sol::object value,
+                                             const std::string& name) {
+        if (!m_scene) return false;
+        const entt::entity entity = resolve(value);
+        if (entity == entt::null) return false;
+        auto& registry = m_scene->Registry();
+        const std::string key = NormalizeKey(name);
+        if (key == "water") {
+            if (!registry.all_of<WaterComponent>(entity)) {
+                registry.emplace<WaterComponent>(entity);
+            }
+            return true;
+        }
+        return false;
     };
     world["count"] = [this]() -> size_t {
         if (!m_scene) return 0;

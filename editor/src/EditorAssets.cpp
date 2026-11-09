@@ -806,6 +806,44 @@
 
 
 
+    bool GaleshiEditorApp::AttachScriptToEntity(
+        entt::entity entity, const std::string& path) {
+        auto& registry = m_scene.Registry();
+        if (!registry.valid(entity) || path.empty()) return false;
+        if (AssetExtensionLower(path) != ".lua") {
+            spdlog::warn(
+                "[Script] '{}' cannot be attached to an entity. "
+                "Use a .lua file; C++ scripts are project-wide modules.",
+                path);
+            return false;
+        }
+
+        const std::string scriptPath =
+            m_assets ? m_assets->MakeRelativePath(path) : path;
+        const bool alreadyAttached =
+            registry.all_of<Galeshi::ScriptComponent>(entity);
+        if (alreadyAttached) {
+            const auto& existing =
+                registry.get<Galeshi::ScriptComponent>(entity);
+            if (existing.scriptPath == scriptPath && existing.enabled) {
+                return true;
+            }
+        }
+
+        PushHistory();
+        auto& script = alreadyAttached
+            ? registry.get<Galeshi::ScriptComponent>(entity)
+            : registry.emplace<Galeshi::ScriptComponent>(entity);
+        script.scriptPath = scriptPath;
+        script.enabled = true;
+        m_editor.Select(Galeshi::Entity(entity, &m_scene));
+        spdlog::info("[Script] Attached '{}' to entity {}", scriptPath,
+                     static_cast<uint32_t>(entity));
+        return true;
+    }
+
+
+
     void GaleshiEditorApp::OnAssetDoubleClicked(const std::string& path) {
         if (IsCodeAssetPath(path)) {
             OpenCodeFile(path);

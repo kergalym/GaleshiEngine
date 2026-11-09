@@ -341,6 +341,7 @@ public:
         m_api.attach_to_bone = &ScriptWorker::AttachToBone;
         m_api.detach_from_bone = &ScriptWorker::DetachFromBone;
         m_api.has_component = &ScriptWorker::HasComponent;
+        m_api.add_component = &ScriptWorker::AddComponent;
         m_api.get_axis_raw = &ScriptWorker::GetAxisRaw;
         m_api.is_mouse_button_down = &ScriptWorker::MouseButtonDown;
         m_api.get_mouse_position = &ScriptWorker::GetMousePosition;
@@ -915,6 +916,14 @@ private:
         if (!user || !component) return false;
         return static_cast<ScriptWorker*>(user)
             ->Request(CppWorkerRequest::HasComponent, entity, component)
+            .valid != 0;
+    }
+
+    static bool AddComponent(void* user, uint32_t entity,
+                             const char* component) {
+        if (!user || !component) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::AddComponent, entity, component)
             .valid != 0;
     }
 

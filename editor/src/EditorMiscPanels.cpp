@@ -185,19 +185,30 @@
         ImGui::BeginChild("ComponentsScroll", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
         auto& reg = m_scene.Registry();
         auto view = reg.view<Galeshi::AIControllerComponent>();
-        if (view.begin() == view.end()) {
+        auto scriptView = reg.view<Galeshi::ScriptComponent>();
+        if (view.begin() == view.end() && scriptView.begin() == scriptView.end()) {
             ImGui::TextDisabled("No script components found.");
         } else {
             for (auto e : view) {
                 auto& ctrl = view.get<Galeshi::AIControllerComponent>(e);
                 std::string name = "Entity " + std::to_string((uint32_t)e);
                 if (reg.all_of<Galeshi::NameComponent>(e)) name = reg.get<Galeshi::NameComponent>(e).name;
-                ImGui::Text("%s -> %s", name.c_str(), ctrl.scriptPath.c_str());
+                ImGui::Text("AI  %s -> %s", name.c_str(), ctrl.scriptPath.c_str());
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Reload")) {
                     // Force reload AI scripts
                     m_scripts.HotReload("assets/scripts/init.lua");
                 }
+            }
+            for (auto e : scriptView) {
+                auto& script = scriptView.get<Galeshi::ScriptComponent>(e);
+                std::string name = "Entity " + std::to_string((uint32_t)e);
+                if (reg.all_of<Galeshi::NameComponent>(e)) {
+                    name = reg.get<Galeshi::NameComponent>(e).name;
+                }
+                ImGui::Text("Lua %s -> %s%s", name.c_str(),
+                            script.scriptPath.c_str(),
+                            script.enabled ? "" : " (disabled)");
             }
         }
         ImGui::EndChild();

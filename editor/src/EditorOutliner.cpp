@@ -530,6 +530,7 @@
                         Galeshi::NavAgentComponent,
                         Galeshi::SoftBodyComponent,
                         Galeshi::AIControllerComponent,
+                        Galeshi::ScriptComponent,
                         Galeshi::PlayerTagComponent,
                         Galeshi::PerceptionComponent,
                         Galeshi::BehaviorTreeComponent,
@@ -748,7 +749,8 @@
                         ImGui::AcceptDragDropPayload("GALESHI_ASSET_PATH")) {
                     const char* path =
                         static_cast<const char*>(payload->Data);
-                    if (path && reg.all_of<Galeshi::LandscapeComponent>(e)) {
+                    if (path &&
+                        reg.all_of<Galeshi::LandscapeComponent>(e)) {
                         if (IsDragDropModelAssetPath(path)) {
                             AssignLandscapeTreeModel(
                                 Galeshi::Entity(e, &m_scene), path);

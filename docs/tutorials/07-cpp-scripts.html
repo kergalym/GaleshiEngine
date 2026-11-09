@@ -119,6 +119,13 @@ extern "C" void GaleshiScriptUpdate(float dt) {
                 particles, navigation, animation, and more. New fields are
                 appended to the end of the ABI table for compatibility.
             </p>
+            <p>
+                Scripts can create a water body by creating an entity and
+                adding the <code>"water"</code> component:
+            </p>
+            <pre><code>const uint32_t water = g_api->world.Create("Water");
+g_api->world.SetPosition(water, {0.0f, 0.0f, 0.0f});
+g_api->world.AddComponent(water, "water");</code></pre>
         </section>
 
         <section id="wrappers">

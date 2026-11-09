@@ -317,6 +317,114 @@ void ScriptEngine::RunAIScripts(Scene& scene, float dt) {
     }
 }
 
+void ScriptEngine::RunEntityScripts(Scene& scene, float dt) {
+    auto& registry = scene.Registry();
+    auto view = registry.view<ScriptComponent>();
+
+    std::vector<uint32_t> active;
+    active.reserve(view.size());
+    for (auto entity : view) {
+        active.push_back(static_cast<uint32_t>(entity));
+    }
+
+    for (uint32_t id : active) {
+        const entt::entity entity = static_cast<entt::entity>(id);
+        if (!registry.valid(entity) ||
+            !registry.all_of<ScriptComponent>(entity)) {
+            continue;
+        }
+        auto& component = registry.get<ScriptComponent>(entity);
+        if (component.scriptPath.empty() || !component.enabled) {
+            m_entityScripts.erase(id);
+            continue;
+        }
+
+        std::filesystem::path resolved(component.scriptPath);
+        if (resolved.is_relative()) {
+            const std::string project = ProjectManager::GetProjectPath();
+            if (!project.empty()) {
+                const std::filesystem::path candidate =
+                    std::filesystem::path(project) / resolved;
+                std::error_code existsEc;
+                if (std::filesystem::is_regular_file(candidate, existsEc)) {
+                    resolved = candidate;
+                }
+            }
+        }
+
+        std::error_code timeEc;
+        const auto writeTime =
+            std::filesystem::last_write_time(resolved, timeEc);
+        auto& instance = m_entityScripts[id];
+        const bool pathChanged =
+            instance.loadedPath != component.scriptPath;
+        const bool fileChanged =
+            !timeEc && !pathChanged && instance.writeTime != writeTime;
+
+        if (pathChanged || fileChanged) {
+            EntityScriptInstance next;
+            next.loadedPath = component.scriptPath;
+            next.writeTime = writeTime;
+            if (timeEc) {
+                next.loadFailed = true;
+                AddLog("[SCRIPT] Cannot open script '" +
+                       resolved.string() + "': " + timeEc.message());
+            } else {
+                next.env = sol::environment(m_lua, sol::create,
+                                            m_lua.globals());
+                try {
+                    m_lua.script_file(resolved.string(), next.env);
+                    next.startFunc = next.env["OnStart"];
+                    next.updateFunc = next.env["OnUpdate"];
+                    spdlog::info("[SCRIPT] Loaded '{}' for entity {}",
+                                 resolved.string(), id);
+                } catch (const sol::error& error) {
+                    next.loadFailed = true;
+                    AddLog(std::string("[SCRIPT ERROR] ") + error.what());
+                }
+            }
+            instance = std::move(next);
+            if (instance.startFunc.valid()) {
+                sol::protected_function_result result = instance.startFunc(id);
+                if (!result.valid()) {
+                    sol::error error = result;
+                    AddLog(std::string("[SCRIPT ERROR] OnStart: ") +
+                           error.what());
+                }
+            }
+        }
+
+        if (!registry.valid(entity) ||
+            !registry.all_of<ScriptComponent>(entity)) {
+            m_entityScripts.erase(id);
+            continue;
+        }
+        if (instance.updateFunc.valid()) {
+            sol::protected_function_result result =
+                instance.updateFunc(id, dt);
+            if (!result.valid()) {
+                sol::error error = result;
+                AddLog(std::string("[SCRIPT ERROR] OnUpdate: ") +
+                       error.what());
+            }
+        }
+    }
+
+    for (auto it = m_entityScripts.begin(); it != m_entityScripts.end();) {
+        const entt::entity entity = static_cast<entt::entity>(it->first);
+        if (!registry.valid(entity) ||
+            !registry.all_of<ScriptComponent>(entity)) {
+            it = m_entityScripts.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void ScriptEngine::ClearEntityScripts() {
+    m_entityScripts.clear();
+}
+
 void ScriptEngine::ClearLuaEntities() {
     if (!m_scene) return;
     auto view = m_scene->Registry().view<LuaEntityComponent>();

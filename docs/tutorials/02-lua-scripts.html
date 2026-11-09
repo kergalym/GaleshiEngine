@@ -29,6 +29,7 @@
             <ul>
                 <li><a href="#where">Where scripts run</a></li>
                 <li><a href="#lifecycle">Lifecycle callbacks</a></li>
+                <li><a href="#entity-scripts">Per-entity scripts</a></li>
                 <li><a href="#entities">Entity handles and movement</a></li>
                 <li><a href="#input">Input and physics</a></li>
                 <li><a href="#triggers">Trigger callbacks</a></li>
@@ -96,8 +97,44 @@ function RunAlways(dt)
 end</code></pre>
         </section>
 
+        <section id="entity-scripts">
+            <h2>3. Per-entity scripts</h2>
+            <p>
+                A Lua script can also be attached to a specific entity. Select
+                the entity, open <strong>Details → Script</strong>, and drop a
+                <code>.lua</code> file on the script field. The script runs in
+                its own environment and may define:
+            </p>
+            <pre><code>function OnStart(entity)
+    -- once after load or reload
+end
+
+function OnUpdate(entity, dt)
+    -- every frame; entity is a raw id
+end</code></pre>
+            <p>
+                Both callbacks are optional. Wrap the id with
+                <code>Galeshi.world.entity(id)</code> when you need entity
+                methods. This is also how a script can create a water body:
+            </p>
+            <pre><code>function OnStart(entity)
+    local water = Galeshi.world.create("Water")
+    Galeshi.world.add_component(water, "water")
+end</code></pre>
+            <p>
+                <code>add_component</code> currently supports the
+                <code>"water"</code> component. The new entity uses the normal
+                Water defaults and can be selected and edited immediately.
+            </p>
+            <p>
+                Use the entity script field for logic tied to one object. Use
+                <code>init.lua</code> for global callbacks and project-wide
+                gameplay.
+            </p>
+        </section>
+
         <section id="entities">
-            <h2>3. Entity handles and movement</h2>
+            <h2>4. Entity handles and movement</h2>
             <p>
                 <code>Galeshi.world.find(name)</code> returns an entity handle
                 or <code>nil</code>. Store the handle in <code>RunOnce</code>
@@ -140,7 +177,7 @@ end</code></pre>
         </section>
 
         <section id="input">
-            <h2>4. Input and physics</h2>
+            <h2>5. Input and physics</h2>
             <p>
                 Input axes are read with
                 <code>Galeshi.input.axis("Horizontal")</code>. For a visual
@@ -183,7 +220,7 @@ end</code></pre>
         </section>
 
         <section id="triggers">
-            <h2>5. Trigger callbacks</h2>
+            <h2>6. Trigger callbacks</h2>
             <p>
                 Triggers use two optional global functions. They receive raw
                 entity ids, not entity handles:
@@ -217,7 +254,7 @@ end</code></pre>
         </section>
 
         <section id="reload">
-            <h2>6. Reloading and debugging</h2>
+            <h2>7. Reloading and debugging</h2>
             <ul>
                 <li>
                     <kbd>F5</kbd> reloads

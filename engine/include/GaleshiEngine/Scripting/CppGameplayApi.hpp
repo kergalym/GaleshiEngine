@@ -120,6 +120,11 @@ public:
                m_api->has_component(m_api->user, entity, component);
     }
 
+    bool AddComponent(uint32_t entity, const char* component) const {
+        return m_api && m_api->add_component &&
+               m_api->add_component(m_api->user, entity, component);
+    }
+
     Vec3 Velocity(uint32_t entity) const {
         return m_api && m_api->get_velocity
             ? m_api->get_velocity(m_api->user, entity)

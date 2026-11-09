@@ -1689,6 +1689,13 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
             const auto& controller = reg.get<AIControllerComponent>(handle);
             je["aiController"] = { {"scriptPath", controller.scriptPath} };
         }
+        if (reg.all_of<ScriptComponent>(handle)) {
+            const auto& script = reg.get<ScriptComponent>(handle);
+            je["scriptComponent"] = {
+                {"scriptPath", script.scriptPath},
+                {"enabled", script.enabled}
+            };
+        }
         if (reg.all_of<PerceptionComponent>(handle)) {
             const auto& perception = reg.get<PerceptionComponent>(handle);
             je["perception"] = {
@@ -2924,6 +2931,12 @@ bool SceneSerializer::LoadFromJson(const json& root,
             const auto& jc = je["aiController"];
             auto& controller = e.AddComponent<AIControllerComponent>();
             controller.scriptPath = jc.value("scriptPath", std::string("assets/scripts/ai_controller.lua"));
+        }
+        if (je.contains("scriptComponent")) {
+            const auto& js = je["scriptComponent"];
+            auto& script = e.AddComponent<ScriptComponent>();
+            script.scriptPath = js.value("scriptPath", std::string{});
+            script.enabled = js.value("enabled", true);
         }
         if (je.contains("perception")) {
             const auto& jp = je["perception"];

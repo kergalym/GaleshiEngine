@@ -143,6 +143,11 @@ public:
         std::function<bool(const std::string&, std::string&)> compileShader);
 
     void RunAIScripts(Scene& scene, float dt);
+    // Runs per-entity Lua scripts attached through ScriptComponent. The script
+    // environment receives OnStart(entityId) once and OnUpdate(entityId, dt)
+    // every frame; both callbacks are optional.
+    void RunEntityScripts(Scene& scene, float dt);
+    void ClearEntityScripts();
     void ClearLuaEntities();
     bool HotReload(const std::string& path = "assets/scripts/init.lua");
     // Scans project scripts/ and assets/scripts/ for .cpp modules, rebuilds
@@ -286,6 +291,16 @@ private:
         std::string loadedPath;
     };
     std::unordered_map<uint32_t, AIControllerInstance> m_aiControllers;
+
+    struct EntityScriptInstance {
+        sol::environment env;
+        sol::protected_function startFunc;
+        sol::protected_function updateFunc;
+        std::string loadedPath;
+        std::filesystem::file_time_type writeTime{};
+        bool loadFailed = false;
+    };
+    std::unordered_map<uint32_t, EntityScriptInstance> m_entityScripts;
 
     struct CppScriptModule {
         std::string path;

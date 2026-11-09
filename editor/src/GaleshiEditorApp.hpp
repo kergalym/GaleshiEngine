@@ -710,6 +710,9 @@ void DrawDetails();
 
     void OnAssetDoubleClicked(const std::string& path);
 
+    // Attaches a .lua asset to an entity as a per-entity ScriptComponent.
+    bool AttachScriptToEntity(entt::entity entity, const std::string& path);
+
     glm::vec3 ViewportDropWorldPosition(const ImVec2& mouse, const ImVec2& imageMin,
                                         uint16_t width, uint16_t height) const;
 

@@ -599,6 +599,7 @@
         {
             const auto scriptsStart = ProfileClock::now();
             m_scripts.RunAIScripts(m_scene, dt);
+            m_scripts.RunEntityScripts(m_scene, dt);
             m_scripts.Update(dt);
             m_cpuProfile.scriptsMs = ProfileElapsedMs(scriptsStart, ProfileClock::now());
         }

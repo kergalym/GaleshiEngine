@@ -521,9 +521,13 @@ struct GaleshiScriptApi {
     bool (*attach_to_bone)(void* user, uint32_t entity, uint32_t character,
                            const char* bone) = nullptr;
     bool (*detach_from_bone)(void* user, uint32_t entity) = nullptr;
+
+    // Adds an engine component by name. Currently "water" is supported.
+    bool (*add_component)(void* user, uint32_t entity,
+                          const char* component) = nullptr;
 };
 
-inline constexpr uint32_t kGaleshiScriptApiVersion = 20;
+inline constexpr uint32_t kGaleshiScriptApiVersion = 21;
 
 inline float GaleshiInterpFactor(float deltaTime, float speed) {
     if (speed <= 0.0f) return 1.0f;

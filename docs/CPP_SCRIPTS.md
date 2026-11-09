@@ -13,6 +13,9 @@ Place `.cpp`, `.cc` or `.cxx` files in the project's `scripts/` or
 shared libraries and loads them in a separate `GaleshiScriptWorker` process, so
 crashes, hangs and compile failures cannot take down the editor.
 
+C++ scripts are project-wide modules, not per-entity attachments. Use the
+entity **Script** field in Details for per-entity Lua scripts.
+
 A script module must export two C functions:
 
 ```cpp
@@ -156,6 +159,11 @@ extern "C" void GaleshiScriptUpdate(float dt) {
     g_api->world.SetPosition(crate, {0.0f, 4.0f, 0.0f});
     g_api->physics.AttachBox(crate, {0.5f, 0.5f, 0.5f});
     g_api->physics.ApplyImpulse(crate, {0.0f, 2.0f, 0.0f});
+
+    // Create a water body from a script. "water" is currently the supported
+    // AddComponent key.
+    const uint32_t water = g_api->world.Create("Water");
+    g_api->world.AddComponent(water, "water");
 
     // Ragdoll activation is explicit; call this on death/hit/input.
     const uint32_t player = g_api->world.Find("Player");
