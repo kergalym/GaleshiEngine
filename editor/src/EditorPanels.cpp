@@ -1277,6 +1277,12 @@ if (ImGui::BeginMenu("File")) {
             ImGui::EndMenu();
         }
 
+        if (ImGui::BeginMenu("AI")) {
+            ImGui::MenuItem("Behavior Tree Editor", nullptr,
+                            &m_showBehaviorTreeEditor);
+            ImGui::EndMenu();
+        }
+
         if (ImGui::BeginMenu("Testing")) {
             if (ImGui::MenuItem("Reset Layout")) m_resetLayout = true;
             ImGui::Separator();

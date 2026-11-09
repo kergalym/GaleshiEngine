@@ -48,6 +48,7 @@ class GaleshiEditorApp final : public Galeshi::Application {
     bool m_showAudioMixer = false;
     bool m_showEnvironmentPalette = false;
     bool m_showStateMachineEditor = false;
+    bool m_showBehaviorTreeEditor = false;
     bool m_showOutputLog = true;
     bool m_logAutoScroll = true;
     int m_logLevelFilter = 0;
@@ -55,6 +56,7 @@ class GaleshiEditorApp final : public Galeshi::Application {
     std::string m_outputLogSelection;
     entt::entity m_stateMachineEditorEntity = entt::null;
     entt::entity m_lastStateMachineSelection = entt::null;
+    entt::entity m_behaviorTreeEditorEntity = entt::null;
     entt::entity m_boneAttachCharacter = entt::null;
     entt::entity m_boneAttachEntity = entt::null;
     std::string m_boneAttachBone;
@@ -560,6 +562,7 @@ private:
         const std::string& fallbackModelPath = {});
 
     void DrawStateMachineEditor();
+    void DrawBehaviorTreeEditor();
 
 void DrawDetails();
 

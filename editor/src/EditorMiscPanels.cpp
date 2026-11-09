@@ -1,5 +1,11 @@
 #include "GaleshiEditorApp.hpp"
 
+#include <algorithm>
+#include <cstdio>
+#include <functional>
+#include <string>
+#include <vector>
+
 
 
     void GaleshiEditorApp::DrawOutputLog() {
@@ -212,6 +218,262 @@
             }
         }
         ImGui::EndChild();
+        ImGui::End();
+    }
+
+
+
+    void GaleshiEditorApp::DrawBehaviorTreeEditor() {
+        if (!m_showBehaviorTreeEditor) return;
+
+        // Keep the tree next to the animation state machine editor; the tab
+        // is a proper docked window instead of a Details section.
+        if (ImGuiWindow* asme =
+                ImGui::FindWindowByName("Animation State Machine Editor");
+            asme && asme->DockId != 0) {
+            ImGui::SetNextWindowDockID(asme->DockId, ImGuiCond_Always);
+        } else if (ImGuiWindow* designer =
+                       ImGui::FindWindowByName("UI Designer");
+                   designer && designer->DockId != 0) {
+            ImGui::SetNextWindowDockID(designer->DockId, ImGuiCond_Always);
+        } else if (ImGuiWindow* output =
+                       ImGui::FindWindowByName("Output Log");
+                   output && output->DockId != 0) {
+            ImGui::SetNextWindowDockID(output->DockId, ImGuiCond_Always);
+        } else if (ImGuiWindow* browser =
+                       ImGui::FindWindowByName("Content Browser");
+                   browser && browser->DockId != 0) {
+            ImGui::SetNextWindowDockID(browser->DockId, ImGuiCond_Always);
+        }
+
+        if (!ImGui::Begin("Behavior Tree Editor",
+                          &m_showBehaviorTreeEditor)) {
+            ImGui::End();
+            return;
+        }
+
+        auto& registry = m_scene.Registry();
+        auto treeView = registry.view<Galeshi::BehaviorTreeComponent>();
+        if (treeView.begin() == treeView.end()) {
+            ImGui::TextDisabled("No behavior tree agents in the scene.");
+            ImGui::End();
+            return;
+        }
+
+        std::vector<std::pair<std::string, entt::entity>> agents;
+        agents.reserve(treeView.size());
+        for (entt::entity entity : treeView) {
+            std::string name =
+                "Entity " + std::to_string(static_cast<uint32_t>(entity));
+            if (const auto* nameComponent =
+                    registry.try_get<Galeshi::NameComponent>(entity)) {
+                if (!nameComponent->name.empty()) name = nameComponent->name;
+            }
+            agents.emplace_back(std::move(name), entity);
+        }
+        std::sort(agents.begin(), agents.end(),
+                  [](const auto& a, const auto& b) {
+                      if (a.first != b.first) return a.first < b.first;
+                      return static_cast<uint32_t>(a.second) <
+                             static_cast<uint32_t>(b.second);
+                  });
+
+        const bool targetValid =
+            registry.valid(m_behaviorTreeEditorEntity) &&
+            registry.all_of<Galeshi::BehaviorTreeComponent>(
+                m_behaviorTreeEditorEntity);
+        if (!targetValid) {
+            m_behaviorTreeEditorEntity = agents.front().second;
+        }
+
+        int current = 0;
+        std::vector<const char*> labels;
+        labels.reserve(agents.size());
+        for (int i = 0; i < static_cast<int>(agents.size()); ++i) {
+            if (agents[static_cast<size_t>(i)].second ==
+                m_behaviorTreeEditorEntity) {
+                current = i;
+            }
+            labels.push_back(agents[static_cast<size_t>(i)].first.c_str());
+        }
+
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::Combo("##behavior_tree_agent", &current,
+                         labels.data(), static_cast<int>(labels.size()))) {
+            m_behaviorTreeEditorEntity =
+                agents[static_cast<size_t>(current)].second;
+        }
+        if (ImGui::Button("Select in Scene")) {
+            m_editor.Select(Galeshi::Entity(m_behaviorTreeEditorEntity,
+                                            &m_scene));
+        }
+        ImGui::Separator();
+
+        auto* tree = registry.try_get<Galeshi::BehaviorTreeComponent>(
+            m_behaviorTreeEditorEntity);
+        if (!tree) {
+            ImGui::TextDisabled("No behavior tree on the selected agent.");
+            ImGui::End();
+            return;
+        }
+
+        ImGui::Checkbox("Enabled", &tree->enabled);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(100.0f);
+        ImGui::DragFloat("Tick Interval", &tree->tickInterval,
+                         0.01f, 0.0f, 2.0f);
+        ImGui::Text("Status: %s (node %d)", tree->statusText.c_str(),
+                    tree->runningNode);
+        if (ImGui::Button("Reset Runtime")) {
+            Galeshi::BehaviorTreeSystem::ResetRuntime(*tree);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Load Default Tree")) {
+            PushHistory();
+            *tree = Galeshi::BehaviorTreeSystem::MakeDefaultBehaviorTree();
+            if (!registry.all_of<Galeshi::PerceptionComponent>(
+                    m_behaviorTreeEditorEntity)) {
+                registry.emplace<Galeshi::PerceptionComponent>(
+                    m_behaviorTreeEditorEntity);
+            }
+            if (!registry.all_of<Galeshi::NavAgentComponent>(
+                    m_behaviorTreeEditorEntity)) {
+                registry.emplace<Galeshi::NavAgentComponent>(
+                    m_behaviorTreeEditorEntity);
+            }
+        }
+
+        const char* nodeTypeNames[] = {
+            "Selector", "Sequence", "Condition", "Action"
+        };
+        const char* conditionNames[] = {
+            "Always True", "Has Target", "Target Visible",
+            "Target In Range", "Target Lost", "Parameter True"
+        };
+        const char* actionNames[] = {
+            "Wait", "Set Target To Player", "Move To Target", "Patrol",
+            "Attack", "Look At Target", "Set Animation State",
+            "Clear Target", "Set Nav Speed"
+        };
+
+        std::function<void(int, int)> drawNode = [&](int index, int depth) {
+            if (depth > 32 || index < 0 ||
+                index >= static_cast<int>(tree->nodes.size())) {
+                return;
+            }
+            auto& node = tree->nodes[static_cast<size_t>(index)];
+            ImGui::PushID(index);
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
+                                       ImGuiTreeNodeFlags_DefaultOpen;
+            if (node.children.empty()) flags |= ImGuiTreeNodeFlags_Leaf;
+            char label[256];
+            std::snprintf(label, sizeof(label), "[%d] %s", index,
+                          node.name.c_str());
+            const bool open =
+                ImGui::TreeNodeEx("##node", flags, "%s", label);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(%s)",
+                                nodeTypeNames[static_cast<int>(node.type)]);
+
+            char nodeName[128];
+            std::snprintf(nodeName, sizeof(nodeName), "%s",
+                          node.name.c_str());
+            if (ImGui::InputText("Name", nodeName, sizeof(nodeName))) {
+                node.name = nodeName;
+            }
+            int type = static_cast<int>(node.type);
+            if (ImGui::Combo("Type", &type, nodeTypeNames,
+                             IM_ARRAYSIZE(nodeTypeNames))) {
+                node.type = static_cast<Galeshi::BehaviorNodeType>(type);
+            }
+
+            if (node.type == Galeshi::BehaviorNodeType::Condition) {
+                int condition = static_cast<int>(node.condition);
+                if (ImGui::Combo("Condition", &condition, conditionNames,
+                                 IM_ARRAYSIZE(conditionNames))) {
+                    node.condition =
+                        static_cast<Galeshi::BehaviorCondition>(condition);
+                }
+                if (node.condition ==
+                    Galeshi::BehaviorCondition::TargetInRange) {
+                    ImGui::DragFloat("Range", &node.range,
+                                     0.1f, 0.0f, 100.0f);
+                }
+                if (node.condition ==
+                    Galeshi::BehaviorCondition::ParameterTrue) {
+                    char parameter[128];
+                    std::snprintf(parameter, sizeof(parameter), "%s",
+                                  node.parameter.c_str());
+                    if (ImGui::InputText("Parameter", parameter,
+                                         sizeof(parameter))) {
+                        node.parameter = parameter;
+                    }
+                }
+            } else if (node.type == Galeshi::BehaviorNodeType::Action) {
+                int action = static_cast<int>(node.action);
+                if (ImGui::Combo("Action", &action, actionNames,
+                                 IM_ARRAYSIZE(actionNames))) {
+                    node.action =
+                        static_cast<Galeshi::BehaviorAction>(action);
+                }
+                switch (node.action) {
+                    case Galeshi::BehaviorAction::Wait:
+                        ImGui::DragFloat("Duration", &node.duration,
+                                         0.05f, 0.0f, 60.0f);
+                        break;
+                    case Galeshi::BehaviorAction::MoveToTarget:
+                        ImGui::DragFloat("Arrive Range", &node.range,
+                                         0.05f, 0.0f, 20.0f);
+                        break;
+                    case Galeshi::BehaviorAction::Patrol:
+                        ImGui::DragFloat("Patrol Radius", &node.radius,
+                                         0.25f, 0.5f, 200.0f);
+                        ImGui::DragFloat("Wait Time", &node.duration,
+                                         0.05f, 0.0f, 60.0f);
+                        break;
+                    case Galeshi::BehaviorAction::Attack:
+                        ImGui::DragFloat("Attack Range", &node.range,
+                                         0.05f, 0.0f, 20.0f);
+                        ImGui::DragFloat("Cooldown", &node.duration,
+                                         0.05f, 0.1f, 10.0f);
+                        break;
+                    case Galeshi::BehaviorAction::SetAnimationState: {
+                        char state[128];
+                        std::snprintf(state, sizeof(state), "%s",
+                                      node.value.c_str());
+                        if (ImGui::InputText("State", state,
+                                             sizeof(state))) {
+                            node.value = state;
+                        }
+                        break;
+                    }
+                    case Galeshi::BehaviorAction::SetNavSpeed: {
+                        char speed[128];
+                        std::snprintf(speed, sizeof(speed), "%s",
+                                      node.value.c_str());
+                        if (ImGui::InputText("Speed", speed,
+                                             sizeof(speed))) {
+                            node.value = speed;
+                        }
+                        break;
+                    }
+                    default:
+                        break;
+                }
+            } else {
+                ImGui::TextDisabled("Children: %zu",
+                                    node.children.size());
+            }
+
+            if (open) {
+                std::vector<int> children = node.children;
+                for (int child : children) drawNode(child, depth + 1);
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        };
+        if (!tree->nodes.empty()) drawNode(tree->root, 0);
+
         ImGui::End();
     }
 

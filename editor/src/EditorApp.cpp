@@ -881,9 +881,16 @@
                     }
                     m_showStateMachineEditor = true;
                 }
+                if (selected &&
+                    selected.HasComponent<
+                        Galeshi::BehaviorTreeComponent>()) {
+                    m_behaviorTreeEditorEntity = selectedHandle;
+                    m_showBehaviorTreeEditor = true;
+                }
             }
         }
         DrawStateMachineEditor();
+        DrawBehaviorTreeEditor();
         DrawPreferencesWindow();
         DrawHistoryModal();
 
