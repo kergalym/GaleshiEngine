@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Cloth painting — GaleshiEngine Tutorials</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+    <nav class="top" aria-label="Breadcrumb">
+        <a href="index.html">Tutorials</a>
+        <span>/</span>
+        <span>Cloth painting</span>
+    </nav>
+
+    <header class="hero">
+        <p class="eyebrow">Tutorial 5</p>
+        <h1>Cloth painting and simulation</h1>
+        <p class="lead">
+            Paint a soft-body region directly on an existing mesh, tune its
+            material, and see it simulated by Jolt in the editor and Play mode.
+        </p>
+    </header>
+
+    <main>
+        <div class="toc">
+            <p>In this tutorial</p>
+            <ul>
+                <li><a href="#concept">How cloth is stored</a></li>
+                <li><a href="#paint">Paint cloth</a></li>
+                <li><a href="#properties">Cloth properties</a></li>
+                <li><a href="#actions">Paint, clear, rebuild</a></li>
+                <li><a href="#simulation">Simulation and saved data</a></li>
+                <li><a href="#limits">Limitations</a></li>
+            </ul>
+        </div>
+
+        <section id="concept">
+            <h2>1. How cloth is stored</h2>
+            <p>
+                Cloth is not a separate entity. It is a
+                <code>SoftBodyComponent</code> added to an existing static or
+                skeletal mesh entity. The entity keeps its mesh, material,
+                transform, and hierarchy; only the painted vertices acquire
+                cloth simulation.
+            </p>
+            <p>
+                Painted vertices are dynamic, unpainted vertices stay pinned.
+                Only faces containing at least one painted vertex are added to
+                the Jolt soft body.
+            </p>
+        </section>
+
+        <section id="paint">
+            <h2>2. Paint cloth</h2>
+            <ol class="steps">
+                <li>
+                    Select an entity with a <code>MeshComponent</code>, or a
+                    static/skeletal model root, in the Outliner or viewport. A
+                    model root uses its first descendant mesh.
+                </li>
+                <li>
+                    Open <strong>Details → Cloth Painting</strong>.
+                </li>
+                <li>
+                    Enable the <strong>Painting cloth</strong> checkbox. This
+                    creates the soft-body component if it does not exist.
+                </li>
+                <li>
+                    Paint on the mesh with the left mouse button.
+                </li>
+                <li>
+                    Hold <kbd>Alt</kbd> while painting to erase.
+                </li>
+                <li>
+                    Release the mouse button. The editor rebuilds the Jolt
+                    soft-body body from the painted vertices.
+                </li>
+            </ol>
+            <p>
+                Painted vertices are shown as small green crosses while the mesh
+                is selected. The brush uses <strong>Brush Radius</strong> and
+                <strong>Brush Strength</strong> from the Landscape sculpting
+                controls.
+            </p>
+            <div class="callout">
+                <p>
+                    Disabling <strong>Painting cloth</strong> only leaves paint
+                    mode. The painted weights and the cloth body remain on the
+                    mesh.
+                </p>
+            </div>
+            <p>
+                Dynamic and kinematic physics proxies do not expose the cloth
+                tabs. Select the mesh or the model root, not the collider child.
+            </p>
+        </section>
+
+        <section id="properties">
+            <h2>3. Cloth properties</h2>
+            <p>
+                After painting is enabled, the <strong>Cloth Properties</strong>
+                section exposes the simulation parameters:
+            </p>
+            <table>
+                <thead>
+                    <tr><th>Parameter</th><th>Default</th><th>Meaning</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Mass</td><td>1.0</td><td>Per-vertex mass for dynamic vertices.</td></tr>
+                    <tr><td>Friction</td><td>0.5</td><td>Jolt soft-body friction.</td></tr>
+                    <tr><td>Restitution</td><td>0.0</td><td>Collision bounce.</td></tr>
+                    <tr><td>Gravity Factor</td><td>1.0</td><td>Multiplier for world gravity.</td></tr>
+                    <tr><td>Linear Damping</td><td>0.1</td><td>Per-vertex velocity damping.</td></tr>
+                    <tr><td>Pressure</td><td>0.0</td><td>Jolt soft-body pressure.</td></tr>
+                    <tr><td>Stiffness</td><td>0.8</td><td>Scales stretch, shear, and bend compliance.</td></tr>
+                    <tr><td>Stretch Compliance</td><td>1e-4</td><td>Edge stretch softness.</td></tr>
+                    <tr><td>Shear Compliance</td><td>1e-4</td><td>Shear softness.</td></tr>
+                    <tr><td>Bend Compliance</td><td>1e-3</td><td>Bending softness.</td></tr>
+                </tbody>
+            </table>
+            <p>
+                Changing a value does not mutate the running Jolt body. Press
+                <strong>Rebuild With Properties</strong> to recreate it with the
+                new values.
+            </p>
+        </section>
+
+        <section id="actions">
+            <h2>4. Paint, clear, and rebuild</h2>
+            <table>
+                <thead>
+                    <tr><th>Action</th><th>Result</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Paint Cloth</td><td>Re-enter paint mode.</td></tr>
+                    <tr><td>Clear Paint</td><td>Remove all weights and destroy the active cloth body.</td></tr>
+                    <tr><td>Rebuild Cloth</td><td>Recreate the body from the current mesh and weights.</td></tr>
+                    <tr><td>Rebuild With Properties</td><td>Recreate the body using the edited material parameters.</td></tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="simulation">
+            <h2>5. Simulation and saved data</h2>
+            <ul>
+                <li>Cloth uses Jolt soft bodies.</li>
+                <li>
+                    Duplicate vertices at UV and normal seams are welded by
+                    position for simulation, then mapped back to the render
+                    mesh.
+                </li>
+                <li>
+                    <code>UpdateSoftBodies()</code> copies simulated positions
+                    back into the mesh and recomputes normals every frame.
+                </li>
+                <li>
+                    Simulation runs in both the editor and Play mode. Soft-body
+                    updates run after skeletal animation, so cloth on a skinned
+                    mesh is not immediately overwritten by the animation.
+                </li>
+            </ul>
+            <p>
+                <code>SoftBodyComponent</code> is serialized with the entity and
+                stores the paint weights, mass, friction, restitution, gravity
+                factor, damping, pressure, and compliance values. The Jolt body
+                id is runtime-only; a mesh with paint weights but no runtime
+                body is rebuilt automatically when Play starts.
+            </p>
+        </section>
+
+        <section id="limits">
+            <h2>6. Limitations</h2>
+            <ul>
+                <li>
+                    Paint before starting simulation. Repainting an already
+                    deformed mesh uses the deformed vertices as the new rest
+                    pose.
+                </li>
+                <li>
+                    Non-uniform entity scale is not baked into the soft body.
+                    Keep cloth meshes at a uniform scale where possible.
+                </li>
+                <li>
+                    Tearing, wind forces, and self-collision controls are not
+                    exposed.
+                </li>
+                <li>
+                    Cloth painted on an animated skeletal mesh drives the
+                    simulated region from the cloth simulation; that region no
+                    longer follows the skeletal animation.
+                </li>
+                <li>
+                    A multi-mesh model or skeletal root authors cloth on its
+                    first descendant mesh.
+                </li>
+                <li>
+                    Dense meshes produce large paint-weight arrays. Use them
+                    carefully.
+                </li>
+            </ul>
+            <p>
+                Reference: <a href="../CLOTH.md">Cloth painting and simulation</a>.
+            </p>
+        </section>
+    </main>
+
+    <nav class="pager" aria-label="Tutorial navigation">
+        <a href="04-water-triggers.html">← Previous: Water triggers</a>
+        <a href="06-material-scripts.html">Next: Material scripts →</a>
+    </nav>
+
+    <footer>
+        <p>GaleshiEngine tutorials · <a href="index.html">Index</a></p>
+    </footer>
+</div>
+</body>
+</html>

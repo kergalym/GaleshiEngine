@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>C++ gameplay scripts — GaleshiEngine Tutorials</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+    <nav class="top" aria-label="Breadcrumb">
+        <a href="index.html">Tutorials</a>
+        <span>/</span>
+        <span>C++ gameplay scripts</span>
+    </nav>
+
+    <header class="hero">
+        <p class="eyebrow">Tutorial 7</p>
+        <h1>Hot-reload C++ gameplay scripts</h1>
+        <p class="lead">
+            Write gameplay logic in C++, compile it into a worker process, and
+            reload it without restarting the editor.
+        </p>
+    </header>
+
+    <main>
+        <div class="toc">
+            <p>In this tutorial</p>
+            <ul>
+                <li><a href="#where">Where scripts live</a></li>
+                <li><a href="#exports">Required exports</a></li>
+                <li><a href="#raw">Using the C API table</a></li>
+                <li><a href="#wrappers">Using the class wrappers</a></li>
+                <li><a href="#triggers">Trigger callbacks</a></li>
+                <li><a href="#workflow">Compile and reload</a></li>
+                <li><a href="#rules">Rules and limitations</a></li>
+            </ul>
+        </div>
+
+        <section id="where">
+            <h2>1. Where scripts live</h2>
+            <p>
+                Place <code>.cpp</code>, <code>.cc</code>, or
+                <code>.cxx</code> files in the project's
+                <code>scripts/</code> or <code>assets/scripts/</code>
+                directory. The editor compiles changed files into temporary
+                shared libraries and loads them into a separate
+                <code>GaleshiScriptWorker</code> process.
+            </p>
+            <p>
+                The worker contains the script code but not the editor scene,
+                renderer, or GPU resources. A crash, hang, or compile error in a
+                script does not take down the editor process.
+            </p>
+        </section>
+
+        <section id="exports">
+            <h2>2. Required exports</h2>
+            <p>
+                A script module must export two C-linkage functions. The
+                signatures are fixed because the worker loads them by symbol
+                name:
+            </p>
+            <pre><code>#include "GaleshiEngine/Scripting/CppScriptApi.hpp"
+
+static const GaleshiScriptApi* g_api = nullptr;
+
+extern "C" void GaleshiScriptRegister(const GaleshiScriptApi* api) {
+    g_api = api;
+    g_api->log(g_api->user, "script registered");
+}
+
+extern "C" void GaleshiScriptUpdate(float dt) {
+    (void)dt;
+    // gameplay code
+}</code></pre>
+            <table>
+                <thead>
+                    <tr><th>Export</th><th>When it runs</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>GaleshiScriptRegister</code></td><td>Once when the module is loaded. Store the API table here.</td></tr>
+                    <tr><td><code>GaleshiScriptUpdate</code></td><td>Every frame with the frame delta.</td></tr>
+                </tbody>
+            </table>
+            <div class="callout warn">
+                <p>
+                    <code>extern "C"</code> only fixes the exported symbol name.
+                    The file is still C++, and you can use classes, templates,
+                    and STL types inside it. Engine classes cannot be linked in
+                    the worker process.
+                </p>
+            </div>
+        </section>
+
+        <section id="raw">
+            <h2>3. Using the C API table</h2>
+            <p>
+                The API table exposes entity handles and explicit operations.
+                Entity ids are plain numbers; revalidate them before use:
+            </p>
+            <pre><code>extern "C" void GaleshiScriptUpdate(float dt) {
+    const uint32_t player =
+        g_api->find_entity(g_api->user, "Player");
+    if (!g_api->entity_valid(g_api->user, player)) return;
+
+    const GaleshiScriptVec3 current =
+        g_api->get_position(g_api->user, player);
+    const GaleshiScriptVec3 target{0.0f, 2.0f, 0.0f};
+
+    // Frame-rate independent interpolation helper.
+    const GaleshiScriptVec3 next =
+        VInterp(current, target, dt, 8.0f);
+    g_api->set_position(g_api->user, player, next);
+}</code></pre>
+            <p>
+                The table includes logging, input, entity lookup/validation,
+                position and velocity access, camera mode switching, audio,
+                particles, navigation, animation, and more. New fields are
+                appended to the end of the ABI table for compatibility.
+            </p>
+        </section>
+
+        <section id="wrappers">
+            <h2>4. Using the class wrappers</h2>
+            <p>
+                <code>CppGameplayApi.hpp</code> is a header-only convenience
+                layer over the same function table:
+            </p>
+            <pre><code>#include "GaleshiEngine/Scripting/CppGameplayApi.hpp"
+
+static Galeshi::Script::Api* g_api = nullptr;
+
+extern "C" void GaleshiScriptRegister(const GaleshiScriptApi* api) {
+    static Galeshi::Script::Api wrapper(api);
+    g_api = &wrapper;
+}
+
+extern "C" void GaleshiScriptUpdate(float dt) {
+    if (!g_api || !g_api->Compatible()) return;
+    (void)dt;
+
+    const uint32_t player = g_api->world.Find("Player");
+    if (!g_api->world.Valid(player)) return;
+
+    g_api->physics.SetVelocity(player, {0.0f, 0.0f, -5.0f});
+}</code></pre>
+            <p>
+                New modules should check <code>Compatible()</code> or the ABI
+                version before using recently added calls. The wrappers also
+                null-check individual function pointers so older hosts fail
+                safely.
+            </p>
+        </section>
+
+        <section id="triggers">
+            <h2>5. Trigger callbacks</h2>
+            <p>
+                A module can also export either optional callback. They are
+                looked up when the module loads:
+            </p>
+            <pre><code>extern "C" void OnTriggerBeginOverlap(uint32_t trigger,
+                                      uint32_t other) {
+    // trigger is the sensor collider; other is the overlapping entity.
+}
+
+extern "C" void OnTriggerEndOverlap(uint32_t trigger,
+                                    uint32_t other) {
+    // Fires after the last contact between the pair is removed.
+}</code></pre>
+            <p>
+                Every loaded module with the matching export receives the
+                event. The hook is module-level, not per-entity, so inspect the
+                ids if one module handles several volumes. Water bodies with
+                the Water inspector's <strong>Trigger</strong> checkbox also
+                dispatch these events with the water entity as
+                <code>trigger</code>.
+            </p>
+            <pre><code>extern "C" void OnTriggerBeginOverlap(uint32_t trigger,
+                                      uint32_t other) {
+    if (!g_api->has_component(g_api->user, trigger, "water")) return;
+    g_api->log(g_api->user, "body entered water");
+    (void)other;
+}</code></pre>
+            <p>
+                See <a href="04-water-triggers.html">Water triggers</a> for the
+                complete Lua and C++ water example.
+            </p>
+        </section>
+
+        <section id="workflow">
+            <h2>6. Compile and reload</h2>
+            <ol class="steps">
+                <li>
+                    Save the <code>.cpp</code> file in the project's
+                    <code>scripts/</code> or <code>assets/scripts/</code>
+                    directory.
+                </li>
+                <li>
+                    Open it in the Code Editor. Compile diagnostics appear in
+                    the <strong>Output</strong> and <strong>Errors</strong> tabs.
+                </li>
+                <li>
+                    Use <strong>Compile C++</strong> to compile and reload, or
+                    wait for the editor's debounced scan.
+                </li>
+                <li>
+                    Press <strong>Play</strong> and watch the Output Log. Invalid
+                    modules are not loaded; the last successfully loaded module
+                    keeps running.
+                </li>
+            </ol>
+            <p>
+                Compilation uses <code>g++</code> by default. Set the
+                <code>CXX</code> environment variable to override the compiler.
+                Live syntax checks also cover <code>.cpp</code>,
+                <code>.h</code>, and <code>.lua</code> files while you edit.
+            </p>
+        </section>
+
+        <section id="rules">
+            <h2>7. Rules and limitations</h2>
+            <ul>
+                <li>
+                    Do not include <code>GaleshiEngine.hpp</code> in a
+                    hot-reload module. The worker does not link the engine.
+                    Use <code>CppScriptApi.hpp</code> or
+                    <code>CppGameplayApi.hpp</code>.
+                </li>
+                <li>
+                    Do not store raw engine pointers across the worker
+                    boundary. Use entity ids and API calls.
+                </li>
+                <li>
+                    Assign <code>g_api</code> in
+                    <code>GaleshiScriptRegister</code>, not during static
+                    initialization.
+                </li>
+                <li>
+                    <code>extern "C"</code> does not mean the file is C. It
+                    only changes the exported symbol linkage.
+                </li>
+                <li>
+                    The API can only access what the host exposes. Use the
+                    native API when you need direct engine classes or custom
+                    engine work.
+                </li>
+            </ul>
+            <p>
+                Next, read
+                <a href="08-cpp-api-modes.html">Native vs hot-reload C++</a>
+                to choose the right integration path, or jump to the
+                <a href="09-third-person-demo.html">third-person demo</a>.
+            </p>
+        </section>
+    </main>
+
+    <nav class="pager" aria-label="Tutorial navigation">
+        <a href="06-material-scripts.html">← Previous: Material scripts</a>
+        <a href="08-cpp-api-modes.html">Next: Native vs hot-reload C++ →</a>
+    </nav>
+
+    <footer>
+        <p>GaleshiEngine tutorials · <a href="index.html">Index</a></p>
+    </footer>
+</div>
+</body>
+</html>

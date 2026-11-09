@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Material scripts — GaleshiEngine Tutorials</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+    <nav class="top" aria-label="Breadcrumb">
+        <a href="index.html">Tutorials</a>
+        <span>/</span>
+        <span>Material scripts</span>
+    </nav>
+
+    <header class="hero">
+        <p class="eyebrow">Tutorial 6</p>
+        <h1>Material scripts: one recipe, many slots</h1>
+        <p class="lead">
+            Create a small JSON recipe that overrides material properties
+            without replacing the slot's textures and apply it across a model.
+        </p>
+    </header>
+
+    <main>
+        <div class="toc">
+            <p>In this tutorial</p>
+            <ul>
+                <li><a href="#concept">What a .mat file does</a></li>
+                <li><a href="#create">Create the recipe</a></li>
+                <li><a href="#format">Format and operators</a></li>
+                <li><a href="#apply">Apply it in the editor</a></li>
+                <li><a href="#properties">Supported properties</a></li>
+                <li><a href="#persistence">Save/load behavior</a></li>
+            </ul>
+        </div>
+
+        <section id="concept">
+            <h2>1. What a .mat file does</h2>
+            <p>
+                A <code>.mat</code> file is a JSON recipe that tunes properties
+                of a material slot. Applying a recipe creates a material
+                <em>instance</em>: the slot keeps its original material as the
+                instance base, and only the properties listed in the recipe are
+                changed.
+            </p>
+            <p>
+                The same recipe can be applied to different slots, so one master
+                can drive many meshes. Textures are inherited from the base
+                material and are never changed by the recipe.
+            </p>
+        </section>
+
+        <section id="create">
+            <h2>2. Create the recipe</h2>
+            <ol class="steps">
+                <li>
+                    Right-click in the Content Browser and choose
+                    <strong>Create Script Templates → Master Material (.mat)</strong>.
+                </li>
+                <li>
+                    Open the generated file in the Code Editor or any text
+                    editor.
+                </li>
+                <li>
+                    Set a readable <code>name</code> and list the properties you
+                    want to change.
+                </li>
+                <li>
+                    Save the file. Use <strong>Reapply Master</strong> later
+                    after editing it.
+                </li>
+            </ol>
+            <pre><code>{
+  "name": "Rough painted metal",
+  "properties": {
+    "metallicFactor": { "set": 1.0 },
+    "roughnessFactor": { "add": 0.12 },
+    "albedoFactor": { "mul": [0.82, 0.86, 0.92, 1.0] },
+    "emissiveFactor": { "set": [0.0, 0.0, 0.0] }
+  }
+}</code></pre>
+        </section>
+
+        <section id="format">
+            <h2>3. Format and operators</h2>
+            <p>
+                A plain number, array, or boolean is shorthand for
+                <code>set</code>. An object with an operator key is also
+                accepted, for example <code>{ "mul": 0.5 }</code> or
+                <code>{ "op": "mul", "value": 0.5 }</code>.
+            </p>
+            <table>
+                <thead>
+                    <tr><th>Operator</th><th>Meaning</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>set</code></td><td>Replace the value.</td></tr>
+                    <tr><td><code>add</code> / <code>sub</code></td><td>Add or subtract component-wise.</td></tr>
+                    <tr><td><code>mul</code> / <code>div</code></td><td>Multiply or divide component-wise.</td></tr>
+                    <tr><td><code>min</code> / <code>max</code></td><td>Component-wise minimum or maximum.</td></tr>
+                    <tr><td><code>clamp</code></td><td>Clamp to <code>[min, max]</code>; the value is a two-element array.</td></tr>
+                </tbody>
+            </table>
+            <p>
+                Scalars apply to one component. Vector values may have one,
+                three, or four components; a one-component value broadcasts to
+                every component. Booleans support <code>set</code> only.
+            </p>
+        </section>
+
+        <section id="apply">
+            <h2>4. Apply it in the editor</h2>
+            <ol class="steps">
+                <li>
+                    Drag the <code>.mat</code> file from the Content Browser
+                    onto a material slot in Details. The slot becomes an
+                    instance and its listed properties are tuned.
+                </li>
+                <li>
+                    For a multi-material mesh or model, use
+                    <strong>Apply to All Slots</strong> to instance the recipe
+                    on every material slot in its hierarchy.
+                </li>
+                <li>
+                    Use <strong>Reapply Master</strong> after editing the
+                    <code>.mat</code> file.
+                </li>
+                <li>
+                    Use <strong>Clear Master</strong> to return to the instance
+                    base material.
+                </li>
+            </ol>
+            <div class="callout">
+                <p>
+                    The recipe changes material <em>properties</em>, not
+                    texture assignments. If a slot looks unchanged, check that
+                    the property you are editing is actually visible for that
+                    material type.
+                </p>
+            </div>
+        </section>
+
+        <section id="properties">
+            <h2>5. Supported properties</h2>
+            <p><strong>Scalars</strong></p>
+            <p>
+                <code>metallicFactor</code>,
+                <code>specularFactor</code>,
+                <code>roughnessFactor</code>,
+                <code>normalStrength</code>,
+                <code>occlusionStrength</code>,
+                <code>alphaCutoff</code>,
+                <code>glassOpacity</code>,
+                <code>subsurfaceStrength</code>,
+                <code>subsurfaceRadius</code>,
+                <code>translucencyOpacity</code>,
+                <code>translucencyStrength</code>,
+                <code>translucencyThickness</code>,
+                <code>translucencyDistortion</code>,
+                <code>translucencyShadowDepth</code>,
+                <code>shadowDepthOffset</code>,
+                <code>landscapeUvScale</code>,
+                <code>landscapeDetailScale</code>,
+                <code>landscapeDetailStrength</code>,
+                <code>landscapeNormalStrength</code>.
+            </p>
+            <p><strong>Colors and vectors</strong></p>
+            <p>
+                <code>albedoFactor</code>,
+                <code>emissiveFactor</code>,
+                <code>subsurfaceColor</code>,
+                <code>translucencyColor</code>.
+            </p>
+            <p><strong>Booleans</strong></p>
+            <p>
+                <code>isGlass</code>,
+                <code>twoSided</code>,
+                <code>backfaceCulling</code>,
+                <code>alphaTest</code>,
+                <code>alphaBlend</code>,
+                <code>subsurfaceEnabled</code>,
+                <code>translucencyEnabled</code>,
+                <code>castsShadow</code>.
+            </p>
+        </section>
+
+        <section id="persistence">
+            <h2>6. Save/load behavior</h2>
+            <p>
+                The active recipe path is stored with the scene material table,
+                so it survives save/load. The assigned values are serialized as
+                well. Editing the <code>.mat</code> file later does not
+                automatically change already instanced slots; use
+                <strong>Reapply Master</strong> to pick up the new recipe.
+            </p>
+            <p>
+                Reference: <a href="../MATERIAL_SCRIPTS.md">Material scripts (.mat)</a>.
+            </p>
+        </section>
+    </main>
+
+    <nav class="pager" aria-label="Tutorial navigation">
+        <a href="05-cloth-painting.html">← Previous: Cloth painting</a>
+        <a href="07-cpp-scripts.html">Next: C++ gameplay scripts →</a>
+    </nav>
+
+    <footer>
+        <p>GaleshiEngine tutorials · <a href="index.html">Index</a></p>
+    </footer>
+</div>
+</body>
+</html>

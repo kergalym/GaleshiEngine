@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Editor basics — GaleshiEngine Tutorials</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+    <nav class="top" aria-label="Breadcrumb">
+        <a href="index.html">Tutorials</a>
+        <span>/</span>
+        <span>Editor basics</span>
+    </nav>
+
+    <header class="hero">
+        <p class="eyebrow">Tutorial 1</p>
+        <h1>Editor basics: build and run a scene</h1>
+        <p class="lead">
+            Open the editor, learn the viewport controls, create a small scene,
+            and run it in Play mode.
+        </p>
+    </header>
+
+    <main>
+        <div class="toc">
+            <p>In this tutorial</p>
+            <ul>
+                <li><a href="#open">Open a project</a></li>
+                <li><a href="#viewport">Move around the viewport</a></li>
+                <li><a href="#scene">Create a minimal scene</a></li>
+                <li><a href="#play">Save and run</a></li>
+                <li><a href="#scripts">Where scripts live</a></li>
+                <li><a href="#shortcuts">Useful shortcuts</a></li>
+            </ul>
+        </div>
+
+        <section id="open">
+            <h2>1. Open a project</h2>
+            <p>
+                Start the editor from the build directory. It must run from
+                <code>build/debug/bin</code> (or the equivalent release
+                directory) because shaders and engine assets are resolved
+                relative to the working directory.
+            </p>
+            <pre><code>cd build/debug/bin
+./GaleshiEditor</code></pre>
+            <p>
+                If no project is open, the <strong>Project Manager</strong>
+                appears. Create a project or open an existing one. After the
+                project opens, you can load a scene with
+                <strong>File → Load Scene…</strong>
+                (<kbd>Ctrl</kbd>+<kbd>O</kbd>).
+            </p>
+            <aside class="callout">
+                <p>
+                    <strong>Tip:</strong> the editor log is the first place to
+                    look when something does not load. Keep the
+                    <strong>Output Log</strong> panel visible while following
+                    the tutorials.
+                </p>
+            </aside>
+        </section>
+
+        <section id="viewport">
+            <h2>2. Move around the viewport</h2>
+            <table>
+                <thead>
+                    <tr><th>Input</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Right mouse drag</td><td>Look around from the viewport center.</td></tr>
+                    <tr><td>Mouse wheel</td><td>Move the editor camera forward or back.</td></tr>
+                    <tr><td><kbd>F</kbd></td><td>Focus the camera on the selected entity.</td></tr>
+                    <tr><td><kbd>W</kbd> / <kbd>E</kbd> / <kbd>R</kbd></td><td>Translate / rotate / scale gizmo.</td></tr>
+                    <tr><td>Left click</td><td>Select an entity.</td></tr>
+                    <tr><td>Left drag on the center marker</td><td>Move the selected entity with the active gizmo.</td></tr>
+                </tbody>
+            </table>
+            <p>
+                The Outliner on the left lists entities. Selecting an entity
+                opens its components in the Details panel. Most tutorials start
+                by selecting the object in the Outliner rather than clicking it
+                in the viewport.
+            </p>
+        </section>
+
+        <section id="scene">
+            <h2>3. Create a minimal scene</h2>
+            <p>
+                This scene is enough to test movement, lighting, and Play mode.
+                Build it from the top <strong>Create</strong> menu.
+            </p>
+            <ol class="steps">
+                <li>
+                    <strong>Ground.</strong> Choose
+                    <strong>Create → Cube</strong>. In Details, set its scale to
+                    something like <code>20, 0.2, 20</code> and move it below the
+                    origin. Rename it to <code>Ground</code> in the Outliner if
+                    you plan to use scripts that look it up by name.
+                </li>
+                <li>
+                    <strong>Light.</strong> Choose
+                    <strong>Create → Directional Light</strong>. If the scene is
+                    dark, increase its intensity in Details or rotate it so it
+                    points down at the ground.
+                </li>
+                <li>
+                    <strong>Camera.</strong> Choose
+                    <strong>Create → Camera</strong>. Move it up and back so it
+                    can see the ground. Keep <strong>Primary</strong> enabled in
+                    the Camera component.
+                </li>
+                <li>
+                    <strong>Player.</strong> Choose
+                    <strong>Create → Player</strong>. This creates the authored
+                    gameplay root with <code>PlayerTagComponent</code>; it is
+                    not a visible character mesh. A separate character model
+                    can be parented to it or spawned by a script.
+                </li>
+                <li>
+                    <strong>Optional physics prop.</strong> Choose
+                    <strong>Create → Collision Shapes → Box</strong>, raise the
+                    collision shape above the ground, then right-click it in
+                    the Outliner and choose
+                    <strong>Attach Mesh → Cube</strong>. In the Collision Shape
+                    section, set <strong>Body Type</strong> to
+                    <strong>Dynamic</strong> if you want it to fall.
+                </li>
+            </ol>
+            <aside class="callout">
+                <p>
+                    A quick smoke test: press <strong>Play</strong> and check
+                    that the camera view is usable. If the viewport looks black,
+                    select the primary camera and verify its position and
+                    clip planes before adding more objects.
+                </p>
+            </aside>
+        </section>
+
+        <section id="play">
+            <h2>4. Save and run</h2>
+            <p>
+                Use <strong>File → Save Scene</strong>
+                (<kbd>Ctrl</kbd>+<kbd>S</kbd>) before running. The
+                <strong>Play</strong> button sits in the thin bar above the
+                viewport. The same button becomes <strong>Stop</strong> while the
+                scene is running; <kbd>Esc</kbd> also stops Play mode.
+            </p>
+            <p>
+                In Play mode, scripts run, physics bodies are created, and water
+                and trigger callbacks fire. Stopping Play restores the authored
+                scene state. Changes made only at runtime are not saved.
+            </p>
+            <div class="callout warn">
+                <p>
+                    <strong>Save before testing.</strong> The renderer and
+                    physics integrations are still alpha software. A scene that
+                    behaves correctly in the editor can still expose a driver
+                    issue in Play mode.
+                </p>
+            </div>
+        </section>
+
+        <section id="scripts">
+            <h2>5. Where scripts live</h2>
+            <p>
+                Project scripts live under <code>assets/scripts/</code>. The
+                editor loads <code>assets/scripts/init.lua</code> at startup and
+                on <kbd>F5</kbd>. The Content Browser can create new Lua files
+                from its right-click menu (<strong>New Lua Script</strong> or
+                <strong>Create Script Templates</strong>).
+            </p>
+            <p>
+                Double-click a script in the Content Browser to open it in the
+                Code Editor. Use the editor's <strong>Reload</strong> button to
+                run a Lua file and <strong>Compile C++</strong> for a hot-reload
+                C++ script.
+            </p>
+            <p>
+                Continue with
+                <a href="02-lua-scripts.html">Lua scripting</a> for the script
+                lifecycle and entity API.
+            </p>
+        </section>
+
+        <section id="shortcuts">
+            <h2>Useful shortcuts</h2>
+            <table>
+                <thead>
+                    <tr><th>Shortcut</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>Save scene.</td></tr>
+                    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></td><td>Save scene as.</td></tr>
+                    <tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd></td><td>Load scene.</td></tr>
+                    <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></td><td>Undo / redo.</td></tr>
+                    <tr><td><kbd>Delete</kbd></td><td>Delete the selected entity.</td></tr>
+                    <tr><td><kbd>F5</kbd></td><td>Hot-reload <code>assets/scripts/init.lua</code>.</td></tr>
+                </tbody>
+            </table>
+        </section>
+    </main>
+
+    <nav class="pager" aria-label="Tutorial navigation">
+        <a href="index.html">← All tutorials</a>
+        <a href="02-lua-scripts.html">Next: Lua scripting →</a>
+    </nav>
+
+    <footer>
+        <p>GaleshiEngine tutorials · <a href="index.html">Index</a></p>
+    </footer>
+</div>
+</body>
+</html>

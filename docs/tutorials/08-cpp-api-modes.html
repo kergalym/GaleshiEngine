@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Native vs hot-reload C++ — GaleshiEngine Tutorials</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+    <nav class="top" aria-label="Breadcrumb">
+        <a href="index.html">Tutorials</a>
+        <span>/</span>
+        <span>Native vs hot-reload C++</span>
+    </nav>
+
+    <header class="hero">
+        <p class="eyebrow">Tutorial 8</p>
+        <h1>Native vs hot-reload C++: choosing the right path</h1>
+        <p class="lead">
+            Both paths are C++, but one links the engine and the other runs in
+            an isolated worker. Pick the path that matches what the code needs
+            to touch.
+        </p>
+    </header>
+
+    <main>
+        <div class="toc">
+            <p>In this tutorial</p>
+            <ul>
+                <li><a href="#compare">At a glance</a></li>
+                <li><a href="#native">Native API</a></li>
+                <li><a href="#scripts">Hot-reload scripts</a></li>
+                <li><a href="#extern">Why extern "C"</a></li>
+                <li><a href="#choose">Choosing a path</a></li>
+                <li><a href="#mistakes">Common mistakes</a></li>
+            </ul>
+        </div>
+
+        <section id="compare">
+            <h2>1. At a glance</h2>
+            <table>
+                <thead>
+                    <tr><th></th><th>Native API</th><th>Hot-reload scripts</th></tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Header</td>
+                        <td><code>GaleshiEngine/GaleshiEngine.hpp</code></td>
+                        <td><code>GaleshiEngine/Scripting/CppScriptApi.hpp</code> or <code>CppGameplayApi.hpp</code></td>
+                    </tr>
+                    <tr><td>Links with the engine</td><td>Yes</td><td>No</td></tr>
+                    <tr><td>Direct engine classes</td><td>Yes</td><td>No; entity handles and API calls only</td></tr>
+                    <tr><td>Hot reload</td><td>No</td><td>Yes</td></tr>
+                    <tr><td>Process isolation</td><td>No; runs in the game/editor process</td><td>Yes; runs in <code>GaleshiScriptWorker</code></td></tr>
+                    <tr><td>Best for</td><td>Games, plugins, tools, custom pipelines</td><td>Gameplay and level logic with fast iteration</td></tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="native">
+            <h2>2. Native API</h2>
+            <p>
+                The native API is the public C++ class surface of the engine.
+                Include the umbrella header and link the engine target:
+            </p>
+            <pre><code>#include &lt;GaleshiEngine/GaleshiEngine.hpp&gt;
+
+target_link_libraries(MyGame PRIVATE GaleshiEngine::GaleshiEngine)</code></pre>
+            <p>
+                It exposes real engine objects: <code>Scene</code>,
+                <code>Entity</code>, ECS components, <code>AssetManager</code>,
+                <code>RenderSystem</code>, <code>EnginePhysicsSystem</code>,
+                <code>AudioSystem</code>, <code>ScriptEngine</code>, and more.
+                Editor-only classes such as <code>ContentBrowser</code> and
+                <code>EditorState</code> are intentionally excluded.
+            </p>
+            <pre><code>#include &lt;GaleshiEngine/GaleshiEngine.hpp&gt;
+
+class MyGame final : public Galeshi::Application {
+protected:
+    void OnStart() override {
+        m_physics.Init();
+        m_context.scene = &m_scene;
+        m_context.assets = m_assets.get();
+        m_context.renderer = GetRenderer();
+        m_context.input = &GetInput();
+        m_context.physics = &m_physics;
+        m_context.audio = &m_audio;
+    }
+
+    void OnUpdate(float dt) override {
+        m_physics.Update(m_scene, dt);
+        m_audio.Update(m_scene, dt);
+    }
+
+private:
+    Galeshi::Scene m_scene;
+    std::unique_ptr&lt;Galeshi::AssetManager&gt; m_assets =
+        std::make_unique&lt;Galeshi::AssetManager&gt;();
+    Galeshi::EnginePhysicsSystem m_physics;
+    Galeshi::AudioSystem m_audio;
+    Galeshi::Api::EngineContext m_context;
+};</code></pre>
+            <p>
+                <code>EngineContext</code> is an optional non-owning grouping of
+                subsystem pointers. It does not create, own, or update
+                anything; the game keeps explicit ownership and lifetime.
+            </p>
+            <p><strong>Use native C++ when you need:</strong></p>
+            <ul>
+                <li>real engine objects and pointers;</li>
+                <li>custom rendering or asset pipelines;</li>
+                <li>direct <code>entt</code> access;</li>
+                <li>control over subsystem lifetime;</li>
+                <li>maximum in-process performance.</li>
+            </ul>
+        </section>
+
+        <section id="scripts">
+            <h2>3. Hot-reload scripts</h2>
+            <p>
+                Hot-reload scripts live in <code>scripts/</code> or
+                <code>assets/scripts/</code>. The editor compiles them into
+                temporary shared libraries and runs them in a separate worker
+                process. The worker does not link the engine and does not own
+                the scene or GPU resources.
+            </p>
+            <pre><code>#include "GaleshiEngine/Scripting/CppGameplayApi.hpp"
+
+static Galeshi::Script::Api* g_api = nullptr;
+
+extern "C" void GaleshiScriptRegister(const GaleshiScriptApi* api) {
+    static Galeshi::Script::Api wrapper(api);
+    g_api = &wrapper;
+}
+
+extern "C" void GaleshiScriptUpdate(float dt) {
+    if (!g_api || !g_api->Compatible()) return;
+    (void)dt;
+
+    const uint32_t player = g_api->world.Find("Player");
+    if (!g_api->world.Valid(player)) return;
+    g_api->physics.SetVelocity(player, {0.0f, 0.0f, -5.0f});
+}</code></pre>
+            <p>
+                The host passes a table of function pointers. Script calls are
+                forwarded to the editor process as worker requests. This gives
+                crash isolation, module unloading, hot reload, and a stable
+                boundary that does not require linking the engine.
+            </p>
+            <p><strong>Use hot-reload scripts when:</strong></p>
+            <ul>
+                <li>the code is gameplay or level logic;</li>
+                <li>fast iteration and hot reload matter;</li>
+                <li>crash isolation is useful;</li>
+                <li>the script API covers what you need;</li>
+                <li>handles instead of raw pointers are acceptable.</li>
+            </ul>
+        </section>
+
+        <section id="extern">
+            <h2>4. Why <code>extern "C"</code>?</h2>
+            <p>
+                The worker loads a module with <code>dlopen</code> and finds
+                symbols with <code>dlsym</code>. A normal C++ function has a
+                compiler-dependent mangled name:
+            </p>
+            <pre><code>void GaleshiScriptUpdate(float dt);
+// emitted as something like _Z19GaleshiScriptUpdatef</code></pre>
+            <p>
+                <code>extern "C"</code> gives the exported function a stable C
+                symbol name:
+            </p>
+            <pre><code>extern "C" void GaleshiScriptUpdate(float dt);
+// emitted as GaleshiScriptUpdate</code></pre>
+            <p>
+                It does <strong>not</strong> mean the file is C. Templates,
+                classes, and STL are fine inside the module. Only the boundary
+                is C-like; C++ objects do not cross the shared-library
+                boundary.
+            </p>
+        </section>
+
+        <section id="choose">
+            <h2>5. Choosing a path</h2>
+            <table>
+                <thead>
+                    <tr><th>If the code...</th><th>Use</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Is part of the game executable or a native plugin</td><td>Native API</td></tr>
+                    <tr><td>Needs direct scene, renderer, or ECS access</td><td>Native API</td></tr>
+                    <tr><td>Owns physics, audio, or rendering systems</td><td>Native API</td></tr>
+                    <tr><td>Is gameplay logic that should reload quickly</td><td>Hot-reload scripts</td></tr>
+                    <tr><td>Should survive script crashes independently</td><td>Hot-reload scripts</td></tr>
+                </tbody>
+            </table>
+            <p>
+                A project can use both: native systems in the game application
+                and hot-reload scripts for gameplay behavior.
+            </p>
+        </section>
+
+        <section id="mistakes">
+            <h2>6. Common mistakes</h2>
+            <ul>
+                <li>
+                    <strong>Including <code>GaleshiEngine.hpp</code> in a
+                    hot-reload module.</strong>
+                    Including the header does not link the engine into the
+                    worker. Use <code>CppScriptApi.hpp</code> or
+                    <code>CppGameplayApi.hpp</code> instead.
+                </li>
+                <li>
+                    <strong>Assuming <code>extern "C"</code> means C.</strong>
+                    The translation unit is still C++.
+                </li>
+                <li>
+                    <strong>Storing raw engine pointers across the worker
+                    boundary.</strong>
+                    Use entity ids and API operations.
+                </li>
+                <li>
+                    <strong>Calling the API before registration.</strong>
+                    Assign <code>g_api</code> in
+                    <code>GaleshiScriptRegister</code>.
+                </li>
+                <li>
+                    <strong>Ignoring ABI checks.</strong>
+                    New scripts should check <code>Compatible()</code> or the
+                    ABI version before using recently added calls.
+                </li>
+            </ul>
+            <p>
+                For the full reference, see
+                <a href="../CPP_API_MODES.md">C++ API Modes</a> and
+                <a href="../CPP_API.md">C++ API</a>.
+            </p>
+        </section>
+    </main>
+
+    <nav class="pager" aria-label="Tutorial navigation">
+        <a href="07-cpp-scripts.html">← Previous: C++ gameplay scripts</a>
+        <a href="09-third-person-demo.html">Next: Third-person demo →</a>
+    </nav>
+
+    <footer>
+        <p>GaleshiEngine tutorials · <a href="index.html">Index</a></p>
+    </footer>
+</div>
+</body>
+</html>

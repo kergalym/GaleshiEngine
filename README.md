@@ -10,6 +10,7 @@ GaleshiEngine is a minimalist, ECS-based game engine and editor written in C++20
 
 ## Documentation
 
+- [HTML tutorials](docs/tutorials/index.html)
 - [Lua API](docs/LUA_API.md)
 - [C++ API](docs/CPP_API.md)
 - [Material scripts (.mat)](docs/MATERIAL_SCRIPTS.md)

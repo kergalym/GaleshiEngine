@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Animation state machines — GaleshiEngine Tutorials</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+    <nav class="top" aria-label="Breadcrumb">
+        <a href="index.html">Tutorials</a>
+        <span>/</span>
+        <span>Animation state machines</span>
+    </nav>
+
+    <header class="hero">
+        <p class="eyebrow">Tutorial 3</p>
+        <h1>Animation state machines for characters</h1>
+        <p class="lead">
+            Create an idle/walk state machine, blend between clips, drive it
+            from Lua, and save a separate setup for every character.
+        </p>
+    </header>
+
+    <main>
+        <div class="toc">
+            <p>In this tutorial</p>
+            <ul>
+                <li><a href="#concepts">Concepts</a></li>
+                <li><a href="#import">Import a character</a></li>
+                <li><a href="#states">Add states and clips</a></li>
+                <li><a href="#transitions">Add transitions</a></li>
+                <li><a href="#scripts">Drive it from Lua</a></li>
+                <li><a href="#save">Save per-character setups</a></li>
+                <li><a href="#troubleshoot">Troubleshooting</a></li>
+            </ul>
+        </div>
+
+        <section id="concepts">
+            <h2>1. Concepts</h2>
+            <p>
+                An animated character has a <code>SkeletalComponent</code> and
+                an <code>AnimationStateMachineComponent</code> on its skeleton
+                root. The state machine contains:
+            </p>
+            <ul>
+                <li><strong>States</strong> — one animation clip each.</li>
+                <li><strong>Transitions</strong> — rules that switch states.</li>
+                <li><strong>Parameters</strong> — values such as
+                    <code>Speed</code> used by transition conditions.</li>
+            </ul>
+            <p>
+                A state can use a clip embedded in the character model, or a
+                separate animation asset retargeted by bone name. The editor
+                gives every character its own state machine and, when saved,
+                its own <code>.asme</code> file.
+            </p>
+        </section>
+
+        <section id="import">
+            <h2>2. Import and select a character</h2>
+            <ol class="steps">
+                <li>
+                    Drag a rigged <code>.gltf</code> or <code>.glb</code>
+                    character from the Content Browser into the viewport. This
+                    creates a model root with a skeleton and its child meshes.
+                </li>
+                <li>
+                    Select the character root in the Outliner. Selecting a mesh
+                    child also works: the editor resolves it to the skeleton
+                    owner instead of assigning the state machine to the mesh.
+                </li>
+                <li>
+                    Open the state machine editor from
+                    <strong>Animation → State Machine Editor</strong>. Selecting
+                    a character opens it automatically.
+                </li>
+            </ol>
+            <aside class="callout">
+                <p>
+                    <strong>One character, one state machine.</strong> Do not
+                    set up animation on a shared parent such as a Player wrapper
+                    that contains several characters. The editor resolves a
+                    sole character below the wrapper automatically; a wrapper
+                    with several characters is intentionally not treated as one
+                    character.
+                </p>
+            </aside>
+        </section>
+
+        <section id="states">
+            <h2>3. Add states and clips</h2>
+            <p>
+                The ASME window shows the selected character and its source
+                model. Use the <strong>States</strong> section:
+            </p>
+            <ol class="steps">
+                <li>
+                    Click <strong>+ Add All Clips</strong> to create one state
+                    per embedded clip. For a manual setup, use
+                    <strong>+ Add State</strong>.
+                </li>
+                <li>
+                    Rename the state, for example <code>Idle</code> and
+                    <code>Walking</code>.
+                </li>
+                <li>
+                    For an embedded clip, choose it in the <strong>Clip</strong>
+                    combo. For a separate animation file, drag an FBX, glTF, or
+                    GLB onto the <strong>Animation Asset</strong> field, or use
+                    <strong>Browse</strong>.
+                </li>
+                <li>
+                    Click <strong>Set</strong> on a state to preview it. The
+                    <strong>Loop</strong> and <strong>Speed</strong> controls
+                    affect that state.
+                </li>
+            </ol>
+            <p>
+                A model with no embedded clips can still use a separate
+                animation asset, as long as the target character has a skin and
+                armature. The ASME warnings in the window explain when the
+                character mesh cannot be deformed.
+            </p>
+        </section>
+
+        <section id="transitions">
+            <h2>4. Add transitions</h2>
+            <p>
+                The default character setup includes a <code>Speed</code>
+                parameter. Build a simple idle-to-walk graph:
+            </p>
+            <ol class="steps">
+                <li>
+                    Open <strong>Transitions</strong> and click
+                    <strong>+ Add Transition</strong>.
+                </li>
+                <li>
+                    Set <strong>From</strong> to <code>Idle</code> and
+                    <strong>To</strong> to <code>Walking</code>.
+                </li>
+                <li>
+                    Set <strong>Condition</strong> to <strong>Greater</strong>,
+                    <strong>Parameter</strong> to <code>Speed</code>, and
+                    <strong>Threshold</strong> to <code>0.5</code>.
+                </li>
+                <li>
+                    Add the reverse transition: <code>Walking</code> →
+                    <code>Idle</code> with <strong>Less</strong> than
+                    <code>0.5</code>.
+                </li>
+                <li>
+                    Set <strong>Blend</strong> to a small value such as
+                    <code>0.2</code> seconds to avoid a hard pose snap.
+                </li>
+            </ol>
+            <table>
+                <thead>
+                    <tr><th>Condition</th><th>Use</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Bool True / Bool False</td><td>Toggle a boolean parameter.</td></tr>
+                    <tr><td>Greater / Less</td><td>Compare a numeric parameter to the threshold.</td></tr>
+                    <tr><td>Trigger</td><td>Consume a one-shot parameter set to 1.</td></tr>
+                    <tr><td>Always</td><td>Unconditional transition; combine with a From state.</td></tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="scripts">
+            <h2>5. Drive the machine from Lua</h2>
+            <p>
+                A character is a normal entity handle. Change parameters every
+                frame, or switch states directly:
+            </p>
+            <pre><code>local character = nil
+
+function RunOnce()
+    character = Galeshi.world.find("Qorlan")
+end
+
+function RunAlways(dt)
+    if not character or not character:valid() then return end
+
+    local move = Galeshi.input.axis("Vertical")
+    local speed = math.abs(move)
+
+    Galeshi.animation.set_parameter(character, "Speed", speed)
+end</code></pre>
+            <pre><code>Galeshi.animation.set_state(character, "Walking")
+Galeshi.animation.trigger(character, "Jump")
+Galeshi.animation.set_parameter(character, "Speed", 1.0)</code></pre>
+            <p>
+                The script API finds the state machine on the character or its
+                nearest parent, so use the character root handle when possible.
+                State names are the names shown in the ASME window.
+            </p>
+        </section>
+
+        <section id="save">
+            <h2>6. Save a separate setup for each character</h2>
+            <p>
+                The ASME window displays the setup path under
+                <strong>ASME setup</strong>. Click <strong>Save ASME Setup</strong>
+                to write the current states, transitions, and parameters to:
+            </p>
+            <pre><code>assets/scripts/&lt;CharacterName&gt;.asme</code></pre>
+            <p>
+                Selecting a character loads its own setup from that file when
+                it exists. <strong>Reload ASME Setup</strong> re-reads the file
+                after external edits. Two characters with the same display name
+                receive stable separate file names; a suffix is added to the
+                later entity so their machines do not share a file.
+            </p>
+            <div class="callout">
+                <p>
+                    <strong>Workflow:</strong> configure the graph, press
+                    <strong>Set</strong> to preview it, then
+                    <strong>Save ASME Setup</strong>. Stopping Play restores the
+                    authored scene, but it does not update the
+                    <code>.asme</code> file for you.
+                </p>
+            </div>
+            <p>
+                The in-memory state machine is also stored in the scene. The
+                <code>.asme</code> file is the reusable per-character setup;
+                keeping both in sync is intentional.
+            </p>
+        </section>
+
+        <section id="troubleshoot">
+            <h2>7. Troubleshooting</h2>
+            <table>
+                <thead>
+                    <tr><th>Symptom</th><th>Check</th></tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>“No embedded animation clips”</td>
+                        <td>
+                            Re-export the FBX with <strong>All Actions</strong>
+                            (or an active action), or assign a separate
+                            animation asset to the state.
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Character does not deform</td>
+                        <td>
+                            The model must contain a skin and armature. A static
+                            mesh with only animation curves cannot be skinned
+                            by separate clips.
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Animation is tiny or huge</td>
+                        <td>
+                            Adjust <strong>Animation Scale</strong> in the ASME
+                            window. A centimeter-authored animation on a
+                            meter character often needs <code>0.01</code>.
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Two characters play the same pose</td>
+                        <td>
+                            Make sure each character has its own skeleton root
+                            and its own ASME target. Do not target a shared
+                            Player/model wrapper that contains both characters.
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Changes disappear after selecting another character</td>
+                        <td>
+                            Save the setup before switching characters, or use
+                            <strong>Reload ASME Setup</strong> deliberately.
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+    </main>
+
+    <nav class="pager" aria-label="Tutorial navigation">
+        <a href="02-lua-scripts.html">← Previous: Lua scripting</a>
+        <a href="04-water-triggers.html">Next: Water triggers →</a>
+    </nav>
+
+    <footer>
+        <p>GaleshiEngine tutorials · <a href="index.html">Index</a></p>
+    </footer>
+</div>
+</body>
+</html>

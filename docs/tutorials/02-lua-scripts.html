@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Lua scripting — GaleshiEngine Tutorials</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+    <nav class="top" aria-label="Breadcrumb">
+        <a href="index.html">Tutorials</a>
+        <span>/</span>
+        <span>Lua scripting</span>
+    </nav>
+
+    <header class="hero">
+        <p class="eyebrow">Tutorial 2</p>
+        <h1>Lua scripting: lifecycle, entities, and triggers</h1>
+        <p class="lead">
+            Write a gameplay script, move an entity, read input, and react to
+            collider or water trigger events.
+        </p>
+    </header>
+
+    <main>
+        <div class="toc">
+            <p>In this tutorial</p>
+            <ul>
+                <li><a href="#where">Where scripts run</a></li>
+                <li><a href="#lifecycle">Lifecycle callbacks</a></li>
+                <li><a href="#entities">Entity handles and movement</a></li>
+                <li><a href="#input">Input and physics</a></li>
+                <li><a href="#triggers">Trigger callbacks</a></li>
+                <li><a href="#reload">Reloading and debugging</a></li>
+            </ul>
+        </div>
+
+        <section id="where">
+            <h2>1. Where scripts run</h2>
+            <p>
+                Lua scripts live in the project's
+                <code>assets/scripts/</code> directory. The editor loads
+                <code>assets/scripts/init.lua</code> at startup. You can create
+                another file from the Content Browser's right-click menu
+                (<strong>New Lua Script</strong>), open it in the Code Editor,
+                and run it with the editor's <strong>Reload</strong> button.
+            </p>
+            <p>
+                When a Lua file is run, its global functions such as
+                <code>RunOnce</code>, <code>RunAlways</code>, and the trigger
+                callbacks become active in the Lua state. If you use several
+                files, load the ones you need from <code>init.lua</code> or run
+                the file from the Code Editor.
+            </p>
+            <aside class="callout">
+                <p>
+                    <strong>Keep it small first.</strong> A script that prints a
+                    message in <code>RunOnce</code> is a good way to verify that
+                    the file is actually loaded and running.
+                </p>
+            </aside>
+        </section>
+
+        <section id="lifecycle">
+            <h2>2. Lifecycle callbacks</h2>
+            <p>
+                A Lua gameplay script uses two optional global callbacks:
+            </p>
+            <table>
+                <thead>
+                    <tr><th>Callback</th><th>When it runs</th></tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>RunOnce()</code></td>
+                        <td>Once after the file is loaded or reloaded. Use it to find and cache entities.</td>
+                    </tr>
+                    <tr>
+                        <td><code>RunAlways(dt)</code></td>
+                        <td>Every frame. <code>dt</code> is the elapsed time in seconds.</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>
+                The older <code>update(dt)</code> function is still accepted as
+                a fallback when <code>RunAlways</code> is absent, but new scripts
+                should use <code>RunAlways</code>.
+            </p>
+            <pre><code>function RunOnce()
+    print("script loaded")
+end
+
+function RunAlways(dt)
+    -- dt is in seconds
+end</code></pre>
+        </section>
+
+        <section id="entities">
+            <h2>3. Entity handles and movement</h2>
+            <p>
+                <code>Galeshi.world.find(name)</code> returns an entity handle
+                or <code>nil</code>. Store the handle in <code>RunOnce</code>
+                and validate it with <code>valid()</code> before using it:
+            </p>
+            <pre><code>local cube = nil
+
+function RunOnce()
+    cube = Galeshi.world.find("Cube")
+end
+
+function RunAlways(dt)
+    if not cube or not cube:valid() then return end
+
+    local position = cube:position()
+    local height = 1.5 + math.sin(Galeshi.engine.time()) * 0.5
+    cube:set_position(position.x, height, position.z)
+end</code></pre>
+            <p>
+                <code>position()</code> returns a table with
+                <code>x</code>, <code>y</code>, and <code>z</code> fields. The
+                same convention applies to rotation, scale, and vector
+                arguments throughout the Lua API.
+            </p>
+            <p>Common entity methods include:</p>
+            <table>
+                <thead>
+                    <tr><th>Method</th><th>Purpose</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>valid()</code></td><td>Is the entity still alive?</td></tr>
+                    <tr><td><code>name()</code> / <code>set_name(name)</code></td><td>Display name.</td></tr>
+                    <tr><td><code>position()</code> / <code>set_position(x, y, z)</code></td><td>Local position.</td></tr>
+                    <tr><td><code>rotation()</code> / <code>set_rotation(x, y, z, w)</code></td><td>Quaternion rotation. Three numbers are treated as Euler degrees.</td></tr>
+                    <tr><td><code>scale()</code> / <code>set_scale(x, y, z)</code></td><td>Local scale.</td></tr>
+                    <tr><td><code>children()</code></td><td>Array of child handles.</td></tr>
+                    <tr><td><code>has_component(name)</code></td><td>Check for an engine component, for example <code>"water"</code> or <code>"collider"</code>.</td></tr>
+                </tbody>
+            </table>
+        </section>
+
+        <section id="input">
+            <h2>4. Input and physics</h2>
+            <p>
+                Input axes are read with
+                <code>Galeshi.input.axis("Horizontal")</code>. For a visual
+                entity without a rigid body, move the transform directly:
+            </p>
+            <pre><code>local player = nil
+
+function RunOnce()
+    player = Galeshi.world.find("Player")
+end
+
+function RunAlways(dt)
+    if not player or not player:valid() then return end
+
+    local move = Galeshi.input.axis("Horizontal")
+    player:translate(move * 5.0 * dt, 0.0, 0.0)
+end</code></pre>
+            <p>
+                If the entity has a dynamic Jolt body, use the physics API so
+                collisions and gravity keep working:
+            </p>
+            <pre><code>local box = nil
+
+function RunOnce()
+    box = Galeshi.world.find("PhysicsBox")
+end
+
+function RunAlways(dt)
+    if not box or not box:valid() then return end
+
+    local velocity = Galeshi.physics.get_velocity(box)
+    local move = Galeshi.input.axis("Horizontal")
+    Galeshi.physics.set_velocity(box, move * 6.0, velocity.y, 0.0)
+end</code></pre>
+            <p>
+                A script can also spawn a physics object with
+                <code>Galeshi.physics.create_box(name, x, y, z, size)</code>.
+                The final optional argument marks the body as static.
+            </p>
+        </section>
+
+        <section id="triggers">
+            <h2>5. Trigger callbacks</h2>
+            <p>
+                Triggers use two optional global functions. They receive raw
+                entity ids, not entity handles:
+            </p>
+            <pre><code>function OnTriggerBeginOverlap(trigger, other)
+    print("entered", trigger, other)
+end
+
+function OnTriggerEndOverlap(trigger, other)
+    print("left", trigger, other)
+end</code></pre>
+            <p>
+                The first id is the trigger collider. The end callback fires
+                when the last contact between that pair is removed. Wrap an id
+                with <code>Galeshi.world.entity(id)</code> when you need entity
+                methods:
+            </p>
+            <pre><code>function OnTriggerBeginOverlap(trigger, other)
+    local triggerEntity = Galeshi.world.entity(trigger)
+    if triggerEntity and triggerEntity:has_component("water") then
+        print("something entered the water")
+    end
+end</code></pre>
+            <p>
+                For collider triggers, add a <code>ColliderComponent</code> with
+                <strong>Is Trigger</strong> enabled and make sure the moving
+                object has a dynamic rigid body. Water bodies have their own
+                <strong>Trigger</strong> checkbox; the next tutorial covers that
+                workflow end to end.
+            </p>
+        </section>
+
+        <section id="reload">
+            <h2>6. Reloading and debugging</h2>
+            <ul>
+                <li>
+                    <kbd>F5</kbd> reloads
+                    <code>assets/scripts/init.lua</code> and C++ modules.
+                </li>
+                <li>
+                    The Code Editor's <strong>Reload</strong> button runs the
+                    currently open Lua file.
+                </li>
+                <li>
+                    <code>print()</code> and script errors are written to the
+                    <strong>Output Log</strong>.
+                </li>
+                <li>
+                    Reloading a script re-runs <code>RunOnce</code> and replaces
+                    global callbacks from that file. Cached entity handles from
+                    a previous load can become invalid; check them or find them
+                    again.
+                </li>
+            </ul>
+            <p>
+                The complete API surface is in the
+                <a href="../LUA_API.md">Lua API reference</a>.
+            </p>
+        </section>
+    </main>
+
+    <nav class="pager" aria-label="Tutorial navigation">
+        <a href="01-editor-basics.html">← Previous: Editor basics</a>
+        <a href="03-animation-state-machine.html">Next: Animation state machines →</a>
+    </nav>
+
+    <footer>
+        <p>GaleshiEngine tutorials · <a href="index.html">Index</a></p>
+    </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Third-person demo — GaleshiEngine Tutorials</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+    <nav class="top" aria-label="Breadcrumb">
+        <a href="index.html">Tutorials</a>
+        <span>/</span>
+        <span>Third-person demo</span>
+    </nav>
+
+    <header class="hero">
+        <p class="eyebrow">Tutorial 9</p>
+        <h1>Third-person demo: camera, capsule, and animation</h1>
+        <p class="lead">
+            Set up the sample hot-reload C++ controller: a non-physical Player
+            visual root, a dynamic physics proxy, camera-relative movement, and
+            gameplay signals.
+        </p>
+    </header>
+
+    <main>
+        <div class="toc">
+            <p>In this tutorial</p>
+            <ul>
+                <li><a href="#what">What the demo does</a></li>
+                <li><a href="#scene">Scene setup</a></li>
+                <li><a href="#script">Add the script</a></li>
+                <li><a href="#controls">Controls</a></li>
+                <li><a href="#tuning">Tuning</a></li>
+                <li><a href="#animation">Animation, audio, and HUD</a></li>
+                <li><a href="#limits">Limitations</a></li>
+            </ul>
+        </div>
+
+        <section id="what">
+            <h2>1. What the demo does</h2>
+            <ul>
+                <li>Finds or creates a non-physical <code>Player</code> visual root.</li>
+                <li>Finds or creates a separate <code>PlayerPhysics</code> entity with a dynamic capsule body.</li>
+                <li>Switches the gameplay camera to third-person orbit.</li>
+                <li>Moves the physics proxy relative to the camera, then copies its position to the visual Player root.</li>
+                <li>Supports sprinting, jumping, respawning, and a simple attack trigger.</li>
+                <li>Rotates the visual Player toward the movement direction.</li>
+                <li>Sends optional animation parameters for speed, jump, attack, and respawn.</li>
+                <li>Plays optional footstep and attack sounds and creates a small HUD canvas.</li>
+            </ul>
+            <p>
+                The complete source is
+                <a href="../third_person_demo.cpp">third_person_demo.cpp</a>.
+            </p>
+        </section>
+
+        <section id="scene">
+            <h2>2. Scene setup</h2>
+            <ol class="steps">
+                <li>
+                    <strong>Ground.</strong> Use a landscape or a large ground
+                    mesh with a static collider. The physics proxy needs
+                    collision to stand and jump.
+                </li>
+                <li>
+                    <strong>Camera.</strong> Choose
+                    <strong>Create → Camera</strong>. Keep the name
+                    <code>Camera</code> (or edit <code>kCameraName</code> in the
+                    script) and mark it <strong>Primary</strong>. If it is not
+                    parented, the script attaches it to <code>Player</code>.
+                </li>
+                <li>
+                    <strong>Player.</strong> Create an entity named
+                    <code>Player</code> with a visible mesh/model, and
+                    <strong>do not add a rigid body or collider</strong>. This
+                    root is the visual and camera target; it must remain
+                    non-physical.
+                </li>
+                <li>
+                    <strong>Physics proxy.</strong> The script creates
+                    <code>PlayerPhysics</code> at the Player's feet plus the
+                    capsule center offset. If you author it manually, make it a
+                    root entity with a dynamic capsule collider and rigid body.
+                </li>
+                <li>
+                    <strong>Script.</strong> Copy
+                    <code>third_person_demo.cpp</code> into
+                    <code>&lt;project&gt;/scripts/</code> or
+                    <code>&lt;project&gt;/assets/scripts/</code>.
+                </li>
+                <li>
+                    Open the project, wait for the C++ script to compile, and
+                    press <strong>Play</strong>.
+                </li>
+            </ol>
+            <div class="callout">
+                <p>
+                    <strong>Player vs PlayerPhysics.</strong> The visual root
+                    must not have a rigid body, or Jolt will overwrite its
+                    position and rotation. Movement happens on the physics
+                    proxy; the script copies the proxy position back to the
+                    visual root.
+                </p>
+            </div>
+        </section>
+
+        <section id="script">
+            <h2>3. Add the script</h2>
+            <p>
+                The demo is a hot-reload C++ module. It exports the same
+                lifecycle as any other module:
+            </p>
+            <pre><code>extern "C" void GaleshiScriptRegister(const GaleshiScriptApi* api);
+extern "C" void GaleshiScriptUpdate(float dt);</code></pre>
+            <p>
+                If the project already has another module using those exports,
+                add this file as a separate module rather than copying its
+                functions into an existing file. The hot-reload worker can load
+                more than one module, but each shared library must export a
+                complete module.
+            </p>
+            <p>
+                Compile diagnostics appear in the Code Editor
+                <strong>Output</strong> and <strong>Errors</strong> tabs. The
+                demo does not link the engine; it uses only the public script
+                API.
+            </p>
+        </section>
+
+        <section id="controls">
+            <h2>4. Controls</h2>
+            <table>
+                <thead>
+                    <tr><th>Input</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>WASD</code></td><td>Move relative to the third-person camera.</td></tr>
+                    <tr><td><code>Left Shift</code></td><td>Sprint.</td></tr>
+                    <tr><td><code>Space</code></td><td>Jump.</td></tr>
+                    <tr><td>Left mouse</td><td>Attack trigger.</td></tr>
+                    <tr><td><code>R</code></td><td>Respawn at the spawn point.</td></tr>
+                </tbody>
+            </table>
+            <p>
+                Input is read only while Play mode is active. The Player root
+                stays at the scene root; the script writes its position in world
+                coordinates.
+            </p>
+        </section>
+
+        <section id="tuning">
+            <h2>5. Tuning</h2>
+            <p>
+                The top of the script contains the main constants. Start there
+                before changing the controller logic:
+            </p>
+            <pre><code>constexpr const char* kPlayerName = "Player";
+constexpr const char* kPlayerPhysicsName = "PlayerPhysics";
+constexpr const char* kCameraName = "Camera";
+constexpr const char* kPlayerModel = "assets/models/player.glb";
+
+constexpr bool kAutoCreatePlayer = true;
+constexpr bool kAutoCreatePhysicsProxy = true;
+constexpr bool kAutoParentCamera = true;
+
+constexpr Vec3 kSpawn{0.0f, 2.0f, 0.0f}; // Player feet
+constexpr float kWalkSpeed = 4.5f;
+constexpr float kRunSpeed = 8.5f;
+constexpr float kJumpSpeed = 7.0f;
+constexpr float kCapsuleHalfHeight = 0.85f;
+constexpr float kCapsuleRadius = 0.35f;
+constexpr float kCapsuleCenterY =
+    kCapsuleHalfHeight + kCapsuleRadius;</code></pre>
+            <p>
+                <code>kSpawn</code> is the visual Player position (feet). The
+                physics proxy is placed at
+                <code>kSpawn.y + kCapsuleCenterY</code> because a Jolt capsule
+                is centered on its body origin.
+            </p>
+            <h3>Model facing direction</h3>
+            <p>
+                The controller rotates the player toward the movement
+                direction. If your model faces <code>-Z</code>, set:
+            </p>
+            <pre><code>constexpr float kModelYawOffset = 3.14159265f;</code></pre>
+            <p>
+                If the character runs sideways, adjust the offset further. The
+                model path is only used when the script creates the visible
+                player automatically.
+            </p>
+        </section>
+
+        <section id="animation">
+            <h2>6. Animation, audio, and HUD</h2>
+            <p>
+                The script sends these optional animation signals to the
+                player's state machine:
+            </p>
+            <table>
+                <thead>
+                    <tr><th>Signal</th><th>Use</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>Speed</code> (float)</td><td>Normalized horizontal speed.</td></tr>
+                    <tr><td><code>Jump</code></td><td>Trigger/parameter for a jump transition.</td></tr>
+                    <tr><td><code>Attack</code></td><td>Trigger/parameter for an attack transition.</td></tr>
+                    <tr><td><code>Respawn</code></td><td>Trigger/parameter for a respawn transition.</td></tr>
+                </tbody>
+            </table>
+            <p>
+                The calls are ignored safely if the player has no animation
+                component. Set up matching parameters and transitions in the
+                ASME window; see
+                <a href="03-animation-state-machine.html">Animation state
+                machines</a>.
+            </p>
+            <h3>Optional audio</h3>
+            <pre><code>assets/sounds/footstep.wav
+assets/sounds/attack.wav</code></pre>
+            <p>
+                Missing files produce no audible result. Set the path constants
+                to empty strings to disable the calls.
+            </p>
+            <h3>HUD</h3>
+            <p>
+                The script creates a canvas named
+                <code>ThirdPersonHUD</code> with a text widget named
+                <code>status</code>. It shows horizontal speed, grounded or
+                airborne state, and whether <code>PlayerPhysics</code> has a
+                rigid body. Reloading the script reuses the existing canvas and
+                widget instead of creating duplicates.
+            </p>
+        </section>
+
+        <section id="limits">
+            <h2>7. Limitations</h2>
+            <ul>
+                <li>Ground detection uses vertical velocity, not a raycast.</li>
+                <li>Jumping is a simple vertical velocity impulse.</li>
+                <li>Attack has no hit detection, damage, combos, or networking.</li>
+                <li>Camera auto-parenting only finds a root camera named <code>Camera</code>.</li>
+                <li>The Player root must stay unparented; its position is copied from the proxy in world space.</li>
+                <li>Only one player and one <code>PlayerPhysics</code> are controlled.</li>
+                <li>Camera collision, root motion, and network prediction are outside the sample.</li>
+            </ul>
+            <p>
+                These limitations are deliberate: the example stays small
+                enough to read while exercising world, input, physics, camera,
+                animation, UI, and audio APIs.
+            </p>
+            <p>
+                Reference:
+                <a href="../THIRD_PERSON_DEMO.md">Third-person demo setup</a>.
+            </p>
+        </section>
+    </main>
+
+    <nav class="pager" aria-label="Tutorial navigation">
+        <a href="08-cpp-api-modes.html">← Previous: Native vs hot-reload C++</a>
+        <a href="index.html">All tutorials →</a>
+    </nav>
+
+    <footer>
+        <p>GaleshiEngine tutorials · <a href="index.html">Index</a></p>
+    </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Water triggers — GaleshiEngine Tutorials</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+    <nav class="top" aria-label="Breadcrumb">
+        <a href="index.html">Tutorials</a>
+        <span>/</span>
+        <span>Water triggers</span>
+    </nav>
+
+    <header class="hero">
+        <p class="eyebrow">Tutorial 4</p>
+        <h1>Water triggers: react to entities entering water</h1>
+        <p class="lead">
+            Turn a water body into a script trigger, identify the water in a
+            callback, and run gameplay logic when a body enters or leaves.
+        </p>
+    </header>
+
+    <main>
+        <div class="toc">
+            <p>In this tutorial</p>
+            <ul>
+                <li><a href="#create">Create the water</a></li>
+                <li><a href="#enable">Enable the trigger</a></li>
+                <li><a href="#lua">Lua callback</a></li>
+                <li><a href="#cpp">C++ callback</a></li>
+                <li><a href="#behaviour">What triggers and when</a></li>
+                <li><a href="#troubleshoot">Troubleshooting</a></li>
+            </ul>
+        </div>
+
+        <section id="create">
+            <h2>1. Create the water</h2>
+            <ol class="steps">
+                <li>
+                    Choose <strong>Create → Water Surface</strong>. The editor
+                    creates an entity named <code>Water</code> at the current
+                    camera target.
+                </li>
+                <li>
+                    Select it and open the <strong>Water</strong> section in
+                    Details.
+                </li>
+                <li>
+                    Set <strong>Width</strong>, <strong>Depth</strong>, and the
+                    entity's Y position. The water surface is centered on the
+                    entity.
+                </li>
+                <li>
+                    Choose a <strong>Body Type</strong> and tune the look.
+                    Waves, refraction, foam, and terrain erosion do not affect
+                    trigger detection; the procedural footprint does.
+                </li>
+            </ol>
+        </section>
+
+        <section id="enable">
+            <h2>2. Enable the trigger</h2>
+            <p>
+                In the Water section, enable <strong>Trigger</strong>. This is
+                the checkbox that turns the water into a script trigger volume.
+                It is enabled by default for new water surfaces.
+            </p>
+            <p>
+                No separate <code>ColliderComponent</code> is required. The
+                trigger follows the water's procedural footprint, including the
+                rounded lake/ocean edge and the river channel, instead of a
+                simple box.
+            </p>
+            <aside class="callout">
+                <p>
+                    <strong>Play mode only.</strong> Water trigger events are
+                    dispatched while the scene is playing, the same as physics
+                    trigger callbacks. Entering and leaving water in the editor
+                    camera does not run gameplay scripts.
+                </p>
+            </aside>
+            <p>
+                Objects must have a dynamic Jolt body to be detected. A visual
+                mesh without a collider/rigid body is invisible to the trigger.
+                A character with a dynamic capsule or box body works.
+            </p>
+        </section>
+
+        <section id="lua">
+            <h2>3. Lua callback</h2>
+            <p>
+                Water uses the existing trigger callback API. The trigger id is
+                the water entity; the other id is the body that entered:
+            </p>
+            <pre><code>function OnTriggerBeginOverlap(trigger, other)
+    local water = Galeshi.world.entity(trigger)
+    if not water or not water:has_component("water") then
+        return
+    end
+
+    print("entered " .. water:name(), "body", other)
+end
+
+function OnTriggerEndOverlap(trigger, other)
+    local water = Galeshi.world.entity(trigger)
+    if not water or not water:has_component("water") then
+        return
+    end
+
+    print("left " .. water:name(), "body", other)
+end</code></pre>
+            <p>
+                If you need the entity behind <code>other</code>, wrap it the
+                same way:
+            </p>
+            <pre><code>local body = Galeshi.world.entity(other)
+if body and body:valid() then
+    print(body:name())
+end</code></pre>
+            <p>
+                Keep track of active entries when you need a count or a
+                per-entity effect:
+            </p>
+            <pre><code>local inside = {}
+
+function OnTriggerBeginOverlap(trigger, other)
+    local water = Galeshi.world.entity(trigger)
+    if not water or not water:has_component("water") then return end
+    inside[other] = (inside[other] or 0) + 1
+end
+
+function OnTriggerEndOverlap(trigger, other)
+    local water = Galeshi.world.entity(trigger)
+    if not water or not water:has_component("water") then return end
+    inside[other] = math.max(0, (inside[other] or 0) - 1)
+end</code></pre>
+            <aside class="callout">
+                <p>
+                    Trigger ids are raw numbers. Use
+                    <code>Galeshi.world.entity(id)</code> before calling entity
+                    methods such as <code>name()</code> or
+                    <code>has_component()</code>.
+                </p>
+            </aside>
+        </section>
+
+        <section id="cpp">
+            <h2>4. C++ callback</h2>
+            <p>
+                Hot-reload C++ scripts receive the same events. The callback
+                signature is unchanged:
+            </p>
+            <pre><code>#include "GaleshiEngine/Scripting/CppScriptApi.hpp"
+
+static const GaleshiScriptApi* g_api = nullptr;
+
+extern "C" void GaleshiScriptRegister(const GaleshiScriptApi* api) {
+    g_api = api;
+}
+
+extern "C" void OnTriggerBeginOverlap(uint32_t trigger, uint32_t other) {
+    if (!g_api || !g_api->has_component(
+            g_api->user, trigger, "water")) {
+        return;
+    }
+
+    g_api->log(g_api->user, "entered water");
+    (void)other;
+}
+
+extern "C" void OnTriggerEndOverlap(uint32_t trigger, uint32_t other) {
+    if (!g_api || !g_api->has_component(
+            g_api->user, trigger, "water")) {
+        return;
+    }
+
+    g_api->log(g_api->user, "left water");
+    (void)other;
+}</code></pre>
+            <p>
+                See <a href="../CPP_SCRIPTS.md">C++ gameplay scripts</a> for the
+                module lifecycle and compile/reload workflow.
+            </p>
+        </section>
+
+        <section id="behaviour">
+            <h2>5. What triggers and when</h2>
+            <table>
+                <thead>
+                    <tr><th>Situation</th><th>Result</th></tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Body enters the water footprint and becomes partially submerged</td>
+                        <td><code>OnTriggerBeginOverlap</code> fires once with the water entity.</td>
+                    </tr>
+                    <tr>
+                        <td>Body leaves the water</td>
+                        <td><code>OnTriggerEndOverlap</code> fires once.</td>
+                    </tr>
+                    <tr>
+                        <td>Body moves directly from one water body to another</td>
+                        <td>The old water receives an end event, then the new water receives a begin event.</td>
+                    </tr>
+                    <tr>
+                        <td>Trigger checkbox is disabled while a body is inside</td>
+                        <td>The end event is sent for the current entry. No new events fire until the checkbox is enabled again.</td>
+                    </tr>
+                    <tr>
+                        <td>Water entity is disabled or removed</td>
+                        <td>Active entries are closed with end events.</td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>
+                The water still applies buoyancy, drag, splash particles, and
+                camera/bubble behavior independently of the trigger checkbox.
+                The checkbox only controls script events.
+            </p>
+        </section>
+
+        <section id="troubleshoot">
+            <h2>6. Troubleshooting</h2>
+            <table>
+                <thead>
+                    <tr><th>Problem</th><th>Check</th></tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>No callbacks at all</td>
+                        <td>
+                            Is the scene in Play mode? Is the water
+                            <strong>Enabled</strong> and <strong>Trigger</strong>
+                            checked? Does the script define the global callback?
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Player does not trigger the water</td>
+                        <td>
+                            The detected entity needs a dynamic Jolt body. Add a
+                            collider and rigid body to the object that moves
+                            through the water.
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Water and a manual trigger fire twice</td>
+                        <td>
+                            Remove the extra trigger collider from the water
+                            entity. The water volume itself dispatches the
+                            events when its checkbox is enabled.
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Trigger fires at an unexpected place</td>
+                        <td>
+                            Check the water entity's position, width, depth,
+                            body type, and the procedural edge. River channels
+                            and lake edges are not rectangular.
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Logic runs in the editor without Play</td>
+                        <td>
+                            Use the trigger callbacks rather than a per-frame
+                            water check; the callbacks are Play-only.
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            <p>
+                For the raw API list, see
+                <a href="../LUA_API.md">Lua API</a> and
+                <a href="../CPP_API.md">C++ API</a>.
+            </p>
+        </section>
+    </main>
+
+    <nav class="pager" aria-label="Tutorial navigation">
+        <a href="03-animation-state-machine.html">← Previous: Animation state machines</a>
+        <a href="05-cloth-painting.html">Next: Cloth painting →</a>
+    </nav>
+
+    <footer>
+        <p>GaleshiEngine tutorials · <a href="index.html">Index</a></p>
+    </footer>
+</div>
+</body>
+</html>

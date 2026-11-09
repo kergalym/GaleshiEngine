@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GaleshiEngine Tutorials</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+    <nav class="top" aria-label="Breadcrumb">
+        <a href="../../README.md">GaleshiEngine</a>
+        <span>/</span>
+        <span>Tutorials</span>
+    </nav>
+
+    <header class="hero">
+        <p class="eyebrow">Hands-on guides</p>
+        <h1>GaleshiEngine tutorials</h1>
+        <p class="lead">
+            Short, practical walkthroughs for the editor and gameplay scripting.
+            Start with the editor basics, then pick the feature you need.
+        </p>
+    </header>
+
+    <aside class="callout warn">
+        <p>
+            <strong>Alpha software.</strong> The editor and renderer are still
+            under active development. Save often, use version control for your
+            project, and expect occasional crashes on untested Vulkan drivers.
+        </p>
+    </aside>
+
+    <main>
+        <section>
+            <h2>Start here</h2>
+            <div class="card-grid">
+                <a class="card" href="01-editor-basics.html">
+                    <span class="number">Tutorial 1</span>
+                    <h2>Editor basics</h2>
+                    <p>
+                        Open a project, move around the viewport, create a
+                        simple scene, and run it.
+                    </p>
+                </a>
+                <a class="card" href="02-lua-scripts.html">
+                    <span class="number">Tutorial 2</span>
+                    <h2>Lua scripting</h2>
+                    <p>
+                        Use <code>RunOnce</code> / <code>RunAlways</code>,
+                        find entities, read input, and handle triggers.
+                    </p>
+                </a>
+                <a class="card" href="03-animation-state-machine.html">
+                    <span class="number">Tutorial 3</span>
+                    <h2>Animation state machines</h2>
+                    <p>
+                        Set up states, clips, transitions, and a separate
+                        <code>.asme</code> setup for each character.
+                    </p>
+                </a>
+                <a class="card" href="04-water-triggers.html">
+                    <span class="number">Tutorial 4</span>
+                    <h2>Water triggers</h2>
+                    <p>
+                        Turn a water body into a script trigger and react to
+                        entities entering or leaving the water.
+                    </p>
+                </a>
+            </div>
+        </section>
+
+        <section>
+            <h2>More tutorials</h2>
+            <div class="card-grid">
+                <a class="card" href="05-cloth-painting.html">
+                    <span class="number">Tutorial 5</span>
+                    <h2>Cloth painting</h2>
+                    <p>
+                        Paint a soft-body region on a mesh, tune its properties,
+                        and simulate cloth on static or skeletal meshes.
+                    </p>
+                </a>
+                <a class="card" href="06-material-scripts.html">
+                    <span class="number">Tutorial 6</span>
+                    <h2>Material scripts</h2>
+                    <p>
+                        Apply reusable <code>.mat</code> recipes across material
+                        slots without replacing their textures.
+                    </p>
+                </a>
+                <a class="card" href="07-cpp-scripts.html">
+                    <span class="number">Tutorial 7</span>
+                    <h2>C++ gameplay scripts</h2>
+                    <p>
+                        Write hot-reload C++ modules with the stable function
+                        table and optional trigger callbacks.
+                    </p>
+                </a>
+                <a class="card" href="08-cpp-api-modes.html">
+                    <span class="number">Tutorial 8</span>
+                    <h2>Native vs hot-reload C++</h2>
+                    <p>
+                        Compare the linked native API with the isolated worker
+                        path and choose the right one.
+                    </p>
+                </a>
+                <a class="card" href="09-third-person-demo.html">
+                    <span class="number">Tutorial 9</span>
+                    <h2>Third-person demo</h2>
+                    <p>
+                        Set up the camera, visual Player root, dynamic physics
+                        capsule, animation signals, and HUD.
+                    </p>
+                </a>
+            </div>
+        </section>
+
+        <section>
+            <h2>Before you start</h2>
+            <ul>
+                <li>
+                    Build or install the editor. A local debug build is enough:
+                    <pre><code>cmake --preset debug --fresh
+cmake --build build/debug --target GaleshiEditor -j"$(nproc)"
+cd build/debug/bin
+./GaleshiEditor</code></pre>
+                </li>
+                <li>
+                    Open a project from the Project Manager, or load an
+                    existing scene with <kbd>Ctrl</kbd>+<kbd>O</kbd>.
+                </li>
+                <li>
+                    Keep the <strong>Output Log</strong> panel visible. Script
+                    and engine errors appear there.
+                </li>
+            </ul>
+        </section>
+
+        <section>
+            <h2>Reference documentation</h2>
+            <p>
+                The tutorials teach workflows. For the complete API surface,
+                use the reference pages:
+            </p>
+            <ul>
+                <li><a href="../LUA_API.md">Lua API reference</a></li>
+                <li><a href="../CPP_API.md">C++ API reference</a></li>
+                <li><a href="../CPP_SCRIPTS.md">Hot-reload C++ scripts</a></li>
+                <li><a href="../CPP_API_MODES.md">Native vs hot-reload C++ API</a></li>
+                <li><a href="../MATERIAL_SCRIPTS.md">Material scripts (<code>.mat</code>)</a></li>
+                <li><a href="../CLOTH.md">Cloth painting and simulation</a></li>
+                <li><a href="../THIRD_PERSON_DEMO.md">Third-person demo setup</a></li>
+            </ul>
+        </section>
+    </main>
+
+    <footer>
+        <p>
+            GaleshiEngine documentation ·
+            <a href="../../README.md">README</a> ·
+            <a href="../LUA_API.md">Lua API</a> ·
+            <a href="../CPP_API.md">C++ API</a>
+        </p>
+    </footer>
+</div>
+</body>
+</html>
