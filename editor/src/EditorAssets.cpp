@@ -5,13 +5,18 @@
 
     void GaleshiEditorApp::EnsureTreeTypeMaterial(Galeshi::VegetationTreeType& type,
                                 int typeIndex) {
-        if (type.material) return;
-        type.material = std::make_shared<Galeshi::Material>();
-        type.material->name = "Tree Type " + std::to_string(typeIndex + 1) +
-                              " Textures";
-        type.material->twoSided = true;
-        type.material->backfaceCulling = false;
-        type.material->castsShadow = true;
+        if (!type.material) {
+            type.material = std::make_shared<Galeshi::Material>();
+            type.material->name = "Tree Type " +
+                                  std::to_string(typeIndex + 1) +
+                                  " Textures";
+            type.material->twoSided = true;
+            type.material->backfaceCulling = false;
+            type.material->castsShadow = true;
+        }
+        // Trees are dielectric. The whole-tree override has no metallic
+        // control, so keep its factor at zero.
+        type.material->metallicFactor = 0.0f;
     }
 
 
@@ -38,6 +43,7 @@
             overrideMat.material =
                 std::make_shared<Galeshi::Material>(*imported);
             overrideMat.material->sceneOverride = true;
+            overrideMat.material->metallicFactor = 0.0f;
             type.materialOverrides.push_back(std::move(overrideMat));
         }
     }
@@ -894,7 +900,10 @@
                         bool placeAtPosition) {
         PushHistory();
         const std::string path = m_assets->MakeRelativePath(originalPath);
-        auto model = m_assets->ImportModel(path);
+        // Reuse the cached model when it is already loaded. ImportModel()
+        // evicts and recreates the model, which can free GPU buffers that the
+        // scene (for example an instanced landscape tree) still references.
+        auto model = m_assets->LoadModel(path);
         if (model.meshes.empty()) return;
         namespace fs = std::filesystem;
         const auto stem = fs::path(path).stem().string();

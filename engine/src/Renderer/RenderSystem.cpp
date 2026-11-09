@@ -73,6 +73,14 @@ namespace {
     // Apply explicit per-mesh flags without mutating the shared imported
     // material. Unchecked alpha-test/two-sided means those features stay off,
     // regardless of the material name or the source file's flags.
+    std::shared_ptr<Material> MakeTreeMaterialNonMetallic(
+        const std::shared_ptr<Material>& source) {
+        if (!source || source->metallicFactor == 0.0f) return source;
+        auto material = std::make_shared<Material>(*source);
+        material->metallicFactor = 0.0f;
+        return material;
+    }
+
     std::shared_ptr<Material> ApplyTreeMeshFlags(
         const std::shared_ptr<Material>& source,
         bool alphaTest,
@@ -1390,11 +1398,12 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
                 if (!material && materialIndex >= 0 &&
                     materialIndex <
                         static_cast<int>(treeModel.materials.size())) {
-                    material = treeModel.materials[
-                        static_cast<size_t>(materialIndex)];
+                    material = MakeTreeMaterialNonMetallic(
+                        treeModel.materials[static_cast<size_t>(materialIndex)]);
                 }
                 if (!material && !treeModel.materials.empty()) {
-                    material = treeModel.materials.front();
+                    material = MakeTreeMaterialNonMetallic(
+                        treeModel.materials.front());
                 }
 
                 const VegetationLeafSet* leafSet =
@@ -1404,6 +1413,7 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
                         material = ComposeLeafOverride(
                             leafSet->material, material);
                     }
+                    material = MakeTreeMaterialNonMetallic(material);
                     if (leafSet->foliage) {
                         material = MakeFoliageMaterial(
                             material, leafFallback, canopyTint);
@@ -1411,7 +1421,7 @@ void RenderSystem::RenderVegetation(Scene& scene, const Frustum& frustum,
                     material = ApplyTreeMeshFlags(
                         material, leafSet->alphaTest, leafSet->twoSided);
                 } else if (useOverride) {
-                    material = overrideMaterial;
+                    material = MakeTreeMaterialNonMetallic(overrideMaterial);
                 }
                 draws.push_back({treeModel.meshes[i], material});
             }

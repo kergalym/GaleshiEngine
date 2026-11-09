@@ -738,8 +738,13 @@
                       return a.label < b.label;
                   });
 
+        // Default a newly opened editor to Player only when the current ASME
+        // target is not already a valid character. A freshly dropped skeletal
+        // mesh sets this target explicitly and must not be replaced by Player.
         if (windowAppearing && playerEntity != entt::null &&
-            characterIndices.count(playerEntity)) {
+            characterIndices.count(playerEntity) &&
+            characterIndices.find(m_stateMachineEditorEntity) ==
+                characterIndices.end()) {
             m_stateMachineEditorEntity = playerEntity;
         }
 
