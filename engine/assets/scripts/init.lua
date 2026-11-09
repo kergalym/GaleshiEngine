@@ -160,7 +160,9 @@ end
 
 function RunOnce()
     player = findPlayer()
-    if not player then
+    -- Only bootstrap a Player in a truly empty scene. Never create one as a
+    -- side effect of the user adding another entity.
+    if not player and Galeshi.world.count() == 0 then
         player = Galeshi.physics.create_box("Player", 0.0, 5.0, 0.0, 2.0)
     end
     if player then
