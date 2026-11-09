@@ -1727,25 +1727,13 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
             const ImVec2 dropImageMin = ImGui::GetItemRectMin();
             const ImVec2 dropImageMax = ImGui::GetItemRectMax();
             if (!m_isGameMode) {
-                Galeshi::Entity dropSelection = m_editor.Selected(&m_scene);
                 if (const ImGuiPayload* active = ImGui::GetDragDropPayload();
                     active && active->IsDataType("GALESHI_ASSET_PATH") &&
                     IsDragDropModelAssetPath(static_cast<const char*>(active->Data)) &&
-                    dropSelection &&
                     ImGui::IsItemHovered(
                         ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
-                    if (dropSelection.HasComponent<Galeshi::LandscapeComponent>()) {
-                        ImGui::SetTooltip(
-                            "Drop to assign this model as the Landscape tree mesh.");
-                    } else if (IsGltfModelAssetPath(
-                                   static_cast<const char*>(active->Data)) &&
-                               FindSkeletalRootForReplacement(
-                                   dropSelection.Handle())) {
-                        ImGui::SetTooltip(
-                            "Drop to replace the selected character's model "
-                            "with this glTF/GLB.\nMaterial values are reloaded "
-                            "from the file.");
-                    }
+                    ImGui::SetTooltip(
+                        "Drop to place this model in the scene as a new entity.");
                 }
             }
             if (!m_isGameMode && ImGui::BeginDragDropTarget()) {

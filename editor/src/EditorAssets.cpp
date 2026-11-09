@@ -867,20 +867,11 @@
                     path);
                 return;
             }
-            // Dropping a model onto the selected Landscape assigns it as
-            // the instanced tree mesh. A glTF dropped while a character or
-            // its capsule is selected replaces the character model in place;
-            // otherwise spawn a regular model entity.
-            Galeshi::Entity selected = m_editor.Selected(&m_scene);
-            if (selected &&
-                selected.HasComponent<Galeshi::LandscapeComponent>()) {
-                AssignLandscapeTreeModel(selected, path);
-            } else if (IsGltfModelAssetPath(path) && selected &&
-                       FindSkeletalRootForReplacement(selected.Handle())) {
-                ReplaceCharacterModel(selected.Handle(), path);
-            } else {
-                SpawnFromModel(path, pos, true);
-            }
+            // A viewport drop always creates a new scene entity at the drop
+            // point. Landscape tree assignment and character replacement are
+            // explicit drop targets in the Outliner and Details panels, never
+            // side effects of dropping into the viewport.
+            SpawnFromModel(path, pos, true);
             return;
         }
 
