@@ -1,17 +1,108 @@
 log("init.lua: loaded player controller")
 
 -- Lifecycle callbacks:
---   RunOnce()          runs once after the script is loaded (and after a successful hot reload)
+--   RunOnce()          runs once after the script is loaded/hot-reloaded
 --   RunAlways(dt)      runs every frame
 local player = nil
 local animationEntity = nil
 local visualEntity = nil
 local bodyEntity = nil
+local moveSpeed = 10.0
+local turnSpeed = math.pi * 0.5 -- 90 degrees/second in radians
+local jumpImpulse = 8.0
+
+local function quatIdentity()
+    return {x = 0.0, y = 0.0, z = 0.0, w = 1.0}
+end
+
+-- x,y,z,w quaternion multiplication.
+local function quatMultiply(a, b)
+    return {
+        x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+        y = a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+        z = a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+        w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
+    }
+end
+
+local function quatNormalize(q)
+    local length = math.sqrt(q.x * q.x + q.y * q.y +
+                             q.z * q.z + q.w * q.w)
+    if length < 1e-8 then return quatIdentity() end
+    local inv = 1.0 / length
+    return {x = q.x * inv, y = q.y * inv,
+            z = q.z * inv, w = q.w * inv}
+end
+
+local function quatInverse(q)
+    local lengthSq = q.x * q.x + q.y * q.y +
+                     q.z * q.z + q.w * q.w
+    if lengthSq < 1e-8 then return quatIdentity() end
+    local inv = 1.0 / lengthSq
+    return {x = -q.x * inv, y = -q.y * inv,
+            z = -q.z * inv, w = q.w * inv}
+end
+
+local function quatYaw(radians)
+    local half = radians * 0.5
+    return {x = 0.0, y = math.sin(half),
+            z = 0.0, w = math.cos(half)}
+end
+
+-- Clean +Z-to-direction quaternion in the horizontal XZ plane.
+-- This is the upright equivalent of quatLookAt; no math.atan is used.
+local function quatFromDirectionXZ(direction)
+    local x = direction.x
+    local z = direction.z
+    local lengthSq = x * x + z * z
+    if lengthSq < 1e-8 then return quatIdentity() end
+
+    local invLength = 1.0 / math.sqrt(lengthSq)
+    x = x * invLength
+    z = z * invLength
+
+    if z < -0.999999 then
+        return {x = 0.0, y = 1.0, z = 0.0, w = 0.0}
+    end
+    return quatNormalize({x = 0.0, y = x, z = 0.0, w = 1.0 + z})
+end
+
+local function parentWorldRotation(entity)
+    local chain = {}
+    local parent = entity:parent()
+    while parent and parent:valid() do
+        table.insert(chain, parent)
+        parent = parent:parent()
+    end
+
+    local world = quatIdentity()
+    -- Parents are child -> root; multiply root -> child.
+    for i = #chain, 1, -1 do
+        world = quatMultiply(world, chain[i]:rotation())
+    end
+    return quatNormalize(world)
+end
+
+local function worldRotation(entity)
+    return quatNormalize(
+        quatMultiply(parentWorldRotation(entity), entity:rotation()))
+end
+
+-- Assign a world-space quaternion while preserving a valid local rotation.
+local function setWorldYaw(entity, targetQuat)
+    local parentWorld = parentWorldRotation(entity)
+    local localQuat = quatMultiply(
+        quatInverse(parentWorld), quatNormalize(targetQuat))
+    entity:set_rotation(localQuat)
+end
+
+local function addWorldYaw(entity, radians)
+    setWorldYaw(entity,
+        quatMultiply(quatYaw(radians), worldRotation(entity)))
+end
 
 local function findVisualEntity(root)
     if not root or not root:valid() then return nil end
-    -- A mesh root already has the character pivot. Otherwise the imported
-    -- character usually lives on a descendant (for example under a capsule).
     if root:has_component("mesh") then return root end
     local function walk(entity)
         local children = entity:children()
@@ -52,19 +143,6 @@ local function findBodyEntity(entity)
         if found then return found end
     end
     return nil
-end
-
--- Assign a world-space yaw while keeping the entity's local transform valid
--- under its current parent.
-local function setWorldYaw(entity, yaw)
-    local parentYaw = 0.0
-    local parent = entity:parent()
-    while parent and parent:valid() do
-        local rotation = parent:rotation()
-        parentYaw = parentYaw + 2.0 * math.atan(rotation.y, rotation.w)
-        parent = parent:parent()
-    end
-    entity:set_euler(0.0, math.deg(yaw - parentYaw), 0.0)
 end
 
 local function findPlayer()
@@ -108,14 +186,8 @@ function RunAlways(dt)
         bodyEntity = findBodyEntity(player) or player
     end
 
-    local speed = 10.0
-    local turn_speed = 90.0
-    local jump_force = 8.0
-
     local body = bodyEntity or player
-    local vel = Galeshi.physics.get_velocity(body)
-    local vy = vel.y -- preserve gravity while moving horizontally
-
+    local velocity = Galeshi.physics.get_velocity(body)
     local horizontal = Galeshi.input.axis("Horizontal")
     local vertical = Galeshi.input.axis("Vertical")
     local strafing = Galeshi.player.strafing()
@@ -126,42 +198,38 @@ function RunAlways(dt)
     if math.abs(vertical) > 0.001 then
         if not strafing and vertical > 0.0 and
            math.abs(horizontal) > 0.001 then
-            -- W+A/W+D rotate the Player itself in world space.
-            setWorldYaw(player, math.atan(move.x, move.z))
+            -- W+A/W+D: face the horizontal movement direction in world space.
+            setWorldYaw(player,
+                quatFromDirectionXZ({x = move.x, z = move.z}))
         elseif not strafing then
-            -- W/S without lateral input keep the existing local facing.
+            -- W/S: keep the existing forward/backpedal facing.
             local facing = visualEntity or player
             local direction = vertical > 0.0 and move or forward
-            facing:set_euler(
-                0.0, math.deg(math.atan(direction.x, direction.z)), 0.0)
+            setWorldYaw(facing,
+                quatFromDirectionXZ({x = direction.x, z = direction.z}))
         end
-        vx = move.x * speed
-        vz = move.z * speed
+        vx = move.x * moveSpeed
+        vz = move.z * moveSpeed
     elseif not strafing and math.abs(horizontal) > 0.001 then
-        -- Without strafing, A/D keep their original local turn-in-place.
+        -- A/D turn around world up without Euler extraction.
         local facing = visualEntity or player
-        local rotation = facing:rotation()
-        local yaw = math.deg(2.0 * math.atan(rotation.y, rotation.w))
-        facing:set_euler(
-            0.0, yaw - horizontal * turn_speed * dt, 0.0)
+        addWorldYaw(facing, -horizontal * turnSpeed * dt)
     elseif strafing then
-        -- With strafing enabled, A/D move sideways without world/local
-        -- rotation.
-        vx = move.x * speed
-        vz = move.z * speed
+        -- Strafing A/D: move sideways without changing facing.
+        vx = move.x * moveSpeed
+        vz = move.z * moveSpeed
     end
 
-    -- Always write the horizontal velocity so the player stops when no key is
-    -- held. This also drives the script fallback used by body-less Player roots.
-    Galeshi.physics.set_velocity(body, vx, vy, vz)
+    -- Always write horizontal velocity so the player stops without input.
+    Galeshi.physics.set_velocity(body, vx, velocity.y, vz)
 
-    if Galeshi.input.axis("Jump") > 0.5 and math.abs(vy) < 0.5 then
+    if Galeshi.input.axis("Jump") > 0.5 and math.abs(velocity.y) < 0.5 then
         log("JUMP!")
-        Galeshi.physics.add_impulse(body, 0, jump_force, 0)
+        Galeshi.physics.add_impulse(body, 0.0, jumpImpulse, 0.0)
     end
 
     if animationEntity then
-        local horizontalSpeed = math.sqrt(vx * vx + vz * vz) / speed
+        local horizontalSpeed = math.sqrt(vx * vx + vz * vz) / moveSpeed
         Galeshi.animation.set_parameter(
             animationEntity, "Speed", math.min(horizontalSpeed, 1.0))
     end

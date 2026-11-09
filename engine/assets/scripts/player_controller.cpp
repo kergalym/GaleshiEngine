@@ -13,17 +13,14 @@ using Galeshi::Script::Quat;
 using Galeshi::Script::Vec3;
 
 constexpr const char* kPlayerName = "Player";
-// Name the visible model root "PlayerVisual" to turn it independently from
-// the Player controller; otherwise the Player root is rotated.
 constexpr const char* kPlayerVisualName = "PlayerVisual";
-// Common physics-proxy names created by the editor and the third-person demo.
 constexpr const char* kBodyNames[] = {
     "PlayerPhysics",
     "CollisionCapsule",
     "PlayerCapsule",
 };
 constexpr float kMoveSpeed = 8.0f;
-constexpr float kTurnSpeed = 1.5707963f; // 90 degrees/second
+constexpr float kTurnSpeed = 1.5707963f; // 90 degrees/second in radians
 constexpr float kJumpImpulse = 8.0f;
 
 Api* g_api = nullptr;
@@ -32,28 +29,98 @@ uint32_t g_body = UINT32_MAX;
 uint32_t g_visual = UINT32_MAX;
 uint32_t g_animation = UINT32_MAX;
 
-Quat YawQuat(float yaw) {
-    return {0.0f, std::sin(yaw * 0.5f), 0.0f, std::cos(yaw * 0.5f)};
+Quat IdentityQuat() {
+    return {0.0f, 0.0f, 0.0f, 1.0f};
 }
 
-float YawFromRotation(Quat rotation) {
-    return 2.0f * std::atan2(rotation.y, rotation.w);
+// x,y,z,w quaternion multiplication.
+Quat MultiplyQuat(const Quat& a, const Quat& b) {
+    return {
+        a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+        a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+        a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+        a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+    };
 }
 
-float ParentWorldYaw(const Api& api, uint32_t entity) {
-    float yaw = 0.0f;
+Quat NormalizeQuat(const Quat& q) {
+    const float length = std::sqrt(q.x * q.x + q.y * q.y +
+                                   q.z * q.z + q.w * q.w);
+    if (length < 1e-8f) return IdentityQuat();
+    const float inv = 1.0f / length;
+    return {q.x * inv, q.y * inv, q.z * inv, q.w * inv};
+}
+
+Quat InverseQuat(const Quat& q) {
+    const float lengthSq = q.x * q.x + q.y * q.y +
+                           q.z * q.z + q.w * q.w;
+    if (lengthSq < 1e-8f) return IdentityQuat();
+    const float inv = 1.0f / lengthSq;
+    return {-q.x * inv, -q.y * inv, -q.z * inv, q.w * inv};
+}
+
+// Rotation around world up, without extracting or accumulating Euler angles.
+Quat YawQuat(float radians) {
+    const float half = radians * 0.5f;
+    return {0.0f, std::sin(half), 0.0f, std::cos(half)};
+}
+
+// Build the quaternion that makes +Z point along an XZ direction.
+// This is the upright shortest-arc equivalent of quatLookAt; no atan2.
+Quat DirectionQuatXZ(const Vec3& direction) {
+    float x = direction.x;
+    float z = direction.z;
+    const float lengthSq = x * x + z * z;
+    if (lengthSq < 1e-8f) return IdentityQuat();
+
+    const float invLength = 1.0f / std::sqrt(lengthSq);
+    x *= invLength;
+    z *= invLength;
+
+    // Exactly backwards: choose a deterministic 180-degree Y rotation.
+    if (z < -0.999999f) {
+        return {0.0f, 1.0f, 0.0f, 0.0f};
+    }
+    return NormalizeQuat({0.0f, x, 0.0f, 1.0f + z});
+}
+
+// Absolute parent rotation: root -> immediate parent.
+Quat ParentWorldRotation(const Api& api, uint32_t entity) {
+    uint32_t chain[128];
+    int count = 0;
     uint32_t parent = api.world.Parent(entity);
-    for (int depth = 0; depth < 128 && parent != UINT32_MAX; ++depth) {
-        if (!api.world.Valid(parent)) break;
-        yaw += YawFromRotation(api.world.Rotation(parent));
+    while (parent != UINT32_MAX && api.world.Valid(parent) &&
+           count < 128) {
+        chain[count++] = parent;
         parent = api.world.Parent(parent);
     }
-    return yaw;
+
+    Quat world = IdentityQuat();
+    // Parents are collected child -> root; multiply root -> child.
+    for (int i = count - 1; i >= 0; --i) {
+        world = MultiplyQuat(world, api.world.Rotation(chain[i]));
+    }
+    return NormalizeQuat(world);
 }
 
-void SetWorldYaw(Api& api, uint32_t entity, float yaw) {
-    api.world.SetRotation(
-        entity, YawQuat(yaw - ParentWorldYaw(api, entity)));
+Quat WorldRotation(const Api& api, uint32_t entity) {
+    return NormalizeQuat(
+        MultiplyQuat(ParentWorldRotation(api, entity),
+                     api.world.Rotation(entity)));
+}
+
+// Set a world-space rotation while keeping the local transform valid.
+void SetWorldYaw(Api& api, uint32_t entity, const Quat& targetWorld) {
+    const Quat parentWorld = ParentWorldRotation(api, entity);
+    const Quat local = MultiplyQuat(
+        InverseQuat(parentWorld), NormalizeQuat(targetWorld));
+    api.world.SetRotation(entity, local);
+}
+
+void AddWorldYaw(Api& api, uint32_t entity, float radians) {
+    SetWorldYaw(api, entity,
+                MultiplyQuat(YawQuat(radians),
+                             WorldRotation(api, entity)));
 }
 
 bool HasRigidBody(const Api& api, uint32_t entity) {
@@ -64,12 +131,9 @@ bool HasRigidBody(const Api& api, uint32_t entity) {
 uint32_t FindBody(const Api& api, uint32_t player) {
     if (HasRigidBody(api, player)) return player;
 
-    // A PlayerPhysics proxy is normally a root entity.
     const uint32_t proxy = api.world.Find(kBodyNames[0]);
     if (HasRigidBody(api, proxy)) return proxy;
 
-    // Capsule children must belong to this Player so a stray collider cannot
-    // capture movement.
     for (size_t i = 1; i < sizeof(kBodyNames) / sizeof(kBodyNames[0]); ++i) {
         const uint32_t candidate = api.world.Find(kBodyNames[i]);
         if (HasRigidBody(api, candidate) &&
@@ -160,25 +224,24 @@ extern "C" void GaleshiScriptUpdate(float dt) {
     if (std::abs(vertical) > 0.001f) {
         if (!strafing && vertical > 0.0f &&
             std::abs(horizontal) > 0.001f) {
-            // W+A/W+D rotate the Player itself in world space.
-            SetWorldYaw(api, g_player,
-                        std::atan2(move.x, move.z));
+            // W+A/W+D: face the horizontal movement direction in world space.
+            const Vec3 direction{move.x, 0.0f, move.z};
+            SetWorldYaw(api, g_player, DirectionQuatXZ(direction));
         } else if (!strafing) {
-            // W/S without lateral input keep the existing local facing.
+            // W/S: keep the existing forward/backpedal facing.
             const Vec3 direction = vertical > 0.0f ? move : forward;
-            api.world.SetRotation(
-                g_visual, YawQuat(std::atan2(direction.x, direction.z)));
+            const Vec3 horizontalDirection{direction.x, 0.0f,
+                                           direction.z};
+            SetWorldYaw(api, g_visual,
+                        DirectionQuatXZ(horizontalDirection));
         }
         vx = move.x * kMoveSpeed;
         vz = move.z * kMoveSpeed;
     } else if (!strafing && std::abs(horizontal) > 0.001f) {
-        // Without strafing, A/D keep their original local turn-in-place.
-        const float yaw = YawFromRotation(api.world.Rotation(g_visual)) -
-                          horizontal * kTurnSpeed * dt;
-        api.world.SetRotation(g_visual, YawQuat(yaw));
+        // A/D turn around world up without Euler extraction.
+        AddWorldYaw(api, g_visual, -horizontal * kTurnSpeed * dt);
     } else if (strafing) {
-        // With strafing enabled, A/D move sideways without world/local
-        // rotation.
+        // Strafing A/D: move sideways without changing facing.
         vx = move.x * kMoveSpeed;
         vz = move.z * kMoveSpeed;
     }
@@ -197,12 +260,10 @@ extern "C" void GaleshiScriptUpdate(float dt) {
         api.world.SetPosition(g_body, position);
     }
 
-    // A separate PlayerPhysics proxy does not move the visual Player root by
-    // itself. Child capsules already carry the visible hierarchy, so only
-    // root proxies need the position copied.
     if (g_body != g_player &&
         api.world.Parent(g_body) != g_player) {
-        api.world.SetPosition(g_player, api.world.Position(g_body));
+        api.world.SetPosition(g_player,
+                              api.world.Position(g_body));
     }
 
     if (g_animation != UINT32_MAX) {
