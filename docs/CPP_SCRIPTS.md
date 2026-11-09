@@ -192,6 +192,27 @@ extern "C" void GaleshiScriptUpdate(float dt) {
 }
 ```
 
+### Per-entity script variables
+
+Hot-reload modules run in separate shared libraries, so they cannot share a
+normal C++ global variable. Use the universal per-entity variable store
+instead:
+
+```cpp
+const uint32_t player = g_api->world.Find("Player");
+
+// Writer module (for example a water trigger):
+g_api->world.SetVariable(player, "isSwim", 1.0f);
+
+// Reader module (for example the player controller):
+const bool isSwim =
+    g_api->world.GetVariable(player, "isSwim", 0.0f) > 0.5f;
+```
+
+Variables are floats keyed by `(entity, name)`, are runtime-only, and are
+shared by every C++ hot-reload module in the same scene. A missing variable
+returns the fallback passed to `GetVariable`.
+
 ```cpp
 g_api->set_camera_mode(g_api->user, GALESHI_CAMERA_FIRST_PERSON);
 const int mode = g_api->get_camera_mode(g_api->user);

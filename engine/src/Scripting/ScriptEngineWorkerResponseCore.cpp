@@ -451,7 +451,10 @@ bool ScriptEngine::MakeWorkerCoreResponse(
                 (key == "script" &&
                  registry.all_of<ScriptComponent>(entity)) ||
                 (key == "lua_script" &&
-                 registry.all_of<ScriptComponent>(entity))
+                 registry.all_of<ScriptComponent>(entity)) ||
+                ((key == "script_variables" ||
+                  key == "variables") &&
+                 registry.all_of<ScriptVariablesComponent>(entity))
                 ? 1u : 0u;
         }
         break;
@@ -468,6 +471,36 @@ bool ScriptEngine::MakeWorkerCoreResponse(
                 }
                 response.valid = 1;
             }
+        }
+        break;
+    case CppWorkerRequest::SetVariable:
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (!registry.valid(entity) || !request.text[0]) break;
+            auto& variables =
+                registry.all_of<ScriptVariablesComponent>(entity)
+                    ? registry.get<ScriptVariablesComponent>(entity)
+                    : registry.emplace<ScriptVariablesComponent>(entity);
+            variables.values[request.text] = request.w;
+            response.valid = 1;
+        }
+        break;
+    case CppWorkerRequest::GetVariable:
+        response.x = request.w;
+        if (m_scene) {
+            auto& registry = m_scene->Registry();
+            const entt::entity entity =
+                static_cast<entt::entity>(request.entity);
+            if (!registry.valid(entity) || !request.text[0] ||
+                !registry.all_of<ScriptVariablesComponent>(entity)) {
+                break;
+            }
+            const auto& variables =
+                registry.get<ScriptVariablesComponent>(entity).values;
+            const auto it = variables.find(request.text);
+            if (it != variables.end()) response.x = it->second;
         }
         break;
     case CppWorkerRequest::GetAxisRaw:

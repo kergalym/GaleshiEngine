@@ -125,6 +125,18 @@ public:
                m_api->add_component(m_api->user, entity, component);
     }
 
+    bool SetVariable(uint32_t entity, const char* name, float value) const {
+        return m_api && m_api->set_variable &&
+               m_api->set_variable(m_api->user, entity, name, value);
+    }
+
+    float GetVariable(uint32_t entity, const char* name,
+                      float fallback = 0.0f) const {
+        return m_api && m_api->get_variable
+            ? m_api->get_variable(m_api->user, entity, name, fallback)
+            : fallback;
+    }
+
     Vec3 Velocity(uint32_t entity) const {
         return m_api && m_api->get_velocity
             ? m_api->get_velocity(m_api->user, entity)

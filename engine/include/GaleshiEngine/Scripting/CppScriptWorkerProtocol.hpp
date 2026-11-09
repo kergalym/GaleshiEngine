@@ -227,6 +227,8 @@ enum class CppWorkerRequest : uint32_t {
     AttachToBone = 204,
     DetachFromBone = 205,
     AddComponent = 206,
+    SetVariable = 207,
+    GetVariable = 208,
 };
 
 constexpr std::size_t kCppWorkerTextSize = 512;

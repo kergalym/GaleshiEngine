@@ -379,6 +379,9 @@ void ScriptEngine::BuildApiCore(ScriptApiBuildContext& context) {
         if (key == "script" || key == "lua_script") {
             return registry.all_of<ScriptComponent>(entity);
         }
+        if (key == "script_variables" || key == "variables") {
+            return registry.all_of<ScriptVariablesComponent>(entity);
+        }
         if (key == "lua_entity") return registry.all_of<LuaEntityComponent>(entity);
         return false;
     };

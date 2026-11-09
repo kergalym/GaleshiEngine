@@ -7,6 +7,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "GaleshiEngine/Audio/AudioTypes.hpp"
@@ -467,6 +468,12 @@ struct ScriptComponent {
 // `new_physics_cube` helper adds this automatically for an entity named
 // "Player"; the editor also offers it for manually authored actors.
 struct PlayerTagComponent {};
+
+// Runtime-only named values shared between scripts through the universal
+// SetVariable/GetVariable API. Not serialized; a loaded scene starts empty.
+struct ScriptVariablesComponent {
+    std::unordered_map<std::string, float> values;
+};
 
 struct PerceptionComponent {
     float sightRadius = 20.0f;

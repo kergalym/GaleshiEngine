@@ -142,10 +142,19 @@ extern "C" void GaleshiScriptUpdate(float dt) {
 }
 ```
 
+Modules can share runtime values through the per-entity variable store:
+
+```cpp
+g_api->world.SetVariable(player, "isSwim", 1.0f);
+const bool swimming =
+    g_api->world.GetVariable(player, "isSwim", 0.0f) > 0.5f;
+```
+
 Current class wrappers cover:
 
 - `World` — create/destroy/find/valid, names, local position/rotation/scale,
-  parent/detach, bone attachment/detach, component presence, velocity
+  parent/detach, bone attachment/detach, component presence, velocity, and
+  per-entity runtime variables
 - `Input` — key state, dead-zoned/raw axes, mouse buttons, position, delta,
   wheel
 - `Physics` — linear velocity, attach box/sphere/capsule, destroy body,

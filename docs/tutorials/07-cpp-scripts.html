@@ -31,6 +31,7 @@
                 <li><a href="#exports">Required exports</a></li>
                 <li><a href="#raw">Using the C API table</a></li>
                 <li><a href="#wrappers">Using the class wrappers</a></li>
+                <li><a href="#variables">Sharing values between scripts</a></li>
                 <li><a href="#triggers">Trigger callbacks</a></li>
                 <li><a href="#workflow">Compile and reload</a></li>
                 <li><a href="#rules">Rules and limitations</a></li>
@@ -160,8 +161,30 @@ extern "C" void GaleshiScriptUpdate(float dt) {
             </p>
         </section>
 
+        <section id="variables">
+            <h2>5. Sharing values between scripts</h2>
+            <p>
+                Modules are separate shared libraries, so a normal C++ global
+                is not shared. Use per-entity runtime variables instead:
+            </p>
+            <pre><code>const uint32_t player = g_api->world.Find("Player");
+
+// Writer module, for example a water trigger:
+g_api->world.SetVariable(player, "isSwim", 1.0f);
+
+// Reader module, for example the player controller:
+const bool isSwim =
+    g_api->world.GetVariable(player, "isSwim", 0.0f) > 0.5f;</code></pre>
+            <p>
+                Variables are floats keyed by entity and name. They are
+                runtime-only and shared by every C++ hot-reload module in the
+                scene. <code>GetVariable</code> returns the fallback when the
+                entity or variable does not exist.
+            </p>
+        </section>
+
         <section id="triggers">
-            <h2>5. Trigger callbacks</h2>
+            <h2>6. Trigger callbacks</h2>
             <p>
                 A module can also export either optional callback. They are
                 looked up when the module loads:
@@ -196,7 +219,7 @@ extern "C" void OnTriggerEndOverlap(uint32_t trigger,
         </section>
 
         <section id="workflow">
-            <h2>6. Compile and reload</h2>
+            <h2>7. Compile and reload</h2>
             <ol class="steps">
                 <li>
                     Save the <code>.cpp</code> file in the project's
@@ -226,7 +249,7 @@ extern "C" void OnTriggerEndOverlap(uint32_t trigger,
         </section>
 
         <section id="rules">
-            <h2>7. Rules and limitations</h2>
+            <h2>8. Rules and limitations</h2>
             <ul>
                 <li>
                     Do not include <code>GaleshiEngine.hpp</code> in a

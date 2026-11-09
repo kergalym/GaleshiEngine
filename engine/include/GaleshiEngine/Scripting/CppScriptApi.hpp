@@ -525,9 +525,16 @@ struct GaleshiScriptApi {
     // Adds an engine component by name. Currently "water" is supported.
     bool (*add_component)(void* user, uint32_t entity,
                           const char* component) = nullptr;
+
+    // Universal per-entity script variables. Values are runtime-only and can
+    // be shared between modules through the host scene.
+    bool (*set_variable)(void* user, uint32_t entity, const char* name,
+                         float value) = nullptr;
+    float (*get_variable)(void* user, uint32_t entity, const char* name,
+                          float fallback) = nullptr;
 };
 
-inline constexpr uint32_t kGaleshiScriptApiVersion = 21;
+inline constexpr uint32_t kGaleshiScriptApiVersion = 22;
 
 inline float GaleshiInterpFactor(float deltaTime, float speed) {
     if (speed <= 0.0f) return 1.0f;

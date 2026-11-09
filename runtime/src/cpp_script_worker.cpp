@@ -342,6 +342,8 @@ public:
         m_api.detach_from_bone = &ScriptWorker::DetachFromBone;
         m_api.has_component = &ScriptWorker::HasComponent;
         m_api.add_component = &ScriptWorker::AddComponent;
+        m_api.set_variable = &ScriptWorker::SetVariable;
+        m_api.get_variable = &ScriptWorker::GetVariable;
         m_api.get_axis_raw = &ScriptWorker::GetAxisRaw;
         m_api.is_mouse_button_down = &ScriptWorker::MouseButtonDown;
         m_api.get_mouse_position = &ScriptWorker::GetMousePosition;
@@ -925,6 +927,24 @@ private:
         return static_cast<ScriptWorker*>(user)
             ->Request(CppWorkerRequest::AddComponent, entity, component)
             .valid != 0;
+    }
+
+    static bool SetVariable(void* user, uint32_t entity, const char* name,
+                            float value) {
+        if (!user || !name || !name[0]) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::SetVariable, entity, name, {},
+                      value)
+            .valid != 0;
+    }
+
+    static float GetVariable(void* user, uint32_t entity, const char* name,
+                             float fallback) {
+        if (!user || !name || !name[0]) return fallback;
+        const CppWorkerPacket response =
+            static_cast<ScriptWorker*>(user)->Request(
+                CppWorkerRequest::GetVariable, entity, name, {}, fallback);
+        return response.x;
     }
 
     static bool AttachBox(void* user, uint32_t entity,
