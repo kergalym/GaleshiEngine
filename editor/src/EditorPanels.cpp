@@ -1168,19 +1168,12 @@ if (ImGui::BeginMenu("File")) {
                 ImGui::EndMenu();
             }
             if (createItem("AI Agent (Behavior Tree)")) {
+                // Behavior-tree agents are authored as empty entities. The
+                // agent supplies navigation, perception and the tree; visuals
+                // and collision are attached separately when needed.
                 auto e = m_scene.CreateEntity("AI_Agent_BT");
                 auto& tc = e.GetComponent<Galeshi::TransformComponent>();
-                tc.position = {0, 1.15f, 0};
-                tc.scale = {1.0f, 1.0f, 1.0f};
-
-                auto mesh = m_assets->CreateCapsuleMesh(0.8f, 0.35f);
-                e.AddComponent<Galeshi::MeshComponent>(
-                    Galeshi::MeshComponent{ mesh, "", "capsule" });
-                auto mat = std::make_shared<Galeshi::Material>();
-                mat->name = "AI_Agent_Material";
-                mat->albedoFactor = {0.75f, 0.18f, 0.12f, 1.0f};
-                mat->roughnessFactor = 0.7f;
-                e.AddComponent<Galeshi::MaterialComponent>(Galeshi::MaterialComponent{ mat });
+                tc.position = {0, 0, 0};
 
                 e.AddComponent<Galeshi::NavAgentComponent>();
                 e.AddComponent<Galeshi::PerceptionComponent>();
