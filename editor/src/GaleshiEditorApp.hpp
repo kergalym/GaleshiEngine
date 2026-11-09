@@ -564,6 +564,10 @@ private:
     void DrawStateMachineEditor();
     void DrawBehaviorTreeEditor();
 
+    std::filesystem::path BehaviorTreeSetupPathFor(entt::entity agent);
+    bool SaveBehaviorTreeSetup(entt::entity agent);
+    bool LoadBehaviorTreeSetup(entt::entity agent);
+
 void DrawDetails();
 
     // -------------------------------------------------------------------

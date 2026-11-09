@@ -2,9 +2,121 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <functional>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
+
+namespace {
+
+std::string BehaviorTreeFileStem(Galeshi::Scene& scene, entt::entity agent) {
+    std::string name = "AI_Agent";
+    if (const auto* nameComponent =
+            scene.Registry().try_get<Galeshi::NameComponent>(agent)) {
+        if (!nameComponent->name.empty()) name = nameComponent->name;
+    }
+    for (char& c : name) {
+        const unsigned char value = static_cast<unsigned char>(c);
+        if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' ||
+            c == '"' || c == '<' || c == '>' || c == '|' || value < 0x20) {
+            c = '_';
+        }
+    }
+    while (!name.empty() && (name.back() == ' ' || name.back() == '.')) {
+        name.pop_back();
+    }
+    return name.empty() ? "AI_Agent" : name;
+}
+
+nlohmann::json BehaviorTreeToJson(
+    const Galeshi::BehaviorTreeComponent& tree) {
+    nlohmann::json nodes = nlohmann::json::array();
+    for (const auto& node : tree.nodes) {
+        nodes.push_back({
+            {"name", node.name},
+            {"type", static_cast<int>(node.type)},
+            {"condition", static_cast<int>(node.condition)},
+            {"action", static_cast<int>(node.action)},
+            {"children", node.children},
+            {"range", node.range},
+            {"duration", node.duration},
+            {"radius", node.radius},
+            {"parameter", node.parameter},
+            {"value", node.value}
+        });
+    }
+    return {
+        {"format", "galeshi-bt"},
+        {"version", 1},
+        {"enabled", tree.enabled},
+        {"root", tree.root},
+        {"tickInterval", tree.tickInterval},
+        {"nodes", std::move(nodes)}
+    };
+}
+
+bool BehaviorTreeFromJson(const nlohmann::json& json,
+                          Galeshi::BehaviorTreeComponent& tree) {
+    if (!json.is_object() || !json.contains("nodes") ||
+        !json["nodes"].is_array() || json["nodes"].empty()) {
+        return false;
+    }
+
+    Galeshi::BehaviorTreeComponent loaded;
+    loaded.enabled = json.value("enabled", true);
+    loaded.root = json.value("root", 0);
+    loaded.tickInterval = std::max(
+        0.0f, json.value("tickInterval", 0.0f));
+
+    for (const auto& nodeJson : json["nodes"]) {
+        if (!nodeJson.is_object()) continue;
+        Galeshi::BehaviorTreeNode node;
+        node.name = nodeJson.value("name", std::string("Node"));
+        node.type = static_cast<Galeshi::BehaviorNodeType>(std::clamp(
+            nodeJson.value("type", 0), 0, 3));
+        node.condition = static_cast<Galeshi::BehaviorCondition>(
+            std::clamp(nodeJson.value("condition", 0), 0, 5));
+        node.action = static_cast<Galeshi::BehaviorAction>(std::clamp(
+            nodeJson.value("action", 0), 0, 8));
+        if (nodeJson.contains("children") &&
+            nodeJson["children"].is_array()) {
+            for (const auto& child : nodeJson["children"]) {
+                if (child.is_number_integer()) {
+                    node.children.push_back(child.get<int>());
+                }
+            }
+        }
+        node.range = nodeJson.value("range", node.range);
+        node.duration = nodeJson.value("duration", node.duration);
+        node.radius = nodeJson.value("radius", node.radius);
+        node.parameter = nodeJson.value("parameter", std::string{});
+        node.value = nodeJson.value("value", std::string{});
+        loaded.nodes.push_back(std::move(node));
+    }
+    if (loaded.nodes.empty()) return false;
+
+    const int count = static_cast<int>(loaded.nodes.size());
+    loaded.root = std::clamp(loaded.root, 0, count - 1);
+    for (int i = 0; i < count; ++i) {
+        auto& children = loaded.nodes[static_cast<size_t>(i)].children;
+        std::vector<int> valid;
+        valid.reserve(children.size());
+        for (int child : children) {
+            if (child >= 0 && child < count && child != i) {
+                valid.push_back(child);
+            }
+        }
+        children = std::move(valid);
+    }
+
+    Galeshi::BehaviorTreeSystem::ResetRuntime(loaded);
+    tree = std::move(loaded);
+    return true;
+}
+
+} // namespace
 
 
 
@@ -307,6 +419,34 @@
             m_editor.Select(Galeshi::Entity(m_behaviorTreeEditorEntity,
                                             &m_scene));
         }
+
+        const std::filesystem::path setupPath =
+            BehaviorTreeSetupPathFor(m_behaviorTreeEditorEntity);
+        const std::string setupLabel =
+            setupPath.empty()
+                ? std::string("(no project)")
+                : (m_assets
+                       ? m_assets->MakeRelativePath(setupPath.string())
+                       : setupPath.string());
+        ImGui::TextDisabled("BT setup: %s", setupLabel.c_str());
+        if (!setupPath.empty()) {
+            if (ImGui::Button("Save Setup")) {
+                SaveBehaviorTreeSetup(m_behaviorTreeEditorEntity);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Save this behavior tree to:\n%s",
+                                  setupPath.string().c_str());
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Reload Setup")) {
+                PushHistory();
+                LoadBehaviorTreeSetup(m_behaviorTreeEditorEntity);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Reload this behavior tree from:\n%s",
+                                  setupPath.string().c_str());
+            }
+        }
         ImGui::Separator();
 
         auto* tree = registry.try_get<Galeshi::BehaviorTreeComponent>(
@@ -475,6 +615,105 @@
         if (!tree->nodes.empty()) drawNode(tree->root, 0);
 
         ImGui::End();
+    }
+
+
+
+    std::filesystem::path GaleshiEditorApp::BehaviorTreeSetupPathFor(
+        entt::entity agent) {
+        const std::string projectPath =
+            Galeshi::ProjectManager::GetProjectPath();
+        if (projectPath.empty()) return {};
+        return std::filesystem::path(projectPath) / "assets" / "scripts" /
+               (BehaviorTreeFileStem(m_scene, agent) + ".bt");
+    }
+
+
+
+    bool GaleshiEditorApp::SaveBehaviorTreeSetup(entt::entity agent) {
+        auto* tree = m_scene.Registry().try_get<
+            Galeshi::BehaviorTreeComponent>(agent);
+        if (!tree) {
+            spdlog::warn("[BT] No behavior tree on the selected AI agent");
+            return false;
+        }
+
+        const std::filesystem::path path =
+            BehaviorTreeSetupPathFor(agent);
+        if (path.empty()) {
+            spdlog::warn("[BT] Cannot save setup: no project is open");
+            return false;
+        }
+
+        std::error_code ec;
+        std::filesystem::create_directories(path.parent_path(), ec);
+        if (ec) {
+            spdlog::error("[BT] Cannot create setup directory '{}': {}",
+                          path.parent_path().string(), ec.message());
+            return false;
+        }
+
+        std::ofstream out(path);
+        if (!out.is_open()) {
+            spdlog::error("[BT] Cannot write setup '{}'", path.string());
+            return false;
+        }
+        out << BehaviorTreeToJson(*tree).dump(4) << '\n';
+        out.close();
+        if (!out.good()) {
+            spdlog::error("[BT] Failed while writing setup '{}'",
+                          path.string());
+            return false;
+        }
+
+        spdlog::info("[BT] Saved setup: {}", path.string());
+        return true;
+    }
+
+
+
+    bool GaleshiEditorApp::LoadBehaviorTreeSetup(entt::entity agent) {
+        auto* tree = m_scene.Registry().try_get<
+            Galeshi::BehaviorTreeComponent>(agent);
+        if (!tree) {
+            spdlog::warn("[BT] No behavior tree on the selected AI agent");
+            return false;
+        }
+
+        const std::filesystem::path path =
+            BehaviorTreeSetupPathFor(agent);
+        if (path.empty()) return false;
+
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(path, ec)) {
+            spdlog::warn("[BT] Setup file not found: {}", path.string());
+            return false;
+        }
+
+        std::ifstream in(path);
+        if (!in.is_open()) {
+            spdlog::error("[BT] Cannot read setup '{}'", path.string());
+            return false;
+        }
+
+        nlohmann::json json;
+        try {
+            in >> json;
+        } catch (const std::exception& e) {
+            spdlog::error("[BT] Invalid setup '{}': {}", path.string(),
+                          e.what());
+            return false;
+        }
+
+        Galeshi::BehaviorTreeComponent loaded;
+        if (!BehaviorTreeFromJson(json, loaded)) {
+            spdlog::error("[BT] Setup '{}' has no valid nodes",
+                          path.string());
+            return false;
+        }
+        *tree = std::move(loaded);
+        spdlog::info("[BT] Loaded setup: {}", path.string());
+        return true;
     }
 
 
