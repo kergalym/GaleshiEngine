@@ -676,6 +676,10 @@
                         if (!isCycle) {
                             PushHistory();
 
+                            // Preserve the world pose when changing parents.
+                            const glm::mat4 world = GetWorldMatrix(dragged);
+                            const glm::mat4 parentWorld = GetWorldMatrix(e);
+
                             // 1) Detach from old parent
                             if (reg.all_of<Galeshi::ParentComponent>(dragged))
                                 reg.remove<Galeshi::ParentComponent>(dragged);
@@ -684,14 +688,10 @@
                             reg.emplace_or_replace<Galeshi::ParentComponent>(
                                 dragged, Galeshi::ParentComponent{ e });
 
-                            // 3) Snap to Parent's origin (Local Transform = Identity)
-                            // The agent will now visually be at the same position as the parent.
-                            if (reg.all_of<Galeshi::TransformComponent>(dragged)) {
-                                auto& tf = reg.get<Galeshi::TransformComponent>(dragged);
-                                tf.position = glm::vec3(0.0f);
-                                tf.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-                                tf.scale = glm::vec3(1.0f);
-                            }
+                            // 3) Convert the preserved world transform into
+                            // the new parent's local space.
+                            SetLocalFromMatrix(
+                                dragged, glm::inverse(parentWorld) * world);
                         } else {
                             spdlog::warn("[Outliner] Cannot reparent: would create a cycle.");
                         }

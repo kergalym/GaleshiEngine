@@ -183,9 +183,23 @@ namespace {
         return root;
     }
 
+    // A character can be attached under a plain entity. The topmost root is
+    // then no longer the skeleton, so find the nearest skeleton ancestor
+    // instead of assuming the scene root owns the bone palette.
+    entt::entity FindSkeletonRoot(Scene& scene, entt::entity handle) {
+        entt::entity current = handle;
+        for (int depth = 0; current != entt::null && depth < 128; ++depth) {
+            if (scene.Registry().all_of<SkeletalComponent>(current)) {
+                return current;
+            }
+            if (!scene.Registry().all_of<ParentComponent>(current)) break;
+            current = scene.Registry().get<ParentComponent>(current).parent;
+        }
+        return entt::null;
+    }
+
     bool HasSkeletonRoot(Scene& scene, entt::entity handle) {
-        return scene.Registry().all_of<SkeletalComponent>(
-            FindRootEntity(scene, handle));
+        return FindSkeletonRoot(scene, handle) != entt::null;
     }
 
     // Cast Shadows is a model-level toggle. Older scenes without a
@@ -1113,8 +1127,8 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         }
 
         const entt::entity root = FindRootEntity(scene, h);
-        const bool hasSkeleton =
-            scene.Registry().all_of<SkeletalComponent>(root);
+        const entt::entity skeletonRoot = FindSkeletonRoot(scene, h);
+        const bool hasSkeleton = skeletonRoot != entt::null;
         // Landscape paint weights are carried in the vertex stream; the
         // instanced vertex shader has no skin/weight attributes and would
         // force the blend varying to zero.
@@ -1172,7 +1186,8 @@ void RenderSystem::Render(Scene& scene, const Camera& camera, bgfx::ViewId viewI
         // Skeletal animation support. Skinned meshes keep the regular path
         // because each entity has its own bone palette.
         if (hasSkeleton) {
-            auto& skel = scene.Registry().get<SkeletalComponent>(root);
+            auto& skel =
+                scene.Registry().get<SkeletalComponent>(skeletonRoot);
             if (skel.isAnimated && !skel.sourcePath.empty()) {
                 if (skel.boneMatrices.size() != kMaxBones) {
                     skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
@@ -1740,10 +1755,11 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
         // depth pass as well. The regular vs_shadow path only knows positions
         // and would otherwise cast the bind pose.
         if (hasSkeleton && bgfx::isValid(m_shadowSkinnedProg)) {
-            const entt::entity root = FindRootEntity(scene, h);
+            const entt::entity skeletonRoot = FindSkeletonRoot(scene, h);
             const std::vector<glm::vec4>* bones = &identityBoneData;
-            if (scene.Registry().all_of<SkeletalComponent>(root)) {
-                auto& skel = scene.Registry().get<SkeletalComponent>(root);
+            if (skeletonRoot != entt::null) {
+                auto& skel =
+                    scene.Registry().get<SkeletalComponent>(skeletonRoot);
                 if (skel.isAnimated && !skel.sourcePath.empty()) {
                     if (skel.boneMatrices.size() != kMaxBones) {
                         skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
@@ -1883,11 +1899,11 @@ void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx,
         bgfx::setUniform(u_shadowDepthOffset, offset);
 
         // Skeletal animation support
-        const entt::entity root = FindRootEntity(scene, h);
-        const bool hasSkeleton =
-            scene.Registry().all_of<SkeletalComponent>(root);
+        const entt::entity skeletonRoot = FindSkeletonRoot(scene, h);
+        const bool hasSkeleton = skeletonRoot != entt::null;
         if (hasSkeleton) {
-            auto& skel = scene.Registry().get<SkeletalComponent>(root);
+            auto& skel =
+                scene.Registry().get<SkeletalComponent>(skeletonRoot);
             if (skel.isAnimated && !skel.sourcePath.empty()) {
                 if (skel.boneMatrices.size() != kMaxBones) skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f)); // Should be handled in OnUpdate
                 // Animation updated in OnUpdate (Parallel)
@@ -2227,9 +2243,10 @@ bool RenderSystem::RenderPlanarReflection(Scene& scene, const Camera& camera,
             glm::length(glm::vec3(model[2])));
         if (!frustum.TestSphere(worldCenter, localRadius * maxScale)) continue;
 
-        const entt::entity root = FindRootEntity(scene, handle);
-        if (scene.Registry().all_of<SkeletalComponent>(root)) {
-            auto& skeleton = scene.Registry().get<SkeletalComponent>(root);
+        const entt::entity skeletonRoot = FindSkeletonRoot(scene, handle);
+        if (skeletonRoot != entt::null) {
+            auto& skeleton =
+                scene.Registry().get<SkeletalComponent>(skeletonRoot);
             if (skeleton.isAnimated && !skeleton.sourcePath.empty()) {
                 if (skeleton.boneMatrices.size() != kMaxBones) {
                     skeleton.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
@@ -2645,15 +2662,11 @@ void RenderSystem::RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId 
         // vs_pbr always samples the bone palette, so bind real skeletal data
         // when available and identity matrices otherwise.
         const std::vector<glm::vec4>* bones = &identityBoneData;
-        entt::entity root = item.entity;
-        while (root != entt::null) {
-            if (scene.Registry().all_of<ParentComponent>(root))
-                root = scene.Registry().get<ParentComponent>(root).parent;
-            else
-                break;
-        }
-        if (scene.Registry().all_of<SkeletalComponent>(root)) {
-            auto& skel = scene.Registry().get<SkeletalComponent>(root);
+        const entt::entity skeletonRoot =
+            FindSkeletonRoot(scene, item.entity);
+        if (skeletonRoot != entt::null) {
+            auto& skel =
+                scene.Registry().get<SkeletalComponent>(skeletonRoot);
             if (skel.isAnimated && !skel.sourcePath.empty()) {
                 if (skel.boneMatrices.size() != kMaxBones)
                     skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
@@ -2884,16 +2897,11 @@ void RenderSystem::RenderTranslucency(Scene& scene, const Camera& camera,
 
         // Skeletal palette (same layout as the opaque PBR path).
         const std::vector<glm::vec4>* bones = &identityBoneData;
-        entt::entity root = item.entity;
-        while (root != entt::null) {
-            if (scene.Registry().all_of<ParentComponent>(root)) {
-                root = scene.Registry().get<ParentComponent>(root).parent;
-            } else {
-                break;
-            }
-        }
-        if (scene.Registry().all_of<SkeletalComponent>(root)) {
-            auto& skel = scene.Registry().get<SkeletalComponent>(root);
+        const entt::entity skeletonRoot =
+            FindSkeletonRoot(scene, item.entity);
+        if (skeletonRoot != entt::null) {
+            auto& skel =
+                scene.Registry().get<SkeletalComponent>(skeletonRoot);
             if (skel.isAnimated && !skel.sourcePath.empty()) {
                 if (skel.boneMatrices.size() != kMaxBones) {
                     skel.boneMatrices.resize(kMaxBones, glm::mat4(1.0f));
