@@ -125,6 +125,8 @@ private:
     bool EnsureOcclusionTarget(uint16_t width, uint16_t height);
     bool IsOccluded(uint32_t entityId) const;
     void ResetOcclusionState();
+    bgfx::TextureHandle BoneTextureForSkeleton(uint32_t skeletonId);
+    void DestroySkeletonBoneTextures();
 
     AssetManager* m_assets = nullptr;
     ViewMode m_viewMode = ViewMode::Lit;
@@ -238,7 +240,10 @@ private:
     bgfx::UniformHandle u_pointLightPosRadius = BGFX_INVALID_HANDLE, u_pointLightColorInt = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_pointLightCount = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_boneMatrices = BGFX_INVALID_HANDLE;
+    // Identity palette for static meshes; animated skeletons get their own
+    // texture so one character's pose can never leak into another draw.
     bgfx::TextureHandle m_boneTexture = BGFX_INVALID_HANDLE;
+    std::unordered_map<uint32_t, bgfx::TextureHandle> m_skeletonBoneTextures;
     bgfx::UniformHandle s_albedoMap = BGFX_INVALID_HANDLE, s_metallicRoughnessMap = BGFX_INVALID_HANDLE, s_normalMap = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_irradianceMap = BGFX_INVALID_HANDLE, s_envMap = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_emissiveMap = BGFX_INVALID_HANDLE, s_occlusionMap = BGFX_INVALID_HANDLE;

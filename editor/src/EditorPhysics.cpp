@@ -1257,6 +1257,14 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
             volumes.push_back(volume);
         }
         if (volumes.empty()) {
+            if (m_editor.isPlaying) {
+                for (const auto& entry : m_waterTriggerBodies) {
+                    m_scripts.DispatchTriggerEndOverlap(
+                        static_cast<uint32_t>(entry.second),
+                        static_cast<uint32_t>(entry.first));
+                }
+            }
+            m_waterTriggerBodies.clear();
             m_waterSubmerged.clear();
             return;
         }
@@ -1322,6 +1330,7 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
             const float bodyHeight = std::max(top - bottom, 0.05f);
 
             bool inWater = false;
+            entt::entity currentWater = entt::null;
             for (const WaterVolume& volume : volumes) {
                 const glm::vec3 local = glm::vec3(
                     volume.invModel * glm::vec4(center, 1.0f));
@@ -1338,6 +1347,7 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
                 const float submerged = std::clamp(
                     (volume.surfaceY - bottom) / bodyHeight, 0.0f, 1.0f);
                 if (submerged <= 0.001f) continue;
+                currentWater = volume.entity;
 
                 if (isPlayerBody(e) && submerged > 0.55f) {
                     playerUnderwater = true;
@@ -1416,6 +1426,43 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
                 inWater = true;
                 break;
             }
+
+            if (m_editor.isPlaying) {
+                const auto triggerIt = m_waterTriggerBodies.find(e);
+                const entt::entity triggerWater =
+                    triggerIt != m_waterTriggerBodies.end()
+                        ? triggerIt->second : entt::null;
+                if (triggerWater != entt::null) {
+                    const auto* previousWater =
+                        registry.valid(triggerWater)
+                            ? registry.try_get<Galeshi::WaterComponent>(
+                                  triggerWater)
+                            : nullptr;
+                    if (currentWater != triggerWater ||
+                        !previousWater || !previousWater->trigger) {
+                        m_scripts.DispatchTriggerEndOverlap(
+                            static_cast<uint32_t>(triggerWater),
+                            static_cast<uint32_t>(e));
+                        m_waterTriggerBodies.erase(e);
+                    }
+                }
+                if (currentWater != entt::null &&
+                    m_waterTriggerBodies.find(e) ==
+                        m_waterTriggerBodies.end()) {
+                    const auto* current =
+                        registry.try_get<Galeshi::WaterComponent>(
+                            currentWater);
+                    if (current && current->trigger) {
+                        m_scripts.DispatchTriggerBeginOverlap(
+                            static_cast<uint32_t>(currentWater),
+                            static_cast<uint32_t>(e));
+                        m_waterTriggerBodies[e] = currentWater;
+                    }
+                }
+            } else if (!m_waterTriggerBodies.empty()) {
+                m_waterTriggerBodies.clear();
+            }
+
             if (!inWater) {
                 if (wasSubmerged) {
                     const glm::vec3 exitVelocity =

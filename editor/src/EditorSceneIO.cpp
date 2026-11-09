@@ -91,6 +91,7 @@ bool IsInsideProject(const std::filesystem::path& scenePath,
         m_history[m_historyIndex] = m_serializer->SaveToString();
         if (m_particles) m_particles->Reset();
         m_waterSubmerged.clear();
+        m_waterTriggerBodies.clear();
         m_bodyWaterSurfaceY.clear();
         m_bodyWaterEntity.clear();
         m_bodyWaterUV.clear();
@@ -112,6 +113,7 @@ bool IsInsideProject(const std::filesystem::path& scenePath,
         m_history[m_historyIndex] = m_serializer->SaveToString();
         if (m_particles) m_particles->Reset();
         m_waterSubmerged.clear();
+        m_waterTriggerBodies.clear();
         m_bodyWaterSurfaceY.clear();
         m_bodyWaterEntity.clear();
         m_bodyWaterUV.clear();
@@ -182,6 +184,7 @@ bool IsInsideProject(const std::filesystem::path& scenePath,
         if (m_physics) m_physics->Reset();
         if (m_particles) m_particles->Reset();
         m_waterSubmerged.clear();
+        m_waterTriggerBodies.clear();
         m_bodyWaterSurfaceY.clear();
         m_bodyWaterEntity.clear();
         m_bodyWaterUV.clear();
@@ -209,9 +212,10 @@ bool IsInsideProject(const std::filesystem::path& scenePath,
         if (!stateMachineCharacterName.empty()) {
             Galeshi::Entity restored =
                 m_scene.FindEntityByName(stateMachineCharacterName);
-            if (restored) {
-                m_stateMachineEditorEntity = restored.Handle();
-            }
+            const entt::entity character = restored
+                ? FindAsmeCharacter(restored.Handle())
+                : entt::null;
+            m_stateMachineEditorEntity = character;
         }
         DeactivateGameplayCamera();
     }
@@ -231,6 +235,7 @@ bool IsInsideProject(const std::filesystem::path& scenePath,
             if (m_physics) m_physics->Reset();
             if (m_particles) m_particles->Reset();
         m_waterSubmerged.clear();
+        m_waterTriggerBodies.clear();
         m_bodyWaterSurfaceY.clear();
         m_bodyWaterEntity.clear();
         m_bodyWaterUV.clear();

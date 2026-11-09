@@ -1459,6 +1459,7 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
                 {"bodyType", static_cast<int>(w.bodyType)},
                 {"enabled", w.enabled},
                 {"visibleInEditor", w.visibleInEditor},
+                {"trigger", w.trigger},
                 {"carveLandscape", w.carveLandscape},
                 {"terrainCarved", w.terrainCarved},
                 {"basinDepth", w.basinDepth},
@@ -2621,6 +2622,7 @@ bool SceneSerializer::LoadFromJson(const json& root,
                 std::clamp(jw.value("bodyType", 0), 0, 3));
             water.enabled = jw.value("enabled", true);
             water.visibleInEditor = jw.value("visibleInEditor", true);
+            water.trigger = jw.value("trigger", true);
             water.carveLandscape = jw.value("carveLandscape", true);
             water.terrainCarved = jw.value("terrainCarved", false);
             water.basinDepth = jw.value("basinDepth", water.basinDepth);

@@ -237,6 +237,9 @@
         m_currentScenePath.clear();
         m_uiCanvasEntity = entt::null;
         m_uiWidgetIndex = -1;
+        m_stateMachineEditorEntity = entt::null;
+        m_lastStateMachineSelection = entt::null;
+        m_waterTriggerBodies.clear();
         m_lastViewportTexture = BGFX_INVALID_HANDLE;
     }
 

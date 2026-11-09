@@ -861,18 +861,11 @@
             if (selectedHandle != m_lastStateMachineSelection) {
                 m_lastStateMachineSelection = selectedHandle;
 
-                entt::entity characterHandle = selectedHandle;
-                if (selected &&
-                    !selected.HasComponent<Galeshi::SkeletalComponent>() &&
-                    !selected.HasComponent<
-                        Galeshi::AnimationStateMachineComponent>()) {
-                    const Galeshi::Entity skeleton =
-                        FindSkeletalRootForReplacement(selectedHandle);
-                    if (skeleton) characterHandle = skeleton.Handle();
-                }
+                const entt::entity characterHandle =
+                    selected ? FindAsmeCharacter(selectedHandle) : entt::null;
 
                 const bool isCharacter =
-                    selected && m_scene.Registry().valid(characterHandle) &&
+                    m_scene.Registry().valid(characterHandle) &&
                     (m_scene.Registry().all_of<Galeshi::SkeletalComponent>(
                          characterHandle) ||
                      m_scene.Registry().all_of<

@@ -659,6 +659,10 @@ struct WaterComponent {
     WaterBodyType bodyType = WaterBodyType::Sea;
     bool enabled = true;
     bool visibleInEditor = true;
+    // Water acts as a script trigger volume. Bodies entering/leaving the
+    // procedural water footprint receive OnTriggerBegin/EndOverlap with the
+    // water entity as the trigger.
+    bool trigger = true;
     // Terrain sculpting under/around this water body.
     bool  carveLandscape = true;
     bool  terrainCarved = false;

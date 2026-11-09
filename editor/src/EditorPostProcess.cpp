@@ -87,6 +87,7 @@
         // TAA history from the previous scene/camera.
         m_postProcess.ResetTaaHistory();
         m_waterSubmerged.clear();
+        m_waterTriggerBodies.clear();
         m_bodyWaterSurfaceY.clear();
         m_bodyWaterEntity.clear();
         m_bodyWaterUV.clear();
@@ -686,6 +687,14 @@
         ImGui::Checkbox("Enabled##water", &water.enabled);
         ImGui::SameLine();
         ImGui::Checkbox("Visible in Editor", &water.visibleInEditor);
+        ImGui::Checkbox("Trigger##water", &water.trigger);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Sends OnTriggerBeginOverlap / OnTriggerEndOverlap to "
+                "scripts when a physics body enters or leaves this water.\n"
+                "The water entity is the trigger id; check "
+                "\"water\" with has_component() to identify it.");
+        }
         ImGui::DragFloat("Width", &water.width, 0.1f, 0.1f, 10000.0f);
         ImGui::DragFloat("Depth", &water.depth, 0.1f, 0.1f, 10000.0f);
         {

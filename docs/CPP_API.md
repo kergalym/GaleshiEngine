@@ -111,10 +111,13 @@ physics.SetOnTriggerEndOverlap(
 ```
 
 Create trigger volumes with a `ColliderComponent` whose `isTrigger` is true.
-Dynamic bodies must exist on the entities that should overlap. The Lua
-callbacks `OnTriggerBeginOverlap` / `OnTriggerEndOverlap` and the optional
-hot-reload C++ exports of the same names are documented in
-[CPP_SCRIPTS.md](CPP_SCRIPTS.md) and [LUA_API.md](LUA_API.md).
+Dynamic bodies must exist on the entities that should overlap. Water bodies
+also raise these callbacks when their **Trigger** checkbox is enabled; the
+first id is then the water entity, so check for `WaterComponent` before
+handling it. The Lua callbacks `OnTriggerBeginOverlap` /
+`OnTriggerEndOverlap` and the optional hot-reload C++ exports of the same
+names are documented in [CPP_SCRIPTS.md](CPP_SCRIPTS.md) and
+[LUA_API.md](LUA_API.md).
 
 ## Hot-reload C++ Script API
 

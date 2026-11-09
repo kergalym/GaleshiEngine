@@ -5,16 +5,8 @@
 
 namespace {
 
-std::string AsmeFileStem(Galeshi::Scene& scene, entt::entity character) {
-    std::string name = "Character";
-    auto& registry = scene.Registry();
-    if (registry.valid(character)) {
-        if (const auto* nameComponent =
-                registry.try_get<Galeshi::NameComponent>(character);
-            nameComponent && !nameComponent->name.empty()) {
-            name = nameComponent->name;
-        }
-    }
+std::string SanitizeAsmeStem(std::string name) {
+    if (name.empty()) return "Character";
     for (char& c : name) {
         const unsigned char value = static_cast<unsigned char>(c);
         if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' ||
@@ -26,6 +18,47 @@ std::string AsmeFileStem(Galeshi::Scene& scene, entt::entity character) {
         name.pop_back();
     }
     return name.empty() ? "Character" : name;
+}
+
+std::string AsmeFileStem(Galeshi::Scene& scene, entt::entity character) {
+    std::string name = "Character";
+    auto& registry = scene.Registry();
+    if (registry.valid(character)) {
+        if (const auto* nameComponent =
+                registry.try_get<Galeshi::NameComponent>(character);
+            nameComponent && !nameComponent->name.empty()) {
+            name = nameComponent->name;
+        }
+    }
+    name = SanitizeAsmeStem(name);
+
+    // Two characters can share a display name (for example two instances of
+    // the same model). Only the lowest entity id keeps <name>.asme; the rest
+    // get a stable suffix so their state machines never share a file.
+    bool earlierDuplicate = false;
+    auto nameView = registry.view<Galeshi::NameComponent>();
+    for (entt::entity other : nameView) {
+        if (other == character ||
+            static_cast<uint32_t>(other) >=
+                static_cast<uint32_t>(character)) {
+            continue;
+        }
+        if (SanitizeAsmeStem(
+                nameView.get<Galeshi::NameComponent>(other).name) != name) {
+            continue;
+        }
+        if (registry.all_of<Galeshi::SkeletalComponent>(other) ||
+            registry.all_of<
+                Galeshi::AnimationStateMachineComponent>(other)) {
+            earlierDuplicate = true;
+            break;
+        }
+    }
+    if (earlierDuplicate) {
+        name += "_" + std::to_string(
+                           static_cast<uint32_t>(character));
+    }
+    return name;
 }
 
 nlohmann::json AsmeToJson(
@@ -209,6 +242,100 @@ bool AsmeFromJson(
 
 
 
+    entt::entity GaleshiEditorApp::FindAsmeCharacter(entt::entity entity) {
+        auto& registry = m_scene.Registry();
+        if (!registry.valid(entity)) return entt::null;
+
+        auto hasSkeleton = [&](entt::entity handle) {
+            return registry.all_of<Galeshi::SkeletalComponent>(handle);
+        };
+        const bool isMesh =
+            registry.all_of<Galeshi::MeshComponent>(entity);
+
+        if (hasSkeleton(entity)) return entity;
+
+        // A model container belongs to exactly one skeleton below it. More
+        // than one means a shared wrapper, never a character.
+        if (!isMesh) {
+            std::vector<entt::entity> skeletons;
+            std::vector<entt::entity> pending{entity};
+            std::unordered_set<entt::entity> visited;
+            for (size_t head = 0; head < pending.size() && head < 1024;
+                 ++head) {
+                const entt::entity current = pending[head];
+                if (!registry.valid(current) ||
+                    !visited.insert(current).second) {
+                    continue;
+                }
+                if (current != entity && hasSkeleton(current)) {
+                    skeletons.push_back(current);
+                    if (skeletons.size() > 1) return entt::null;
+                    continue;
+                }
+                auto childView = registry.view<Galeshi::ParentComponent>();
+                for (entt::entity child : childView) {
+                    if (childView.get<Galeshi::ParentComponent>(child)
+                            .parent == current) {
+                        pending.push_back(child);
+                    }
+                }
+            }
+            if (skeletons.size() == 1) return skeletons.front();
+        }
+
+        // A mesh child uses the nearest skeleton above it.
+        entt::entity ancestor = entity;
+        for (int depth = 0; depth < 128 && registry.valid(ancestor);
+             ++depth) {
+            if (!registry.all_of<Galeshi::ParentComponent>(ancestor)) break;
+            ancestor =
+                registry.get<Galeshi::ParentComponent>(ancestor).parent;
+            if (!registry.valid(ancestor)) break;
+            if (hasSkeleton(ancestor)) return ancestor;
+        }
+
+        // A state machine without a skeleton is a setup in progress. Keep it
+        // on its own entity/nearest ancestor so it can be completed.
+        entt::entity current = entity;
+        for (int depth = 0; depth < 128 && registry.valid(current);
+             ++depth) {
+            if (registry.all_of<Galeshi::AnimationStateMachineComponent>(
+                    current)) {
+                return current;
+            }
+            if (!registry.all_of<Galeshi::ParentComponent>(current)) break;
+            current = registry.get<Galeshi::ParentComponent>(current).parent;
+        }
+
+        // A standalone unsupported mesh is itself a setup candidate.
+        if (isMesh) return entity;
+
+        // Imported model hierarchies without bones can still be set up here,
+        // but a plain wrapper with no mesh must not become a shared ASME.
+        std::vector<entt::entity> pending{entity};
+        std::unordered_set<entt::entity> visited;
+        for (size_t head = 0; head < pending.size() && head < 1024; ++head) {
+            const entt::entity current = pending[head];
+            if (!registry.valid(current) ||
+                !visited.insert(current).second) {
+                continue;
+            }
+            if (registry.all_of<Galeshi::MeshComponent>(current)) {
+                return entity;
+            }
+            auto childView = registry.view<Galeshi::ParentComponent>();
+            for (entt::entity child : childView) {
+                if (childView.get<Galeshi::ParentComponent>(child).parent ==
+                    current) {
+                    pending.push_back(child);
+                }
+            }
+        }
+        return entt::null;
+    }
+
+
+
     std::filesystem::path GaleshiEditorApp::AsmeSetupPathFor(
         entt::entity character) {
         const std::string projectPath =
@@ -318,6 +445,7 @@ bool AsmeFromJson(
 
 
     void GaleshiEditorApp::SetAsmeCharacter(entt::entity character) {
+        character = FindAsmeCharacter(character);
         if (!m_scene.Registry().valid(character)) return;
         if (m_stateMachineEditorEntity == character) return;
         m_stateMachineEditorEntity = character;
@@ -951,56 +1079,39 @@ bool AsmeFromJson(
             if (!gltfModel && !isSkeletalModel(mesh.sourceAssetPath)) {
                 continue;
             }
-            addCharacter(modelRootForMesh(handle), mesh.sourceAssetPath);
+            addCharacter(FindAsmeCharacter(modelRootForMesh(handle)),
+                         mesh.sourceAssetPath);
         }
 
-        // A model just added to the scene is usually selected. Include the
-        // selection explicitly so the state machine editor can target it even
-        // if the import does not expose bones or animation metadata.
+        // A model just added to the scene is usually selected. Resolve the
+        // selection to its actual character so a Player/wrapper never becomes
+        // a second ASME owner for the same skeleton.
         for (Galeshi::Entity selected : m_editor.SelectedAll(&m_scene)) {
-            const entt::entity handle = selected.Handle();
-            if (!registry.valid(handle)) continue;
-            if (const auto* skeleton =
-                    registry.try_get<Galeshi::SkeletalComponent>(handle)) {
-                addCharacter(handle, skeleton->sourcePath);
-                continue;
-            }
-            if (const auto* mesh =
-                    registry.try_get<Galeshi::MeshComponent>(handle);
-                mesh && !mesh->sourceAssetPath.empty()) {
-                addCharacter(modelRootForMesh(handle), mesh->sourceAssetPath);
+            const entt::entity character =
+                FindAsmeCharacter(selected.Handle());
+            if (character == entt::null) continue;
+            if (registry.all_of<Galeshi::MeshComponent>(character) &&
+                !registry.all_of<Galeshi::SkeletalComponent>(character) &&
+                !registry.all_of<
+                    Galeshi::AnimationStateMachineComponent>(character)) {
                 continue;
             }
 
-            // Selected model root/container: find the first descendant mesh
-            // that belongs to an imported model.
-            std::vector<entt::entity> pending{handle};
-            std::unordered_set<entt::entity> visited;
-            while (!pending.empty()) {
-                const entt::entity current = pending.back();
-                pending.pop_back();
-                if (!registry.valid(current) ||
-                    !visited.insert(current).second) {
-                    continue;
-                }
-                if (const auto* mesh =
-                        registry.try_get<Galeshi::MeshComponent>(current);
-                    mesh && !mesh->sourceAssetPath.empty()) {
-                    addCharacter(handle, mesh->sourceAssetPath);
-                    break;
-                }
-                auto childView = registry.view<Galeshi::ParentComponent>();
-                for (entt::entity child : childView) {
-                    if (childView.get<Galeshi::ParentComponent>(child).parent ==
-                        current) {
-                        pending.push_back(child);
-                    }
-                }
+            std::string sourcePath;
+            if (const auto* skeleton =
+                    registry.try_get<Galeshi::SkeletalComponent>(character)) {
+                sourcePath = skeleton->sourcePath;
+            } else if (const auto* mesh =
+                           registry.try_get<Galeshi::MeshComponent>(character);
+                       mesh && !mesh->sourceAssetPath.empty()) {
+                sourcePath = mesh->sourceAssetPath;
             }
+            addCharacter(character, sourcePath);
         }
 
-        // ASME defaults to the authored Player entity when one exists, even
-        // if it is not a skeletal model yet.
+        // Player is only a character when it owns the skeleton/model. When it
+        // is just the shared parent of imported characters, resolve it to the
+        // character below instead of giving all of them one state machine.
         entt::entity playerEntity = entt::null;
         auto playerView = registry.view<Galeshi::PlayerTagComponent>();
         for (entt::entity handle : playerView) {
@@ -1021,16 +1132,21 @@ bool AsmeFromJson(
                 }
             }
         }
-        if (playerEntity != entt::null) {
+        entt::entity playerCharacter =
+            playerEntity != entt::null ? FindAsmeCharacter(playerEntity)
+                                       : entt::null;
+        if (playerCharacter != entt::null) {
             std::string playerSourcePath;
             if (const auto* skeleton =
-                    registry.try_get<Galeshi::SkeletalComponent>(playerEntity)) {
+                    registry.try_get<Galeshi::SkeletalComponent>(
+                        playerCharacter)) {
                 playerSourcePath = skeleton->sourcePath;
             } else if (const auto* mesh =
-                           registry.try_get<Galeshi::MeshComponent>(playerEntity)) {
+                           registry.try_get<Galeshi::MeshComponent>(
+                               playerCharacter)) {
                 playerSourcePath = mesh->sourceAssetPath;
             }
-            addCharacter(playerEntity, playerSourcePath);
+            addCharacter(playerCharacter, playerSourcePath);
         }
 
         std::sort(characters.begin(), characters.end(),
@@ -1038,14 +1154,21 @@ bool AsmeFromJson(
                       return a.label < b.label;
                   });
 
-        // Default a newly opened editor to Player only when the current ASME
-        // target is not already a valid character. A freshly dropped skeletal
-        // mesh sets this target explicitly and must not be replaced by Player.
-        if (windowAppearing && playerEntity != entt::null &&
-            characterIndices.count(playerEntity) &&
+        // A stale/wrapper target must never keep editing a shared parent.
+        const entt::entity resolvedTarget =
+            FindAsmeCharacter(m_stateMachineEditorEntity);
+        if (resolvedTarget != entt::null &&
+            resolvedTarget != m_stateMachineEditorEntity) {
+            SetAsmeCharacter(resolvedTarget);
+        }
+
+        // Default a newly opened editor to the resolved Player character only
+        // when the current ASME target is not already a valid character.
+        if (windowAppearing && playerCharacter != entt::null &&
+            characterIndices.count(playerCharacter) &&
             characterIndices.find(m_stateMachineEditorEntity) ==
                 characterIndices.end()) {
-            SetAsmeCharacter(playerEntity);
+            SetAsmeCharacter(playerCharacter);
         }
 
         if (characters.empty()) {
@@ -1062,11 +1185,23 @@ bool AsmeFromJson(
             }
         }
         if (!found) {
-            SetAsmeCharacter(
-                playerEntity != entt::null &&
-                        characterIndices.count(playerEntity)
-                    ? playerEntity
-                    : characters.front().entity);
+            entt::entity fallback = characters.front().entity;
+            if (playerCharacter != entt::null &&
+                characterIndices.count(playerCharacter)) {
+                fallback = playerCharacter;
+            } else {
+                for (const CharacterEntry& entry : characters) {
+                    if (registry.all_of<Galeshi::SkeletalComponent>(
+                            entry.entity) ||
+                        registry.all_of<
+                            Galeshi::AnimationStateMachineComponent>(
+                            entry.entity)) {
+                        fallback = entry.entity;
+                        break;
+                    }
+                }
+            }
+            SetAsmeCharacter(fallback);
         }
 
         int current = 0;

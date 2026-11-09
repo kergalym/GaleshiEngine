@@ -248,6 +248,19 @@ The end callback fires when the last contact between the pair is removed.
 Entities need a collider with `Is Trigger` enabled; add a rigid body to moving
 objects.
 
+Water bodies also act as triggers when their Water inspector **Trigger**
+checkbox is enabled. The first id is then the water entity; the enter/exit
+events use the procedural water footprint rather than a box collider:
+
+```lua
+function OnTriggerBeginOverlap(trigger, other)
+    local water = Galeshi.world.entity(trigger)
+    if water and water:has_component("water") then
+        print("entered water", other)
+    end
+end
+```
+
 ### `Galeshi.animation`
 
 State-machine helpers:

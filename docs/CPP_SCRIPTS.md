@@ -88,7 +88,9 @@ The host dispatches queued physics events on the main thread before the next
 Every loaded module with the matching export receives the event. The hook is
 module-level, not per-entity: inspect the trigger/other ids if one module
 handles several volumes. Entities must have a collider with `Is Trigger`
-enabled in the editor.
+enabled in the editor. Water bodies with the Water inspector's **Trigger**
+checkbox enabled also dispatch these events with the water entity as
+`trigger`; use `HasComponent(trigger, "water")` to identify it.
 
 ### Accessing an entity shown in the Outliner
 

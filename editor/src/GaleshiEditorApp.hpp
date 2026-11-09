@@ -542,6 +542,11 @@ private:
 
     std::string FindCharacterModelPath(entt::entity entity);
 
+    // Resolves a selection, mesh or wrapper to the entity that owns the
+    // character's skeleton/state machine. Returns null for a shared parent
+    // with several characters below it.
+    entt::entity FindAsmeCharacter(entt::entity entity);
+
     bool AssignStateAnimationAsset(Galeshi::Entity entity, int stateIndex,
                                    const std::string& originalPath);
 
@@ -851,6 +856,9 @@ void DrawDetails();
     std::unordered_map<entt::entity, float> m_bodyWaterSurfaceY;
     std::unordered_map<entt::entity, entt::entity> m_bodyWaterEntity;
     std::unordered_map<entt::entity, glm::vec2> m_bodyWaterUV;
+    // Body -> water whose trigger begin event has been sent, so the matching
+    // end event fires exactly once even when the body changes water bodies.
+    std::unordered_map<entt::entity, entt::entity> m_waterTriggerBodies;
     bgfx::TextureHandle m_shadowMaps[3] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
     bgfx::FrameBufferHandle m_shadowFbos[3] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
     bgfx::FrameBufferHandle m_pointShadowFbos[6] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
