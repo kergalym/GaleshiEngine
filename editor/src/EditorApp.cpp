@@ -860,16 +860,30 @@
                 selected ? selected.Handle() : entt::null;
             if (selectedHandle != m_lastStateMachineSelection) {
                 m_lastStateMachineSelection = selectedHandle;
+
+                entt::entity characterHandle = selectedHandle;
+                if (selected &&
+                    !selected.HasComponent<Galeshi::SkeletalComponent>() &&
+                    !selected.HasComponent<
+                        Galeshi::AnimationStateMachineComponent>()) {
+                    const Galeshi::Entity skeleton =
+                        FindSkeletalRootForReplacement(selectedHandle);
+                    if (skeleton) characterHandle = skeleton.Handle();
+                }
+
                 const bool isCharacter =
-                    selected &&
-                    (selected.HasComponent<Galeshi::SkeletalComponent>() ||
-                     (selected.HasComponent<Galeshi::MeshComponent>() &&
-                      IsSkeletalCharacter(selected)));
+                    selected && m_scene.Registry().valid(characterHandle) &&
+                    (m_scene.Registry().all_of<Galeshi::SkeletalComponent>(
+                         characterHandle) ||
+                     m_scene.Registry().all_of<
+                         Galeshi::AnimationStateMachineComponent>(
+                         characterHandle));
                 if (isCharacter) {
-                    // Only seed the pending target while the docked window is
-                    // closed. If it is already open, keep the user's choice.
-                    if (!m_showStateMachineEditor) {
-                        m_stateMachineEditorEntity = selectedHandle;
+                    // Selecting a character switches ASME to that character
+                    // and loads scripts/<name>.asme when it exists.
+                    if (!m_showStateMachineEditor ||
+                        m_stateMachineEditorEntity != characterHandle) {
+                        SetAsmeCharacter(characterHandle);
                     }
                     m_showStateMachineEditor = true;
                 }

@@ -545,6 +545,11 @@ private:
     bool AssignStateAnimationAsset(Galeshi::Entity entity, int stateIndex,
                                    const std::string& originalPath);
 
+    std::filesystem::path AsmeSetupPathFor(entt::entity character);
+    bool SaveAsmeSetup(entt::entity character);
+    bool LoadAsmeSetup(entt::entity character);
+    void SetAsmeCharacter(entt::entity character);
+
     void DrawAnimationStateMachineContents(
         Galeshi::Entity entity,
         const std::string& fallbackModelPath = {});

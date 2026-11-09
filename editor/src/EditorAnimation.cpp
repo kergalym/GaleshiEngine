@@ -1,5 +1,167 @@
 #include "GaleshiEditorApp.hpp"
 
+#include <fstream>
+#include <nlohmann/json.hpp>
+
+namespace {
+
+std::string AsmeFileStem(Galeshi::Scene& scene, entt::entity character) {
+    std::string name = "Character";
+    auto& registry = scene.Registry();
+    if (registry.valid(character)) {
+        if (const auto* nameComponent =
+                registry.try_get<Galeshi::NameComponent>(character);
+            nameComponent && !nameComponent->name.empty()) {
+            name = nameComponent->name;
+        }
+    }
+    for (char& c : name) {
+        const unsigned char value = static_cast<unsigned char>(c);
+        if (c == '/' || c == '\\' || c == ':' || c == '*' || c == '?' ||
+            c == '"' || c == '<' || c == '>' || c == '|' || value < 0x20) {
+            c = '_';
+        }
+    }
+    while (!name.empty() && (name.back() == ' ' || name.back() == '.')) {
+        name.pop_back();
+    }
+    return name.empty() ? "Character" : name;
+}
+
+nlohmann::json AsmeToJson(
+    const Galeshi::AnimationStateMachineComponent& machine,
+    Galeshi::AssetManager& assets) {
+    nlohmann::json states = nlohmann::json::array();
+    for (const auto& state : machine.states) {
+        states.push_back({
+            {"name", state.name},
+            {"clip", state.clip},
+            {"animationName", state.animationName},
+            {"loop", state.loop},
+            {"speed", state.speed},
+            {"animationPath", assets.MakeRelativePath(state.animationPath)}
+        });
+    }
+
+    nlohmann::json transitions = nlohmann::json::array();
+    for (const auto& transition : machine.transitions) {
+        transitions.push_back({
+            {"fromState", transition.fromState},
+            {"toState", transition.toState},
+            {"parameter", transition.parameter},
+            {"condition", static_cast<int>(transition.condition)},
+            {"threshold", transition.threshold},
+            {"duration", transition.duration},
+            {"enabled", transition.enabled}
+        });
+    }
+
+    nlohmann::json parameters = nlohmann::json::array();
+    for (const auto& parameter : machine.parameters) {
+        parameters.push_back({
+            {"name", parameter.name},
+            {"value", parameter.value}
+        });
+    }
+
+    return {
+        {"format", "galeshi-asme"},
+        {"version", 1},
+        {"enabled", machine.enabled},
+        {"playbackSpeed", machine.playbackSpeed},
+        {"animationScale", machine.animationScale},
+        {"blendDuration", machine.blendDuration},
+        {"states", std::move(states)},
+        {"transitions", std::move(transitions)},
+        {"parameters", std::move(parameters)}
+    };
+}
+
+bool AsmeFromJson(
+    const nlohmann::json& json,
+    Galeshi::AnimationStateMachineComponent& machine) {
+    if (!json.is_object() || !json.contains("states") ||
+        !json["states"].is_array() || json["states"].empty()) {
+        return false;
+    }
+
+    Galeshi::AnimationStateMachineComponent loaded;
+    loaded.enabled = json.value("enabled", true);
+    loaded.playbackSpeed = json.value("playbackSpeed", 1.0f);
+    loaded.animationScale = json.value("animationScale", 1.0f);
+    loaded.blendDuration = json.value("blendDuration", 0.25f);
+
+    for (const auto& stateJson : json["states"]) {
+        if (!stateJson.is_object()) continue;
+        Galeshi::AnimationState state;
+        state.name = stateJson.value("name", std::string("State"));
+        state.clip = stateJson.value("clip", 0);
+        state.animationName =
+            stateJson.value("animationName", std::string{});
+        state.loop = stateJson.value("loop", true);
+        state.speed = stateJson.value("speed", 1.0f);
+        state.animationPath =
+            stateJson.value("animationPath", std::string{});
+        loaded.states.push_back(std::move(state));
+    }
+    if (loaded.states.empty()) return false;
+
+    if (json.contains("transitions") &&
+        json["transitions"].is_array()) {
+        for (const auto& transitionJson : json["transitions"]) {
+            if (!transitionJson.is_object()) continue;
+            Galeshi::AnimationTransition transition;
+            transition.fromState =
+                transitionJson.value("fromState", -1);
+            transition.toState = transitionJson.value("toState", 0);
+            transition.parameter =
+                transitionJson.value("parameter", std::string{});
+            transition.condition =
+                static_cast<Galeshi::AnimationCondition>(std::clamp(
+                    transitionJson.value("condition", 0), 0, 5));
+            transition.threshold =
+                transitionJson.value("threshold", 0.5f);
+            transition.duration =
+                transitionJson.value("duration", 0.25f);
+            transition.enabled =
+                transitionJson.value("enabled", true);
+            loaded.transitions.push_back(std::move(transition));
+        }
+    }
+
+    if (json.contains("parameters") &&
+        json["parameters"].is_array()) {
+        for (const auto& parameterJson : json["parameters"]) {
+            if (!parameterJson.is_object()) continue;
+            loaded.parameters.push_back({
+                parameterJson.value("name", std::string{}),
+                parameterJson.value("value", 0.0f)
+            });
+        }
+    }
+
+    const int stateCount = static_cast<int>(loaded.states.size());
+    for (auto& transition : loaded.transitions) {
+        if (transition.fromState < -1 ||
+            transition.fromState >= stateCount) {
+            transition.fromState = -1;
+        }
+        transition.toState =
+            std::clamp(transition.toState, 0, stateCount - 1);
+    }
+    loaded.currentState = 0;
+    loaded.previousState = -1;
+    loaded.stateTime = 0.0f;
+    loaded.previousTime = 0.0f;
+    loaded.blendElapsed = loaded.blendDuration;
+    loaded.initialized = false;
+
+    machine = std::move(loaded);
+    return true;
+}
+
+} // namespace
+
 
 
     std::string GaleshiEditorApp::FindCharacterModelPath(entt::entity entity) {
@@ -43,6 +205,123 @@
             }
         }
         return {};
+    }
+
+
+
+    std::filesystem::path GaleshiEditorApp::AsmeSetupPathFor(
+        entt::entity character) {
+        const std::string projectPath =
+            Galeshi::ProjectManager::GetProjectPath();
+        if (projectPath.empty()) return {};
+        return std::filesystem::path(projectPath) / "assets" / "scripts" /
+               (AsmeFileStem(m_scene, character) + ".asme");
+    }
+
+
+
+    bool GaleshiEditorApp::SaveAsmeSetup(entt::entity character) {
+        if (!m_assets) return false;
+        auto& registry = m_scene.Registry();
+        auto* machine =
+            registry.try_get<Galeshi::AnimationStateMachineComponent>(
+                character);
+        if (!machine) {
+            spdlog::warn("[ASME] No state machine on the selected character");
+            return false;
+        }
+
+        const std::filesystem::path path = AsmeSetupPathFor(character);
+        if (path.empty()) {
+            spdlog::warn("[ASME] Cannot save setup: no project is open");
+            return false;
+        }
+
+        std::error_code ec;
+        std::filesystem::create_directories(path.parent_path(), ec);
+        if (ec) {
+            spdlog::error("[ASME] Cannot create setup directory '{}': {}",
+                          path.parent_path().string(), ec.message());
+            return false;
+        }
+
+        std::ofstream out(path);
+        if (!out.is_open()) {
+            spdlog::error("[ASME] Cannot write setup '{}'", path.string());
+            return false;
+        }
+        out << AsmeToJson(*machine, *m_assets).dump(4) << '\n';
+        out.close();
+        if (!out.good()) {
+            spdlog::error("[ASME] Failed while writing setup '{}'",
+                          path.string());
+            return false;
+        }
+
+        spdlog::info("[ASME] Saved setup: {}", path.string());
+        return true;
+    }
+
+
+
+    bool GaleshiEditorApp::LoadAsmeSetup(entt::entity character) {
+        auto& registry = m_scene.Registry();
+        if (!registry.valid(character)) return false;
+
+        const std::filesystem::path path = AsmeSetupPathFor(character);
+        if (path.empty()) return false;
+
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(path, ec)) return false;
+
+        std::ifstream in(path);
+        if (!in.is_open()) {
+            spdlog::error("[ASME] Cannot read setup '{}'", path.string());
+            return false;
+        }
+
+        nlohmann::json json;
+        try {
+            in >> json;
+        } catch (const std::exception& e) {
+            spdlog::error("[ASME] Invalid setup '{}': {}", path.string(),
+                          e.what());
+            return false;
+        }
+
+        Galeshi::AnimationStateMachineComponent machine;
+        if (!AsmeFromJson(json, machine)) {
+            spdlog::error("[ASME] Setup '{}' has no valid states",
+                          path.string());
+            return false;
+        }
+
+        if (auto* existing =
+                registry.try_get<Galeshi::AnimationStateMachineComponent>(
+                    character)) {
+            *existing = std::move(machine);
+        } else {
+            registry.emplace<Galeshi::AnimationStateMachineComponent>(
+                character, std::move(machine));
+        }
+        if (auto* skeleton =
+                registry.try_get<Galeshi::SkeletalComponent>(character)) {
+            skeleton->isAnimated =
+                registry.get<Galeshi::AnimationStateMachineComponent>(
+                    character).enabled;
+        }
+
+        spdlog::info("[ASME] Loaded setup: {}", path.string());
+        return true;
+    }
+
+
+
+    void GaleshiEditorApp::SetAsmeCharacter(entt::entity character) {
+        if (!m_scene.Registry().valid(character)) return;
+        if (m_stateMachineEditorEntity == character) return;
+        m_stateMachineEditorEntity = character;
+        LoadAsmeSetup(character);
     }
 
 
@@ -192,6 +471,27 @@
                 };
             }
             return;
+        }
+
+        const std::filesystem::path asmePath = AsmeSetupPathFor(handle);
+        const std::string asmeLabel =
+            asmePath.empty() || !m_assets
+                ? std::string("(no project)")
+                : m_assets->MakeRelativePath(asmePath.string());
+        ImGui::TextDisabled("ASME setup: %s", asmeLabel.c_str());
+        if (!asmePath.empty()) {
+            if (ImGui::Button("Save ASME Setup")) {
+                SaveAsmeSetup(handle);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Save this setup to:\n%s",
+                                  asmePath.string().c_str());
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Reload ASME Setup")) {
+                PushHistory();
+                LoadAsmeSetup(handle);
+            }
         }
 
         ImGui::PushID(static_cast<int>(handle));
@@ -745,7 +1045,7 @@
             characterIndices.count(playerEntity) &&
             characterIndices.find(m_stateMachineEditorEntity) ==
                 characterIndices.end()) {
-            m_stateMachineEditorEntity = playerEntity;
+            SetAsmeCharacter(playerEntity);
         }
 
         if (characters.empty()) {
@@ -762,12 +1062,11 @@
             }
         }
         if (!found) {
-            if (playerEntity != entt::null &&
-                characterIndices.count(playerEntity)) {
-                m_stateMachineEditorEntity = playerEntity;
-            } else {
-                m_stateMachineEditorEntity = characters.front().entity;
-            }
+            SetAsmeCharacter(
+                playerEntity != entt::null &&
+                        characterIndices.count(playerEntity)
+                    ? playerEntity
+                    : characters.front().entity);
         }
 
         int current = 0;
@@ -786,8 +1085,8 @@
         ImGui::SetNextItemWidth(-1.0f);
         if (ImGui::Combo("##character", &current, labels.data(),
                          static_cast<int>(labels.size()))) {
-            m_stateMachineEditorEntity =
-                characters[static_cast<size_t>(current)].entity;
+            SetAsmeCharacter(
+                characters[static_cast<size_t>(current)].entity);
         }
         if (ImGui::Button("Select in Scene")) {
             Galeshi::Entity entity(m_stateMachineEditorEntity, &m_scene);
