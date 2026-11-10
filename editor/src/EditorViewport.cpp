@@ -464,15 +464,11 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
         const uint16_t renderH = static_cast<uint16_t>(std::max(
             2, static_cast<int>(std::lround(static_cast<float>(h) * activeRenderScale))));
 
-        // Realtime Rendering off keeps the last completed viewport image on
-        // screen and skips all GPU scene/post-process work. The game needs at
-        // least one frame after enabling it, so an invalid cache always
-        // renders once even while the editor is paused.
-        const bool renderThisFrame =
-            m_realtimeRendering || m_isGameMode ||
-            !bgfx::isValid(m_lastViewportTexture);
+        // Performance mode only removes expensive optional GPU work. The
+        // viewport, camera and scene keep rendering and simulating.
+        const bool skipHeavyGpu = m_performanceMode && !m_isGameMode;
 
-        if (renderThisFrame && w > 0 && h > 0) {
+        if (w > 0 && h > 0) {
             if (!m_framebuffer || m_framebuffer->Width() != renderW ||
                 m_framebuffer->Height() != renderH) {
                 // Recreating an FBO that bgfx still considers bound can make it
@@ -496,7 +492,7 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
         ProfileClock::time_point postFxSegmentStart{};
         bool postFxProfiling = false;
 
-        if (renderThisFrame && m_framebuffer && m_framebuffer->Valid()) {
+        if (m_framebuffer && m_framebuffer->Valid()) {
 
             const auto pssmStart = ProfileClock::now();
             // --- PSSM SHADOW PASS ---
@@ -688,8 +684,20 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
             }
             m_cpuProfile.spotShadowsMs = ProfileElapsedMs(spotShadowStart, ProfileClock::now());
 
-            const Galeshi::PostProcessSettings pp =
+            Galeshi::PostProcessSettings pp =
                 ResolvePostProcessSettings();
+            if (skipHeavyGpu) {
+                // Keep the viewport live, but skip optional full-screen work
+                // that dominates GPU time on integrated and mid-range cards.
+                pp.ssgiEnabled = false;
+                pp.ssrEnabled = false;
+                pp.ssaoEnabled = false;
+                pp.atmosphereEnabled = false;
+                pp.godRaysEnabled = false;
+                pp.fogVolumetric = false;
+                pp.dofEnabled = false;
+                pp.motionBlurEnabled = false;
+            }
 
             // Do not carry stale history across a period where TAA was off.
             if (!pp.taaEnabled) m_postProcess.ResetTaaHistory();
@@ -749,7 +757,11 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
             // visible surface. Half resolution is sufficient for a rippled
             // reflection and keeps the extra scene pass affordable.
             const auto planarStart = ProfileClock::now();
-            {
+            if (skipHeavyGpu) {
+                // Clear the stale mirror target; water falls back to the
+                // environment cubemap instead of rendering the scene twice.
+                m_render->RenderPlanarReflection(m_scene, m_camera, 19, 0, 0);
+            } else {
                 const uint16_t reflectionW = static_cast<uint16_t>(
                     std::max(2, static_cast<int>(renderW / 2)));
                 const uint16_t reflectionH = static_cast<uint16_t>(
@@ -1531,7 +1543,7 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
         // blend the transparent layer over it (view 48, before glass at 49,
         // debug at 50 and the ImGui blit at 51). Reusing the persistent
         // G-buffer FBO avoids temporary FBOs whose layout can get out of sync.
-        if (renderThisFrame && m_framebuffer &&
+        if (m_framebuffer &&
             bgfx::isValid(m_framebuffer->Color()) &&
             m_postProcess.OutputFbo().idx != bgfx::kInvalidHandle) {
             m_postProcess.BlitTexture(m_postProcess.OutputTexture(), m_framebuffer->Color(), 48);
@@ -1544,7 +1556,7 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
         // reuse the viewport color/depth targets at view 50 (after post and
         // glass, before the ImGui copy at 51), and deliberately omit shadows,
         // lighting and post-processing.
-        if (renderThisFrame && m_framebuffer &&
+        if (m_framebuffer &&
             bgfx::isValid(m_framebuffer->Handle()) &&
             m_viewportViewMode != ViewportViewMode::Lit) {
             const Galeshi::RenderSystem::State savedState =
@@ -1562,12 +1574,10 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
         // Set when the 2D UI canvas overlay handles the click this frame.
         bool uiOverlayConsumed = false;
 
-        // Blit for ImGui (View 51). While Realtime Rendering is paused this
-        // pass is skipped and the last completed viewport image is sampled
-        // directly, so the UI stays responsive without submitting scene work.
+        // Blit for ImGui (View 51). This runs every frame; performance mode
+        // only skips optional heavy passes inside the scene render.
         bgfx::TextureHandle __disp = BGFX_INVALID_HANDLE;
-        if (renderThisFrame && m_framebuffer &&
-            bgfx::isValid(m_framebuffer->Color())) {
+        if (m_framebuffer && bgfx::isValid(m_framebuffer->Color())) {
             bgfx::TextureHandle __ppTex = m_framebuffer->Color();
             __disp = __ppTex;
             m_postProcess.BlitTexture(__ppTex, m_postProcess.BlitTextureA(), 51);
@@ -1594,8 +1604,6 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                 std::snprintf(entitiesText, sizeof(entitiesText), "Entities: %d",
                               static_cast<int>(m_scene.AllEntities().size()));
 
-                const bool renderPassesPaused =
-                    !m_realtimeRendering && !m_isGameMode;
                 const char* viewModeName =
                     m_viewportViewMode == ViewportViewMode::Wireframe
                         ? "Wireframe"
@@ -1605,10 +1613,9 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                 char renderStatus[128];
                 std::snprintf(
                     renderStatus, sizeof(renderStatus),
-                    "View: %s | Render passes: %s", viewModeName,
-                    renderPassesPaused ? "PAUSED (scene running)"
-                                       : "Realtime");
-                const char* realtimeText = renderStatus;
+                    "View: %s | Effects: %s", viewModeName,
+                    skipHeavyGpu ? "Reduced (live)" : "Full");
+                const char* statusText = renderStatus;
 
                 const float lineHeight = ImGui::GetTextLineHeight();
                 const ImVec2 padding(8.0f, 5.0f);
@@ -1617,7 +1624,7 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                 const float textWidth = std::max(
                     std::max(ImGui::CalcTextSize(fpsText).x,
                              ImGui::CalcTextSize(entitiesText).x),
-                    ImGui::CalcTextSize(realtimeText).x);
+                    ImGui::CalcTextSize(statusText).x);
                 const ImVec2 panelMin = m_viewportImagePos;
                 const ImVec2 panelMax(
                     m_viewportImagePos.x + textWidth + padding.x * 2.0f,
@@ -1637,13 +1644,13 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                                   IM_COL32(235, 240, 248, 255), entitiesText);
                 drawList->AddText(
                     ImVec2(textPos.x + 1.0f, textPos.y + lineHeight * 2.0f + 1.0f),
-                    IM_COL32(0, 0, 0, 180), realtimeText);
+                    IM_COL32(0, 0, 0, 180), statusText);
                 drawList->AddText(
                     ImVec2(textPos.x, textPos.y + lineHeight * 2.0f),
-                    renderPassesPaused
+                    skipHeavyGpu
                         ? IM_COL32(255, 190, 90, 255)
                         : IM_COL32(140, 220, 150, 255),
-                    realtimeText);
+                    statusText);
             }
 
             // A left click inside the gameplay view restores the viewport
@@ -1673,7 +1680,7 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     IsGameplayCameraAttachedToPlayer(
                         selectedCamera.Handle()) &&
                     RenderPlayerCameraPreview(
-                        selectedCamera.Handle(), renderThisFrame)) {
+                        selectedCamera.Handle(), true)) {
                     const float maxWidth = std::min(
                         320.0f, m_viewportImageSize.x * 0.38f);
                     const float maxHeight = m_viewportImageSize.y * 0.38f;

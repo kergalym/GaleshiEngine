@@ -882,22 +882,20 @@
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Rendering")) {
-            bool realtime = m_realtimeRendering;
-            if (ImGui::MenuItem("Realtime Rendering", nullptr, &realtime)) {
-                m_realtimeRendering = realtime;
-                // The camera can move while paused; do not reuse stale TAA
-                // history when the viewport starts rendering again.
+            bool performance = m_performanceMode;
+            if (ImGui::MenuItem("Performance Mode", nullptr, &performance)) {
+                m_performanceMode = performance;
+                // The lighting result changes; do not reuse stale TAA history.
                 m_postProcess.ResetTaaHistory();
-                spdlog::info("[Render] Render passes {}",
-                             realtime ? "resumed; scene updates unchanged"
-                                      : "paused; scene updates continue");
+                spdlog::info("[Render] Performance mode {}",
+                             performance ? "enabled; heavy GPU work skipped"
+                                         : "disabled; full effects restored");
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip(
-                    "Skip GPU render passes only. Physics, animation, scripts, "
-                    "AI, particles and scene time keep running.\n"
-                    "The viewport shows the last completed frame until "
-                    "rendering is resumed.");
+                    "Skip SSGI/SSR/AO, volumetric fog, god rays, DOF, motion "
+                    "blur and planar reflections.\n"
+                    "The viewport, camera, physics and animation keep running.");
             }
             ImGui::Separator();
 

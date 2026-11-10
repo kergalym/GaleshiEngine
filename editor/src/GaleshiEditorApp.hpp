@@ -830,10 +830,9 @@ void DrawDetails();
     float                   m_frameDelta = 1.0f / 60.0f;
     int                     m_renderFrameCounter = 0;
     bool                    m_pendingEffectsEnable = false;
-    // When false, the viewport skips all scene, shadow, reflection and
-    // post-process GPU work and keeps displaying the last completed image.
-    // OnUpdate is deliberately unaffected: only render passes are paused.
-    bool                    m_realtimeRendering = true;
+    // Skip expensive optional GPU calculations while still rendering the
+    // viewport. Physics, animation, scripts, AI and camera movement continue.
+    bool                    m_performanceMode = false;
     bgfx::TextureHandle     m_lastViewportTexture = BGFX_INVALID_HANDLE;
 
     // Small offscreen render target for the selected player camera. The

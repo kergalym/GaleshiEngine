@@ -526,9 +526,9 @@
         m_uiRuntime.PreloadFonts(m_scene);
         m_uiPreviewRuntime.PreloadFonts(m_scene);
 
-        // This update path is independent of m_realtimeRendering. Pausing
-        // render passes must not stop scene simulation: physics, scripting,
-        // AI, animation, groom, particles and time continue every frame.
+        // This update path is independent of viewport rendering options.
+        // Physics, scripting, AI, animation, groom, particles and time
+        // continue every frame even when expensive GPU work is skipped.
         const auto updateStart = ProfileClock::now();
         m_cpuProfile = CpuProfileSample{};
         m_cpuProfile.frameMs = dt * 1000.0f;
