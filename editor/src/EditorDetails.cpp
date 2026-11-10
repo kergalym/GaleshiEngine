@@ -377,14 +377,17 @@ void GaleshiEditorApp::DrawDetails() {
             if (beginDetailsSection(
                     "Texture Settings", 0,
                     "texture compression compress bc7 loading vram")) {
-                bool compress = Galeshi::Texture::CompressionEnabled();
+                bool compress = m_scene.CompressTextures();
                 if (ImGui::Checkbox("Compress textures on load (BC7)", &compress)) {
+                    m_scene.SetCompressTextures(compress);
                     Galeshi::Texture::SetCompressionEnabled(compress);
+                    PushHistory();
                 }
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("BC7 compression lowers VRAM usage but makes\n"
-                                      "loading significantly slower. Disabled by\n"
-                                      "default for fast scene loading.");
+                                      "loading significantly slower. Saved into\n"
+                                      "scene.json; reload the scene to recompress\n"
+                                      "already loaded textures.");
                 }
                 ImGui::TextDisabled("Current: %s",
                                     Galeshi::Texture::CompressionEnabled() ? "compressed" : "uncompressed");

@@ -66,12 +66,18 @@ public:
     bool HasGlobalPostProcess() const { return m_hasGlobalPostProcess; }
     void SetHasGlobalPostProcess(bool value) { m_hasGlobalPostProcess = value; }
 
+    // BC7 texture compression on load. Persisted in scene.json; applied to
+    // the texture loader before any scene texture is uploaded.
+    bool CompressTextures() const { return m_compressTextures; }
+    void SetCompressTextures(bool value) { m_compressTextures = value; }
+
 private:
     entt::registry m_registry;
     std::array<AudioBusSettings, kAudioBusCount> m_audioBuses{};
     SceneCameraState m_cameraState;
     PostProcessSettings m_globalPostProcess;
     bool m_hasGlobalPostProcess = false;
+    bool m_compressTextures = false;
 };
 
 } // namespace Galeshi

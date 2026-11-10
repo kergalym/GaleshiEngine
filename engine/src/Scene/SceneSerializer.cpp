@@ -1074,6 +1074,7 @@ std::shared_ptr<Mesh> BuildClothMesh(const SoftBodyComponent& softBody) {
 json SceneSerializer::SaveToJson(bool includeEditorState) const {
     json root;
     root["version"] = kSceneFormatVersion;
+    root["textureCompression"] = m_scene.CompressTextures();
     root["entities"] = json::array();
     if (includeEditorState) {
         root["codeEditor"] = {
@@ -1945,6 +1946,14 @@ bool SceneSerializer::LoadFromJson(const json& root,
 
     const int formatVersion = root.value("version", 1);
     const auto& jsonEntities = root["entities"];
+
+    // Texture compression must be decided before the first texture upload:
+    // materials, embedded model maps and post-process LUTs all load below.
+    const bool compressTextures = root.value("textureCompression", false);
+    m_scene.SetCompressTextures(compressTextures);
+    Texture::SetCompressionEnabled(compressTextures);
+    spdlog::info("[Scene] Texture compression on load: {}",
+                 compressTextures ? "BC7 on" : "off");
 
     m_codeEditorPath.clear();
     m_codeEditorText.clear();

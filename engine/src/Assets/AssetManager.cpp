@@ -401,6 +401,9 @@ std::string TextureCacheKey(const std::string& path, bool srgb,
                             bool flipVertically = true) {
     std::string key = srgb ? "srgb:" + path : path;
     if (!flipVertically) key = "top-left:" + key;
+    // Compression changes the uploaded data; cached uncompressed variants
+    // must not be reused after the scene switches the setting.
+    if (Texture::CompressionEnabled()) key = "bc7:" + key;
     return key;
 }
 } // namespace
