@@ -903,6 +903,8 @@ void DrawDetails();
     int m_vegetationMeshTypeIndex = -1;
     // Last export/import result shown in the Details Material Preset panel.
     std::string m_matPresetStatus;
+    // Last PP.settings export/import result for post-process volumes.
+    std::string m_ppSettingsStatus;
     Galeshi::FilePickerDialog m_characterModelPicker;
     entt::entity m_characterModelTarget = entt::null;
     Galeshi::FilePickerDialog m_animationClipPicker;

@@ -462,6 +462,85 @@
             "menu edits the active source. Editor Bounds are only a visual "
             "reference and do not limit the effect.");
 
+        ImGui::Separator();
+        if (ImGui::Button("Export Settings", ImVec2(-1.0f, 0.0f))) {
+            const std::filesystem::path dir = ScriptsDirectory();
+            std::error_code ec;
+            std::filesystem::create_directories(dir, ec);
+            const std::string path = (dir / "PP.settings").string();
+            nlohmann::json root;
+            root["format"] = "galeshi-postprocess-volume";
+            root["volume"] = {
+                {"enabled", volume.enabled},
+                {"priority", volume.priority},
+                {"size", {volume.size.x, volume.size.y, volume.size.z}},
+                {"visibleInEditor", volume.visibleInEditor},
+                {"settings", Galeshi::PostProcessSettingsToJson(s)}
+            };
+            std::ofstream out(path);
+            if (out) {
+                out << root.dump(2);
+                m_ppSettingsStatus = "Exported to " + path;
+            } else {
+                m_ppSettingsStatus = "Could not write " + path;
+            }
+            spdlog::info("[PostProcessVolume] {}", m_ppSettingsStatus);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Write this volume (enabled, priority, bounds "
+                              "and settings) to scripts/PP.settings.");
+        }
+
+        if (ImGui::Button("Import Settings", ImVec2(-1.0f, 0.0f))) {
+            const std::string path =
+                (ScriptsDirectory() / "PP.settings").string();
+            std::ifstream in(path);
+            if (!in) {
+                m_ppSettingsStatus = "No PP.settings at " + path;
+                spdlog::warn("[PostProcessVolume] {}", m_ppSettingsStatus);
+            } else {
+                try {
+                    nlohmann::json root = nlohmann::json::parse(in);
+                    // Tolerate the older file that only carried settings.
+                    const nlohmann::json& jv =
+                        root.contains("volume") && root["volume"].is_object()
+                            ? root.at("volume") : root;
+                    PushHistory();
+                    volume.enabled = jv.value("enabled", volume.enabled);
+                    volume.priority = jv.value("priority", volume.priority);
+                    if (jv.contains("size") && jv.at("size").is_array() &&
+                        jv.at("size").size() >= 3) {
+                        volume.size = glm::vec3(
+                            jv.at("size")[0].get<float>(),
+                            jv.at("size")[1].get<float>(),
+                            jv.at("size")[2].get<float>());
+                    }
+                    volume.visibleInEditor = jv.value(
+                        "visibleInEditor", volume.visibleInEditor);
+                    const nlohmann::json& js = jv.contains("settings")
+                        ? jv.at("settings") : jv;
+                    Galeshi::PostProcessSettingsFromJson(js, s);
+                    m_ppSettingsStatus = "Imported from " +
+                        std::filesystem::path(path).filename().string();
+                    spdlog::info("[PostProcessVolume] {}",
+                                 m_ppSettingsStatus);
+                } catch (const std::exception& ex) {
+                    m_ppSettingsStatus =
+                        std::string("Import failed: ") + ex.what();
+                    spdlog::warn("[PostProcessVolume] {}",
+                                 m_ppSettingsStatus);
+                }
+            }
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(
+                "Load scripts/PP.settings into this volume.");
+        }
+        if (!m_ppSettingsStatus.empty()) {
+            ImGui::TextWrapped("%s", m_ppSettingsStatus.c_str());
+        }
+        ImGui::Separator();
+
         if (ImGui::TreeNode("Bloom")) {
             ImGui::Checkbox("Enabled##bloom", &s.bloomEnabled);
             ImGui::DragFloat("Threshold", &s.bloomThreshold,

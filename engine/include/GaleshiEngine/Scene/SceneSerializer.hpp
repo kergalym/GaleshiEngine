@@ -10,14 +10,22 @@ namespace Galeshi {
 class Scene;
 class AssetManager;
 class Material;
+struct PostProcessSettings;
 
 // Material JSON round-trip, shared by scene save/load and the editor's
 // per-character material presets (.matp).
 nlohmann::json MaterialToJson(const Material& material,
-                              const AssetManager& assets);
+                              const AssetManager& assets,
+                              bool includeTextures = true);
 std::shared_ptr<Material> MaterialFromJson(const nlohmann::json& jm,
                                            AssetManager& assets,
                                            const std::string& textureRoot);
+
+// Post-process settings round-trip, shared by scene volumes and the
+// editor's PP.settings export/import.
+nlohmann::json PostProcessSettingsToJson(const PostProcessSettings& s);
+void PostProcessSettingsFromJson(const nlohmann::json& js,
+                                 PostProcessSettings& s);
 
 class SceneSerializer {
 public:

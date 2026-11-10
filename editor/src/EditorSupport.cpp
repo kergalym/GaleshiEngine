@@ -87,3 +87,16 @@ bool IsCodeAssetPath(const std::string& path) {
     return AssetExtensionLower(path) == ".lua" || IsCppCodeAssetPath(path) ||
            IsShaderAssetPath(path) || IsMaterialScriptAssetPath(path);
 }
+
+std::filesystem::path ScriptsDirectory() {
+    std::filesystem::path dir;
+    const std::string project = Galeshi::ProjectManager::GetProjectPath();
+    if (!project.empty()) {
+        dir = std::filesystem::path(project) / "scripts";
+        if (!std::filesystem::is_directory(dir)) {
+            dir = std::filesystem::path(project) / "assets/scripts";
+        }
+    }
+    if (dir.empty()) dir = std::filesystem::path("scripts");
+    return dir;
+}

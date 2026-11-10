@@ -2633,13 +2633,38 @@ void GaleshiEditorApp::DrawDetails() {
         // same material schema the scene uses, so it survives schema bumps.
         if (!selectedPhysicsShapeWithMesh &&
             (selectionHasMaterials || selectedHasOwnMesh)) {
+            // The preset always targets the whole character: selecting any
+            // sub-mesh walks up to the nearest skeletal ancestor, so the
+            // export/import covers every slot of the hierarchy.
+            Galeshi::Entity presetRoot = selected[0];
+            {
+                auto& registry = m_scene.Registry();
+                entt::entity cursor = selected[0].Handle();
+                for (int depth = 0; depth < 128; ++depth) {
+                    if (registry.all_of<Galeshi::SkeletalComponent>(
+                            cursor)) {
+                        presetRoot = Galeshi::Entity(cursor, &m_scene);
+                        break;
+                    }
+                    if (!registry.all_of<Galeshi::ParentComponent>(
+                            cursor)) {
+                        break;
+                    }
+                    cursor = registry
+                                 .get<Galeshi::ParentComponent>(cursor)
+                                 .parent;
+                    if (!registry.valid(cursor)) break;
+                }
+            }
+            const entt::entity presetRootHandle = presetRoot.Handle();
+
             if (beginDetailsSection(
                     "Material Preset", ImGuiTreeNodeFlags_DefaultOpen,
                     "material preset export import .matp save load all "
                     "slots character")) {
                 std::string presetName;
-                if (selected[0].HasComponent<Galeshi::NameComponent>()) {
-                    presetName = selected[0]
+                if (presetRoot.HasComponent<Galeshi::NameComponent>()) {
+                    presetName = presetRoot
                                      .GetComponent<Galeshi::NameComponent>()
                                      .name;
                 }
@@ -2653,65 +2678,57 @@ void GaleshiEditorApp::DrawDetails() {
                 }
                 if (safeName.empty()) safeName = "Character";
 
-                // Same slot order as the material list below: the selected
-                // entity's own slot, then every descendant with a mesh.
+                // Slot order matches the material list below: the root's
+                // own slot, then every descendant with a mesh.
                 auto collectPresetSlots = [&]() {
                     auto& registry = m_scene.Registry();
                     std::vector<entt::entity> handles;
-                    if (!selectedPhysicsShapeWithMesh && selectedHasOwnMesh) {
-                        if (ensureMaterialSlot(selected[0])) {
-                            handles.push_back(selected[0].Handle());
+                    const bool rootHasOwnMesh =
+                        presetRoot.HasComponent<Galeshi::MeshComponent>();
+                    const bool skipRootSlot =
+                        presetRoot == selected[0] &&
+                        selectedPhysicsShapeWithMesh;
+                    if (rootHasOwnMesh && !skipRootSlot) {
+                        if (ensureMaterialSlot(presetRoot)) {
+                            handles.push_back(presetRootHandle);
                         }
                     }
-                    if (!selectedPhysicsShapeWithMesh &&
-                        (!selectedIsCollisionShape || selectionHasMaterials)) {
-                        for (auto e : m_scene.AllEntities()) {
-                            if (e.Handle() == selectedHandle) continue;
-                            entt::entity cursor = e.Handle();
-                            bool belongsToSelection = false;
-                            for (int depth = 0; depth < 128; ++depth) {
-                                if (!registry.all_of<
-                                        Galeshi::ParentComponent>(cursor)) {
-                                    break;
-                                }
-                                cursor = registry
-                                             .get<Galeshi::ParentComponent>(
-                                                 cursor)
-                                             .parent;
-                                if (!registry.valid(cursor)) break;
-                                if (cursor == selectedHandle) {
-                                    belongsToSelection = true;
-                                    break;
-                                }
+                    for (auto e : m_scene.AllEntities()) {
+                        if (e.Handle() == presetRootHandle) continue;
+                        entt::entity cursor = e.Handle();
+                        bool belongsToSelection = false;
+                        for (int depth = 0; depth < 128; ++depth) {
+                            if (!registry.all_of<
+                                    Galeshi::ParentComponent>(cursor)) {
+                                break;
                             }
-                            if (!belongsToSelection ||
-                                (!e.HasComponent<
-                                     Galeshi::MaterialComponent>() &&
-                                 !e.HasComponent<
-                                     Galeshi::MeshComponent>())) {
-                                continue;
+                            cursor = registry
+                                         .get<Galeshi::ParentComponent>(
+                                             cursor)
+                                         .parent;
+                            if (!registry.valid(cursor)) break;
+                            if (cursor == presetRootHandle) {
+                                belongsToSelection = true;
+                                break;
                             }
-                            if (ensureMaterialSlot(e)) {
-                                handles.push_back(e.Handle());
-                            }
+                        }
+                        if (!belongsToSelection ||
+                            (!e.HasComponent<
+                                 Galeshi::MaterialComponent>() &&
+                             !e.HasComponent<
+                                 Galeshi::MeshComponent>())) {
+                            continue;
+                        }
+                        if (ensureMaterialSlot(e)) {
+                            handles.push_back(e.Handle());
                         }
                     }
                     return handles;
                 };
 
                 auto presetPath = [&]() {
-                    std::filesystem::path dir;
-                    const std::string project =
-                        Galeshi::ProjectManager::GetProjectPath();
-                    if (!project.empty()) {
-                        dir = std::filesystem::path(project) / "scripts";
-                        if (!std::filesystem::is_directory(dir)) {
-                            dir = std::filesystem::path(project) /
-                                  "assets/scripts";
-                        }
-                    }
-                    if (dir.empty()) dir = std::filesystem::path("scripts");
-                    return (dir / (safeName + "_mat_preset.matp")).string();
+                    return (ScriptsDirectory() /
+                            (safeName + "_mat_preset.matp")).string();
                 };
 
                 if (ImGui::Button("Export Materials", ImVec2(-1.0f, 0.0f))) {
@@ -2734,7 +2751,8 @@ void GaleshiEditorApp::DrawDetails() {
                                       std::to_string(
                                           static_cast<uint32_t>(h));
                         entry["material"] = Galeshi::MaterialToJson(
-                            *matc->material, *m_assets);
+                            *matc->material, *m_assets,
+                            /*includeTextures=*/false);
                         slots.push_back(std::move(entry));
                     }
                     root["slots"] = std::move(slots);
@@ -2773,39 +2791,130 @@ void GaleshiEditorApp::DrawDetails() {
                         try {
                             nlohmann::json root = nlohmann::json::parse(in);
                             const auto& slotsJson = root.at("slots");
-                            PushHistory();
-                            size_t applied = 0;
-                            for (size_t i = 0;
-                                 i < handles.size() &&
-                                 i < slotsJson.size();
-                                 ++i) {
-                                const nlohmann::json& entry = slotsJson[i];
-                                if (!entry.contains("material")) continue;
+
+                            auto applyEntry = [&](size_t handleIndex,
+                                                  const nlohmann::json& entry)
+                                -> bool {
                                 auto* matc =
                                     registry.try_get<
                                         Galeshi::MaterialComponent>(
-                                        handles[i]);
-                                if (!matc || !matc->material) continue;
-                                auto imported =
-                                    Galeshi::MaterialFromJson(
-                                        entry.at("material"), *m_assets,
-                                        std::string{});
+                                        handles[handleIndex]);
+                                if (!matc || !matc->material) return false;
+                                auto imported = Galeshi::MaterialFromJson(
+                                    entry.at("material"), *m_assets,
+                                    std::string{});
+                                // The preset carries no texture maps on
+                                // purpose; keep the slot's existing ones.
+                                imported->albedoMap = matc->material->albedoMap;
+                                imported->normalMap = matc->material->normalMap;
+                                imported->metallicRoughnessMap =
+                                    matc->material->metallicRoughnessMap;
+                                imported->metallicMap =
+                                    matc->material->metallicMap;
+                                imported->roughnessMap =
+                                    matc->material->roughnessMap;
+                                imported->emissiveMap =
+                                    matc->material->emissiveMap;
+                                imported->occlusionMap =
+                                    matc->material->occlusionMap;
+                                imported->opacityMap =
+                                    matc->material->opacityMap;
+                                imported->specularMap =
+                                    matc->material->specularMap;
+                                imported->landscapeAlbedoMap =
+                                    matc->material->landscapeAlbedoMap;
+                                imported->landscapeOrmMap =
+                                    matc->material->landscapeOrmMap;
+                                imported->landscapeNormalMap =
+                                    matc->material->landscapeNormalMap;
                                 *matc->material = *imported;
                                 matc->material->sceneOverride = true;
-                                ++applied;
+                                return true;
+                            };
+
+                            std::vector<std::string> currentNames;
+                            currentNames.reserve(handles.size());
+                            for (const entt::entity h : handles) {
+                                currentNames.push_back(
+                                    registry.all_of<
+                                        Galeshi::NameComponent>(h)
+                                        ? registry
+                                              .get<Galeshi::NameComponent>(
+                                                  h)
+                                              .name
+                                        : std::string{});
                             }
+
+                            PushHistory();
+                            std::vector<bool> usedSlot(handles.size(),
+                                                       false);
+                            std::vector<bool> usedEntry(slotsJson.size(),
+                                                        false);
+                            size_t applied = 0;
+                            size_t byName = 0;
+
+                            // Pass 1: prefer exact entity-name matches so
+                            // renamed/reordered hierarchies still receive
+                            // the right material.
+                            for (size_t i = 0; i < slotsJson.size(); ++i) {
+                                const nlohmann::json& entry = slotsJson[i];
+                                if (!entry.contains("material")) continue;
+                                const std::string want =
+                                    entry.value("name", std::string{});
+                                if (want.empty()) continue;
+                                for (size_t k = 0; k < handles.size();
+                                     ++k) {
+                                    if (usedSlot[k] ||
+                                        currentNames[k] != want) {
+                                        continue;
+                                    }
+                                    if (applyEntry(k, entry)) {
+                                        usedSlot[k] = true;
+                                        usedEntry[i] = true;
+                                        ++applied;
+                                        ++byName;
+                                    }
+                                    break;
+                                }
+                            }
+
+                            // Pass 2: remaining entries fill remaining
+                            // slots in order, as before.
+                            size_t k = 0;
+                            for (size_t i = 0; i < slotsJson.size(); ++i) {
+                                if (usedEntry[i]) continue;
+                                const nlohmann::json& entry = slotsJson[i];
+                                if (!entry.contains("material")) continue;
+                                while (k < handles.size() &&
+                                       usedSlot[k]) {
+                                    ++k;
+                                }
+                                if (k >= handles.size()) break;
+                                if (applyEntry(k, entry)) {
+                                    usedSlot[k] = true;
+                                    usedEntry[i] = true;
+                                    ++applied;
+                                }
+                                ++k;
+                            }
+
                             m_matPresetStatus = "Imported " +
                                 std::to_string(applied) + " material(s) "
                                 "from " +
                                 std::filesystem::path(path)
                                     .filename()
                                     .string();
+                            if (byName > 0) {
+                                m_matPresetStatus += " (" +
+                                    std::to_string(byName) +
+                                    " matched by name)";
+                            }
                             if (applied < slotsJson.size()) {
                                 m_matPresetStatus +=
-                                    " (" +
+                                    ", " +
                                     std::to_string(slotsJson.size() -
                                                    applied) +
-                                    " slot(s) without a match)";
+                                    " without a match";
                             }
                             spdlog::info("[MaterialPreset] {}",
                                          m_matPresetStatus);
@@ -2820,7 +2929,8 @@ void GaleshiEditorApp::DrawDetails() {
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip(
                         "Load scripts/%s_mat_preset.matp and apply its "
-                        "materials to this character's slots in order.",
+                        "materials to this character's slots: by entity "
+                        "name first, then by order.",
                         safeName.c_str());
                 }
                 if (!m_matPresetStatus.empty()) {
@@ -2912,7 +3022,10 @@ void GaleshiEditorApp::DrawDetails() {
         }
 
         // Per-entity Lua script field. Drop a .lua asset here to attach it.
-        if (!selectedIsPlainCollisionShape) {
+        // Volumes are scene-wide configuration, not scripted entities.
+        if (!selectedIsPlainCollisionShape &&
+            !selected[0].HasComponent<
+                Galeshi::PostProcessVolumeComponent>()) {
             const bool hasScript =
                 selected[0].HasComponent<Galeshi::ScriptComponent>();
             if (beginDetailsSection(

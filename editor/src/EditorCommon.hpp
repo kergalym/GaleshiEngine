@@ -127,6 +127,10 @@ bool IsMaterialScriptAssetPath(const std::string& path);
 bool IsVertexShaderSource(const std::string& source);
 bool IsCodeAssetPath(const std::string& path);
 
+// The project's script folder (scripts/ or assets/scripts/), used by the
+// material presets and the PP.settings export/import.
+std::filesystem::path ScriptsDirectory();
+
 inline float ProfileElapsedMs(ProfileClock::time_point begin,
                               ProfileClock::time_point end) {
     return std::chrono::duration<float, std::milli>(end - begin).count();

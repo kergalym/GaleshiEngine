@@ -519,6 +519,8 @@ void CameraStateFromJson(const json& j, SceneCameraState& camera) {
     camera.valid = true;
 }
 
+} // namespace
+
 json PostProcessSettingsToJson(const PostProcessSettings& s) {
     return {
         {"bloomEnabled", s.bloomEnabled},
@@ -764,13 +766,12 @@ void PostProcessSettingsFromJson(const json& js, PostProcessSettings& s) {
     if (s.fogSteps > 64) s.fogSteps = 64;
 }
 
-} // namespace
-
 std::string TexturePath(const std::shared_ptr<Texture>& texture) {
     return texture ? texture->Path() : std::string{};
 }
 
-json MaterialToJson(const Material& m, const AssetManager& assets) {
+json MaterialToJson(const Material& m, const AssetManager& assets,
+                    bool includeTextures) {
     auto relPath = [&](const std::shared_ptr<Texture>& tex) {
         if (!tex || tex->Path() == "<white>") return std::string{};
         return assets.MakeRelativePath(tex->Path());
@@ -778,7 +779,7 @@ json MaterialToJson(const Material& m, const AssetManager& assets) {
     auto relStr = [&](const std::string& s) {
         return assets.MakeRelativePath(s);
     };
-    return {
+    json j = {
         {"name", m.name},
         {"sourcePath", relStr(m.sourcePath)},
         {"masterScriptPath", relStr(m.masterScriptPath)},
@@ -827,20 +828,25 @@ json MaterialToJson(const Material& m, const AssetManager& assets) {
         {"translucencyDistortion", m.translucencyDistortion},
         {"translucencyShadowDepth", m.translucencyShadowDepth},
         {"castsShadow", m.castsShadow},
-        {"shadowDepthOffset", m.shadowDepthOffset},
-        {"albedoMapPath", relPath(m.albedoMap)},
-        {"normalMapPath", relPath(m.normalMap)},
-        {"mrMapPath", relPath(m.metallicRoughnessMap)},
-        {"metallicMapPath", relPath(m.metallicMap)},
-        {"roughnessMapPath", relPath(m.roughnessMap)},
-        {"emissiveMapPath", relPath(m.emissiveMap)},
-        {"occlusionMapPath", relPath(m.occlusionMap)},
-        {"opacityMapPath", relPath(m.opacityMap)},
-        {"specularMapPath", relPath(m.specularMap)},
-        {"landscapeAlbedoMapPath", relPath(m.landscapeAlbedoMap)},
-        {"landscapeOrmMapPath", relPath(m.landscapeOrmMap)},
-        {"landscapeNormalMapPath", relPath(m.landscapeNormalMap)}
+        {"shadowDepthOffset", m.shadowDepthOffset}
     };
+    // Texture maps are optional: character presets (.matp) intentionally
+    // skip them and keep the target slot's existing maps on import.
+    if (includeTextures) {
+        j["albedoMapPath"] = relPath(m.albedoMap);
+        j["normalMapPath"] = relPath(m.normalMap);
+        j["mrMapPath"] = relPath(m.metallicRoughnessMap);
+        j["metallicMapPath"] = relPath(m.metallicMap);
+        j["roughnessMapPath"] = relPath(m.roughnessMap);
+        j["emissiveMapPath"] = relPath(m.emissiveMap);
+        j["occlusionMapPath"] = relPath(m.occlusionMap);
+        j["opacityMapPath"] = relPath(m.opacityMap);
+        j["specularMapPath"] = relPath(m.specularMap);
+        j["landscapeAlbedoMapPath"] = relPath(m.landscapeAlbedoMap);
+        j["landscapeOrmMapPath"] = relPath(m.landscapeOrmMap);
+        j["landscapeNormalMapPath"] = relPath(m.landscapeNormalMap);
+    }
+    return j;
 }
 
 std::shared_ptr<Material> MaterialFromJson(const json& jm,
