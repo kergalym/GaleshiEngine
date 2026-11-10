@@ -433,24 +433,16 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
             // hover/focus made F3 unreliable after the viewport had been
             // clicked or the mouse moved away. Shift+F1 remains the focus
             // release shortcut, so F1 only switches when Shift is not held.
+            // F1 = Wireframe, F2 = Unlit, F3 = Lit (the default).
             if (!ImGui::GetIO().KeyShift &&
                 ImGui::IsKeyPressed(ImGuiKey_F1)) {
-                if (m_viewportViewMode != ViewportViewMode::Wireframe) {
-                    m_viewModeBeforeDiagnostic = m_viewportViewMode;
-                    m_viewModeDiagnosticActive = true;
-                }
                 SetViewportViewMode(ViewportViewMode::Wireframe);
             }
             if (ImGui::IsKeyPressed(ImGuiKey_F2)) {
                 SetViewportViewMode(ViewportViewMode::Unlit);
             }
             if (ImGui::IsKeyPressed(ImGuiKey_F3)) {
-                if (m_viewModeDiagnosticActive) {
-                    SetViewportViewMode(m_viewModeBeforeDiagnostic);
-                    m_viewModeDiagnosticActive = false;
-                } else {
-                    SetViewportViewMode(ViewportViewMode::Lit);
-                }
+                SetViewportViewMode(ViewportViewMode::Lit);
             }
         }
         // Guard the normal path against a stale diagnostic view mode left in
@@ -1582,6 +1574,10 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                 // the post-processed image at view 48. The G-buffer color is
                 // no longer sampled after the lighting pass.
                 bgfx::setViewFrameBuffer(50, m_framebuffer->Handle());
+                // The diagnostic pass at view 50 leaves a dark CLEAR on this
+                // view; without this reset, returning to Lit would wipe the
+                // lit image every frame and show only the debug lines.
+                bgfx::setViewClear(50, BGFX_CLEAR_NONE);
                 m_debug->Render(m_camera, 50, renderW, renderH);
             }
         }

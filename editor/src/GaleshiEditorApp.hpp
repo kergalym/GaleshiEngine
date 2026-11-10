@@ -880,10 +880,6 @@ void DrawDetails();
     bool        m_viewportHovered = false;
     bool        m_viewportInputFocused = false;
     ViewportViewMode m_viewportViewMode = ViewportViewMode::Lit;
-    // Mode that was active before F1 entered the wireframe diagnostic view.
-    // F3 restores this mode instead of always assuming Lit.
-    ViewportViewMode m_viewModeBeforeDiagnostic = ViewportViewMode::Lit;
-    bool        m_viewModeDiagnosticActive = false;
     Galeshi::RenderSystem::State m_savedRenderState;
     bool        m_viewModeStateSaved = false;
     bool        m_editorLooking = false;
