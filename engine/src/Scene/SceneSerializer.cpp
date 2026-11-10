@@ -764,6 +764,8 @@ void PostProcessSettingsFromJson(const json& js, PostProcessSettings& s) {
     if (s.fogSteps > 64) s.fogSteps = 64;
 }
 
+} // namespace
+
 std::string TexturePath(const std::shared_ptr<Texture>& texture) {
     return texture ? texture->Path() : std::string{};
 }
@@ -995,6 +997,8 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     }
     return material;
 }
+
+namespace {
 
 // Character sub-meshes are named "<root>_<number>".  Old scene files stored
 // parent handles instead of stable ids, and those handles do not survive a

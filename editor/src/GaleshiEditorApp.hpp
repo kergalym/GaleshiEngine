@@ -901,6 +901,8 @@ void DrawDetails();
     Galeshi::FilePickerDialog m_vegetationMeshPicker;
     entt::entity m_vegetationMeshTarget = entt::null;
     int m_vegetationMeshTypeIndex = -1;
+    // Last export/import result shown in the Details Material Preset panel.
+    std::string m_matPresetStatus;
     Galeshi::FilePickerDialog m_characterModelPicker;
     entt::entity m_characterModelTarget = entt::null;
     Galeshi::FilePickerDialog m_animationClipPicker;

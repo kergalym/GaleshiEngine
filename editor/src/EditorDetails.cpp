@@ -2628,6 +2628,207 @@ void GaleshiEditorApp::DrawDetails() {
             ImGui::PopID();
         };
 
+        // --- Material preset export/import ------------------------------
+        // One .matp per character in scripts/. The file is JSON with the
+        // same material schema the scene uses, so it survives schema bumps.
+        if (!selectedPhysicsShapeWithMesh &&
+            (selectionHasMaterials || selectedHasOwnMesh)) {
+            if (beginDetailsSection(
+                    "Material Preset", ImGuiTreeNodeFlags_DefaultOpen,
+                    "material preset export import .matp save load all "
+                    "slots character")) {
+                std::string presetName;
+                if (selected[0].HasComponent<Galeshi::NameComponent>()) {
+                    presetName = selected[0]
+                                     .GetComponent<Galeshi::NameComponent>()
+                                     .name;
+                }
+                if (presetName.empty()) presetName = "Character";
+                std::string safeName = presetName;
+                for (char& c : safeName) {
+                    if (!(std::isalnum(static_cast<unsigned char>(c)) ||
+                          c == '-' || c == '_')) {
+                        c = '_';
+                    }
+                }
+                if (safeName.empty()) safeName = "Character";
+
+                // Same slot order as the material list below: the selected
+                // entity's own slot, then every descendant with a mesh.
+                auto collectPresetSlots = [&]() {
+                    auto& registry = m_scene.Registry();
+                    std::vector<entt::entity> handles;
+                    if (!selectedPhysicsShapeWithMesh && selectedHasOwnMesh) {
+                        if (ensureMaterialSlot(selected[0])) {
+                            handles.push_back(selected[0].Handle());
+                        }
+                    }
+                    if (!selectedPhysicsShapeWithMesh &&
+                        (!selectedIsCollisionShape || selectionHasMaterials)) {
+                        for (auto e : m_scene.AllEntities()) {
+                            if (e.Handle() == selectedHandle) continue;
+                            entt::entity cursor = e.Handle();
+                            bool belongsToSelection = false;
+                            for (int depth = 0; depth < 128; ++depth) {
+                                if (!registry.all_of<
+                                        Galeshi::ParentComponent>(cursor)) {
+                                    break;
+                                }
+                                cursor = registry
+                                             .get<Galeshi::ParentComponent>(
+                                                 cursor)
+                                             .parent;
+                                if (!registry.valid(cursor)) break;
+                                if (cursor == selectedHandle) {
+                                    belongsToSelection = true;
+                                    break;
+                                }
+                            }
+                            if (!belongsToSelection ||
+                                (!e.HasComponent<
+                                     Galeshi::MaterialComponent>() &&
+                                 !e.HasComponent<
+                                     Galeshi::MeshComponent>())) {
+                                continue;
+                            }
+                            if (ensureMaterialSlot(e)) {
+                                handles.push_back(e.Handle());
+                            }
+                        }
+                    }
+                    return handles;
+                };
+
+                auto presetPath = [&]() {
+                    std::filesystem::path dir;
+                    const std::string project =
+                        Galeshi::ProjectManager::GetProjectPath();
+                    if (!project.empty()) {
+                        dir = std::filesystem::path(project) / "scripts";
+                        if (!std::filesystem::is_directory(dir)) {
+                            dir = std::filesystem::path(project) /
+                                  "assets/scripts";
+                        }
+                    }
+                    if (dir.empty()) dir = std::filesystem::path("scripts");
+                    return (dir / (safeName + "_mat_preset.matp")).string();
+                };
+
+                if (ImGui::Button("Export Materials", ImVec2(-1.0f, 0.0f))) {
+                    const auto handles = collectPresetSlots();
+                    auto& registry = m_scene.Registry();
+                    nlohmann::json root;
+                    root["format"] = "galeshi-material-preset";
+                    root["character"] = presetName;
+                    nlohmann::json slots = nlohmann::json::array();
+                    for (const entt::entity h : handles) {
+                        auto* matc = registry
+                                         .try_get<Galeshi::MaterialComponent>(
+                                             h);
+                        if (!matc || !matc->material) continue;
+                        nlohmann::json entry;
+                        entry["name"] =
+                            registry.all_of<Galeshi::NameComponent>(h)
+                                ? registry.get<Galeshi::NameComponent>(h).name
+                                : std::string("slot_") +
+                                      std::to_string(
+                                          static_cast<uint32_t>(h));
+                        entry["material"] = Galeshi::MaterialToJson(
+                            *matc->material, *m_assets);
+                        slots.push_back(std::move(entry));
+                    }
+                    root["slots"] = std::move(slots);
+                    const std::string path = presetPath();
+                    std::error_code ec;
+                    std::filesystem::create_directories(
+                        std::filesystem::path(path).parent_path(), ec);
+                    std::ofstream out(path);
+                    if (out) {
+                        out << root.dump(2);
+                        m_matPresetStatus = "Exported " +
+                            std::to_string(root["slots"].size()) +
+                            " material(s) to " + path;
+                    } else {
+                        m_matPresetStatus = "Could not write " + path;
+                    }
+                    spdlog::info("[MaterialPreset] {}", m_matPresetStatus);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Write every material slot of this character to "
+                        "scripts/%s_mat_preset.matp.",
+                        safeName.c_str());
+                }
+
+                if (ImGui::Button("Import Materials", ImVec2(-1.0f, 0.0f))) {
+                    const auto handles = collectPresetSlots();
+                    auto& registry = m_scene.Registry();
+                    const std::string path = presetPath();
+                    std::ifstream in(path);
+                    if (!in) {
+                        m_matPresetStatus = "No preset at " + path;
+                        spdlog::warn("[MaterialPreset] {}",
+                                     m_matPresetStatus);
+                    } else {
+                        try {
+                            nlohmann::json root = nlohmann::json::parse(in);
+                            const auto& slotsJson = root.at("slots");
+                            PushHistory();
+                            size_t applied = 0;
+                            for (size_t i = 0;
+                                 i < handles.size() &&
+                                 i < slotsJson.size();
+                                 ++i) {
+                                const nlohmann::json& entry = slotsJson[i];
+                                if (!entry.contains("material")) continue;
+                                auto* matc =
+                                    registry.try_get<
+                                        Galeshi::MaterialComponent>(
+                                        handles[i]);
+                                if (!matc || !matc->material) continue;
+                                auto imported =
+                                    Galeshi::MaterialFromJson(
+                                        entry.at("material"), *m_assets,
+                                        std::string{});
+                                *matc->material = *imported;
+                                matc->material->sceneOverride = true;
+                                ++applied;
+                            }
+                            m_matPresetStatus = "Imported " +
+                                std::to_string(applied) + " material(s) "
+                                "from " +
+                                std::filesystem::path(path)
+                                    .filename()
+                                    .string();
+                            if (applied < slotsJson.size()) {
+                                m_matPresetStatus +=
+                                    " (" +
+                                    std::to_string(slotsJson.size() -
+                                                   applied) +
+                                    " slot(s) without a match)";
+                            }
+                            spdlog::info("[MaterialPreset] {}",
+                                         m_matPresetStatus);
+                        } catch (const std::exception& ex) {
+                            m_matPresetStatus =
+                                std::string("Import failed: ") + ex.what();
+                            spdlog::warn("[MaterialPreset] {}",
+                                         m_matPresetStatus);
+                        }
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Load scripts/%s_mat_preset.matp and apply its "
+                        "materials to this character's slots in order.",
+                        safeName.c_str());
+                }
+                if (!m_matPresetStatus.empty()) {
+                    ImGui::TextWrapped("%s", m_matPresetStatus.c_str());
+                }
+            }
+        }
+
         // 1. Draw material for the selected entity itself (if any). A
         // collision capsule can own a character subtree; in that case its
         // child material slots are still valid Details content.

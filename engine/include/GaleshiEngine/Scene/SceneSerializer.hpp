@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <memory>
 #include <nlohmann/json_fwd.hpp>
 #include <string>
 
@@ -8,6 +9,15 @@ namespace Galeshi {
 
 class Scene;
 class AssetManager;
+class Material;
+
+// Material JSON round-trip, shared by scene save/load and the editor's
+// per-character material presets (.matp).
+nlohmann::json MaterialToJson(const Material& material,
+                              const AssetManager& assets);
+std::shared_ptr<Material> MaterialFromJson(const nlohmann::json& jm,
+                                           AssetManager& assets,
+                                           const std::string& textureRoot);
 
 class SceneSerializer {
 public:
