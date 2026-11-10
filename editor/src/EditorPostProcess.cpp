@@ -495,6 +495,16 @@
             }
             ImGui::DragFloat("Blur (px)", &s.dofBlur,
                              0.1f, 0.0f, 64.0f);
+            ImGui::DragFloat("Bokeh Blades", &s.dofBokehBlades,
+                             1.0f, 0.0f, 8.0f);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("0 = classic Gaussian blur, 3..8 = cinematic\n"
+                                  "polygonal bokeh disc.");
+            }
+            if (s.dofBokehBlades >= 2.5f) {
+                ImGui::DragFloat("Bokeh Radius", &s.dofBokehRadius,
+                                 0.1f, 0.1f, 4.0f);
+            }
             ImGui::TreePop();
         }
 
@@ -509,8 +519,35 @@
 
         if (ImGui::TreeNode("Tonemap")) {
             ImGui::DragFloat("Exposure", &s.exposure, 0.01f, 0.0f, 20.0f);
+            ImGui::DragFloat("Exposure (EV)", &s.exposureEv,
+                             0.05f, -8.0f, 8.0f);
+            ImGui::Checkbox("Auto Exposure", &s.autoExposureEnabled);
+            if (s.autoExposureEnabled) {
+                ImGui::DragFloat("AE Min EV", &s.autoExposureMinEv,
+                                 0.05f, -16.0f, s.autoExposureMaxEv);
+                ImGui::DragFloat("AE Max EV", &s.autoExposureMaxEv,
+                                 0.05f, s.autoExposureMinEv, 16.0f);
+                ImGui::DragFloat("AE Speed Up", &s.autoExposureSpeedUp,
+                                 0.1f, 0.0f, 50.0f);
+                ImGui::DragFloat("AE Speed Down", &s.autoExposureSpeedDown,
+                                 0.1f, 0.0f, 50.0f);
+                ImGui::DragFloat("AE Calibration", &s.autoExposureCalibration,
+                                 0.01f, 0.01f, 2.0f);
+            }
             ImGui::DragFloat("Contrast", &s.contrast, 0.01f, 0.0f, 5.0f);
             ImGui::DragFloat("Saturation", &s.saturation, 0.01f, 0.0f, 5.0f);
+            ImGui::DragFloat("Film Grain", &s.grainStrength,
+                             0.001f, 0.0f, 0.5f);
+            ImGui::DragFloat("Grain Scale", &s.grainScale,
+                             0.1f, 0.1f, 16.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("White Balance")) {
+            ImGui::DragFloat("Temperature (K)", &s.colorTemperature,
+                             10.0f, 1500.0f, 15000.0f);
+            ImGui::DragFloat("Tint", &s.colorTint,
+                             0.01f, -1.0f, 1.0f);
             ImGui::TreePop();
         }
 
@@ -521,6 +558,15 @@
                              0.01f, 0.0f, 5.0f);
             ImGui::DragFloat("Saturation##cc", &s.colorSaturation,
                              0.01f, 0.0f, 5.0f);
+            ImGui::DragFloat3("Gain##cc", glm::value_ptr(s.colorGain),
+                              0.01f, 0.0f, 4.0f);
+            ImGui::DragFloat3("Gamma##cc", glm::value_ptr(s.colorGamma),
+                              0.01f, 0.1f, 4.0f);
+            ImGui::DragFloat3("Offset##cc", glm::value_ptr(s.colorOffset),
+                              0.001f, -1.0f, 1.0f);
+            ImGui::ColorEdit3("Shadows##cc", glm::value_ptr(s.gradeShadows));
+            ImGui::ColorEdit3("Midtones##cc", glm::value_ptr(s.gradeMidtones));
+            ImGui::ColorEdit3("Highlights##cc", glm::value_ptr(s.gradeHighlights));
             ImGui::TreePop();
         }
 
@@ -559,6 +605,15 @@
             const char* aoResolutions[] = { "Quarter (fast)", "Half (quality)" };
             if (ImGui::Combo("Resolution", &aoResolution, aoResolutions, 2)) {
                 s.aoResolutionScale = aoResolution == 0 ? 0.25f : 0.5f;
+            }
+            ImGui::Checkbox("Temporal", &s.aoTemporalEnabled);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Accumulate AO over frames with camera\n"
+                                  "reprojection to kill flicker.");
+            }
+            if (s.aoTemporalEnabled) {
+                ImGui::DragFloat("Temporal Blend", &s.aoTemporalBlend,
+                                 0.01f, 0.5f, 1.0f);
             }
 
             if (s.aoMode == Galeshi::AmbientOcclusionMode::SSAO) {
@@ -621,6 +676,32 @@
             ImGui::Checkbox("TAA", &s.taaEnabled);
             ImGui::DragFloat("TAA Blend", &s.taaBlend,
                              0.005f, 0.0f, 1.0f);
+            ImGui::DragFloat("TAA Sharpen", &s.taaSharpen,
+                             0.01f, 0.0f, 1.0f);
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Shadows")) {
+            ImGui::Checkbox("PCSS (Penumbra)", &s.pcssEnabled);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Variable penumbra from a blocker search:\n"
+                                  "hard at contact, soft with distance.");
+            }
+            if (s.pcssEnabled) {
+                ImGui::DragFloat("Light Source Size", &s.shadowLightSourceSize,
+                                 0.05f, 0.01f, 10.0f);
+            }
+            ImGui::Checkbox("Contact Shadows", &s.contactShadowsEnabled);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Short screen-space shadow ray march that\n"
+                                  "grounds objects in indirect light.");
+            }
+            if (s.contactShadowsEnabled) {
+                ImGui::DragFloat("Contact Length", &s.contactShadowLength,
+                                 0.001f, 0.0f, 1.0f, "%.3f");
+                ImGui::DragFloat("Contact Thickness", &s.contactShadowThickness,
+                                 0.001f, 0.0f, 0.5f, "%.3f");
+            }
             ImGui::TreePop();
         }
 

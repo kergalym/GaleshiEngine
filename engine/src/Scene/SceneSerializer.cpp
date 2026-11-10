@@ -532,12 +532,39 @@ json PostProcessSettingsToJson(const PostProcessSettings& s) {
         {"motionBlurEnabled", s.motionBlurEnabled},
         {"motionBlurAmount", s.motionBlurAmount},
         {"motionBlurMaxVelocity", s.motionBlurMaxVelocity},
+        {"pcssEnabled", s.pcssEnabled},
+        {"shadowLightSourceSize", s.shadowLightSourceSize},
+        {"contactShadowsEnabled", s.contactShadowsEnabled},
+        {"contactShadowLength", s.contactShadowLength},
+        {"contactShadowThickness", s.contactShadowThickness},
+        {"taaSharpen", s.taaSharpen},
+        {"dofBokehBlades", s.dofBokehBlades},
+        {"dofBokehRadius", s.dofBokehRadius},
+        {"aoTemporalEnabled", s.aoTemporalEnabled},
+        {"aoTemporalBlend", s.aoTemporalBlend},
         {"exposure", s.exposure},
+        {"exposureEv", s.exposureEv},
+        {"autoExposureEnabled", s.autoExposureEnabled},
+        {"autoExposureMinEv", s.autoExposureMinEv},
+        {"autoExposureMaxEv", s.autoExposureMaxEv},
+        {"autoExposureSpeedUp", s.autoExposureSpeedUp},
+        {"autoExposureSpeedDown", s.autoExposureSpeedDown},
+        {"autoExposureCalibration", s.autoExposureCalibration},
         {"contrast", s.contrast},
         {"saturation", s.saturation},
         {"colorExposure", s.colorExposure},
         {"colorContrast", s.colorContrast},
         {"colorSaturation", s.colorSaturation},
+        {"colorGain", Vec3ToJson(s.colorGain)},
+        {"colorGamma", Vec3ToJson(s.colorGamma)},
+        {"colorOffset", Vec3ToJson(s.colorOffset)},
+        {"colorTemperature", s.colorTemperature},
+        {"colorTint", s.colorTint},
+        {"gradeShadows", Vec3ToJson(s.gradeShadows)},
+        {"gradeMidtones", Vec3ToJson(s.gradeMidtones)},
+        {"gradeHighlights", Vec3ToJson(s.gradeHighlights)},
+        {"grainStrength", s.grainStrength},
+        {"grainScale", s.grainScale},
         {"environmentPaletteEnabled", s.environmentPaletteEnabled},
         {"environmentPaletteAmount", s.environmentPaletteAmount},
         {"environmentPaletteShadow", Vec3ToJson(s.environmentPaletteShadow)},
@@ -608,12 +635,49 @@ void PostProcessSettingsFromJson(const json& js, PostProcessSettings& s) {
     s.motionBlurAmount = js.value("motionBlurAmount", s.motionBlurAmount);
     s.motionBlurMaxVelocity = js.value("motionBlurMaxVelocity",
                                        s.motionBlurMaxVelocity);
+    s.pcssEnabled = js.value("pcssEnabled", s.pcssEnabled);
+    s.shadowLightSourceSize = js.value("shadowLightSourceSize",
+                                       s.shadowLightSourceSize);
+    s.contactShadowsEnabled = js.value("contactShadowsEnabled",
+                                       s.contactShadowsEnabled);
+    s.contactShadowLength = js.value("contactShadowLength",
+                                     s.contactShadowLength);
+    s.contactShadowThickness = js.value("contactShadowThickness",
+                                        s.contactShadowThickness);
+    s.taaSharpen = js.value("taaSharpen", s.taaSharpen);
+    s.dofBokehBlades = js.value("dofBokehBlades", s.dofBokehBlades);
+    s.dofBokehRadius = js.value("dofBokehRadius", s.dofBokehRadius);
+    s.aoTemporalEnabled = js.value("aoTemporalEnabled", s.aoTemporalEnabled);
+    s.aoTemporalBlend = js.value("aoTemporalBlend", s.aoTemporalBlend);
     s.exposure = js.value("exposure", s.exposure);
+    s.exposureEv = js.value("exposureEv", s.exposureEv);
+    s.autoExposureEnabled = js.value("autoExposureEnabled",
+                                     s.autoExposureEnabled);
+    s.autoExposureMinEv = js.value("autoExposureMinEv",
+                                   s.autoExposureMinEv);
+    s.autoExposureMaxEv = js.value("autoExposureMaxEv",
+                                   s.autoExposureMaxEv);
+    s.autoExposureSpeedUp = js.value("autoExposureSpeedUp",
+                                     s.autoExposureSpeedUp);
+    s.autoExposureSpeedDown = js.value("autoExposureSpeedDown",
+                                       s.autoExposureSpeedDown);
+    s.autoExposureCalibration = js.value("autoExposureCalibration",
+                                         s.autoExposureCalibration);
     s.contrast = js.value("contrast", s.contrast);
     s.saturation = js.value("saturation", s.saturation);
     s.colorExposure = js.value("colorExposure", s.colorExposure);
     s.colorContrast = js.value("colorContrast", s.colorContrast);
     s.colorSaturation = js.value("colorSaturation", s.colorSaturation);
+    if (js.contains("colorGain")) s.colorGain = Vec3FromJson(js.at("colorGain"));
+    if (js.contains("colorGamma")) s.colorGamma = Vec3FromJson(js.at("colorGamma"));
+    if (js.contains("colorOffset")) s.colorOffset = Vec3FromJson(js.at("colorOffset"));
+    s.colorTemperature = js.value("colorTemperature", s.colorTemperature);
+    s.colorTint = js.value("colorTint", s.colorTint);
+    if (js.contains("gradeShadows")) s.gradeShadows = Vec3FromJson(js.at("gradeShadows"));
+    if (js.contains("gradeMidtones")) s.gradeMidtones = Vec3FromJson(js.at("gradeMidtones"));
+    if (js.contains("gradeHighlights")) s.gradeHighlights = Vec3FromJson(js.at("gradeHighlights"));
+    s.grainStrength = js.value("grainStrength", s.grainStrength);
+    s.grainScale = js.value("grainScale", s.grainScale);
     s.environmentPaletteEnabled = js.value("environmentPaletteEnabled",
                                            s.environmentPaletteEnabled);
     s.environmentPaletteAmount = js.value("environmentPaletteAmount",
@@ -752,6 +816,7 @@ json MaterialToJson(const Material& m, const AssetManager& assets) {
         {"subsurfaceColor", Vec3ToJson(m.subsurfaceColor)},
         {"subsurfaceStrength", m.subsurfaceStrength},
         {"subsurfaceRadius", m.subsurfaceRadius},
+        {"clearcoat", m.clearcoat},
         {"translucencyEnabled", m.translucencyEnabled},
         {"translucencyColor", Vec3ToJson(m.translucencyColor)},
         {"translucencyOpacity", m.translucencyOpacity},
@@ -848,6 +913,7 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
         ? Vec3FromJson(jm.at("subsurfaceColor")) : material->subsurfaceColor;
     material->subsurfaceStrength = jm.value("subsurfaceStrength", 0.55f);
     material->subsurfaceRadius = jm.value("subsurfaceRadius", 0.85f);
+    material->clearcoat = glm::clamp(jm.value("clearcoat", 0.0f), 0.0f, 1.0f);
     material->translucencyEnabled = jm.value("translucencyEnabled", false);
     material->translucencyColor = jm.contains("translucencyColor")
         ? Vec3FromJson(jm.at("translucencyColor")) : material->translucencyColor;

@@ -2008,10 +2008,13 @@ void RenderSystem::BindMaterial(const Material& mat) {
     bgfx::setUniform(u_landscapeDetail, landscapeDetail);
     // Subsurface color is premultiplied by strength so a zero vector
     // disables the feature without an extra branch in the G-buffer.
+    // Materials without SSS pack clearcoat into the blue channel; the
+    // lighting pass keys off the radius channel to tell the two apart.
     const float sss[4] = {
         mat.subsurfaceEnabled ? mat.subsurfaceColor.r * mat.subsurfaceStrength : 0.0f,
         mat.subsurfaceEnabled ? mat.subsurfaceColor.g * mat.subsurfaceStrength : 0.0f,
-        mat.subsurfaceEnabled ? mat.subsurfaceColor.b * mat.subsurfaceStrength : 0.0f,
+        mat.subsurfaceEnabled ? mat.subsurfaceColor.b * mat.subsurfaceStrength
+                              : std::clamp(mat.clearcoat, 0.0f, 1.0f),
         mat.subsurfaceEnabled ? std::clamp(mat.subsurfaceRadius / 5.0f, 0.0f, 1.0f) : 0.0f
     };
     bgfx::setUniform(u_subsurfaceParams, sss);

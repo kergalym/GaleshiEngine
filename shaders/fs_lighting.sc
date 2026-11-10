@@ -25,6 +25,12 @@ uniform vec4 u_cascadeSplits;
 uniform vec4 u_cascadeNormalOffsets; // xyz = world-space normal offset per cascade
 uniform vec4 u_cascadeDepthBias;     // xyz = NDC depth bias per cascade
 uniform vec4 u_pssmParams;           // x=slope bias, y=PCF radius, z=normal slope, w=Y flip
+// x = PCSS enabled, y = light source size (world units),
+// z = blocker search radius (texels), w = max penumbra (texels).
+uniform vec4 u_pcssParams;
+// x = enabled, y = ray length (world units), z = depth thickness.
+uniform vec4 u_contactShadowParams;
+uniform mat4 u_cameraViewProj;
 uniform vec4 u_lightDirection;
 uniform vec4 u_lightColorIntensity;
 uniform vec4 u_lightDirection2;
@@ -93,7 +99,7 @@ vec3 F_Schlick(vec3 F0, float VdotH) {
     return saturate(50.0 * F0.g) * Fc + (1.0 - Fc) * F0;
 }
 
-vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, float specularStrength, vec3 L, vec3 radiance) {
+vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, float specularStrength, float clearcoat, vec3 L, vec3 radiance) {
     vec3 H = normalize(L + V);
     float NdotL = saturate(dot(N, L));
     float NdotV = saturate(abs(dot(N, V)) + 0.00001);
@@ -109,7 +115,20 @@ vec3 calcLight(vec3 N, vec3 V, vec3 albedo, float metallic, float rough, float s
     // UE4 DefaultLitBxDF: Lambert diffuse is not multiplied by (1-F).
     vec3 diffuse = albedo * (1.0 - metallic) / PI;
     vec3 specular = D * Vis * F;
-    return (diffuse + specular) * radiance * NdotL;
+    vec3 result = (diffuse + specular) * radiance * NdotL;
+
+    // UE4 clearcoat: a tight glossy layer on top. Roughness is fixed at
+    // 0.03 (the common authoring choice) and F0 is the dielectric 4%.
+    if (clearcoat > 0.001) {
+        float ccA2 = 0.03 * 0.03;
+        ccA2 *= ccA2;
+        float ccF = F_Schlick(vec3_splat(0.04), VdotH).x;
+        result += 0.25 * clearcoat *
+                  D_GGX(ccA2, NdotH) *
+                  Vis_SmithJointApprox(ccA2, NdotV, NdotL) *
+                  ccF * radiance * NdotL;
+    }
+    return result;
 }
 
 // UE4 DynamicLightingCommon.ush: squared saturate mask. L points from the
@@ -140,6 +159,29 @@ float calculateShadow(vec4 lightSpacePos, float NdotL, int cascadeIdx) {
     float shadow = 0.0;
     vec2 texelSize = vec2(1.0 / 2048.0, 1.0 / 2048.0);
 
+    // PCSS: the average blocker depth drives a variable penumbra, so
+    // shadows are hard at contact and soften with the gap behind the
+    // occluder (UE-style). The 2000 factor maps NDC depth gaps to texels
+    // for a typical cascade footprint.
+    if (u_pcssParams.x > 0.5) {
+        float avgBlocker = 0.0;
+        int blockers = 0;
+        for (int i = 0; i < 8; ++i) {
+            vec2 off = getPoissonDisk(i) * texelSize * u_pcssParams.z;
+            float d;
+            if (cascadeIdx == 0) d = texture2D(s_shadowMap0, projCoords.xy + off).r;
+            else if (cascadeIdx == 1) d = texture2D(s_shadowMap1, projCoords.xy + off).r;
+            else d = texture2D(s_shadowMap2, projCoords.xy + off).r;
+            if (currentDepth - bias > d) { avgBlocker += d; blockers++; }
+        }
+        if (blockers == 0) return 0.0;
+        if (blockers == 8) return 1.0;
+        avgBlocker /= float(blockers);
+        float penumbra = (currentDepth - avgBlocker) *
+                         u_pcssParams.y * 2000.0;
+        pcfRadius = clamp(penumbra, 1.0, u_pcssParams.w);
+    }
+
     // Radius 0 means a genuinely hard shadow: one center tap instead of
     // eight coincident PCF taps.
     if (pcfRadius <= 0.001) {
@@ -165,6 +207,38 @@ float calculateShadow(vec4 lightSpacePos, float NdotL, int cascadeIdx) {
         shadow += (currentDepth - bias > pcfDepth) ? 1.0 : 0.0;
     }
     return shadow / 8.0;
+}
+
+// Screen-space contact shadows: march the lit HDR position texture toward
+// the sun and occlude when a sample is closer to the light than the surface.
+// One sample per step, short distances only (UE contact-shadow analogue).
+float contactShadowOcclusion(vec3 worldPos, vec3 lightDir) {
+    float maxDist = u_contactShadowParams.y;
+    if (maxDist <= 0.0) return 1.0;
+    const int steps = 8;
+    float thickness = max(u_contactShadowParams.z, 0.0001);
+
+    vec4 c0 = mul(u_cameraViewProj, vec4(worldPos, 1.0));
+    vec2 uv0 = c0.xy / max(c0.w, 0.00001) * 0.5 + 0.5;
+    if (u_pssmParams.w > 0.5) uv0.y = 1.0 - uv0.y;
+
+    vec4 c1 = mul(u_cameraViewProj, vec4(worldPos + lightDir * maxDist, 1.0));
+    vec2 uv1 = c1.xy / max(c1.w, 0.00001) * 0.5 + 0.5;
+    if (u_pssmParams.w > 0.5) uv1.y = 1.0 - uv1.y;
+
+    vec2 uvStep = (uv1 - uv0) / float(steps);
+    float surfaceDepth = dot(worldPos - u_cameraPosition.xyz, lightDir);
+    float occluded = 0.0;
+    for (int i = 1; i <= steps; ++i) {
+        vec2 suv = uv0 + uvStep * float(i);
+        if (suv.x < 0.0 || suv.x > 1.0 ||
+            suv.y < 0.0 || suv.y > 1.0) continue;
+        vec4 s = texture2D(s_worldPos, suv);
+        if (s.w < 0.5) continue;  // sky
+        float sDepth = dot(s.xyz - u_cameraPosition.xyz, lightDir);
+        if (sDepth < surfaceDepth - thickness) occluded += 1.0;
+    }
+    return 1.0 - occluded / float(steps);
 }
 
 // Distance between the receiving fragment and the nearest shadow-map depth.
@@ -515,9 +589,12 @@ void main()
     float materialSpecular = clamp(wPos.w - 1.0, 0.0, 1.0);
 
     // RT5 = subsurface color (premultiplied by strength) + normalized radius.
+    // Materials without SSS pack clearcoat strength into the blue channel
+    // instead (a zero radius marks the pack).
     vec4 sssData = texture2D(s_materialFeatures, uv);
     vec3 sssColor = sssData.rgb;
     float sssRadiusNorm = sssData.a;
+    float clearcoat = sssData.a > 0.001 ? 0.0 : sssData.b;
     float sssAmount = clamp(max(sssColor.r, max(sssColor.g, sssColor.b)), 0.0, 1.0);
 
     // Ambient occlusion from the half-res SSAO chain multiplied by the
@@ -540,6 +617,14 @@ void main()
     // UE4 EnvBRDF: the second split-sum term uses F90, not a constant 1.
     vec3 specularIBL = prefilteredColor *
         (F0 * brdf.x + saturate(50.0 * F0.g) * brdf.y);
+
+    // Clearcoat also picks up environment reflections (tight rough lobe).
+    if (clearcoat > 0.001) {
+        vec3 ccPrefiltered = textureCubeLod(s_prefilteredCube, R, 1.0).rgb;
+        vec2 ccBrdf = envBrdfApprox(NdotV, 0.03);
+        specularIBL += ccPrefiltered * (0.04 * ccBrdf.x + ccBrdf.y) *
+                       clearcoat * 0.25;
+    }
 
     // UE4 GetSpecularOcclusion: reflections are less occluded than diffuse
     // as roughness and NdotV increase.
@@ -572,10 +657,14 @@ void main()
     else lightSpacePos = mul(u_lightViewProj2, vec4(shadowWorldPos, 1.0));
     float shadowFactor = calculateShadow(lightSpacePos, NdotL, cascadeIdx);
     float visibility = 1.0 - shadowFactor;
+    // Contact shadows refine the sun shadow with a short screen-space march.
+    if (u_contactShadowParams.x > 0.5 && visibility > 0.01) {
+        visibility *= contactShadowOcclusion(wPos.xyz, L_dir);
+    }
 
     // Standard direct light. SSS materials reduce the geometric diffuse
     // slightly so the wrapped/back-scattered lobe does not double-expose.
-    finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L_dir, radiance_dir)
+    finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, clearcoat, L_dir, radiance_dir)
                   * visibility * (1.0 - 0.25 * sssAmount);
 
     if (sssAmount > 0.0001) {
@@ -601,7 +690,8 @@ void main()
         vec3 radiance_fill =
             u_lightColorIntensity2.rgb * u_lightColorIntensity2.a;
         finalColor += calcLight(N, V, albedo, metallic, rough,
-                                materialSpecular, L_fill, radiance_fill);
+                                materialSpecular, clearcoat,
+                                L_fill, radiance_fill);
     }
 
     // 3. Point Lights (Tiled)
@@ -623,7 +713,7 @@ void main()
             float window = saturate(1.0 - pow(dist / radius, 4.0));
             atten *= window * window;
             vec3 radiance = u_pointLightColorInt[lightIdx].rgb * u_pointLightColorInt[lightIdx].a * atten;
-            finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L, radiance);
+            finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, clearcoat, L, radiance);
             if (sssAmount > 0.0001) {
                 float wrapWidth = mix(0.16, 0.72, sssRadiusNorm);
                 float wrapped = saturate((dot(N, L) + wrapWidth) / (1.0 + wrapWidth));
@@ -657,7 +747,7 @@ void main()
                 vec3 radiance = lightColor * intensity * atten * spotFactor;
                 vec4 spotLightSpace = mul(u_spotLightVP0, vec4(wPos.xyz + N * 0.1, 1.0));
                 float spotShadow = calcSpotShadow0(spotLightSpace, max(dot(N, L), 0.0));
-                finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L, radiance) * (1.0 - spotShadow);
+                finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, clearcoat, L, radiance) * (1.0 - spotShadow);
                 if (sssAmount > 0.0001) {
                     float wrapWidth = mix(0.16, 0.72, sssRadiusNorm);
                     float wrapped = saturate((dot(N, L) + wrapWidth) / (1.0 + wrapWidth));
@@ -688,7 +778,7 @@ void main()
                 vec3 radiance = lightColor * intensity * atten * spotFactor;
                 vec4 spotLightSpace = mul(u_spotLightVP1, vec4(wPos.xyz + N * 0.1, 1.0));
                 float spotShadow = calcSpotShadow1(spotLightSpace, max(dot(N, L), 0.0));
-                finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L, radiance) * (1.0 - spotShadow);
+                finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, clearcoat, L, radiance) * (1.0 - spotShadow);
                 if (sssAmount > 0.0001) {
                     float wrapWidth = mix(0.16, 0.72, sssRadiusNorm);
                     float wrapped = saturate((dot(N, L) + wrapWidth) / (1.0 + wrapWidth));
@@ -719,7 +809,7 @@ void main()
                 vec3 radiance = lightColor * intensity * atten * spotFactor;
                 vec4 spotLightSpace = mul(u_spotLightVP2, vec4(wPos.xyz + N * 0.1, 1.0));
                 float spotShadow = calcSpotShadow2(spotLightSpace, max(dot(N, L), 0.0));
-                finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L, radiance) * (1.0 - spotShadow);
+                finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, clearcoat, L, radiance) * (1.0 - spotShadow);
                 if (sssAmount > 0.0001) {
                     float wrapWidth = mix(0.16, 0.72, sssRadiusNorm);
                     float wrapped = saturate((dot(N, L) + wrapWidth) / (1.0 + wrapWidth));
@@ -750,7 +840,7 @@ void main()
                 vec3 radiance = lightColor * intensity * atten * spotFactor;
                 vec4 spotLightSpace = mul(u_spotLightVP3, vec4(wPos.xyz + N * 0.1, 1.0));
                 float spotShadow = calcSpotShadow3(spotLightSpace, max(dot(N, L), 0.0));
-                finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, L, radiance) * (1.0 - spotShadow);
+                finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, clearcoat, L, radiance) * (1.0 - spotShadow);
                 if (sssAmount > 0.0001) {
                     float wrapWidth = mix(0.16, 0.72, sssRadiusNorm);
                     float wrapped = saturate((dot(N, L) + wrapWidth) / (1.0 + wrapWidth));

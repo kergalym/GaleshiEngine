@@ -19,6 +19,8 @@ struct AmbientOcclusionParams {
     int   directions  = 8;
     int   steps       = 4;
     float resolutionScale = 0.25f; // AO source resolution relative to viewport
+    bool  temporalEnabled = false;
+    float temporalBlend   = 0.9f;  // 1 = keep all history
 };
 
 // Screen-space diffuse global illumination. The trace runs at half resolution
@@ -77,6 +79,9 @@ public:
                                        const float fogParams2[4],
                                        const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
                                        const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], const float spotLightCone[][4], int spotLightCount,
+                                       const glm::mat4& viewProj,
+                                       const float pcssParams[4],
+                                       const float contactShadowParams[4],
                                        bgfx::ViewId viewId, uint16_t width, uint16_t height);
 
     void RenderAmbientOcclusion(bgfx::TextureHandle worldPos, bgfx::TextureHandle normal,
@@ -121,7 +126,31 @@ public:
         bgfx::TextureHandle color, bgfx::FrameBufferHandle target,
         bgfx::ViewId viewId, uint16_t w, uint16_t h,
         float exposure, float contrast, float saturation,
-        float gradeContrast, float gradeSaturation);
+        float gradeContrast, float gradeSaturation,
+        const glm::vec3& gain = glm::vec3(1.0f),
+        const glm::vec3& gamma = glm::vec3(1.0f),
+        const glm::vec3& offset = glm::vec3(0.0f),
+        float grainStrength = 0.0f,
+        float grainScale = 1.0f,
+        float time = 0.0f,
+        bool autoExposureEnabled = false,
+        bgfx::TextureHandle exposureTexture = BGFX_INVALID_HANDLE,
+        float temperature = 6500.0f,
+        float tint = 0.0f,
+        const glm::vec3& gradeShadows = glm::vec3(1.0f),
+        const glm::vec3& gradeMidtones = glm::vec3(1.0f),
+        const glm::vec3& gradeHighlights = glm::vec3(1.0f));
+
+    // Renders the eye-adaptation ping-pong pass. The adapted value is stored
+    // as stops in a 1x1 R32F texture and consumed by RenderTonemap.
+    void RenderAutoExposure(bgfx::TextureHandle sceneColor,
+                            uint16_t w, uint16_t h, float dt,
+                            float calibration, float minEv, float maxEv,
+                            float speedUp, float speedDown,
+                            bgfx::ViewId viewId);
+    bgfx::TextureHandle AutoExposureTexture() const {
+        return m_autoExposureTexA;
+    }
     bgfx::TextureHandle RenderFxaa(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height);
     bool FxaaEnabled() const { return m_fxaaEnabled; }
     void SetFxaaEnabled(bool v) { m_fxaaEnabled = v; }
@@ -137,7 +166,8 @@ public:
                                   bgfx::TextureHandle motionVector,
                                   const glm::mat4& prevVP, const glm::mat4& invVP,
                                   bgfx::FrameBufferHandle target, bgfx::ViewId viewId,
-                                  uint16_t w, uint16_t h, float blend);
+                                  uint16_t w, uint16_t h, float blend,
+                                  float sharpen = 0.0f);
     bgfx::TextureHandle RenderGodRays(bgfx::TextureHandle color, bgfx::TextureHandle depth,
                                       const glm::mat4& viewProj, const float camPos[4], const float sunDir[4],
                                       bgfx::FrameBufferHandle target,
@@ -169,7 +199,9 @@ public:
                                   const glm::mat4& proj, const glm::mat4& invProj,
                                   bgfx::FrameBufferHandle target,
                                   bgfx::ViewId viewId, uint16_t w, uint16_t h,
-                                  float focusDistance, float blurAmount);
+                                  float focusDistance, float blurAmount,
+                                  float bokehBlades = 0.0f,
+                                  float bokehRadius = 1.0f);
     void SetDofEnabled(bool v) { m_dofEnabled = v; }
     bool DofEnabled() const { return m_dofEnabled; }
     void GenerateIBL(const float sunDir[4]);
@@ -338,6 +370,7 @@ private:
     bgfx::ProgramHandle m_bloomBlurProg;
     bgfx::ProgramHandle m_bloomCombineProg;
     bgfx::ProgramHandle m_tonemapProg;
+    bgfx::ProgramHandle m_autoExposureProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_colorCorrectionProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_vignetteProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_chromaticProg = BGFX_INVALID_HANDLE;
@@ -352,6 +385,35 @@ private:
     bgfx::FrameBufferHandle m_bloomFboB = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_colorParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_gradeParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_gradeGain = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_gradeGamma = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_gradeOffset = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_grain = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_whiteBalance = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_gradeShadows = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_gradeMidtones = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_gradeHighlights = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_pcssParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_contactShadowParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_cameraViewProj = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_taaSharpen = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_dofBokeh = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_aoHistoryVP = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_aoHistoryParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_aoHistory = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_aoHistoryTex = BGFX_INVALID_HANDLE;
+    bool m_aoHistoryValid = false;
+    glm::mat4 m_aoPrevVP = glm::mat4(1.0f);
+    bgfx::UniformHandle u_autoExposure = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_adaptParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_adaptRange = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_exposure = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_autoScene = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_autoPrev = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_autoExposureTexA = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_autoExposureTexB = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_autoExposureFboA = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_autoExposureFboB = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_colorCorrectionParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_envPaletteShadow = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_envPaletteMid = BGFX_INVALID_HANDLE;

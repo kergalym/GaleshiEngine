@@ -10,6 +10,7 @@ uniform mat4 u_prevViewProj;
 uniform mat4 u_taaInvViewProj;
 uniform vec4 u_taaParams;    // x = current-frame blend
 uniform vec4 u_taaTexelSize; // xy = 1/width, 1/height
+uniform vec4 u_taaSharpen;   // x = sharpen amount, 0 = off
 
 vec2 Reproject(vec2 uv, float depth, vec2 motion) {
     // Per-object velocity is already in UV space. Objects with no motion
@@ -79,5 +80,17 @@ void main() {
     // A small current-frame contribution keeps history from accumulating
     // indefinitely; a large contribution rejects it under fast motion.
     float blend = clamp(u_taaParams.x, 0.01, 1.0);
-    gl_FragColor = vec4(mix(history, current.rgb, blend), 1.0);
+    vec3 color = mix(history, current.rgb, blend);
+
+    // Optional unsharp mask against the current (aliased) frame. TAA alone
+    // softens the image; a small amount restores texture detail.
+    float sharpen = max(u_taaSharpen.x, 0.0);
+    if (sharpen > 0.0001) {
+        vec3 n = texture2D(s_texColor, uv + vec2(0.0, texel.y)).rgb;
+        vec3 s = texture2D(s_texColor, uv - vec2(0.0, texel.y)).rgb;
+        vec3 e = texture2D(s_texColor, uv + vec2(texel.x, 0.0)).rgb;
+        vec3 w = texture2D(s_texColor, uv - vec2(texel.x, 0.0)).rgb;
+        color += (color * 4.0 - (n + s + e + w)) * sharpen;
+    }
+    gl_FragColor = vec4(color, 1.0);
 }

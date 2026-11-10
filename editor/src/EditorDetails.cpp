@@ -1874,6 +1874,14 @@ void GaleshiEditorApp::DrawDetails() {
                                                 PushHistory();
                                                 materialEdited = true;
                                             }
+                                        } else {
+                                            if (ImGui::SliderFloat(
+                                                    "Clearcoat",
+                                                    &m.clearcoat,
+                                                    0.0f, 1.0f)) {
+                                                PushHistory();
+                                                materialEdited = true;
+                                            }
                                         }
                                         ImGui::TreePop();
                                     }
@@ -2210,6 +2218,7 @@ void GaleshiEditorApp::DrawDetails() {
             addVec3(mat.subsurfaceColor);
             addFloat(mat.subsurfaceStrength);
             addFloat(mat.subsurfaceRadius);
+            addFloat(mat.clearcoat);
             addHash(mat.translucencyEnabled);
             addVec3(mat.translucencyColor);
             addFloat(mat.translucencyOpacity);
@@ -2503,6 +2512,12 @@ void GaleshiEditorApp::DrawDetails() {
                     ImGui::SliderFloat("Subsurface Radius", &m.subsurfaceRadius, 0.01f, 5.0f);
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("Scattering radius in world units.");
+                    }
+                } else {
+                    ImGui::SliderFloat("Clearcoat", &m.clearcoat, 0.0f, 1.0f);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Tight glossy layer (varnish, wet eyes). "
+                                          "Ignored while subsurface scattering is on.");
                     }
                 }
                 }

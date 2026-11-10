@@ -76,6 +76,14 @@ public:
     float     subsurfaceRadius   = 0.85f;
 
     // ---------------------------------------------------------------------
+    // Clearcoat (deferred opaque materials)
+    // ---------------------------------------------------------------------
+    // A tight glossy layer for varnish, car paint and wet eyes. Roughness
+    // is fixed at 0.03. Materials with subsurface scattering keep their
+    // scatter channels, so clearcoat is ignored on them.
+    float     clearcoat = 0.0f;
+
+    // ---------------------------------------------------------------------
     // Lit translucency (forward, alpha-blended)
     // ---------------------------------------------------------------------
     // Translucent materials are excluded from the deferred G-buffer and are

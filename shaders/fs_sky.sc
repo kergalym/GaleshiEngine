@@ -9,8 +9,10 @@ void main() {
     vec3 dir = normalize(world.xyz / max(world.w, 0.000001));
     // Procedural sky: horizon color
     vec3 skyColor = mix(vec3(0.4, 0.6, 1.0), vec3(0.05, 0.1, 0.3), clamp(dir.y, 0.0, 1.0));
-    // Sun
+    // Sun: a hard disk with a wide soft glow (UE-style sun disc).
     float sun = max(dot(dir, normalize(u_skySunDir.xyz)), 0.0);
-    skyColor += vec3(1.0, 0.9, 0.8) * pow(sun, 128.0) * 10.0;
+    float disk = smoothstep(0.9993, 0.9998, sun);
+    float glow = pow(sun, 64.0) * 0.15;
+    skyColor += vec3(1.0, 0.9, 0.8) * (disk * 8.0 + glow);
     gl_FragData[0] = vec4(skyColor, 1.0);
 }

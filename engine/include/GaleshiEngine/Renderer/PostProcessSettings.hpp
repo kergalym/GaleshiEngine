@@ -34,16 +34,67 @@ struct PostProcessSettings {
     float motionBlurAmount     = 0.4f;  // camera velocity scale
     float motionBlurMaxVelocity = 70.0f; // clamp in pixels
 
+    // Shadows. PCSS estimates penumbra from a blocker search; contact
+    // shadows ray-march screen-space depth toward the sun.
+    bool  pcssEnabled           = false;
+    float shadowLightSourceSize = 1.0f;   // world units, penumbra scale
+    bool  contactShadowsEnabled = false;
+    float contactShadowLength   = 0.05f;  // world units along the light
+    float contactShadowThickness = 0.02f; // depth rejection, world units
+
+    // Temporal AA
+    float taaSharpen = 0.0f;  // 0 = off, ~0.25 subtle
+
+    // Depth of field bokeh. 0 blades keeps the classic Gaussian blur,
+    // 3..8 switches to a polygonal (cinematic) disk kernel.
+    float dofBokehBlades = 0.0f;
+    float dofBokehRadius = 1.0f;
+
+    // Ambient occlusion temporal accumulation.
+    bool  aoTemporalEnabled = false;
+    float aoTemporalBlend   = 0.9f;  // 1 = keep all history
+
     // Tonemap
     float exposure   = 1.0f;
+    float exposureEv = 0.0f;  // manual exposure in stops (2^EV), UE-style
     float contrast   = 1.0f;
     float saturation = 1.0f;
+
+    // Eye adaptation. The adapted value is added to the manual exposure in
+    // stops. Calibration is the target average scene luminance.
+    bool  autoExposureEnabled    = false;
+    float autoExposureMinEv      = -4.0f;
+    float autoExposureMaxEv      = 4.0f;
+    float autoExposureSpeedUp    = 3.0f;
+    float autoExposureSpeedDown  = 1.0f;
+    float autoExposureCalibration = 0.18f;
 
     // Scene-referred color grading. Applied before the ACES curve, matching
     // the UE-style linear grading stage.
     float colorExposure   = 1.0f;
     float colorContrast   = 1.0f;
     float colorSaturation = 1.0f;
+
+    // Per-channel UE-style gain/gamma/offset in linear space (pre-tonemap).
+    glm::vec3 colorGain{1.0f};
+    glm::vec3 colorGamma{1.0f};
+    glm::vec3 colorOffset{0.0f};
+
+    // White balance. Higher temperature is warmer (orange), positive tint
+    // shifts toward green.
+    float colorTemperature = 6500.0f;
+    float colorTint        = 0.0f;
+
+    // Shadows/midtones/highlights tints, multiplied in display space after
+    // the ACES curve. UE4 bakes these into the grading LUT; we apply them
+    // directly.
+    glm::vec3 gradeShadows{1.0f};
+    glm::vec3 gradeMidtones{1.0f};
+    glm::vec3 gradeHighlights{1.0f};
+
+    // Film grain applied after the ACES curve.
+    float grainStrength = 0.06f;
+    float grainScale    = 1.0f;
 
     // Environment colour palette.  The final environment render is remapped
     // through a three-point colour ramp (shadows, midtones, highlights) while

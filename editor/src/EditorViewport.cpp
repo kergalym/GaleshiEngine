@@ -224,9 +224,18 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                 m_playerCameraPreviewColor, m_playerCameraPreviewOutputFbo,
                 m_playerCameraPreviewTonemapView,
                 m_playerCameraPreviewW, m_playerCameraPreviewH,
-                pp.exposure * pp.colorExposure,
+                std::exp2(pp.exposureEv) * pp.exposure *
+                    pp.colorExposure,
                 pp.contrast, pp.saturation,
-                pp.colorContrast, pp.colorSaturation);
+                pp.colorContrast, pp.colorSaturation,
+                pp.colorGain, pp.colorGamma, pp.colorOffset,
+                pp.grainStrength, pp.grainScale,
+                static_cast<float>(m_time),
+                pp.autoExposureEnabled,
+                m_postProcess.AutoExposureTexture(),
+                pp.colorTemperature, pp.colorTint,
+                pp.gradeShadows, pp.gradeMidtones,
+                pp.gradeHighlights);
         }
 
         return bgfx::isValid(m_playerCameraPreviewOutput);
@@ -919,9 +928,23 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     ao.steps       = pp.aoSteps;
                 }
                 ao.resolutionScale = pp.aoResolutionScale;
+                ao.temporalEnabled = pp.aoTemporalEnabled;
+                ao.temporalBlend = pp.aoTemporalBlend;
                 m_postProcess.RenderAmbientOcclusion(
                     m_framebuffer->WorldPos(), m_framebuffer->Normal(),
                     m_camera.View(), proj, 15, renderW, renderH, ao);
+
+                // Eye adaptation reads the lit HDR (view 45 runs after
+                // tonemap, so this frame's lighting is already there); the
+                // adapted value is consumed by the next frame's tonemap.
+                if (pp.autoExposureEnabled) {
+                    m_postProcess.RenderAutoExposure(
+                        m_postProcess.OutputTexture(), renderW, renderH,
+                        m_frameDelta,
+                        pp.autoExposureCalibration,
+                        pp.autoExposureMinEv, pp.autoExposureMaxEv,
+                        pp.autoExposureSpeedUp, pp.autoExposureSpeedDown, 45);
+                }
 
                 m_postProcess.RenderLightCulling(plCount, plPosA, currVP, renderW, renderH);
                 const float pssmParams[4] = {
@@ -942,6 +965,18 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     pp.fogVolumetric ? 1.0f : 0.0f,
                     static_cast<float>(std::clamp(pp.fogSteps, 1, 64))
                 };
+                const float pcssParams[4] = {
+                    pp.pcssEnabled ? 1.0f : 0.0f,
+                    std::max(pp.shadowLightSourceSize, 0.01f),
+                    24.0f,  // blocker search radius in shadow-map texels
+                    48.0f   // maximum penumbra in shadow-map texels
+                };
+                const float contactShadowParams[4] = {
+                    pp.contactShadowsEnabled ? 1.0f : 0.0f,
+                    std::max(pp.contactShadowLength, 0.0f),
+                    std::max(pp.contactShadowThickness, 0.0001f),
+                    0.0f
+                };
                 m_postProcess.RenderLighting(
                     m_framebuffer->Color(),
                     m_framebuffer->Normal(),
@@ -957,6 +992,7 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     fogColorDensity, fogParams, fogParams2,
                     plPosA, plColA, plCount,
                     slPos, slDir, slCol, slCone, slCount,
+                    currVP, pcssParams, contactShadowParams,
                     20, renderW, renderH);
 
                 // Particles are drawn after lighting into the HDR output
@@ -1050,7 +1086,8 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     if (bgfx::isValid(m_postProcess.RenderDof(
                             m_postProcess.OutputTexture(), m_framebuffer->Depth(),
                             proj, invProj, m_postProcess.PingFbo(), 28, renderW, renderH,
-                            dofFocusDistance, pp.dofBlur))) {
+                            dofFocusDistance, pp.dofBlur,
+                            pp.dofBokehBlades, pp.dofBokehRadius))) {
                         m_postProcess.SwapFbos();
                     }
                 }
@@ -1071,7 +1108,8 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                             m_postProcess.OutputTexture(), m_framebuffer->Depth(),
                             m_framebuffer->Velocity(),
                             m_postProcess.GetPrevViewProj(), taaInvVP,
-                            m_postProcess.PingFbo(), 36, renderW, renderH, pp.taaBlend))) {
+                            m_postProcess.PingFbo(), 36, renderW, renderH, pp.taaBlend,
+                            pp.taaSharpen))) {
                         m_postProcess.SwapFbos();
                     }
                 }
@@ -1153,9 +1191,18 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                 m_postProcess.RenderTonemap(
                     m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
                     40, renderW, renderH,
-                    pp.exposure * pp.colorExposure,
+                    std::exp2(pp.exposureEv) * pp.exposure *
+                        pp.colorExposure,
                     pp.contrast, pp.saturation,
-                    pp.colorContrast, pp.colorSaturation);
+                    pp.colorContrast, pp.colorSaturation,
+                    pp.colorGain, pp.colorGamma, pp.colorOffset,
+                    pp.grainStrength, pp.grainScale,
+                    static_cast<float>(m_time),
+                    pp.autoExposureEnabled,
+                    m_postProcess.AutoExposureTexture(),
+                    pp.colorTemperature, pp.colorTint,
+                    pp.gradeShadows, pp.gradeMidtones,
+                    pp.gradeHighlights);
                 m_postProcess.SwapFbos();
 
                 // 10. LUT-style environment palette (View 41), after tonemap

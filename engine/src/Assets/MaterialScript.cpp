@@ -254,6 +254,8 @@ bool MaterialScript::Apply(Material& material) const {
             applied |= ApplyScalar(material.subsurfaceStrength, assignment);
         } else if (name == "subsurfaceRadius") {
             applied |= ApplyScalar(material.subsurfaceRadius, assignment);
+        } else if (name == "clearcoat") {
+            applied |= ApplyScalar(material.clearcoat, assignment);
         } else if (name == "translucencyOpacity") {
             applied |= ApplyScalar(material.translucencyOpacity, assignment);
         } else if (name == "translucencyStrength") {

@@ -1120,6 +1120,7 @@ void CacheWriteMaterial(const Material& material, std::vector<uint8_t>& out) {
     CacheWriteVec3(out, material.subsurfaceColor);
     CacheWriteFloat(out, material.subsurfaceStrength);
     CacheWriteFloat(out, material.subsurfaceRadius);
+    CacheWriteFloat(out, material.clearcoat);
     CacheWriteVarUInt(out, material.translucencyEnabled ? 1 : 0);
     CacheWriteVec3(out, material.translucencyColor);
     CacheWriteFloat(out, material.translucencyOpacity);
@@ -1183,6 +1184,7 @@ std::shared_ptr<Material> CacheReadMaterial(AssetManager& assets,
     material->subsurfaceColor = CacheReadVec3(reader);
     material->subsurfaceStrength = CacheReadFloat(reader);
     material->subsurfaceRadius = CacheReadFloat(reader);
+    material->clearcoat = CacheReadFloat(reader);
     material->translucencyEnabled = reader.VarUInt() != 0;
     material->translucencyColor = CacheReadVec3(reader);
     material->translucencyOpacity = CacheReadFloat(reader);

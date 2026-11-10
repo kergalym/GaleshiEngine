@@ -111,9 +111,10 @@ void main() {
     vec3 color = u_atmoSunDir.w * (totalRayleigh * rayleighCoeff * phaseR + totalMie * mieCoeff * phaseM);
 
     float sun = max(dot(rd, sunDir), 0.0);
-    if (sun > 0.9999) {
-        color += vec3(1.0, 0.9, 0.8) * 20.0;
-    }
+    // Hard disc with a soft glow, brighter than the procedural sky's disk.
+    float disk = smoothstep(0.9993, 0.9998, sun);
+    float glow = pow(sun, 64.0) * 0.25;
+    color += vec3(1.0, 0.9, 0.8) * (disk * 30.0 + glow);
 
     // Keep the atmosphere in linear HDR; the main tonemap pass runs later.
     // A horizon / below-horizon sun makes the single-scattering integral go

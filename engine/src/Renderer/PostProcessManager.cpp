@@ -103,6 +103,9 @@ void PostProcessManager::Init() {
             u_cascadeNormalOffsets = bgfx::createUniform("u_cascadeNormalOffsets", bgfx::UniformType::Vec4);
             u_cascadeDepthBias = bgfx::createUniform("u_cascadeDepthBias", bgfx::UniformType::Vec4);
             u_pssmParams = bgfx::createUniform("u_pssmParams", bgfx::UniformType::Vec4);
+            u_pcssParams = bgfx::createUniform("u_pcssParams", bgfx::UniformType::Vec4);
+            u_contactShadowParams = bgfx::createUniform("u_contactShadowParams", bgfx::UniformType::Vec4);
+            u_cameraViewProj = bgfx::createUniform("u_cameraViewProj", bgfx::UniformType::Mat4);
             u_lightDir    = bgfx::createUniform("u_lightDirection",     bgfx::UniformType::Vec4);
             u_lightCol    = bgfx::createUniform("u_lightColorIntensity",bgfx::UniformType::Vec4);
             u_lightDir2   = bgfx::createUniform("u_lightDirection2",    bgfx::UniformType::Vec4);
@@ -185,6 +188,9 @@ void PostProcessManager::Init() {
         u_aoSource     = bgfx::createUniform("u_aoSource",     bgfx::UniformType::Vec4);
         u_aoBlurParams = bgfx::createUniform("u_aoBlurParams", bgfx::UniformType::Vec4);
         u_aoBlurDir    = bgfx::createUniform("u_aoBlurDir",    bgfx::UniformType::Vec4);
+        u_aoHistoryVP  = bgfx::createUniform("u_aoHistoryVP",  bgfx::UniformType::Mat4);
+        u_aoHistoryParams = bgfx::createUniform("u_aoHistoryParams", bgfx::UniformType::Vec4);
+        s_aoHistory    = bgfx::createUniform("s_aoHistory",    bgfx::UniformType::Sampler);
         s_aoSource     = bgfx::createUniform("s_aoSource",     bgfx::UniformType::Sampler);
         s_aoTex        = bgfx::createUniform("s_aoTex",        bgfx::UniformType::Sampler);
 
@@ -235,6 +241,7 @@ void PostProcessManager::Init() {
           u_taaInvVP = bgfx::createUniform("u_taaInvViewProj", bgfx::UniformType::Mat4);
           u_taaParams = bgfx::createUniform("u_taaParams", bgfx::UniformType::Vec4);
           u_taaTexelSize = bgfx::createUniform("u_taaTexelSize", bgfx::UniformType::Vec4);
+          u_taaSharpen = bgfx::createUniform("u_taaSharpen", bgfx::UniformType::Vec4);
           s_taaHistory = bgfx::createUniform("s_history", bgfx::UniformType::Sampler);
           s_taaMotion = bgfx::createUniform("s_taaMotion", bgfx::UniformType::Sampler);
       } }
@@ -270,12 +277,27 @@ void PostProcessManager::Init() {
     // layout, but each program owns its own shader handles.
     {
         m_tonemapProg         = createFsProg("shaders/fs_tonemap.bin");
+        m_autoExposureProg    = createFsProg("shaders/fs_auto_exposure.bin");
         m_colorCorrectionProg = createFsProg("shaders/fs_color_correction.bin");
         m_vignetteProg        = createFsProg("shaders/fs_vignette.bin");
         m_chromaticProg       = createFsProg("shaders/fs_chromatic.bin");
 
         u_colorParams           = bgfx::createUniform("u_colorParams", bgfx::UniformType::Vec4);
         u_gradeParams           = bgfx::createUniform("u_gradeParams", bgfx::UniformType::Vec4);
+        u_gradeGain             = bgfx::createUniform("u_gradeGain", bgfx::UniformType::Vec4);
+        u_gradeGamma            = bgfx::createUniform("u_gradeGamma", bgfx::UniformType::Vec4);
+        u_gradeOffset           = bgfx::createUniform("u_gradeOffset", bgfx::UniformType::Vec4);
+        u_grain                 = bgfx::createUniform("u_grain", bgfx::UniformType::Vec4);
+        u_whiteBalance          = bgfx::createUniform("u_whiteBalance", bgfx::UniformType::Vec4);
+        u_gradeShadows          = bgfx::createUniform("u_gradeShadows", bgfx::UniformType::Vec4);
+        u_gradeMidtones         = bgfx::createUniform("u_gradeMidtones", bgfx::UniformType::Vec4);
+        u_gradeHighlights       = bgfx::createUniform("u_gradeHighlights", bgfx::UniformType::Vec4);
+        u_autoExposure          = bgfx::createUniform("u_autoExposure", bgfx::UniformType::Vec4);
+        u_adaptParams           = bgfx::createUniform("u_adaptParams", bgfx::UniformType::Vec4);
+        u_adaptRange            = bgfx::createUniform("u_adaptRange", bgfx::UniformType::Vec4);
+        s_exposure              = bgfx::createUniform("s_exposure", bgfx::UniformType::Sampler);
+        s_autoScene             = bgfx::createUniform("s_autoScene", bgfx::UniformType::Sampler);
+        s_autoPrev              = bgfx::createUniform("s_autoPrev", bgfx::UniformType::Sampler);
         u_colorCorrectionParams = bgfx::createUniform("u_colorCorrectionParams", bgfx::UniformType::Vec4);
         u_envPaletteShadow      = bgfx::createUniform("u_envPaletteShadow", bgfx::UniformType::Vec4);
         u_envPaletteMid         = bgfx::createUniform("u_envPaletteMid", bgfx::UniformType::Vec4);
@@ -371,6 +393,7 @@ void PostProcessManager::Init() {
         u_godraysParams = bgfx::createUniform("u_godraysParams", bgfx::UniformType::Vec4);
         u_dofTexelSize = bgfx::createUniform("u_dofTexelSize", bgfx::UniformType::Vec4);
         u_dofDir       = bgfx::createUniform("u_dofDir",       bgfx::UniformType::Vec4);
+        u_dofBokeh     = bgfx::createUniform("u_dofBokeh",     bgfx::UniformType::Vec4);
         s_dofColor     = bgfx::createUniform("s_dofColor",     bgfx::UniformType::Sampler);
         s_dofDepth     = bgfx::createUniform("s_dofDepth",     bgfx::UniformType::Sampler);
         s_dofBlur      = bgfx::createUniform("s_dofBlur",      bgfx::UniformType::Sampler);
@@ -539,6 +562,7 @@ void PostProcessManager::Shutdown() {
     if (bgfx::isValid(m_mbVelocityFbo)) bgfx::destroy(m_mbVelocityFbo);
     if (bgfx::isValid(m_mbVelocityTex)) bgfx::destroy(m_mbVelocityTex);
     destroyUni(u_dofParams); destroyUni(u_dofTexelSize); destroyUni(u_dofDir);
+    destroyUni(u_dofBokeh);
     destroyUni(s_dofColor); destroyUni(s_dofDepth); destroyUni(s_dofBlur); destroyUni(s_dofCoc);
     if (bgfx::isValid(m_dofCocFbo))   bgfx::destroy(m_dofCocFbo);
     if (bgfx::isValid(m_dofBlurFboA)) bgfx::destroy(m_dofBlurFboA);
@@ -547,15 +571,26 @@ void PostProcessManager::Shutdown() {
     if (bgfx::isValid(m_dofBlurTexA)) bgfx::destroy(m_dofBlurTexA);
     if (bgfx::isValid(m_dofBlurTexB)) bgfx::destroy(m_dofBlurTexB);
     destroyUni(u_taaPrevVP); destroyUni(u_taaInvVP); destroyUni(u_taaParams); destroyUni(u_taaTexelSize);
+    destroyUni(u_taaSharpen);
     destroyUni(s_taaHistory); destroyUni(s_taaMotion);
     if (bgfx::isValid(m_historyFbo)) bgfx::destroy(m_historyFbo);
     if(bgfx::isValid(m_historyColor)) bgfx::destroy(m_historyColor);
     destroyProg(m_skyProg); destroyProg(m_iblGenProg); destroyProg(m_brdfProg);
     destroyProg(m_irradianceConvProg); destroyProg(m_prefilterProg);
-    destroyProg(m_tonemapProg); destroyProg(m_bloomExtractProg);
+    destroyProg(m_tonemapProg); destroyProg(m_autoExposureProg);
+    destroyProg(m_bloomExtractProg);
     destroyProg(m_bloomBlurProg); destroyProg(m_bloomCombineProg);
     destroyProg(m_colorCorrectionProg); destroyProg(m_vignetteProg); destroyProg(m_chromaticProg);
     destroyUni(u_colorParams); destroyUni(u_gradeParams);
+    destroyUni(u_gradeGain); destroyUni(u_gradeGamma);
+    destroyUni(u_gradeOffset); destroyUni(u_grain);
+    destroyUni(u_whiteBalance); destroyUni(u_gradeShadows);
+    destroyUni(u_gradeMidtones); destroyUni(u_gradeHighlights);
+    destroyUni(u_autoExposure); destroyUni(u_adaptParams);
+    destroyUni(u_adaptRange); destroyUni(s_exposure);
+    destroyUni(s_autoScene); destroyUni(s_autoPrev);
+    destroyTex(m_autoExposureTexA); destroyTex(m_autoExposureTexB);
+    destroyFbo(m_autoExposureFboA); destroyFbo(m_autoExposureFboB);
     destroyUni(u_colorCorrectionParams);
     destroyUni(u_envPaletteShadow); destroyUni(u_envPaletteMid);
     destroyUni(u_envPaletteHighlight);
@@ -584,6 +619,8 @@ void PostProcessManager::Shutdown() {
     destroyUni(s_texColor); destroyUni(s_texDepth); destroyUni(u_texelSize);
     destroyUni(u_camPos); destroyUni(u_cascadeSplits); destroyUni(u_cascadeNormalOffsets);
     destroyUni(u_cascadeDepthBias); destroyUni(u_pssmParams);
+    destroyUni(u_pcssParams); destroyUni(u_contactShadowParams);
+    destroyUni(u_cameraViewProj);
     destroyUni(u_lightDir); destroyUni(u_lightCol);
     destroyUni(u_lightDir2); destroyUni(u_lightCol2);
     destroyUni(u_fogColorDensity); destroyUni(u_fogParams); destroyUni(u_fogParams2);
@@ -610,6 +647,8 @@ void PostProcessManager::Shutdown() {
     destroyUni(u_aoView); destroyUni(u_aoProj); destroyUni(u_aoParams);
     destroyUni(u_aoParams2);
     destroyUni(u_aoViewport); destroyUni(u_aoSource); destroyUni(u_aoBlurParams); destroyUni(u_aoBlurDir);
+    destroyUni(u_aoHistoryVP); destroyUni(u_aoHistoryParams); destroyUni(s_aoHistory);
+    if (bgfx::isValid(m_aoHistoryTex)) bgfx::destroy(m_aoHistoryTex);
     destroyUni(s_aoSource); destroyUni(s_aoTex);
     destroyTex(m_aoHalfTex); destroyTex(m_aoFullTexA); destroyTex(m_aoFullTexB);
     destroyFbo(m_aoHalfFbo); destroyFbo(m_aoFullFboA); destroyFbo(m_aoFullFboB);
@@ -652,9 +691,12 @@ void PostProcessManager::EnsureAOFbo(uint16_t w, uint16_t h, float resolutionSca
     if (bgfx::isValid(m_aoHalfTex))   bgfx::destroy(m_aoHalfTex);
     if (bgfx::isValid(m_aoFullTexA))  bgfx::destroy(m_aoFullTexA);
     if (bgfx::isValid(m_aoFullTexB))  bgfx::destroy(m_aoFullTexB);
+    if (bgfx::isValid(m_aoHistoryTex)) bgfx::destroy(m_aoHistoryTex);
 
     m_aoHalfFbo = m_aoFullFboA = m_aoFullFboB = BGFX_INVALID_HANDLE;
     m_aoHalfTex = m_aoFullTexA = m_aoFullTexB = BGFX_INVALID_HANDLE;
+    m_aoHistoryTex = BGFX_INVALID_HANDLE;
+    m_aoHistoryValid = false;
     m_aoValid = false;
 
     const uint16_t aoW = std::max<uint16_t>(1, static_cast<uint16_t>(w * resolutionScale));
@@ -664,6 +706,8 @@ void PostProcessManager::EnsureAOFbo(uint16_t w, uint16_t h, float resolutionSca
     m_aoHalfTex  = bgfx::createTexture2D(aoW, aoH, false, 1, bgfx::TextureFormat::RGBA8, flags);
     m_aoFullTexA = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
     m_aoFullTexB = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8, flags);
+    m_aoHistoryTex = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA8,
+                                           flags | BGFX_TEXTURE_BLIT_DST);
 
     if (bgfx::isValid(m_aoHalfTex))  m_aoHalfFbo  = bgfx::createFrameBuffer(1, &m_aoHalfTex, false);
     if (bgfx::isValid(m_aoFullTexA)) m_aoFullFboA = bgfx::createFrameBuffer(1, &m_aoFullTexA, false);
@@ -837,6 +881,9 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     const float fogParams2[4],
     const float pointLightPos[][4], const float pointLightColor[][4], int pointLightCount,
     const float spotLightPosRadius[][4], const float spotLightDirInner[][4], const float spotLightColorOuter[][4], const float spotLightCone[][4], int spotLightCount,
+    const glm::mat4& viewProj,
+    const float pcssParams[4],
+    const float contactShadowParams[4],
     bgfx::ViewId viewId, uint16_t width, uint16_t height)
 {
     if (!bgfx::isValid(m_lightingProg) || width == 0 || height == 0) {
@@ -860,6 +907,11 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     bgfx::setUniform(u_cascadeNormalOffsets, cascadeNormalOffsets);
     bgfx::setUniform(u_cascadeDepthBias, cascadeDepthBias);
     bgfx::setUniform(u_pssmParams, pssmParams);
+    bgfx::setUniform(u_pcssParams, pcssParams);
+    bgfx::setUniform(u_contactShadowParams, contactShadowParams);
+    if (bgfx::isValid(u_cameraViewProj)) {
+        bgfx::setUniform(u_cameraViewProj, glm::value_ptr(viewProj));
+    }
     bgfx::setUniform(u_lightDir, lightDir);
     bgfx::setUniform(u_lightCol, lightColorIntensity);
     bgfx::setUniform(u_lightDir2, lightDir2);
@@ -1030,6 +1082,25 @@ void PostProcessManager::RenderAmbientOcclusion(bgfx::TextureHandle worldPos,
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId + 1, m_aoUpsampleProg);
 
+    // Temporal accumulation: the vertical blur pass blends the history
+    // reprojected with last frame's camera. The final buffer is copied into
+    // the history texture afterwards.
+    const bool blitSupported =
+        (bgfx::getCaps()->supported & BGFX_CAPS_TEXTURE_BLIT) != 0;
+    const bool temporal = params.temporalEnabled && m_aoHistoryValid &&
+                          blitSupported &&
+                          bgfx::isValid(m_aoHistoryTex) &&
+                          bgfx::isValid(u_aoHistoryVP) &&
+                          bgfx::isValid(u_aoHistoryParams) &&
+                          bgfx::isValid(s_aoHistory);
+    const float historyParams[4] = {
+        temporal ? 1.0f : 0.0f,
+        std::clamp(params.temporalBlend, 0.5f, 1.0f),
+        static_cast<float>(width), static_cast<float>(height)};
+    bgfx::setUniform(u_aoHistoryParams, historyParams);
+    bgfx::setUniform(u_aoHistoryVP, glm::value_ptr(m_aoPrevVP));
+    bgfx::setTexture(3, s_aoHistory, m_aoHistoryTex);
+
     // View viewId + 2: separable bilateral blur, horizontal pass A -> B.
     bgfx::setViewFrameBuffer(viewId + 2, m_aoFullFboB);
     bgfx::setViewRect(viewId + 2, 0, 0, width, height);
@@ -1061,6 +1132,14 @@ void PostProcessManager::RenderAmbientOcclusion(bgfx::TextureHandle worldPos,
     bgfx::setIndexBuffer(m_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId + 3, m_aoBlurProg);
+
+    // Copy this frame's final AO into the history texture and advance the
+    // camera matrix for the next frame's reprojection.
+    if (blitSupported && bgfx::isValid(m_aoHistoryTex)) {
+        bgfx::blit(viewId + 3, m_aoHistoryTex, 0, 0, m_aoFullTexA);
+        m_aoHistoryValid = true;
+    }
+    m_aoPrevVP = proj * view;
 
     m_aoValid = true;
 }
@@ -1296,7 +1375,14 @@ bgfx::TextureHandle PostProcessManager::RenderTonemap(
     bgfx::TextureHandle color, bgfx::FrameBufferHandle target,
     bgfx::ViewId viewId, uint16_t w, uint16_t h,
     float exposure, float contrast, float saturation,
-    float gradeContrast, float gradeSaturation) {
+    float gradeContrast, float gradeSaturation,
+    const glm::vec3& gain, const glm::vec3& gamma,
+    const glm::vec3& offset, float grainStrength,
+    float grainScale, float time,
+    bool autoExposureEnabled, bgfx::TextureHandle exposureTexture,
+    float temperature, float tint,
+    const glm::vec3& gradeShadows, const glm::vec3& gradeMidtones,
+    const glm::vec3& gradeHighlights) {
     if (!bgfx::isValid(m_tonemapProg) || !bgfx::isValid(u_colorParams) ||
         !bgfx::isValid(u_gradeParams)) {
         return color;
@@ -1304,14 +1390,86 @@ bgfx::TextureHandle PostProcessManager::RenderTonemap(
     bgfx::setViewFrameBuffer(viewId, target);
     bgfx::setViewRect(viewId, 0, 0, w, h);
     bgfx::setTexture(0, s_texColor, color);
+    // Slot 1: adapted exposure in stops (1x1 R32F), or black when disabled.
+    bgfx::setTexture(1, s_exposure,
+                     autoExposureEnabled && bgfx::isValid(exposureTexture)
+                         ? exposureTexture
+                         : m_blackTex2D);
     float params[4] = { exposure, contrast, saturation, 0 };
     bgfx::setUniform(u_colorParams, params);
     float grade[4] = { gradeContrast, gradeSaturation, 0, 0 };
     bgfx::setUniform(u_gradeParams, grade);
+
+    const float gainValue[4] = {gain.x, gain.y, gain.z, 1.0f};
+    const float gammaValue[4] = {gamma.x, gamma.y, gamma.z, 1.0f};
+    const float offsetValue[4] = {offset.x, offset.y, offset.z, 0.0f};
+    const float grainValue[4] = {
+        grainStrength, std::max(grainScale, 1e-3f), time, 0.0f};
+    bgfx::setUniform(u_gradeGain, gainValue);
+    bgfx::setUniform(u_gradeGamma, gammaValue);
+    bgfx::setUniform(u_gradeOffset, offsetValue);
+    bgfx::setUniform(u_grain, grainValue);
+    const float autoValue[4] = {autoExposureEnabled ? 1.0f : 0.0f, 0, 0, 0};
+    bgfx::setUniform(u_autoExposure, autoValue);
+    const float wbValue[4] = {temperature, tint, 0.0f, 0.0f};
+    const float shValue[4] = {gradeShadows.x, gradeShadows.y, gradeShadows.z, 1.0f};
+    const float midValue[4] = {gradeMidtones.x, gradeMidtones.y, gradeMidtones.z, 1.0f};
+    const float hiValue[4] = {gradeHighlights.x, gradeHighlights.y, gradeHighlights.z, 1.0f};
+    bgfx::setUniform(u_whiteBalance, wbValue);
+    bgfx::setUniform(u_gradeShadows, shValue);
+    bgfx::setUniform(u_gradeMidtones, midValue);
+    bgfx::setUniform(u_gradeHighlights, hiValue);
+
     bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId, m_tonemapProg);
     return m_pingColor;
+}
+
+void PostProcessManager::RenderAutoExposure(
+    bgfx::TextureHandle sceneColor, uint16_t w, uint16_t h, float dt,
+    float calibration, float minEv, float maxEv,
+    float speedUp, float speedDown, bgfx::ViewId viewId) {
+    if (!bgfx::isValid(m_autoExposureProg)) {
+        return;
+    }
+    // 1x1 R32F ping-pong: A holds the exposure consumed by the tonemap,
+    // B receives the newly adapted value and becomes A next frame.
+    if (!bgfx::isValid(m_autoExposureTexA)) {
+        const uint64_t flags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP |
+                               BGFX_SAMPLER_V_CLAMP;
+        m_autoExposureTexA = bgfx::createTexture2D(
+            1, 1, false, 1, bgfx::TextureFormat::R32F, flags);
+        m_autoExposureTexB = bgfx::createTexture2D(
+            1, 1, false, 1, bgfx::TextureFormat::R32F, flags);
+        m_autoExposureFboA =
+            bgfx::createFrameBuffer(1, &m_autoExposureTexA, false);
+        m_autoExposureFboB =
+            bgfx::createFrameBuffer(1, &m_autoExposureTexB, false);
+        const float zero[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        const bgfx::Memory* mem = bgfx::copy(zero, sizeof(zero));
+        bgfx::updateTexture2D(m_autoExposureTexA, 0, 0, 0, 0, 1, 1, mem);
+        bgfx::updateTexture2D(m_autoExposureTexB, 0, 0, 0, 0, 1, 1, mem);
+    }
+    const float aspect = w > 0 && h > 0
+                             ? static_cast<float>(w) / static_cast<float>(h)
+                             : 1.0f;
+    const float adapt[4] = {
+        std::max(calibration, 1e-4f), std::max(dt, 1e-6f),
+        std::max(speedUp, 0.0f), std::max(speedDown, 0.0f)};
+    const float range[4] = {minEv, maxEv, aspect, 0.0f};
+    bgfx::setViewFrameBuffer(viewId, m_autoExposureFboB);
+    bgfx::setViewRect(viewId, 0, 0, 1, 1);
+    bgfx::setTexture(0, s_autoScene, sceneColor);
+    bgfx::setTexture(1, s_autoPrev, m_autoExposureTexA);
+    bgfx::setUniform(u_adaptParams, adapt);
+    bgfx::setUniform(u_adaptRange, range);
+    bgfx::setVertexBuffer(0, m_vbh);
+    bgfx::setIndexBuffer(m_ibh);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+    bgfx::submit(viewId, m_autoExposureProg);
+    std::swap(m_autoExposureTexA, m_autoExposureTexB);
+    std::swap(m_autoExposureFboA, m_autoExposureFboB);
 }
 
 bgfx::TextureHandle PostProcessManager::RenderFxaa(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height) {
@@ -1378,7 +1536,8 @@ bgfx::TextureHandle PostProcessManager::RenderTaa(bgfx::TextureHandle color, bgf
                                                   bgfx::TextureHandle motionVector,
                                                   const glm::mat4& prevVP, const glm::mat4& invVP,
                                                   bgfx::FrameBufferHandle target, bgfx::ViewId viewId,
-                                                  uint16_t w, uint16_t h, float blend) {
+                                                  uint16_t w, uint16_t h, float blend,
+                                                  float sharpen) {
     if (!bgfx::isValid(m_taaProg) || !bgfx::isValid(u_taaParams)) return BGFX_INVALID_HANDLE;
     if (m_width != w || m_height != h) return BGFX_INVALID_HANDLE;
 
@@ -1414,6 +1573,8 @@ bgfx::TextureHandle PostProcessManager::RenderTaa(bgfx::TextureHandle color, bgf
     bgfx::setUniform(u_taaInvVP, glm::value_ptr(invVP));
     float params[4] = { std::clamp(blend, 0.0f, 1.0f), 0, 0, 0 };
     bgfx::setUniform(u_taaParams, params);
+    const float sharpenValue[4] = { std::max(sharpen, 0.0f), 0, 0, 0 };
+    if (bgfx::isValid(u_taaSharpen)) bgfx::setUniform(u_taaSharpen, sharpenValue);
     float ts[4] = { 1.0f / (float)w, 1.0f / (float)h, 0.0f, 0.0f };
     bgfx::setUniform(u_taaTexelSize, ts);
     bgfx::setVertexBuffer(0, m_vbh);
@@ -1562,7 +1723,8 @@ bgfx::TextureHandle PostProcessManager::RenderDof(bgfx::TextureHandle color, bgf
                                                     const glm::mat4& proj, const glm::mat4& invProj,
                                                     bgfx::FrameBufferHandle target,
                                                     bgfx::ViewId viewId, uint16_t w, uint16_t h,
-                                                    float focusDistance, float blurAmount) {
+                                                    float focusDistance, float blurAmount,
+                                                    float bokehBlades, float bokehRadius) {
     (void)invProj;
     if (!bgfx::isValid(m_dofCocProg) || !bgfx::isValid(m_dofBlurProg) || !bgfx::isValid(m_dofCompositeProg))
         return BGFX_INVALID_HANDLE;
@@ -1599,6 +1761,10 @@ bgfx::TextureHandle PostProcessManager::RenderDof(bgfx::TextureHandle color, bgf
     bgfx::setTexture(1, s_dofCoc, m_dofCocTex);
     float texel[4] = { texelX, texelY, maxCoC, 0.0f };
     bgfx::setUniform(u_dofTexelSize, texel);
+    // x = blade count (0 = classic Gaussian), y = disk radius scale.
+    const float bokeh[4] = { std::max(bokehBlades, 0.0f),
+                             std::max(bokehRadius, 0.1f), 0.0f, 0.0f };
+    if (bgfx::isValid(u_dofBokeh)) bgfx::setUniform(u_dofBokeh, bokeh);
     float dirH[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
     bgfx::setUniform(u_dofDir, dirH);
     bgfx::setVertexBuffer(0, m_vbh);
