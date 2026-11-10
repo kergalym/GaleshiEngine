@@ -1,4 +1,5 @@
 #include "GaleshiEngine/Assets/Texture.hpp"
+#include "GaleshiEngine/Core/ProjectManager.hpp"
 
 #include <bimg/bimg.h>
 #include <bimg/encode.h>
@@ -8,7 +9,9 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -358,8 +361,117 @@ Texture* UploadRgba8(const std::vector<MipLevel>& levels, uint32_t width,
     return tex;
 }
 
+// Disk cache for the encoded BC7 chains. The hash covers the source pixels,
+// dimensions and colour space, so the cache is safe against edits and format
+// changes. Files live under <project>/assets/cache/textures/.
+constexpr uint32_t kBc7CacheMagic = 0x37434247u; // "GBC7"
+constexpr uint32_t kBc7CacheHeaderBytes = 32;
+
+uint64_t HashBc7Source(const uint8_t* pixels, size_t bytes, uint32_t width,
+                       uint32_t height, bool srgb) {
+    uint64_t hash = 1469598103934665603ull;
+    const auto mix = [&hash](uint64_t value) {
+        hash ^= value;
+        hash *= 1099511628211ull;
+    };
+    mix(width);
+    mix(height);
+    mix(srgb ? 1u : 0u);
+    for (size_t i = 0; i < bytes; ++i) {
+        hash ^= pixels[i];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+std::string Bc7CachePath(const uint8_t* pixels, size_t bytes, uint32_t width,
+                         uint32_t height, bool srgb) {
+    const std::string project = ProjectManager::GetProjectPath();
+    if (project.empty()) return {};
+    std::filesystem::path dir =
+        std::filesystem::path(project) / "assets/cache/textures";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) return {};
+    const uint64_t hash = HashBc7Source(pixels, bytes, width, height, srgb);
+    std::array<char, 20> hex{};
+    std::snprintf(hex.data(), hex.size(), "%016llx",
+                  static_cast<unsigned long long>(hash));
+    return (dir / (std::string(hex.data()) + ".bc7")).string();
+}
+
+void SaveBc7ToCache(const std::string& cachePath, uint32_t width,
+                    uint32_t height, uint8_t numMips, bool srgb,
+                    bool hasAlpha, float alphaCoverage,
+                    const std::vector<uint8_t>& data) {
+    std::ofstream out(cachePath, std::ios::binary | std::ios::trunc);
+    if (!out) return;
+    const auto write32 = [&out](uint32_t value) {
+        out.write(reinterpret_cast<const char*>(&value), sizeof(value));
+    };
+    write32(kBc7CacheMagic);
+    write32(width);
+    write32(height);
+    write32(numMips);
+    write32(srgb ? 1u : 0u);
+    write32(hasAlpha ? 1u : 0u);
+    out.write(reinterpret_cast<const char*>(&alphaCoverage),
+              sizeof(alphaCoverage));
+    write32(static_cast<uint32_t>(data.size()));
+    out.write(reinterpret_cast<const char*>(data.data()),
+              static_cast<std::streamsize>(data.size()));
+}
+
+Texture* LoadBc7FromCache(const std::string& cachePath,
+                          const std::string& displayPath, bool srgb) {
+    std::ifstream in(cachePath, std::ios::binary);
+    if (!in) return nullptr;
+    const auto read32 = [&in](uint32_t& value) {
+        in.read(reinterpret_cast<char*>(&value), sizeof(value));
+        return static_cast<bool>(in);
+    };
+    uint32_t magic = 0, width = 0, height = 0, numMips = 0, srgbFlag = 0;
+    uint32_t hasAlphaFlag = 0, dataSize = 0;
+    float alphaCoverage = 1.0f;
+    if (!read32(magic) || magic != kBc7CacheMagic) return nullptr;
+    if (!read32(width) || !read32(height) || !read32(numMips) ||
+        !read32(srgbFlag) || !read32(hasAlphaFlag)) {
+        return nullptr;
+    }
+    in.read(reinterpret_cast<char*>(&alphaCoverage), sizeof(alphaCoverage));
+    if (!read32(dataSize)) return nullptr;
+    if (width == 0 || height == 0 || numMips == 0 || dataSize == 0 ||
+        dataSize > 512u * 1024u * 1024u || srgbFlag > 1u ||
+        hasAlphaFlag > 1u) {
+        return nullptr;
+    }
+
+    std::vector<uint8_t> data(dataSize);
+    in.read(reinterpret_cast<char*>(data.data()),
+            static_cast<std::streamsize>(dataSize));
+    if (!in) return nullptr;
+
+    const bgfx::TextureHandle handle = bgfx::createTexture2D(
+        static_cast<uint16_t>(width), static_cast<uint16_t>(height),
+        numMips > 1, 1, bgfx::TextureFormat::BC7, TextureFlags(srgb),
+        bgfx::copy(data.data(), static_cast<uint32_t>(data.size())));
+    if (!bgfx::isValid(handle)) {
+        spdlog::warn("[Texture] Cannot upload cached BC7 '{}' ({}x{})",
+                     displayPath, width, height);
+        return nullptr;
+    }
+    Texture* tex = new Texture();
+    TextureUploader::Assign(
+        tex, handle, displayPath, srgb, static_cast<uint16_t>(width),
+        static_cast<uint16_t>(height), static_cast<uint8_t>(numMips),
+        bgfx::TextureFormat::BC7, true, data.size(),
+        hasAlphaFlag != 0, alphaCoverage);
+    return tex;
+}
+
 Texture* UploadBc7(const std::vector<MipLevel>& levels, uint32_t width,
-                   uint32_t height, const std::string& path, bool srgb) {
+                   uint32_t height, const std::string& path, bool srgb,
+                   const std::string& cachePath) {
     if (levels.empty() || width == 0 || height == 0) return nullptr;
 
     std::vector<uint8_t> encoded;
@@ -405,6 +517,15 @@ Texture* UploadBc7(const std::vector<MipLevel>& levels, uint32_t width,
                             static_cast<uint8_t>(levels.size()),
                             bgfx::TextureFormat::BC7, true, encoded.size(),
                             hasAlpha, alphaCoverage);
+
+    // The one-time BC7 encode is the slow part of compressed loading. Cache
+    // the encoded chain on disk so the next load is a plain memcpy, matching
+    // UE4's "compress once at import" behaviour.
+    if (!cachePath.empty()) {
+        SaveBc7ToCache(cachePath, width, height,
+                       static_cast<uint8_t>(levels.size()), srgb,
+                       hasAlpha, alphaCoverage, encoded);
+    }
     return tex;
 }
 
@@ -415,6 +536,19 @@ Texture* CreateFromRgba8Source(const uint8_t* pixels, uint32_t width,
 
     if (allowCompression && CompressionFlag() &&
         FormatSupported(bgfx::TextureFormat::BC7, srgb)) {
+        // Reuse the encoded chain from a previous load when available.
+        const std::string cachePath = Bc7CachePath(
+            pixels, static_cast<size_t>(width) * height * 4, width, height,
+            srgb);
+        if (!cachePath.empty()) {
+            if (Texture* cached = LoadBc7FromCache(cachePath, path, srgb)) {
+                spdlog::info(
+                    "[Texture] Loaded '{}' ({}x{}, BC7{}, from cache)", path,
+                    cached->Width(), cached->Height(),
+                    srgb ? ", sRGB" : "");
+                return cached;
+            }
+        }
         // BC storage always covers complete 4x4 blocks. Pad the base image to
         // block boundaries first so bgfx and the GPU agree on every mip size,
         // including non-multiple-of-four source dimensions.
@@ -422,7 +556,8 @@ Texture* CreateFromRgba8Source(const uint8_t* pixels, uint32_t width,
         const std::vector<MipLevel> compressedLevels =
             BuildMipChain(padded.pixels.data(), padded.width, padded.height, srgb);
         if (Texture* compressed = UploadBc7(
-                compressedLevels, padded.width, padded.height, path, srgb)) {
+                compressedLevels, padded.width, padded.height, path, srgb,
+                cachePath)) {
             spdlog::info("[Texture] Loaded '{}' ({}x{}, {} mips, BC7{})",
                          path, compressed->Width(), compressed->Height(),
                          compressed->MipCount(), srgb ? ", sRGB" : "");

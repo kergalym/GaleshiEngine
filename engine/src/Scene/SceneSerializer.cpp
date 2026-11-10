@@ -855,6 +855,12 @@ std::shared_ptr<Material> MaterialFromJson(const json& jm,
     auto material = std::make_shared<Material>();
     material->name = jm.value("name", std::string("Material"));
     material->sourcePath = jm.value("sourcePath", std::string{});
+    // Older scenes stored an embedded-texture reference ("*0") here instead
+    // of a model path. Treat it as absent; the glTF that owns the texture is
+    // preloaded before the material library is built.
+    if (!material->sourcePath.empty() && material->sourcePath[0] == '*') {
+        material->sourcePath.clear();
+    }
     const std::string masterScript =
         jm.value("masterScriptPath", std::string{});
     material->masterScriptPath = masterScript.empty()
@@ -2032,6 +2038,27 @@ bool SceneSerializer::LoadFromJson(const json& root,
     // receives the same shared_ptr; resolve base links in a second pass to
     // allow instances to appear before their bases in malformed/hand-edited
     // files.
+    //
+    // glTF stores character/armor textures inside the model file and
+    // registers them by name when the model loads. Preload every model the
+    // scene references so those embedded maps resolve during the material
+    // pass instead of falling back to white until the next reload.
+    {
+        std::unordered_set<std::string> preloadedModels;
+        for (const auto& entry : jsonEntities) {
+            if (!entry.is_object() || !entry.contains("mesh") ||
+                !entry["mesh"].is_object()) {
+                continue;
+            }
+            const std::string source =
+                entry["mesh"].value("sourceAssetPath", std::string{});
+            if (source.empty() || source[0] == '*') continue;
+            if (preloadedModels.insert(source).second) {
+                m_assets.LoadModel(source);
+            }
+        }
+    }
+
     std::vector<std::shared_ptr<Material>> materialLibrary;
     std::vector<int> materialBaseIds;
     if (root.contains("materials") && root["materials"].is_array()) {

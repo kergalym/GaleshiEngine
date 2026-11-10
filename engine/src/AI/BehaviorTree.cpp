@@ -352,9 +352,6 @@ int TickAction(Scene& scene, TickContext& ctx, BehaviorTreeNode& node) {
             node.elapsed += std::max(0.0f, ctx.dt);
             if (node.elapsed >= std::max(0.1f, node.duration)) {
                 node.elapsed = 0.0f;
-                spdlog::info("[AI] Entity {} attacks target {}",
-                             static_cast<uint32_t>(ctx.entity),
-                             static_cast<uint32_t>(ctx.perception->targetEntity));
             }
             node.lastStatus = kRunning;
             return kRunning;

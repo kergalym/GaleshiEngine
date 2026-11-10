@@ -2289,7 +2289,11 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         if (!hasRoughnessFactor && (mat->metallicRoughnessMap || mat->roughnessMap))
             mat->roughnessFactor = 1.0f;
 
-        if (!albedoRef.empty()) mat->sourcePath = albedoRef;
+        // sourcePath must identify the MODEL, not the albedo map: scene
+        // loading calls LoadModel(sourcePath) to register embedded glTF
+        // textures before it resolves the material maps. Embedded texture
+        // references ("*0") are not model paths and broke hat/armor maps.
+        mat->sourcePath = path;
 
         spdlog::info("  PBR: base=({:.2f},{:.2f},{:.2f},{:.2f}) metal={:.2f} rough={:.2f} normal={:.2f} glass={} alphaTest={} alphaBlend={}",
                      mat->albedoFactor.r, mat->albedoFactor.g, mat->albedoFactor.b, mat->albedoFactor.a,

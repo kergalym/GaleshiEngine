@@ -301,7 +301,6 @@ void ScriptEngine::RunAIScripts(Scene& scene, float dt) {
                 m_lua.script_file(aic.scriptPath, instance.env);
                 instance.updateFunc = instance.env["update_ai"];
                 instance.loadedPath = aic.scriptPath;
-                spdlog::info("[AI] Loaded script for entity {}: {}", eid, aic.scriptPath);
             } catch (const sol::error& err) {
                 AddLog(std::string("[AI ERROR] ") + err.what());
                 instance.loadedPath = "ERROR_" + aic.scriptPath;
@@ -427,8 +426,24 @@ void ScriptEngine::ClearEntityScripts() {
 
 void ScriptEngine::ClearLuaEntities() {
     if (!m_scene) return;
+    auto& registry = m_scene->Registry();
+    // The engine-authored Player is a stable gameplay alias. Hot reload must
+    // never delete it (or its visual children): init.lua only bootstraps a
+    // Player in an empty scene, so it would not come back.
+    const auto inPlayerSubtree = [&registry](entt::entity entity) {
+        entt::entity cursor = entity;
+        for (int depth = 0; depth < 128 && registry.valid(cursor); ++depth) {
+            if (registry.all_of<PlayerTagComponent>(cursor)) return true;
+            if (!registry.all_of<ParentComponent>(cursor)) break;
+            cursor = registry.get<ParentComponent>(cursor).parent;
+        }
+        return false;
+    };
     auto view = m_scene->Registry().view<LuaEntityComponent>();
-    std::vector<entt::entity> to_destroy(view.begin(), view.end());
+    std::vector<entt::entity> to_destroy;
+    for (auto entity : view) {
+        if (!inPlayerSubtree(entity)) to_destroy.push_back(entity);
+    }
     for (auto entity : to_destroy) DestroyEntity(entity);
     if (!to_destroy.empty()) AddLog("Cleared " + std::to_string(to_destroy.size()) +
                                    " script-spawned entities");
