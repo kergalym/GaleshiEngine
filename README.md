@@ -1,6 +1,6 @@
 ![GaleshiEngineLogo](./engine/assets/icons/galeshi_engine_logo.png)
 
-![GaleshiEngine](./screenshoots/scrot-2026-11-08-23:21.png)
+![GaleshiEngine](./screenshoots/scrot-2026-11-10-17:57.png)
 
 # GaleshiEngine
 
