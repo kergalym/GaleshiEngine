@@ -148,6 +148,7 @@
         m_gameCameraBaseForward = glm::vec3(0.0f, 0.0f, -1.0f);
         m_gameCameraBaseUp = glm::vec3(0.0f, 1.0f, 0.0f);
         m_gameCameraBaseValid = false;
+        m_gameCameraFollowValid = false;
         if (target == entt::null) return;
 
         const glm::mat4 targetWorld = EntityWorldMatrix(target);
@@ -319,6 +320,52 @@
         }
         const bool validTarget =
             target != entt::null && m_scene.Registry().valid(target);
+
+        // The camera's own yaw/pitch follow the character model's yaw/pitch.
+        // Deltas are applied to the captured base, so the view swings with
+        // the character; mouse-look still orbits on top of it.
+        if (validTarget) {
+            const glm::mat4 targetWorldNow = EntityWorldMatrix(target);
+            const glm::vec3 targetForwardNow = glm::normalize(
+                glm::vec3(targetWorldNow *
+                          glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
+            const float targetYawNow =
+                std::atan2(targetForwardNow.x, targetForwardNow.z);
+            const float targetPitchNow =
+                std::asin(glm::clamp(targetForwardNow.y, -1.0f, 1.0f));
+            if (!m_gameCameraFollowValid) {
+                m_gameCameraFollowYaw = targetYawNow;
+                m_gameCameraFollowPitch = targetPitchNow;
+                m_gameCameraFollowValid = true;
+            }
+            float yawDelta = targetYawNow - m_gameCameraFollowYaw;
+            constexpr float kTwoPi = 6.28318530718f;
+            while (yawDelta > 3.14159265359f) yawDelta -= kTwoPi;
+            while (yawDelta < -3.14159265359f) yawDelta += kTwoPi;
+            const float pitchDelta =
+                targetPitchNow - m_gameCameraFollowPitch;
+            m_gameCameraFollowYaw = targetYawNow;
+            m_gameCameraFollowPitch = targetPitchNow;
+            if (std::abs(yawDelta) > 1e-4f ||
+                std::abs(pitchDelta) > 1e-4f) {
+                const glm::quat yawRot =
+                    glm::angleAxis(yawDelta, glm::vec3(0.0f, 1.0f, 0.0f));
+                const glm::vec3 right = glm::normalize(glm::cross(
+                    m_gameCameraBaseForward, m_gameCameraBaseUp));
+                const glm::quat pitchRot =
+                    glm::angleAxis(pitchDelta, right);
+                const glm::quat rot = glm::normalize(pitchRot * yawRot);
+                m_gameCameraBaseForward =
+                    glm::normalize(rot * m_gameCameraBaseForward);
+                m_gameCameraBaseUp =
+                    glm::normalize(rot * m_gameCameraBaseUp);
+                m_gameCameraBaseOffsetLocal =
+                    rot * m_gameCameraBaseOffsetLocal;
+                m_gameCameraEyeLocal = rot * m_gameCameraEyeLocal;
+                m_gameCameraPivotLocal = rot * m_gameCameraPivotLocal;
+            }
+        }
+
 
         const auto applyInPlaceLook = [&]() {
             if (!hasLookOffset) return;

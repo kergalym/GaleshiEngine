@@ -825,6 +825,12 @@ void DrawDetails();
     bool                    m_gameCameraBaseValid = false;
     GaleshiScriptCameraMode m_gameCameraMode = GALESHI_CAMERA_THIRD_PERSON;
     float                   m_gameCameraYawOffset = 0.0f;
+    // The gameplay camera's own yaw/pitch follow the character model's
+    // orientation (W+A/W+D turns, swim pitch, ...). The camera entity is
+    // never rotated.
+    float                   m_gameCameraFollowYaw = 0.0f;
+    float                   m_gameCameraFollowPitch = 0.0f;
+    bool                    m_gameCameraFollowValid = false;
     float                   m_gameCameraPitchOffset = 0.0f;
     float                   m_time = 0.0f;
     float                   m_frameDelta = 1.0f / 60.0f;
