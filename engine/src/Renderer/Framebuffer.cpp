@@ -7,6 +7,7 @@ Framebuffer::~Framebuffer() { Destroy(); }
 
 void Framebuffer::Destroy() {
     if (bgfx::isValid(m_fbh))      bgfx::destroy(m_fbh);
+    if (bgfx::isValid(m_colorFbh)) bgfx::destroy(m_colorFbh);
     if (bgfx::isValid(m_color))    bgfx::destroy(m_color);
     if (bgfx::isValid(m_normal))   bgfx::destroy(m_normal);
     if (bgfx::isValid(m_worldPos)) bgfx::destroy(m_worldPos);
@@ -15,6 +16,7 @@ void Framebuffer::Destroy() {
     if (bgfx::isValid(m_features)) bgfx::destroy(m_features);
     if (bgfx::isValid(m_depth))    bgfx::destroy(m_depth);
     m_fbh      = BGFX_INVALID_HANDLE;
+    m_colorFbh = BGFX_INVALID_HANDLE;
     m_color    = BGFX_INVALID_HANDLE;
     m_normal   = BGFX_INVALID_HANDLE;
     m_worldPos = BGFX_INVALID_HANDLE;
@@ -65,6 +67,7 @@ bool Framebuffer::Create(uint16_t w, uint16_t h) {
         m_color, m_normal, m_worldPos, m_material, m_velocity, m_features, m_depth
     };
     m_fbh = bgfx::createFrameBuffer(7, att, false);
+    m_colorFbh = bgfx::createFrameBuffer(1, &m_color, false);
     if (!bgfx::isValid(m_fbh)) {
         spdlog::error("[FBO] createFrameBuffer failed");
         Destroy();

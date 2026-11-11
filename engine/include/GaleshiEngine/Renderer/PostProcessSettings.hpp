@@ -40,6 +40,8 @@ struct PostProcessSettings {
     // shadows ray-march screen-space depth toward the sun.
     bool  pcssEnabled           = false;
     float shadowLightSourceSize = 1.0f;   // world units, penumbra scale
+    // Cube shadows for the first point light. Costs six scene passes per frame.
+    bool  pointShadowsEnabled   = false;
     bool  contactShadowsEnabled = false;
     float contactShadowLength   = 0.05f;  // world units along the light
     float contactShadowThickness = 0.02f; // depth rejection, world units

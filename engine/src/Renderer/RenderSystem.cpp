@@ -42,6 +42,19 @@ namespace {
         return state;
     }
 
+    // Unit box for decals, counter-clockwise from outside. Decals draw the back
+    // faces, so every pixel under the box is shaded once.
+    const float kDecalBoxCorners[8][3] = {
+        {-0.5f, -0.5f, -0.5f}, {0.5f, -0.5f, -0.5f}, {0.5f, 0.5f, -0.5f}, {-0.5f, 0.5f, -0.5f},
+        {-0.5f, -0.5f,  0.5f}, {0.5f, -0.5f,  0.5f}, {0.5f, 0.5f,  0.5f}, {-0.5f, 0.5f,  0.5f},
+    };
+    const uint16_t kDecalBoxIndices[36] = {
+        0, 2, 1, 0, 3, 2,  4, 5, 6, 4, 6, 7,  0, 4, 7, 0, 7, 3,
+        1, 2, 6, 1, 6, 5,  0, 1, 5, 0, 5, 4,  3, 6, 2, 3, 7, 6,
+    };
+    // Cosine of the steepest surface a decal still lands on (about 60 degrees).
+    constexpr float kDecalMinFacing = 0.5f;
+
     bool HasTreeTextureOverride(const std::shared_ptr<Material>& material) {
         return material &&
                (material->albedoMap || material->normalMap ||
@@ -504,6 +517,17 @@ void RenderSystem::Init(AssetManager* assets) {
         bgfx::isValid(m_hairProg), bgfx::isValid(m_instancedProg),
         m_occlusionSupported);
     u_shadowLightPos = bgfx::createUniform("u_shadowLightPos", bgfx::UniformType::Vec4);
+    m_decalProg = ShaderManager::LoadProgram("shaders/vs_decal.bin", "shaders/fs_decal.bin");
+    u_decalInvModel = bgfx::createUniform("u_decalInvModel", bgfx::UniformType::Mat4);
+    u_decalAxis = bgfx::createUniform("u_decalAxis", bgfx::UniformType::Vec4);
+    u_decalParams = bgfx::createUniform("u_decalParams", bgfx::UniformType::Vec4);
+    s_decalAlbedo = bgfx::createUniform("s_decalAlbedo", bgfx::UniformType::Sampler);
+    s_decalNormal = bgfx::createUniform("s_decalNormal", bgfx::UniformType::Sampler);
+    s_decalWorldPos = bgfx::createUniform("s_decalWorldPos", bgfx::UniformType::Sampler);
+    bgfx::VertexLayout decalLayout;
+    decalLayout.begin().add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float).end();
+    m_decalVbh = bgfx::createVertexBuffer(bgfx::makeRef(kDecalBoxCorners, sizeof(kDecalBoxCorners)), decalLayout);
+    m_decalIbh = bgfx::createIndexBuffer(bgfx::makeRef(kDecalBoxIndices, sizeof(kDecalBoxIndices)));
     u_prevViewProj = bgfx::createUniform("u_prevViewProj", bgfx::UniformType::Mat4);
     u_prevModel = bgfx::createUniform("u_prevModel", bgfx::UniformType::Mat4);
     if (!bgfx::isValid(m_program) && !bgfx::isValid(m_gbufferProg)) return;
@@ -639,6 +663,15 @@ void RenderSystem::Shutdown() {
     if (bgfx::isValid(m_instancedShadowProg)) bgfx::destroy(m_instancedShadowProg);
     if (bgfx::isValid(m_instancedShadowPointProg)) bgfx::destroy(m_instancedShadowPointProg);
     if (bgfx::isValid(u_shadowLightPos)) bgfx::destroy(u_shadowLightPos);
+    if (bgfx::isValid(m_decalProg)) bgfx::destroy(m_decalProg);
+    if (bgfx::isValid(m_decalVbh)) bgfx::destroy(m_decalVbh);
+    if (bgfx::isValid(m_decalIbh)) bgfx::destroy(m_decalIbh);
+    if (bgfx::isValid(u_decalInvModel)) bgfx::destroy(u_decalInvModel);
+    if (bgfx::isValid(u_decalAxis)) bgfx::destroy(u_decalAxis);
+    if (bgfx::isValid(u_decalParams)) bgfx::destroy(u_decalParams);
+    if (bgfx::isValid(s_decalAlbedo)) bgfx::destroy(s_decalAlbedo);
+    if (bgfx::isValid(s_decalNormal)) bgfx::destroy(s_decalNormal);
+    if (bgfx::isValid(s_decalWorldPos)) bgfx::destroy(s_decalWorldPos);
     if (bgfx::isValid(u_prevViewProj)) bgfx::destroy(u_prevViewProj);
     if (bgfx::isValid(u_prevModel)) bgfx::destroy(u_prevModel);
     if (bgfx::isValid(u_albedoFactor)) bgfx::destroy(u_albedoFactor);
@@ -1869,13 +1902,49 @@ void RenderSystem::RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx
 }
 
 
-void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx, const glm::vec3& lightPos, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo) {
+void RenderSystem::RenderDecals(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height,
+                                bgfx::FrameBufferHandle targetFbo, bgfx::TextureHandle normal, bgfx::TextureHandle worldPos) {
+    if (!bgfx::isValid(m_decalProg) || !bgfx::isValid(targetFbo)) return;
+    auto decals = scene.Registry().view<TransformComponent, DecalComponent>();
+    bool viewSet = false;
+    for (auto h : decals) {
+        const auto& dc = decals.get<DecalComponent>(h);
+        if (!dc.texture || !dc.texture->Valid()) continue;
+        const glm::mat4 model = EntityWorldMatrix(scene, h);
+        if (std::abs(glm::determinant(model)) < 1e-8f) continue;
+        if (!viewSet) {
+            bgfx::setViewFrameBuffer(viewId, targetFbo);
+            bgfx::setViewRect(viewId, 0, 0, width, height);
+            bgfx::setViewTransform(viewId, glm::value_ptr(camera.View()), glm::value_ptr(camera.Projection()));
+            viewSet = true;
+        }
+        const glm::vec3 up = glm::normalize(glm::vec3(model[1]));
+        const float axis[4] = { up.x, up.y, up.z, 0.0f };
+        const float params[4] = { dc.opacity, kDecalMinFacing,
+                                  bgfx::getCaps()->originBottomLeft ? 0.0f : 1.0f, 0.0f };
+        const glm::mat4 invModel = glm::inverse(model);
+        bgfx::setTransform(glm::value_ptr(model));
+        bgfx::setUniform(u_decalInvModel, glm::value_ptr(invModel));
+        bgfx::setUniform(u_decalAxis, axis);
+        bgfx::setUniform(u_decalParams, params);
+        bgfx::setTexture(0, s_decalAlbedo, dc.texture->Handle());
+        bgfx::setTexture(1, s_decalNormal, normal);
+        bgfx::setTexture(2, s_decalWorldPos, worldPos);
+        bgfx::setVertexBuffer(0, m_decalVbh);
+        bgfx::setIndexBuffer(m_decalIbh);
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_BLEND_ALPHA | BGFX_STATE_FRONT_CCW | BGFX_STATE_CULL_CCW);
+        bgfx::submit(viewId, m_decalProg);
+    }
+}
+
+void RenderSystem::RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx, const glm::vec3& lightPos, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo, float farPlane) {
     if (!bgfx::isValid(m_shadowPointProg) || !bgfx::isValid(shadowFbo)) return;
     bgfx::setViewFrameBuffer(viewId, shadowFbo);
     bgfx::setViewRect(viewId, 0, 0, 1024, 1024);
-    bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x00000000, 1.0f, 0);
+    // Cleared to the far plane (1.0), so texels without an occluder read as unshadowed.
+    bgfx::setViewClear(viewId, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0xffffffff, 1.0f, 0);
 
-    float lp[4] = { lightPos.x, lightPos.y, lightPos.z, 1.0f };
+    float lp[4] = { lightPos.x, lightPos.y, lightPos.z, 1.0f / farPlane };
     bgfx::setUniform(u_shadowLightPos, lp);
 
     glm::mat4 view = glm::mat4(1.0f);

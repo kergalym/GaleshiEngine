@@ -1242,6 +1242,14 @@ if (ImGui::BeginMenu("File")) {
                 tc.position = {0, 2, 0};
                 m_editor.Select(e);
             }
+            if (createItem("Decal")) {
+                auto e = m_scene.CreateEntity("Decal");
+                e.AddComponent<Galeshi::DecalComponent>();
+                auto& tc = e.GetComponent<Galeshi::TransformComponent>();
+                tc.position = {0, 1, 0};
+                tc.scale = {2, 2, 2};
+                m_editor.Select(e);
+            }
             if (createItem("Water Surface")) {
                 auto e = m_scene.CreateEntity("Water");
                 e.AddComponent<Galeshi::WaterComponent>();

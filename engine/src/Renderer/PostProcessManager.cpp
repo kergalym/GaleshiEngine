@@ -150,12 +150,17 @@ void PostProcessManager::Init() {
             s_pointShadowMap = bgfx::createUniform("s_pointShadowMap", bgfx::UniformType::Sampler);
             u_pointLightFarPlane = bgfx::createUniform("u_pointLightFarPlane", bgfx::UniformType::Vec4);
             
-            uint64_t cubeFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_W_CLAMP | BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT;
-            m_pointShadowMap = bgfx::createTextureCube(1024, false, 1, bgfx::TextureFormat::R32F, cubeFlags);
+            // The six faces are layers of one 2D array, read with the spot-shadow UV path.
+            uint64_t shadowFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | BGFX_SAMPLER_W_CLAMP | BGFX_SAMPLER_MIN_POINT | BGFX_SAMPLER_MAG_POINT;
+            m_pointShadowMap = bgfx::createTexture2D(1024, 1024, false, 6, bgfx::TextureFormat::R32F, shadowFlags);
+            m_pointShadowDepth = bgfx::createTexture2D(1024, 1024, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_RT);
+            u_pointShadowParams = bgfx::createUniform("u_pointShadowParams", bgfx::UniformType::Vec4);
+            u_pointShadowVP = bgfx::createUniform("u_pointShadowVP", bgfx::UniformType::Mat4, 6);
             for (int i = 0; i < 6; ++i) {
-                bgfx::Attachment att;
-                att.init(m_pointShadowMap, bgfx::Access::Write, i);
-                m_pointShadowFbos[i] = bgfx::createFrameBuffer(1, &att, false);
+                bgfx::Attachment att[2];
+                att[0].init(m_pointShadowMap, bgfx::Access::Write, i);
+                att[1].init(m_pointShadowDepth, bgfx::Access::Write);
+                m_pointShadowFbos[i] = bgfx::createFrameBuffer(2, att, false);
             }
         }
     }
@@ -649,7 +654,9 @@ void PostProcessManager::Shutdown() {
     if (bgfx::isValid(u_spotLightVP2)) bgfx::destroy(u_spotLightVP2);
     if (bgfx::isValid(u_spotLightVP3)) bgfx::destroy(u_spotLightVP3);
     if (bgfx::isValid(m_pointShadowMap)) bgfx::destroy(m_pointShadowMap);
+    if (bgfx::isValid(m_pointShadowDepth)) bgfx::destroy(m_pointShadowDepth);
     destroyUni(s_pointShadowMap); destroyUni(u_pointLightFarPlane);
+    destroyUni(u_pointShadowParams); destroyUni(u_pointShadowVP);
     destroyUni(u_aoView); destroyUni(u_aoProj); destroyUni(u_aoParams);
     destroyUni(u_aoParams2);
     destroyUni(u_aoViewport); destroyUni(u_aoSource); destroyUni(u_aoBlurParams); destroyUni(u_aoBlurDir);
@@ -890,6 +897,7 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
     const glm::mat4& viewProj,
     const float pcssParams[4],
     const float contactShadowParams[4],
+    const float pointShadowParams[4], const glm::mat4* pointShadowVP,
     bgfx::ViewId viewId, uint16_t width, uint16_t height)
 {
     if (!bgfx::isValid(m_lightingProg) || width == 0 || height == 0) {
@@ -974,8 +982,15 @@ bgfx::TextureHandle PostProcessManager::RenderLighting(
         float tp[4] = { (float)((width + 15) / 16), (float)((height + 15) / 16), (float)width, (float)height };
         bgfx::setUniform(u_tileParams, tp);
     }
-    // Point shadows are not sampled by fs_lighting yet; slot 9 is used by the
-    // material G-buffer texture. The resource is kept alive for later.
+    // Point shadow faces at slot 16 (needs the 17-sampler bgfx build). Bound
+    // only when this frame rendered them, so the shader never reads unwritten faces.
+    if (pointShadowParams[0] > 0.5f && bgfx::isValid(s_pointShadowMap) && bgfx::isValid(m_pointShadowMap)) {
+        bgfx::setTexture(16, s_pointShadowMap, m_pointShadowMap);
+    }
+    if (bgfx::isValid(u_pointShadowParams) && bgfx::isValid(u_pointShadowVP)) {
+        bgfx::setUniform(u_pointShadowParams, pointShadowParams);
+        bgfx::setUniform(u_pointShadowVP, glm::value_ptr(pointShadowVP[0]), 6);
+    }
     if (spotLightCount > 0) {
         bgfx::setTexture(10, s_spotShadowMap0, m_spotShadowMaps[0]);
         bgfx::setTexture(11, s_spotShadowMap1, m_spotShadowMaps[1]);

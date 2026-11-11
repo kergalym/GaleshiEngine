@@ -522,6 +522,7 @@
                         Galeshi::CameraComponent,
                         Galeshi::DirectionalLightComponent,
                         Galeshi::PointLightComponent,
+                        Galeshi::DecalComponent,
                         Galeshi::SpotLightComponent,
                         Galeshi::RigidBodyComponent,
                         Galeshi::ColliderComponent,

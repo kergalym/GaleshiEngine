@@ -158,6 +158,9 @@ set(BGFX_CONFIG_RENDERER_VULKAN ON CACHE BOOL "" FORCE)
 set(BGFX_CONFIG_DEBUG   OFF CACHE BOOL "" FORCE)
 set(BGFX_CUSTOM_TARGETS OFF CACHE BOOL "" FORCE)
 
+# Point shadows bind a 17th texture sampler (slot 16) in fs_lighting. Vulkan only.
+set(BGFX_CONFIG_MAX_TEXTURE_SAMPLERS 17 CACHE STRING "" FORCE)
+
 FetchContent_Declare(bgfx
     GIT_REPOSITORY https://github.com/bkaradzic/bgfx.cmake.git
     GIT_TAG        v1.136.9114-510   # <-- актуальный тег из релизов

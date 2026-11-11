@@ -51,6 +51,7 @@ varying_for() {
         vs_shadow|fs_shadow)                   echo "$SRC_DIR/varying_shadow.def.sc";;
         vs_shadow_skinned)                     echo "$SRC_DIR/varying_shadow_skinned.def.sc";;
         vs_imgui|fs_imgui) echo "$SRC_DIR/varying_imgui.def.sc" ;;
+        vs_decal|fs_decal) echo "$SRC_DIR/varying_decal.def.sc" ;;
         *)                 echo "" ;;
     esac
 }

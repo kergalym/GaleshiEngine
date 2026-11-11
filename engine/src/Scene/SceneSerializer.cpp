@@ -536,6 +536,7 @@ json PostProcessSettingsToJson(const PostProcessSettings& s) {
         {"motionBlurMaxVelocity", s.motionBlurMaxVelocity},
         {"pcssEnabled", s.pcssEnabled},
         {"shadowLightSourceSize", s.shadowLightSourceSize},
+        {"pointShadowsEnabled", s.pointShadowsEnabled},
         {"contactShadowsEnabled", s.contactShadowsEnabled},
         {"contactShadowLength", s.contactShadowLength},
         {"contactShadowThickness", s.contactShadowThickness},
@@ -645,6 +646,7 @@ void PostProcessSettingsFromJson(const json& js, PostProcessSettings& s) {
     s.pcssEnabled = js.value("pcssEnabled", s.pcssEnabled);
     s.shadowLightSourceSize = js.value("shadowLightSourceSize",
                                        s.shadowLightSourceSize);
+    s.pointShadowsEnabled = js.value("pointShadowsEnabled", s.pointShadowsEnabled);
     s.contactShadowsEnabled = js.value("contactShadowsEnabled",
                                        s.contactShadowsEnabled);
     s.contactShadowLength = js.value("contactShadowLength",
@@ -1479,6 +1481,10 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
         if (reg.all_of<PointLightComponent>(handle)) {
             const auto& pl = reg.get<PointLightComponent>(handle);
             je["pointLight"] = { {"color", Vec3ToJson(pl.color)}, {"intensity", pl.intensity}, {"radius", pl.radius} };
+        }
+        if (reg.all_of<DecalComponent>(handle)) {
+            const auto& dc = reg.get<DecalComponent>(handle);
+            je["decal"] = { {"texture", dc.texturePath}, {"opacity", dc.opacity} };
         }
         if (reg.all_of<SpotLightComponent>(handle)) {
             const auto& sl = reg.get<SpotLightComponent>(handle);
@@ -2672,6 +2678,13 @@ bool SceneSerializer::LoadFromJson(const json& root,
             pl.color = Vec3FromJson(jl.at("color"));
             pl.intensity = jl.value("intensity", 1.0f);
             pl.radius = jl.value("radius", 10.0f);
+        }
+        if (je.contains("decal")) {
+            const auto& jd = je["decal"];
+            auto& dc = e.AddComponent<DecalComponent>();
+            dc.texturePath = jd.value("texture", std::string{});
+            dc.opacity = jd.value("opacity", 1.0f);
+            if (!dc.texturePath.empty()) dc.texture = m_assets.LoadTexture(dc.texturePath, true);
         }
         if (je.contains("spotLight")) {
             const auto& jl = je["spotLight"];

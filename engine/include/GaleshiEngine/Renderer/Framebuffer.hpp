@@ -16,6 +16,8 @@ public:
     void Resize(uint16_t width, uint16_t height);
 
     bgfx::FrameBufferHandle Handle()     const { return m_fbh; }
+    // Single-attachment view of Color(), so a pass can write albedo alone.
+    bgfx::FrameBufferHandle ColorFbo()   const { return m_colorFbh; }
     // RT0..RT5 (deferred G-Buffer targets)
     bgfx::TextureHandle     Color()      const { return m_color; }      // albedo.rgb + metallic.a
     bgfx::TextureHandle     Normal()     const { return m_normal; }     // normal.xyz*0.5+0.5 + rough.a
@@ -31,6 +33,7 @@ public:
 
 private:
     bgfx::FrameBufferHandle m_fbh      = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_colorFbh = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle     m_color    = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle     m_normal   = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle     m_worldPos = BGFX_INVALID_HANDLE;

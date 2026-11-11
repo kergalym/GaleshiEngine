@@ -194,6 +194,14 @@ struct PointLightComponent {
     float     radius    = 10.0f;
 };
 
+// Deferred decal. The transform scale is the box size. The texture is projected
+// down the local -Y axis onto surfaces that face up; its alpha is coverage.
+struct DecalComponent {
+    std::string texturePath;
+    float opacity = 1.0f;
+    std::shared_ptr<Texture> texture; // loaded from texturePath, null while unresolved
+};
+
 struct RigidBodyComponent {
     enum class MotionType { Static, Dynamic, Kinematic };
     MotionType motionType = MotionType::Dynamic;

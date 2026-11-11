@@ -636,34 +636,6 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
             }
             m_cpuProfile.pssmMs = ProfileElapsedMs(pssmStart, ProfileClock::now());
 
-            // --- POINT LIGHT SHADOW PASS ---
-            // shortcut: fs_lighting never samples the point cube map, so these six full scene passes per frame produce unused data; enable when point shadows are sampled.
-            constexpr bool kPointShadowsSampled = false;
-            const auto pointShadowStart = ProfileClock::now();
-            auto plview = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::PointLightComponent>();
-            if (kPointShadowsSampled && plview.begin() != plview.end()) {
-                auto firstLight = *plview.begin();
-                auto& tc = plview.get<Galeshi::TransformComponent>(firstLight);
-
-                glm::vec3 lightPos = tc.position;
-
-                glm::mat4 proj;
-                bx::mtxProj(glm::value_ptr(proj), 90.0f, 1.0f, 0.1f, 50.0f, bgfx::getCaps()->homogeneousDepth, bx::Handedness::Right);
-                glm::mat4 views[6] = {
-                    glm::lookAt(lightPos, lightPos + glm::vec3( 1, 0, 0), glm::vec3(0,-1,0)),
-                    glm::lookAt(lightPos, lightPos + glm::vec3(-1, 0, 0), glm::vec3(0,-1,0)),
-                    glm::lookAt(lightPos, lightPos + glm::vec3( 0, 1, 0), glm::vec3(0, 0,1)),
-                    glm::lookAt(lightPos, lightPos + glm::vec3( 0,-1, 0), glm::vec3(0, 0,-1)),
-                    glm::lookAt(lightPos, lightPos + glm::vec3( 0, 0, 1), glm::vec3(0,-1,0)),
-                    glm::lookAt(lightPos, lightPos + glm::vec3( 0, 0,-1), glm::vec3(0,-1,0))
-                };
-
-                for (int i = 0; i < 6; ++i) {
-                    m_render->RenderPointShadowMap(m_scene, proj * views[i], lightPos, 5 + i, m_postProcess.PointShadowFbo(i));
-                }
-            }
-            m_cpuProfile.pointShadowsMs = ProfileElapsedMs(pointShadowStart, ProfileClock::now());
-
             // --- SPOT LIGHT SHADOW PASS ---
             const auto spotShadowStart = ProfileClock::now();
             auto slview = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::SpotLightComponent>();
@@ -701,6 +673,38 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                 pp.dofEnabled = false;
                 pp.motionBlurEnabled = false;
             }
+
+            // --- POINT LIGHT SHADOW PASS ---
+            // The first point light (index 0 in plPosA) casts the cube shadow.
+            const auto pointShadowStart = ProfileClock::now();
+            constexpr float kPointShadowFar = 50.0f;
+            float pointShadowParams[4] = { 0.0f, kPointShadowFar, 0.0f, 0.0f };
+            glm::mat4 pointShadowVP[6] = {};
+            auto plview = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::PointLightComponent>();
+            if (pp.pointShadowsEnabled && !skipHeavyGpu && plview.begin() != plview.end()) {
+                auto firstLight = *plview.begin();
+                auto& tc = plview.get<Galeshi::TransformComponent>(firstLight);
+
+                glm::vec3 lightPos = tc.position;
+
+                glm::mat4 proj;
+                bx::mtxProj(glm::value_ptr(proj), 90.0f, 1.0f, 0.1f, kPointShadowFar, bgfx::getCaps()->homogeneousDepth, bx::Handedness::Right);
+                glm::mat4 views[6] = {
+                    glm::lookAt(lightPos, lightPos + glm::vec3( 1, 0, 0), glm::vec3(0,-1,0)),
+                    glm::lookAt(lightPos, lightPos + glm::vec3(-1, 0, 0), glm::vec3(0,-1,0)),
+                    glm::lookAt(lightPos, lightPos + glm::vec3( 0, 1, 0), glm::vec3(0, 0,1)),
+                    glm::lookAt(lightPos, lightPos + glm::vec3( 0,-1, 0), glm::vec3(0, 0,-1)),
+                    glm::lookAt(lightPos, lightPos + glm::vec3( 0, 0, 1), glm::vec3(0,-1,0)),
+                    glm::lookAt(lightPos, lightPos + glm::vec3( 0, 0,-1), glm::vec3(0,-1,0))
+                };
+
+                for (int i = 0; i < 6; ++i) {
+                    pointShadowVP[i] = proj * views[i];
+                    m_render->RenderPointShadowMap(m_scene, pointShadowVP[i], lightPos, 5 + i, m_postProcess.PointShadowFbo(i), kPointShadowFar);
+                }
+                pointShadowParams[0] = 1.0f;
+            }
+            m_cpuProfile.pointShadowsMs = ProfileElapsedMs(pointShadowStart, ProfileClock::now());
 
             // Do not carry stale history across a period where TAA was off.
             if (!pp.taaEnabled) m_postProcess.ResetTaaHistory();
@@ -754,6 +758,12 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
             const auto gbufferStart = ProfileClock::now();
             m_render->Render(m_scene, renderCamera, 1, renderW, renderH);
             m_cpuProfile.gbufferMs = ProfileElapsedMs(gbufferStart, ProfileClock::now());
+
+            // Decals change albedo before lighting (view 18, between the G-buffer
+            // and lighting). Each pixel tests its own surface position, so no
+            // depth buffer is needed.
+            m_render->RenderDecals(m_scene, renderCamera, 18, renderW, renderH,
+                                   m_framebuffer->ColorFbo(), m_framebuffer->Normal(), m_framebuffer->WorldPos());
 
             // Mirrored opaque scene for the nearest water plane. The water
             // pass samples this HDR target at the same screen UV as the
@@ -988,6 +998,7 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     plPosA, plColA, plCount,
                     slPos, slDir, slCol, slCone, slCount,
                     currVP, pcssParams, contactShadowParams,
+                    pointShadowParams, pointShadowVP,
                     20, renderW, renderH);
 
                 // Particles are drawn after lighting into the HDR output

@@ -82,6 +82,7 @@ public:
                                        const glm::mat4& viewProj,
                                        const float pcssParams[4],
                                        const float contactShadowParams[4],
+                                       const float pointShadowParams[4], const glm::mat4* pointShadowVP,
                                        bgfx::ViewId viewId, uint16_t width, uint16_t height);
 
     void RenderAmbientOcclusion(bgfx::TextureHandle worldPos, bgfx::TextureHandle normal,
@@ -292,6 +293,8 @@ private:
     bgfx::UniformHandle u_slCol       = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_slCnt       = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_pointShadowMap = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_pointShadowParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_pointShadowVP = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_pointLightFarPlane = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_pointShadowMap = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_pointShadowDepth = BGFX_INVALID_HANDLE;

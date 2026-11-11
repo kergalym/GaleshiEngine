@@ -37,7 +37,9 @@ public:
     // occlusion queries. Must be submitted before the main scene view.
     void RenderOcclusion(Scene& scene, const Camera& camera,
                          bgfx::ViewId viewId, uint16_t width, uint16_t height);
-    void RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx, const glm::vec3& lightPos, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo);
+    void RenderPointShadowMap(Scene& scene, const glm::mat4& lightMtx, const glm::vec3& lightPos, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo, float farPlane);
+    void RenderDecals(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height,
+                      bgfx::FrameBufferHandle targetFbo, bgfx::TextureHandle normal, bgfx::TextureHandle worldPos);
     void RenderShadowMap(Scene& scene, const glm::mat4& lightMtx, bgfx::ViewId viewId, bgfx::FrameBufferHandle shadowFbo);
     void RenderGlass(Scene& scene, const Camera& camera, bgfx::ViewId viewId, uint16_t width, uint16_t height);
     // Alpha-blended, lit forward pass for materials with translucencyEnabled.
@@ -172,6 +174,15 @@ private:
     bgfx::ProgramHandle m_shadowSkinnedProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_shadowPointProg = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_shadowLightPos = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_decalProg = BGFX_INVALID_HANDLE;
+    bgfx::VertexBufferHandle m_decalVbh = BGFX_INVALID_HANDLE;
+    bgfx::IndexBufferHandle m_decalIbh = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_decalInvModel = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_decalAxis = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_decalParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_decalAlbedo = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_decalNormal = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_decalWorldPos = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_prevViewProj = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_prevModel = BGFX_INVALID_HANDLE;
     glm::mat4 m_prevViewProj{1.0f};

@@ -778,6 +778,7 @@
 
         if (ImGui::TreeNode("Shadows")) {
             ImGui::Checkbox("PCSS (Penumbra)", &s.pcssEnabled);
+            ImGui::Checkbox("Point light shadows", &s.pointShadowsEnabled);
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Variable penumbra from a blocker search:\n"
                                   "hard at contact, soft with distance.");

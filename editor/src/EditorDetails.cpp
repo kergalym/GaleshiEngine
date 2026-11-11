@@ -3209,6 +3209,19 @@ void GaleshiEditorApp::DrawDetails() {
             ImGui::SliderFloat("Outer Cone", &sl.outerConeAngle, 0.0f, 90.0f);
         }
 
+        if (selected[0].HasComponent<Galeshi::DecalComponent>() && beginDetailsSection(
+                "Decal", ImGuiTreeNodeFlags_DefaultOpen,
+                "decal texture opacity projector")) {
+            auto& dc = m_scene.Registry().get<Galeshi::DecalComponent>(selected[0].Handle());
+            char texturePath[512];
+            std::snprintf(texturePath, sizeof(texturePath), "%s", dc.texturePath.c_str());
+            if (ImGui::InputText("Texture", texturePath, sizeof(texturePath))) {
+                dc.texturePath = texturePath;
+                dc.texture = dc.texturePath.empty() ? nullptr : m_assets->LoadTexture(dc.texturePath, true);
+            }
+            ImGui::SliderFloat("Opacity", &dc.opacity, 0.0f, 1.0f);
+        }
+
         if (selected[0].HasComponent<Galeshi::ParticleEmitterComponent>() &&
             beginDetailsSection(
                 "Particle Emitter", ImGuiTreeNodeFlags_DefaultOpen,

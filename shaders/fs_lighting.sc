@@ -52,6 +52,10 @@ uniform vec4 u_tileParams;
 SAMPLER2D(s_materialFeatures, 14);
 // Counts at the start of the buffer, indices at totalTiles + tile*64.
 BUFFER_RO(s_tileLights, uint, 15);
+// Point shadow faces as a 2D array, one VP per face in +X, -X, +Y, -Y, +Z, -Z order.
+SAMPLER2DARRAY(s_pointShadowMap, 16);
+uniform vec4 u_pointShadowParams; // x = enabled, y = far plane
+uniform mat4 u_pointShadowVP[6];
 
 uniform vec4 u_spotLightPosRadius[4];
 uniform vec4 u_spotLightDirInner[4];
@@ -372,6 +376,29 @@ void applyFog(inout vec3 color, vec3 rayDir, float distance, float jitter) {
 
 
 
+
+// Shadow for the first point light (u_pointLightPosRadius[0]). Each face is a
+// 2D layer rendered with its own view-projection, so this reuses the spot UV path.
+float calcPointShadow(vec3 wPos, vec3 N) {
+    vec3 lightPos = u_pointLightPosRadius[0].xyz;
+    vec3 p = wPos + N * 0.05;
+    vec3 d = p - lightPos;
+    vec3 a = abs(d);
+    int face;
+    if (a.x >= a.y && a.x >= a.z) face = d.x >= 0.0 ? 0 : 1;
+    else if (a.y >= a.z) face = d.y >= 0.0 ? 2 : 3;
+    else face = d.z >= 0.0 ? 4 : 5;
+
+    float dist = length(d);
+    if (dist >= u_pointShadowParams.y) return 0.0;
+
+    vec4 clip = mul(u_pointShadowVP[face], vec4(p, 1.0));
+    vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+    if (u_pssmParams.w > 0.5) uv.y = 1.0 - uv.y;
+    float stored = texture2DArray(s_pointShadowMap, vec3(uv, float(face))).r * u_pointShadowParams.y;
+    // shortcut: fixed 5 cm bias, nearest texel, no PCF; upgrade if acne or jagged edges show.
+    return dist - 0.05 > stored ? 1.0 : 0.0;
+}
 
 float calcSpotShadow0(vec4 lightSpacePos, float NdotL) {
     vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
@@ -712,7 +739,8 @@ void main()
             float atten = 1.0 / (dist * dist + 1.0);
             float window = saturate(1.0 - pow(dist / radius, 4.0));
             atten *= window * window;
-            vec3 radiance = u_pointLightColorInt[lightIdx].rgb * u_pointLightColorInt[lightIdx].a * atten;
+            float pointShadow = (lightIdx == 0u && u_pointShadowParams.x > 0.5) ? calcPointShadow(wPos.xyz, N) : 0.0;
+            vec3 radiance = u_pointLightColorInt[lightIdx].rgb * u_pointLightColorInt[lightIdx].a * atten * (1.0 - pointShadow);
             finalColor += calcLight(N, V, albedo, metallic, rough, materialSpecular, clearcoat, L, radiance);
             if (sssAmount > 0.0001) {
                 float wrapWidth = mix(0.16, 0.72, sssRadiusNorm);
