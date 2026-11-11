@@ -112,14 +112,18 @@ public:
         uint16_t ssgiWidth, uint16_t ssgiHeight);
     void SetBloomEnabled(bool v) { m_bloomEnabled = v; }
     bool BloomEnabled() const { return m_bloomEnabled; }
-    bgfx::TextureHandle RenderBloom(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float threshold, float intensity, float radius);
+    bgfx::TextureHandle RenderBloom(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float threshold, float intensity, float radius,
+        const glm::vec2& flareUv = glm::vec2(0.5f), float flareVisibility = 0.0f,
+        float flareIntensity = 0.0f, float flareThreshold = 4.0f);
 
     bgfx::TextureHandle RenderColorCorrection(
         bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo,
         bgfx::ViewId viewId, uint16_t width, uint16_t height,
         float exposure, float contrast, float saturation,
         float paletteAmount, const glm::vec3& paletteShadow,
-        const glm::vec3& paletteMid, const glm::vec3& paletteHighlight);
+        const glm::vec3& paletteMid, const glm::vec3& paletteHighlight,
+        bgfx::TextureHandle lut = BGFX_INVALID_HANDLE, float lutSize = 0.0f,
+        float lutStrength = 0.0f);
     bgfx::TextureHandle RenderVignette(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height, float intensity, float smoothness);
     bgfx::TextureHandle RenderChromatic(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height, float intensity);
     bgfx::TextureHandle RenderTonemap(
@@ -147,7 +151,7 @@ public:
                             uint16_t w, uint16_t h, float dt,
                             float calibration, float minEv, float maxEv,
                             float speedUp, float speedDown,
-                            bgfx::ViewId viewId);
+                            bgfx::ViewId viewId, bool histogram = true);
     bgfx::TextureHandle AutoExposureTexture() const {
         return m_autoExposureTexA;
     }
@@ -415,6 +419,10 @@ private:
     bgfx::FrameBufferHandle m_autoExposureFboA = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_autoExposureFboB = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_colorCorrectionParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_colorLut = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_colorLutParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lensFlareSun = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lensFlareParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_envPaletteShadow = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_envPaletteMid = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_envPaletteHighlight = BGFX_INVALID_HANDLE;

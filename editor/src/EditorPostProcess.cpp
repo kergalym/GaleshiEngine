@@ -549,6 +549,10 @@
                              0.01f, 0.0f, 10.0f);
             ImGui::DragFloat("Radius", &s.bloomRadius,
                              0.01f, 0.01f, 10.0f);
+            ImGui::DragFloat("Lens flare intensity", &s.lensFlareIntensity,
+                             0.01f, 0.0f, 4.0f);
+            ImGui::DragFloat("Lens flare threshold", &s.lensFlareThreshold,
+                             0.05f, 0.0f, 100.0f);
             ImGui::TreePop();
         }
 
@@ -612,6 +616,7 @@
                                  0.1f, 0.0f, 50.0f);
                 ImGui::DragFloat("AE Calibration", &s.autoExposureCalibration,
                                  0.01f, 0.01f, 2.0f);
+                ImGui::Checkbox("Histogram metering##ae", &s.autoExposureHistogram);
             }
             ImGui::DragFloat("Contrast", &s.contrast, 0.01f, 0.0f, 5.0f);
             ImGui::DragFloat("Saturation", &s.saturation, 0.01f, 0.0f, 5.0f);
@@ -646,6 +651,17 @@
             ImGui::ColorEdit3("Shadows##cc", glm::value_ptr(s.gradeShadows));
             ImGui::ColorEdit3("Midtones##cc", glm::value_ptr(s.gradeMidtones));
             ImGui::ColorEdit3("Highlights##cc", glm::value_ptr(s.gradeHighlights));
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("Color LUT")) {
+            char lutPath[512];
+            std::snprintf(lutPath, sizeof(lutPath), "%s", s.colorLutPath.c_str());
+            if (ImGui::InputText("LUT texture##lut", lutPath, sizeof(lutPath))) {
+                s.colorLutPath = lutPath;
+            }
+            ImGui::DragFloat("Strength##lut", &s.colorLutStrength, 0.01f, 0.0f, 1.0f);
+            ImGui::TextDisabled("2D strip: N slices of NxN texels, left to right (height = N).");
             ImGui::TreePop();
         }
 

@@ -2,6 +2,8 @@
 
 #include <glm/glm.hpp>
 
+#include <string>
+
 namespace Galeshi {
 
 // Screen-space ambient-occlusion algorithm used by the post-process stack.
@@ -112,6 +114,21 @@ struct PostProcessSettings {
 
     // Chromatic aberration
     float chromaticAberration = 0.004f;
+
+    // Colour grading LUT: a 2D strip of N slices, each NxN texels, laid out
+    // left to right (texture height = N). Applied last, in display space.
+    // An empty path disables it.
+    std::string colorLutPath;
+    float colorLutStrength = 1.0f;
+
+    // Lens flare from the sun, built from the HDR scene above the threshold.
+    // Zero intensity disables it. It rides the bloom pass, so bloom must be on.
+    float lensFlareIntensity = 0.0f;
+    float lensFlareThreshold = 4.0f;
+
+    // Histogram metering: averages the 10..90 percentile of log luminance.
+    // Off falls back to the plain log average.
+    bool autoExposureHistogram = true;
 
     // Ambient occlusion. ssaoEnabled is the shared on/off switch for all
     // three algorithms; the SSAO fields are kept for existing scenes.

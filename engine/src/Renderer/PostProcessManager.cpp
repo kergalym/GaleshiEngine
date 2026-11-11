@@ -299,6 +299,8 @@ void PostProcessManager::Init() {
         s_autoScene             = bgfx::createUniform("s_autoScene", bgfx::UniformType::Sampler);
         s_autoPrev              = bgfx::createUniform("s_autoPrev", bgfx::UniformType::Sampler);
         u_colorCorrectionParams = bgfx::createUniform("u_colorCorrectionParams", bgfx::UniformType::Vec4);
+        s_colorLut              = bgfx::createUniform("s_colorLut", bgfx::UniformType::Sampler);
+        u_colorLutParams        = bgfx::createUniform("u_colorLutParams", bgfx::UniformType::Vec4);
         u_envPaletteShadow      = bgfx::createUniform("u_envPaletteShadow", bgfx::UniformType::Vec4);
         u_envPaletteMid         = bgfx::createUniform("u_envPaletteMid", bgfx::UniformType::Vec4);
         u_envPaletteHighlight   = bgfx::createUniform("u_envPaletteHighlight", bgfx::UniformType::Vec4);
@@ -314,6 +316,8 @@ void PostProcessManager::Init() {
         m_bloomCombineProg = createFsProg("shaders/fs_bloom_combine.bin");
         u_bloomIntensity   = bgfx::createUniform("u_bloomIntensity", bgfx::UniformType::Vec4);
         s_bloomTex         = bgfx::createUniform("s_bloom", bgfx::UniformType::Sampler);
+        u_lensFlareSun     = bgfx::createUniform("u_lensFlareSun", bgfx::UniformType::Vec4);
+        u_lensFlareParams  = bgfx::createUniform("u_lensFlareParams", bgfx::UniformType::Vec4);
     }
 
         // IBL
@@ -592,11 +596,13 @@ void PostProcessManager::Shutdown() {
     destroyTex(m_autoExposureTexA); destroyTex(m_autoExposureTexB);
     destroyFbo(m_autoExposureFboA); destroyFbo(m_autoExposureFboB);
     destroyUni(u_colorCorrectionParams);
+    destroyUni(s_colorLut); destroyUni(u_colorLutParams);
     destroyUni(u_envPaletteShadow); destroyUni(u_envPaletteMid);
     destroyUni(u_envPaletteHighlight);
     destroyUni(u_vignetteParams); destroyUni(u_chromaParams);
     destroyUni(u_bloomThreshold); destroyUni(u_bloomTexelSize); destroyUni(u_bloomDir);
     destroyUni(u_bloomIntensity); destroyUni(s_bloomTex);
+    destroyUni(u_lensFlareSun); destroyUni(u_lensFlareParams);
     destroyTex(m_bloomTexA); destroyTex(m_bloomTexB);
     destroyFbo(m_bloomFboA); destroyFbo(m_bloomFboB);
     if (bgfx::isValid(s_iblIrradiance)) bgfx::destroy(s_iblIrradiance);
@@ -1250,7 +1256,9 @@ bgfx::TextureHandle PostProcessManager::RenderScreenSpaceLighting(
     return m_pingColor;
 }
 
-bgfx::TextureHandle PostProcessManager::RenderBloom(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float threshold, float intensity, float radius) {
+bgfx::TextureHandle PostProcessManager::RenderBloom(bgfx::TextureHandle color, bgfx::FrameBufferHandle target, bgfx::ViewId viewId, uint16_t w, uint16_t h, float threshold, float intensity, float radius,
+                                     const glm::vec2& flareUv, float flareVisibility,
+                                     float flareIntensity, float flareThreshold) {
     if (!bgfx::isValid(m_bloomExtractProg) || !bgfx::isValid(m_bloomBlurProg) || !bgfx::isValid(m_bloomCombineProg)) return BGFX_INVALID_HANDLE;
     if (!bgfx::isValid(s_bloomTex) || !bgfx::isValid(m_bloomFboA) || !bgfx::isValid(m_bloomFboB)) return BGFX_INVALID_HANDLE;
     // FBOs are recreated once per frame in RenderLighting. Recreating them
@@ -1301,6 +1309,13 @@ bgfx::TextureHandle PostProcessManager::RenderBloom(bgfx::TextureHandle color, b
     bgfx::setTexture(1, s_bloomTex, m_bloomTexA);
     float bi[4] = { intensity, 0, 0, 0 };
     bgfx::setUniform(u_bloomIntensity, bi);
+    if (bgfx::isValid(u_lensFlareSun) && bgfx::isValid(u_lensFlareParams)) {
+        const float flareSun[4] = { flareUv.x, flareUv.y, flareVisibility, 0.0f };
+        const float flareParams[4] = { flareIntensity, flareThreshold,
+                                       static_cast<float>(w) / static_cast<float>(h), 0.0f };
+        bgfx::setUniform(u_lensFlareSun, flareSun);
+        bgfx::setUniform(u_lensFlareParams, flareParams);
+    }
     bgfx::setVertexBuffer(0, m_vbh); bgfx::setIndexBuffer(m_ibh);
     bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
     bgfx::submit(viewId + 3, m_bloomCombineProg);
@@ -1314,7 +1329,8 @@ bgfx::TextureHandle PostProcessManager::RenderColorCorrection(
     bgfx::ViewId viewId, uint16_t width, uint16_t height,
     float exposure, float contrast, float saturation,
     float paletteAmount, const glm::vec3& paletteShadow,
-    const glm::vec3& paletteMid, const glm::vec3& paletteHighlight) {
+    const glm::vec3& paletteMid, const glm::vec3& paletteHighlight,
+    bgfx::TextureHandle lut, float lutSize, float lutStrength) {
     if (!bgfx::isValid(m_colorCorrectionProg) ||
         !bgfx::isValid(u_colorCorrectionParams)) {
         return color;
@@ -1322,6 +1338,14 @@ bgfx::TextureHandle PostProcessManager::RenderColorCorrection(
     bgfx::setViewFrameBuffer(viewId, targetFbo);
     bgfx::setViewRect(viewId, 0, 0, width, height);
     bgfx::setTexture(0, s_texColor, color);
+    // The LUT sampler is always bound; the shader skips it while inactive.
+    const bool lutActive = bgfx::isValid(lut) && lutSize > 0.0f && lutStrength > 0.0f;
+    if (bgfx::isValid(s_colorLut) && bgfx::isValid(u_colorLutParams)) {
+        bgfx::setTexture(1, s_colorLut, lutActive ? lut : color);
+        const float lutParams[4] = { lutSize, std::clamp(lutStrength, 0.0f, 1.0f),
+                                     lutActive ? 1.0f : 0.0f, 0.0f };
+        bgfx::setUniform(u_colorLutParams, lutParams);
+    }
     float params[4] = { exposure, contrast, saturation,
                         std::clamp(paletteAmount, 0.0f, 1.0f) };
     bgfx::setUniform(u_colorCorrectionParams, params);
@@ -1429,7 +1453,7 @@ bgfx::TextureHandle PostProcessManager::RenderTonemap(
 void PostProcessManager::RenderAutoExposure(
     bgfx::TextureHandle sceneColor, uint16_t w, uint16_t h, float dt,
     float calibration, float minEv, float maxEv,
-    float speedUp, float speedDown, bgfx::ViewId viewId) {
+    float speedUp, float speedDown, bgfx::ViewId viewId, bool histogram) {
     if (!bgfx::isValid(m_autoExposureProg)) {
         return;
     }
@@ -1457,7 +1481,7 @@ void PostProcessManager::RenderAutoExposure(
     const float adapt[4] = {
         std::max(calibration, 1e-4f), std::max(dt, 1e-6f),
         std::max(speedUp, 0.0f), std::max(speedDown, 0.0f)};
-    const float range[4] = {minEv, maxEv, aspect, 0.0f};
+    const float range[4] = {minEv, maxEv, aspect, histogram ? 1.0f : 0.0f};
     bgfx::setViewFrameBuffer(viewId, m_autoExposureFboB);
     bgfx::setViewRect(viewId, 0, 0, 1, 1);
     bgfx::setTexture(0, s_autoScene, sceneColor);

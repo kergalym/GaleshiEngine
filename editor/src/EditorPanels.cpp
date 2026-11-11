@@ -677,6 +677,11 @@
                                         static_cast<unsigned>(stats->numViews),
                                         stats->numDraw, stats->numCompute,
                                         stats->numTextures, m_gpuFrameMs);
+                    if (stats->gpuMemoryMax > 0 && stats->gpuMemoryUsed >= 0) {
+                        ImGui::TextDisabled("GPU memory: %.0f / %.0f MB",
+                                            stats->gpuMemoryUsed / 1048576.0,
+                                            stats->gpuMemoryMax / 1048576.0);
+                    }
                 }
                 if (!gpuTimerAvailable) {
                     ImGui::TextDisabled("GPU timer queries are not available on "

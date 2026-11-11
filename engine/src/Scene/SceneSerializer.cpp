@@ -575,6 +575,11 @@ json PostProcessSettingsToJson(const PostProcessSettings& s) {
         {"vignetteIntensity", s.vignetteIntensity},
         {"vignetteSmoothness", s.vignetteSmoothness},
         {"chromaticAberration", s.chromaticAberration},
+        {"colorLutPath", s.colorLutPath},
+        {"colorLutStrength", s.colorLutStrength},
+        {"lensFlareIntensity", s.lensFlareIntensity},
+        {"lensFlareThreshold", s.lensFlareThreshold},
+        {"autoExposureHistogram", s.autoExposureHistogram},
         {"ssaoEnabled", s.ssaoEnabled},
         {"aoMode", static_cast<int>(s.aoMode)},
         {"ssaoRadius", s.ssaoRadius},
@@ -699,6 +704,12 @@ void PostProcessSettingsFromJson(const json& js, PostProcessSettings& s) {
     }
     s.vignetteIntensity = js.value("vignetteIntensity", s.vignetteIntensity);
     s.vignetteSmoothness = js.value("vignetteSmoothness", s.vignetteSmoothness);
+    s.colorLutPath = js.value("colorLutPath", s.colorLutPath);
+    s.colorLutStrength = js.value("colorLutStrength", s.colorLutStrength);
+    s.lensFlareIntensity = js.value("lensFlareIntensity", s.lensFlareIntensity);
+    s.lensFlareThreshold = js.value("lensFlareThreshold", s.lensFlareThreshold);
+    s.autoExposureHistogram =
+        js.value("autoExposureHistogram", s.autoExposureHistogram);
     s.chromaticAberration = js.value("chromaticAberration",
                                      s.chromaticAberration);
     s.ssaoEnabled = js.value("ssaoEnabled", s.ssaoEnabled);

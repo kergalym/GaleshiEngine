@@ -26,6 +26,9 @@ class GaleshiEditorApp final : public Galeshi::Application {
     float m_dynamicScale = 1.0f;
     float m_dynamicMinScale = 0.5f;
     float m_dynamicTargetFps = 60.0f;
+    // Colour grading LUT, reloaded when PostProcessSettings::colorLutPath changes.
+    std::string m_colorLutPath;
+    std::shared_ptr<Galeshi::Texture> m_colorLut;
     float m_smoothedFrameTime = 1.0f / 60.0f;
     int m_dynamicFrameCounter = 0;
     LoadingState m_loadingState;

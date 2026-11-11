@@ -637,9 +637,11 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
             m_cpuProfile.pssmMs = ProfileElapsedMs(pssmStart, ProfileClock::now());
 
             // --- POINT LIGHT SHADOW PASS ---
+            // shortcut: fs_lighting never samples the point cube map, so these six full scene passes per frame produce unused data; enable when point shadows are sampled.
+            constexpr bool kPointShadowsSampled = false;
             const auto pointShadowStart = ProfileClock::now();
             auto plview = m_scene.Registry().view<Galeshi::TransformComponent, Galeshi::PointLightComponent>();
-            if (plview.begin() != plview.end()) {
+            if (kPointShadowsSampled && plview.begin() != plview.end()) {
                 auto firstLight = *plview.begin();
                 auto& tc = plview.get<Galeshi::TransformComponent>(firstLight);
 
@@ -935,7 +937,8 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                         m_frameDelta,
                         pp.autoExposureCalibration,
                         pp.autoExposureMinEv, pp.autoExposureMaxEv,
-                        pp.autoExposureSpeedUp, pp.autoExposureSpeedDown, 45);
+                        pp.autoExposureSpeedUp, pp.autoExposureSpeedDown, 45,
+                        pp.autoExposureHistogram);
                 }
 
                 m_postProcess.RenderLightCulling(plCount, plPosA, currVP, renderW, renderH);
@@ -1084,12 +1087,29 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     }
                 }
 
-                // 6. Bloom (Views 32..35)
+                // 6. Bloom (Views 32..35). Lens flare rides this pass, so it
+                // needs bloom on. The sun is projected with the lit-scene VP;
+                // occluders darken its brightness sample, so no depth test.
+                glm::vec2 flareUv(0.5f);
+                float flareVisibility = 0.0f;
+                const glm::vec3 toSunRaw = -glm::vec3(lDirA[0], lDirA[1], lDirA[2]);
+                if (pp.lensFlareIntensity > 0.0f && glm::length(toSunRaw) > 1e-4f) {
+                    const glm::vec3 toSun = glm::normalize(toSunRaw);
+                    const glm::vec3 eye = m_camera.Position();
+                    const glm::vec4 clip = currVP * glm::vec4(eye + toSun * 1000.0f, 1.0f);
+                    if (clip.w > 0.0f) {
+                        flareUv = glm::vec2(clip.x, clip.y) / clip.w * 0.5f + 0.5f;
+                        if (!bgfx::getCaps()->originBottomLeft) flareUv.y = 1.0f - flareUv.y;
+                        const glm::vec2 edge = glm::abs(flareUv - 0.5f) * 2.0f;
+                        flareVisibility = 1.0f - glm::smoothstep(0.85f, 1.15f, std::max(edge.x, edge.y));
+                    }
+                }
                 if (pp.bloomEnabled) {
                     if (bgfx::isValid(m_postProcess.RenderBloom(
                             m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
                             32, renderW, renderH, pp.bloomThreshold, pp.bloomIntensity,
-                            pp.bloomRadius))) {
+                            pp.bloomRadius, flareUv, flareVisibility,
+                            pp.lensFlareIntensity, pp.lensFlareThreshold))) {
                         m_postProcess.SwapFbos();
                     }
                 }
@@ -1197,6 +1217,29 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     pp.gradeHighlights);
                 m_postProcess.SwapFbos();
 
+                // Colour grading LUT. Reloaded only when the path changes; a
+                // texture that is not N*N wide by N high is ignored.
+                if (pp.colorLutPath != m_colorLutPath) {
+                    m_colorLutPath = pp.colorLutPath;
+                    m_colorLut = (m_assets && !m_colorLutPath.empty())
+                        ? m_assets->LoadTexture(m_colorLutPath, false, nullptr, false) : nullptr;
+                    const bool lutValid = m_colorLut && m_colorLut->Valid() &&
+                        m_colorLut->Height() >= 2 &&
+                        static_cast<uint32_t>(m_colorLut->Width()) ==
+                            static_cast<uint32_t>(m_colorLut->Height()) * m_colorLut->Height();
+                    if (m_colorLut && !lutValid) {
+                        spdlog::warn("[LUT] {} is {}x{}, expected N*N by N",
+                                     m_colorLutPath, m_colorLut->Width(), m_colorLut->Height());
+                        m_colorLut.reset();
+                    }
+                }
+                bgfx::TextureHandle lutHandle = BGFX_INVALID_HANDLE;
+                float lutSize = 0.0f;
+                if (m_colorLut) {
+                    lutHandle = m_colorLut->Handle();
+                    lutSize = static_cast<float>(m_colorLut->Height());
+                }
+
                 // 10. LUT-style environment palette (View 41), after tonemap
                 m_postProcess.RenderColorCorrection(
                     m_postProcess.OutputTexture(), m_postProcess.PingFbo(),
@@ -1205,7 +1248,8 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                         ? pp.environmentPaletteAmount
                         : 0.0f,
                     pp.environmentPaletteShadow, pp.environmentPaletteMid,
-                    pp.environmentPaletteHighlight);
+                    pp.environmentPaletteHighlight, lutHandle, lutSize,
+                    pp.colorLutStrength);
                 m_postProcess.SwapFbos();
 
                 // 11. Vignette (View 42)

@@ -2,12 +2,28 @@ $input v_texcoord0
 #include <bgfx_shader.sh>
 
 SAMPLER2D(s_texColor, 0);
+SAMPLER2D(s_colorLut, 1);
 // The exposure/contrast/saturation inputs stay neutral in the post-tonemap
 // palette pass; scene-referred grading is performed by fs_tonemap.
 uniform vec4 u_colorCorrectionParams; // x = exposure, y = contrast, z = saturation, w = palette amount
 uniform vec4 u_envPaletteShadow;
 uniform vec4 u_envPaletteMid;
 uniform vec4 u_envPaletteHighlight;
+// x = LUT size N, y = strength, z = enabled.
+uniform vec4 u_colorLutParams;
+
+// Colour grading LUT lookup. The strip holds N slices (blue) of NxN texels:
+// red runs along each slice, green down it. Texel indices stay within
+// [0, N-1], so bilinear taps never leave a slice.
+vec3 applyColorLut(vec3 c) {
+    float n = u_colorLutParams.x;
+    vec3 p = clamp(c, 0.0, 1.0) * (n - 1.0);
+    float b0 = floor(p.b);
+    float b1 = min(b0 + 1.0, n - 1.0);
+    vec2 uv0 = vec2((b0 * n + p.r + 0.5) / (n * n), (p.g + 0.5) / n);
+    vec2 uv1 = vec2((b1 * n + p.r + 0.5) / (n * n), (p.g + 0.5) / n);
+    return mix(texture2D(s_colorLut, uv0).rgb, texture2D(s_colorLut, uv1).rgb, p.b - b0);
+}
 
 void main() {
     vec3 color = texture2D(s_texColor, v_texcoord0).rgb;
@@ -39,5 +55,8 @@ void main() {
         color = mix(color, graded, paletteAmount);
     }
 
+    if (u_colorLutParams.z > 0.5) {
+        color = mix(color, applyColorLut(color), clamp(u_colorLutParams.y, 0.0, 1.0));
+    }
     gl_FragColor = vec4(color, 1.0);
 }
