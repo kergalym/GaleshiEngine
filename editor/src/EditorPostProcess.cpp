@@ -801,6 +801,12 @@
             ImGui::TreePop();
         }
 
+        if (ImGui::TreeNode("Subsurface")) {
+            ImGui::Checkbox("Screen-space SSS", &s.sssEnabled);
+            ImGui::TextDisabled("Blurs materials with Subsurface Scattering on.");
+            ImGui::TreePop();
+        }
+
         if (ImGui::TreeNode("God Rays")) {
             ImGui::Checkbox("Enabled##godrays", &s.godRaysEnabled);
             ImGui::DragFloat("Intensity##godrays", &s.godRaysIntensity,

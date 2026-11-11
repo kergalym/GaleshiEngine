@@ -286,6 +286,7 @@ void PostProcessManager::Init() {
         m_colorCorrectionProg = createFsProg("shaders/fs_color_correction.bin");
         m_vignetteProg        = createFsProg("shaders/fs_vignette.bin");
         m_chromaticProg       = createFsProg("shaders/fs_chromatic.bin");
+        m_sssProg             = createFsProg("shaders/fs_sss_blur.bin");
 
         u_colorParams           = bgfx::createUniform("u_colorParams", bgfx::UniformType::Vec4);
         u_gradeParams           = bgfx::createUniform("u_gradeParams", bgfx::UniformType::Vec4);
@@ -311,6 +312,13 @@ void PostProcessManager::Init() {
         u_envPaletteHighlight   = bgfx::createUniform("u_envPaletteHighlight", bgfx::UniformType::Vec4);
         u_vignetteParams        = bgfx::createUniform("u_vignetteParams", bgfx::UniformType::Vec4);
         u_chromaParams          = bgfx::createUniform("u_chromaParams", bgfx::UniformType::Vec4);
+        s_sssSrc      = bgfx::createUniform("s_sssSrc", bgfx::UniformType::Sampler);
+        s_sssOrig     = bgfx::createUniform("s_sssOrig", bgfx::UniformType::Sampler);
+        s_sssWorldPos = bgfx::createUniform("s_sssWorldPos", bgfx::UniformType::Sampler);
+        s_sssFeature  = bgfx::createUniform("s_sssFeature", bgfx::UniformType::Sampler);
+        u_sssDir      = bgfx::createUniform("u_sssDir", bgfx::UniformType::Vec4);
+        u_sssMisc     = bgfx::createUniform("u_sssMisc", bgfx::UniformType::Vec4);
+        u_sssCamPos   = bgfx::createUniform("u_sssCamPos", bgfx::UniformType::Vec4);
 
         m_bloomExtractProg = createFsProg("shaders/fs_bloom_extract.bin");
         u_bloomThreshold   = bgfx::createUniform("u_threshold", bgfx::UniformType::Vec4);
@@ -590,6 +598,7 @@ void PostProcessManager::Shutdown() {
     destroyProg(m_bloomExtractProg);
     destroyProg(m_bloomBlurProg); destroyProg(m_bloomCombineProg);
     destroyProg(m_colorCorrectionProg); destroyProg(m_vignetteProg); destroyProg(m_chromaticProg);
+    destroyProg(m_sssProg);
     destroyUni(u_colorParams); destroyUni(u_gradeParams);
     destroyUni(u_gradeGain); destroyUni(u_gradeGamma);
     destroyUni(u_gradeOffset); destroyUni(u_grain);
@@ -605,6 +614,8 @@ void PostProcessManager::Shutdown() {
     destroyUni(u_envPaletteShadow); destroyUni(u_envPaletteMid);
     destroyUni(u_envPaletteHighlight);
     destroyUni(u_vignetteParams); destroyUni(u_chromaParams);
+    destroyUni(s_sssSrc); destroyUni(s_sssOrig); destroyUni(s_sssWorldPos); destroyUni(s_sssFeature);
+    destroyUni(u_sssDir); destroyUni(u_sssMisc); destroyUni(u_sssCamPos);
     destroyUni(u_bloomThreshold); destroyUni(u_bloomTexelSize); destroyUni(u_bloomDir);
     destroyUni(u_bloomIntensity); destroyUni(s_bloomTex);
     destroyUni(u_lensFlareSun); destroyUni(u_lensFlareParams);
@@ -681,6 +692,7 @@ void PostProcessManager::Shutdown() {
     destroyTex(m_pingColor); destroyFbo(m_pingFbo);
     destroyTex(m_blitDepth);
     destroyTex(m_ssgiTraceTex); destroyFbo(m_ssgiTraceFbo);
+    destroyTex(m_sssColor); destroyFbo(m_sssFbo);
     m_width = m_height = 0;
     m_ssgiWidth = m_ssgiHeight = 0;
 }
@@ -750,6 +762,8 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
     if (bgfx::isValid(m_blitDepth))   bgfx::destroy(m_blitDepth);
     if (bgfx::isValid(m_ssgiTraceFbo)) bgfx::destroy(m_ssgiTraceFbo);
     if (bgfx::isValid(m_ssgiTraceTex)) bgfx::destroy(m_ssgiTraceTex);
+    if (bgfx::isValid(m_sssFbo)) bgfx::destroy(m_sssFbo);
+    if (bgfx::isValid(m_sssColor)) bgfx::destroy(m_sssColor);
 
     const uint64_t flags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
     // The whole post-processing chain works in linear HDR; tonemapping and
@@ -765,6 +779,8 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
         m_smaaColorTex = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags | BGFX_TEXTURE_BLIT_DST);
     m_blitTexB = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags | BGFX_TEXTURE_BLIT_DST);
     m_blitDepth = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::D32F, BGFX_TEXTURE_BLIT_DST | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP);
+    m_sssColor = bgfx::createTexture2D(w, h, false, 1, bgfx::TextureFormat::RGBA16F, flags);
+    m_sssFbo = bgfx::createFrameBuffer(1, &m_sssColor, false);
     // The ping buffer also serves as the transparent/debug overlay target at
     // the end of the frame; BGFX_TEXTURE_BLIT_DST is required for the copy of
     // the base image into it.
@@ -825,6 +841,38 @@ void PostProcessManager::EnsureOutputFbo(uint16_t w, uint16_t h) {
     m_blitFboA = bgfx::createFrameBuffer(1, &m_blitTexA, false);
     m_width = w;
     m_height = h;
+}
+
+bool PostProcessManager::RenderSubsurface(bgfx::TextureHandle worldPos, bgfx::TextureHandle features,
+                                          const float camPos[4], float pixelsPerUnit,
+                                          uint16_t width, uint16_t height,
+                                          bgfx::ViewId viewH, bgfx::ViewId viewV) {
+    if (!bgfx::isValid(m_sssProg) || !bgfx::isValid(m_sssFbo) || !bgfx::isValid(m_pingFbo) ||
+        !bgfx::isValid(m_outputColor) || !bgfx::isValid(worldPos) || !bgfx::isValid(features) ||
+        width == 0 || height == 0) {
+        return false;
+    }
+    bgfx::setUniform(u_sssCamPos, camPos);
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool finalPass = pass == 1;
+        const bgfx::ViewId view = finalPass ? viewV : viewH;
+        bgfx::setViewFrameBuffer(view, finalPass ? m_pingFbo : m_sssFbo);
+        bgfx::setViewRect(view, 0, 0, width, height);
+        const float dir[4] = { finalPass ? 0.0f : 1.0f, finalPass ? 1.0f : 0.0f,
+                               1.0f / width, 1.0f / height };
+        const float misc[4] = { pixelsPerUnit, finalPass ? 1.0f : 0.0f, 0.0f, 0.0f };
+        bgfx::setUniform(u_sssDir, dir);
+        bgfx::setUniform(u_sssMisc, misc);
+        bgfx::setTexture(0, s_sssSrc, finalPass ? m_sssColor : m_outputColor);
+        bgfx::setTexture(1, s_sssOrig, m_outputColor);
+        bgfx::setTexture(2, s_sssWorldPos, worldPos);
+        bgfx::setTexture(3, s_sssFeature, features);
+        bgfx::setVertexBuffer(0, m_vbh);
+        bgfx::setIndexBuffer(m_ibh);
+        bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+        bgfx::submit(view, m_sssProg);
+    }
+    return true;
 }
 
 void PostProcessManager::SwapFbos() {

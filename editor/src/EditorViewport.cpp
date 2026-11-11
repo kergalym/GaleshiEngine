@@ -1210,6 +1210,19 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                 }
                 postFxSegmentStart = ProfileClock::now();
 
+                // Screen-space SSS (views 52 and 53) runs before the tonemap. bgfx runs
+                // views in ID order, so this remap moves those two ahead of view 40
+                // without renumbering the chain. NULL restores the identity order.
+                static const bgfx::ViewId kSssViewOrder[14] = {
+                    52, 53, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51 };
+                const bool sssOn = pp.sssEnabled && !skipHeavyGpu;
+                bgfx::setViewOrder(40, 14, sssOn ? kSssViewOrder : nullptr);
+                if (sssOn && m_postProcess.RenderSubsurface(
+                        m_framebuffer->WorldPos(), m_framebuffer->Features(), camPos,
+                        std::abs(proj[1][1]) * renderH * 0.5f, renderW, renderH, 52, 53)) {
+                    m_postProcess.SwapFbos();
+                }
+
                 // 9. Scene-referred grading + ACES tonemap (View 40)
                 m_postProcess.RenderTonemap(
                     m_postProcess.OutputTexture(), m_postProcess.PingFbo(),

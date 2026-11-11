@@ -68,8 +68,8 @@ public:
     // Subsurface scattering (deferred opaque materials)
     // ---------------------------------------------------------------------
     // The scatter color is multiplied by strength before it is written to
-    // the lighting G-buffer. Radius is expressed in world units and controls
-    // how far the wrapped diffuse lobe bleeds past the terminator.
+    // the lighting G-buffer. Radius is in centimetres: it sets the width of the
+    // screen-space blur (Post Process > Subsurface) and of the wrapped lobe.
     bool      subsurfaceEnabled  = false;
     glm::vec3 subsurfaceColor    {0.82f, 0.28f, 0.18f};
     float     subsurfaceStrength = 0.55f;

@@ -537,6 +537,7 @@ json PostProcessSettingsToJson(const PostProcessSettings& s) {
         {"pcssEnabled", s.pcssEnabled},
         {"shadowLightSourceSize", s.shadowLightSourceSize},
         {"pointShadowsEnabled", s.pointShadowsEnabled},
+        {"sssEnabled", s.sssEnabled},
         {"contactShadowsEnabled", s.contactShadowsEnabled},
         {"contactShadowLength", s.contactShadowLength},
         {"contactShadowThickness", s.contactShadowThickness},
@@ -647,6 +648,7 @@ void PostProcessSettingsFromJson(const json& js, PostProcessSettings& s) {
     s.shadowLightSourceSize = js.value("shadowLightSourceSize",
                                        s.shadowLightSourceSize);
     s.pointShadowsEnabled = js.value("pointShadowsEnabled", s.pointShadowsEnabled);
+    s.sssEnabled = js.value("sssEnabled", s.sssEnabled);
     s.contactShadowsEnabled = js.value("contactShadowsEnabled",
                                        s.contactShadowsEnabled);
     s.contactShadowLength = js.value("contactShadowLength",

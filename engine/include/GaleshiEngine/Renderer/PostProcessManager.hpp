@@ -127,6 +127,11 @@ public:
         float lutStrength = 0.0f);
     bgfx::TextureHandle RenderVignette(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height, float intensity, float smoothness);
     bgfx::TextureHandle RenderChromatic(bgfx::TextureHandle color, bgfx::FrameBufferHandle targetFbo, bgfx::ViewId viewId, uint16_t width, uint16_t height, float intensity);
+    // Blurs OutputTexture into PingFbo for SSS pixels. Returns false when nothing
+    // was submitted, and the caller then must not swap.
+    bool RenderSubsurface(bgfx::TextureHandle worldPos, bgfx::TextureHandle features,
+                          const float camPos[4], float pixelsPerUnit,
+                          uint16_t width, uint16_t height, bgfx::ViewId viewH, bgfx::ViewId viewV);
     bgfx::TextureHandle RenderTonemap(
         bgfx::TextureHandle color, bgfx::FrameBufferHandle target,
         bgfx::ViewId viewId, uint16_t w, uint16_t h,
@@ -351,6 +356,8 @@ private:
     // --- Screen-space GI (half-resolution radiance trace) ---
     bgfx::TextureHandle     m_ssgiTraceTex = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_ssgiTraceFbo = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_sssColor = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle m_sssFbo = BGFX_INVALID_HANDLE;
     uint16_t m_ssgiWidth = 0, m_ssgiHeight = 0;
 
     // --- Ambient occlusion chain (reduced res -> full res) ---
@@ -380,6 +387,7 @@ private:
     bgfx::ProgramHandle m_autoExposureProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_colorCorrectionProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_vignetteProg = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_sssProg = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_chromaticProg = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_bloomThreshold;
     bgfx::UniformHandle u_bloomTexelSize = BGFX_INVALID_HANDLE;
@@ -431,6 +439,13 @@ private:
     bgfx::UniformHandle u_envPaletteHighlight = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_vignetteParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_chromaParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_sssSrc = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_sssOrig = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_sssWorldPos = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_sssFeature = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_sssDir = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_sssMisc = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_sssCamPos = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_taaPrevVP = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_taaInvVP = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_taaParams = BGFX_INVALID_HANDLE;
