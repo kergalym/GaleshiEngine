@@ -1806,6 +1806,7 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
                     {"range", node.range},
                     {"duration", node.duration},
                     {"radius", node.radius},
+                    {"acceptanceRadius", node.acceptanceRadius},
                     {"parameter", node.parameter},
                     {"value", node.value}
                 });
@@ -3090,6 +3091,8 @@ bool SceneSerializer::LoadFromJson(const json& root,
                     node.range = jn.value("range", 2.0f);
                     node.duration = jn.value("duration", 1.0f);
                     node.radius = jn.value("radius", 8.0f);
+                    node.acceptanceRadius =
+                        jn.value("acceptanceRadius", 0.0f);
                     node.parameter = jn.value("parameter", std::string{});
                     node.value = jn.value("value", std::string{});
                     tree.nodes.push_back(std::move(node));

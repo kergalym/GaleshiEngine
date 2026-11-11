@@ -98,9 +98,25 @@ bool HasLineOfSight(Scene& scene, entt::entity viewer, entt::entity target,
     if (distance < 1e-4f) return true;
     const glm::vec3 dir = delta / distance;
 
+    // The viewer's own body and the target's own body must never block the
+    // sight line: the ray starts inside the viewer's meshes and ends on the
+    // target, so their AABBs would always report a hit.
+    const auto inSubtree = [&scene](entt::entity node, entt::entity root) {
+        entt::entity cursor = node;
+        for (int depth = 0; depth < 128; ++depth) {
+            if (cursor == root) return true;
+            if (!scene.Registry().all_of<ParentComponent>(cursor)) break;
+            cursor = scene.Registry().get<ParentComponent>(cursor).parent;
+        }
+        return false;
+    };
+
     auto view = scene.Registry().view<MeshComponent>();
     for (auto candidate : view) {
         if (candidate == viewer || candidate == target) continue;
+        if (inSubtree(candidate, viewer) || inSubtree(candidate, target)) {
+            continue;
+        }
         const auto& meshComponent = view.get<MeshComponent>(candidate);
         if (!meshComponent.mesh || !meshComponent.mesh->Valid()) continue;
         if (meshComponent.primitiveType == "landscape") continue;
@@ -290,7 +306,10 @@ int TickAction(Scene& scene, TickContext& ctx, BehaviorTreeNode& node) {
 
             const glm::vec3 target = TargetPosition(scene, *ctx.perception);
             const float distance = ExtractionDistance(ctx.transform->position, target);
-            if (distance <= std::max(0.25f, node.range * 0.25f)) return kSuccess;
+            const float arrivalRadius = node.acceptanceRadius > 0.0f
+                ? node.acceptanceRadius
+                : std::max(0.25f, node.range * 0.25f);
+            if (distance <= arrivalRadius) return kSuccess;
 
             SetStateIfPresent(scene, ctx.entity, "Run");
             if (ctx.agent) {

@@ -43,6 +43,7 @@ nlohmann::json BehaviorTreeToJson(
             {"range", node.range},
             {"duration", node.duration},
             {"radius", node.radius},
+            {"acceptanceRadius", node.acceptanceRadius},
             {"parameter", node.parameter},
             {"value", node.value}
         });
@@ -91,6 +92,8 @@ bool BehaviorTreeFromJson(const nlohmann::json& json,
         node.range = nodeJson.value("range", node.range);
         node.duration = nodeJson.value("duration", node.duration);
         node.radius = nodeJson.value("radius", node.radius);
+        node.acceptanceRadius =
+            nodeJson.value("acceptanceRadius", node.acceptanceRadius);
         node.parameter = nodeJson.value("parameter", std::string{});
         node.value = nodeJson.value("value", std::string{});
         loaded.nodes.push_back(std::move(node));
@@ -564,6 +567,14 @@ bool BehaviorTreeFromJson(const nlohmann::json& json,
                     case Galeshi::BehaviorAction::MoveToTarget:
                         ImGui::DragFloat("Arrive Range", &node.range,
                                          0.05f, 0.0f, 20.0f);
+                        ImGui::DragFloat("Acceptance Radius",
+                                         &node.acceptanceRadius,
+                                         0.05f, 0.0f, 20.0f);
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip(
+                                "Distance at which the move counts as "
+                                "arrived.\n0 = automatic (Arrive Range x 0.25).");
+                        }
                         break;
                     case Galeshi::BehaviorAction::Patrol:
                         ImGui::DragFloat("Patrol Radius", &node.radius,

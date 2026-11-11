@@ -532,6 +532,9 @@ struct BehaviorTreeNode {
     float range = 2.0f;
     float duration = 1.0f;
     float radius = 8.0f;
+    // MoveToTarget: distance at which the move counts as arrived. 0 keeps
+    // the legacy behaviour (range * 0.25).
+    float acceptanceRadius = 0.0f;
     std::string parameter;
     std::string value;
 
