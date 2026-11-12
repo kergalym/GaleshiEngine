@@ -138,6 +138,11 @@ public:
     std::string MakeRelativePath(const std::string& path) const;
 
 private:
+    // True when a pinned import still matches its source file on disk.
+    bool ImportedModelIsCurrent(const std::string& path) const;
+    // Drops embedded texture uploads and their retained sources.
+    void DropEmbeddedCache();
+
     // Encoded (or BGRA8) source retained so an embedded texture can be
     // re-uploaded when its sRGB checkbox changes.
     struct EmbeddedTextureSource {

@@ -37,7 +37,9 @@ const aiScene* g_currentAiScene = nullptr;
 namespace {
 
 constexpr char kModelCacheMagic[8] = {'G', 'A', 'M', 'C', 'A', 'C', 'H', '1'};
-constexpr uint32_t kModelCacheVersion = 1;
+// Bump whenever the cache format or the validation rules change: older files
+// may contain stale embedded textures under an already-updated model entry.
+constexpr uint32_t kModelCacheVersion = 2;
 
 void CacheWriteU32(std::vector<uint8_t>& out, uint32_t value) {
     for (int i = 0; i < 4; ++i) {
@@ -219,6 +221,22 @@ bool WriteModelCacheFile(const std::string& path,
     return true;
 }
 
+// Size plus write time is the cache invalidation key. A zero size means the
+// source is missing and must never validate an entry.
+std::pair<uint64_t, uint64_t> FileSignature(const std::string& path) {
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec)) return {0, 0};
+    const uint64_t size =
+        static_cast<uint64_t>(std::filesystem::file_size(path, ec));
+    if (ec) return {0, 0};
+    uint64_t time = 0;
+    const auto writeTime = std::filesystem::last_write_time(path, ec);
+    if (!ec) {
+        time = static_cast<uint64_t>(writeTime.time_since_epoch().count());
+    }
+    return {size, time};
+}
+
 } // namespace
 
 AssetManager::AssetManager() {
@@ -262,6 +280,29 @@ std::string AssetManager::ResolvePath(const std::string& path) const {
         return (std::filesystem::path(projPath) / path).string();
     }
     return path;
+}
+
+bool AssetManager::ImportedModelIsCurrent(const std::string& path) const {
+    const auto signature = m_importedSignatures.find(path);
+    return signature != m_importedSignatures.end() &&
+           signature->second == FileSignature(ResolvePath(path));
+}
+
+void AssetManager::DropEmbeddedCache() {
+    std::unordered_set<const Texture*> embedded;
+    for (const auto& [key, texture] : m_embeddedTextures) {
+        (void)key;
+        if (texture) embedded.insert(texture.get());
+    }
+    for (auto it = m_textures.begin(); it != m_textures.end();) {
+        if (it->second && embedded.count(it->second.get())) {
+            it = m_textures.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    m_embeddedTextures.clear();
+    m_embeddedSources.clear();
 }
 
 void AssetManager::ReleaseUnusedAssets(const std::vector<std::string>& retainedModels) {
@@ -1467,17 +1508,69 @@ void AssetManager::SaveImportCache() const {
         (void)model;
         modelPaths.insert(modelPath);
     }
-    if (modelPaths.empty()) {
+
+    std::vector<std::pair<std::string, const LoadedModel*>> models;
+    std::unordered_set<std::string> referencedTextures;
+    for (const std::string& modelPath : modelPaths) {
+        const LoadedModel* model = nullptr;
+        const auto cached = m_models.find(modelPath);
+        if (cached != m_models.end()) {
+            model = &cached->second;
+        } else {
+            const auto imported = m_importedModels.find(modelPath);
+            if (imported != m_importedModels.end()) model = &imported->second;
+        }
+        if (!model) continue;
+        const auto signature = m_importedSignatures.find(modelPath);
+        // Never store a model under a signature it was not imported with:
+        // that is how a changed glTF used to keep its old embedded textures.
+        if (signature == m_importedSignatures.end() ||
+            signature->second != FileSignature(ResolvePath(modelPath))) {
+            spdlog::warn("[AssetManager] Not caching changed model: {}",
+                         modelPath);
+            continue;
+        }
+        models.emplace_back(modelPath, model);
+        for (const auto& material : model->materials) {
+            if (!material) continue;
+            const std::shared_ptr<Texture> maps[] = {
+                material->albedoMap, material->metallicRoughnessMap,
+                material->metallicMap, material->roughnessMap,
+                material->normalMap, material->emissiveMap,
+                material->occlusionMap, material->opacityMap,
+                material->specularMap, material->landscapeAlbedoMap,
+                material->landscapeOrmMap, material->landscapeNormalMap};
+            for (const auto& texture : maps) {
+                if (!texture || texture->Path().empty()) continue;
+                const std::string key = LowerAssetPath(texture->Path());
+                referencedTextures.insert(key);
+                referencedTextures.insert(LowerAssetPath(AssetBaseName(key)));
+            }
+        }
+    }
+    if (models.empty()) {
         // Don't replace a valid cache with an empty one after opening an
         // empty scene or closing before any model is loaded.
         return;
     }
 
+    // Keep only embedded sources used by the models being written, so a
+    // skipped (changed) model cannot leave its old textures in the cache.
+    sources.erase(
+        std::remove_if(sources.begin(), sources.end(),
+                       [&](const SourceRecord& record) {
+            for (const std::string& key : record.keys) {
+                if (referencedTextures.count(key)) return false;
+            }
+            return true;
+        }),
+        sources.end());
+
     std::vector<uint8_t> out;
     out.insert(out.end(), kModelCacheMagic, kModelCacheMagic + 8);
     CacheWriteU32(out, kModelCacheVersion);
     CacheWriteU32(out, static_cast<uint32_t>(sources.size()));
-    CacheWriteU32(out, static_cast<uint32_t>(modelPaths.size()));
+    CacheWriteU32(out, static_cast<uint32_t>(models.size()));
 
     for (const SourceRecord& record : sources) {
         const EmbeddedTextureSource& source = *record.source;
@@ -1494,41 +1587,11 @@ void AssetManager::SaveImportCache() const {
         }
     }
 
-    for (const std::string& modelPath : modelPaths) {
-        const LoadedModel* model = nullptr;
-        const auto cached = m_models.find(modelPath);
-        if (cached != m_models.end()) {
-            model = &cached->second;
-        } else {
-            const auto imported = m_importedModels.find(modelPath);
-            if (imported != m_importedModels.end()) model = &imported->second;
-        }
-        if (!model) continue;
+    for (const auto& [modelPath, model] : models) {
         CacheWriteString(out, modelPath);
         const auto signature = m_importedSignatures.find(modelPath);
-        uint64_t fileSize = 0;
-        uint64_t fileTime = 0;
-        if (signature != m_importedSignatures.end()) {
-            fileSize = signature->second.first;
-            fileTime = signature->second.second;
-        } else {
-            const std::string resolved = ResolvePath(modelPath);
-            std::error_code ec;
-            fileSize = std::filesystem::is_regular_file(resolved, ec)
-                ? static_cast<uint64_t>(
-                      std::filesystem::file_size(resolved, ec))
-                : 0;
-            if (!ec) {
-                const auto time =
-                    std::filesystem::last_write_time(resolved, ec);
-                if (!ec) {
-                    fileTime = static_cast<uint64_t>(
-                        time.time_since_epoch().count());
-                }
-            }
-        }
-        CacheWriteU64(out, fileSize);
-        CacheWriteU64(out, fileTime);
+        CacheWriteU64(out, signature->second.first);
+        CacheWriteU64(out, signature->second.second);
         CacheWriteLoadedModel(*model, out);
     }
 
@@ -1549,13 +1612,16 @@ bool AssetManager::LoadImportCache() {
             return false;
         }
         reader.pos = 8;
-        if (reader.U32() != kModelCacheVersion) return false;
+        if (reader.U32() != kModelCacheVersion) {
+            spdlog::info(
+                "[AssetManager] Rebuilding model cache: version changed");
+            return false;
+        }
         const uint64_t sourceCount = reader.U32();
         const uint64_t modelCount = reader.U32();
         if (sourceCount > 100000 || modelCount > 100000) return false;
 
-        m_embeddedSources.clear();
-        m_embeddedTextures.clear();
+        DropEmbeddedCache();
         m_importedModels.clear();
         m_importedSignatures.clear();
 
@@ -1586,6 +1652,7 @@ bool AssetManager::LoadImportCache() {
             }
         }
 
+        bool stale = false;
         for (uint64_t i = 0; i < modelCount; ++i) {
             const std::string modelPath = reader.String();
             const uint64_t fileSize = reader.U64();
@@ -1594,8 +1661,9 @@ bool AssetManager::LoadImportCache() {
 
             const std::string resolved = ResolvePath(modelPath);
             std::error_code ec;
-            bool valid = std::filesystem::is_regular_file(resolved, ec);
-            if (valid && fileSize > 0) {
+            bool valid = fileSize > 0 &&
+                std::filesystem::is_regular_file(resolved, ec);
+            if (valid) {
                 valid = std::filesystem::file_size(resolved, ec) == fileSize;
             }
             if (valid && fileTime > 0) {
@@ -1604,21 +1672,39 @@ bool AssetManager::LoadImportCache() {
                     static_cast<uint64_t>(time.time_since_epoch().count()) ==
                         fileTime;
             }
-            if (valid && (!model.meshes.empty() || model.hasAnimation)) {
+            if (!valid) {
+                stale = true;
+                spdlog::warn(
+                    "[AssetManager] Model cache is stale for {}: rebuilding",
+                    modelPath);
+                continue;
+            }
+            if (!model.meshes.empty() || model.hasAnimation) {
                 m_importedModels[modelPath] = std::move(model);
                 m_importedSignatures[modelPath] = {fileSize, fileTime};
             }
         }
+        if (stale) {
+            // Embedded sources are shared by name, so one stale model makes
+            // every texture lookup from this cache suspect.
+            DropEmbeddedCache();
+            m_importedModels.clear();
+            m_importedSignatures.clear();
+            return false;
+        }
         spdlog::info("[AssetManager] Loaded model cache: {} models",
                      m_importedModels.size());
-        return !m_importedModels.empty();
+        if (m_importedModels.empty()) {
+            DropEmbeddedCache();
+            return false;
+        }
+        return true;
     } catch (const std::exception& e) {
         spdlog::warn("[AssetManager] Could not read model cache {}: {}",
                      path, e.what());
         m_importedModels.clear();
         m_importedSignatures.clear();
-        m_embeddedSources.clear();
-        m_embeddedTextures.clear();
+        DropEmbeddedCache();
         return false;
     }
 }
@@ -1630,12 +1716,22 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
     if (it != m_models.end()) return it->second;
     auto imported = m_importedModels.find(path);
     if (imported != m_importedModels.end()) {
-        m_models[path] = imported->second;
-        spdlog::info("[AssetManager] Using imported model cache: {}", path);
-        return imported->second;
+        if (ImportedModelIsCurrent(path)) {
+            m_models[path] = imported->second;
+            spdlog::info("[AssetManager] Using imported model cache: {}", path);
+            return imported->second;
+        }
+        spdlog::info("[AssetManager] Model changed on disk, reimporting: {}",
+                     path);
+        m_importedModels.erase(imported);
+        m_importedSignatures.erase(path);
     }
 
     spdlog::info("[AssetManager] === Loading: {} ===", path);
+    // Capture the source signature before reading so the uploaded embedded
+    // textures and the cached model always describe the same file version.
+    const std::pair<uint64_t, uint64_t> sourceSignature =
+        FileSignature(ResolvePath(path));
 
     LoadedModel out;
     auto importer = std::make_shared<Assimp::Importer>();
@@ -1752,6 +1848,11 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         return true;
     };
 
+    // Fresh imports replace previously retained sources so a changed embedded
+    // texture is never served from an older model.
+    std::unordered_map<int, std::shared_ptr<EmbeddedTextureSource>>
+        importedSources;
+
     auto loadEmbeddedTexture = [&](int index, const std::string& reference,
                                    bool srgb,
                                    bool flipVertically) -> std::shared_ptr<Texture> {
@@ -1761,28 +1862,34 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
         std::string displayPath = NormalizeAssetPath(reference);
         if (displayPath.empty() || displayPath[0] == '*') displayPath = embeddedName;
 
-        const std::string cacheKey = "embedded:" + std::to_string(index) + ":" +
-                                     (srgb ? "srgb:" : "linear:") +
-                                     (flipVertically ? "flip:" : "top-left:") +
-                                     embeddedName;
+        // Key by model and source version: reimporting a changed file must not
+        // return a texture uploaded for the previous version.
+        const std::string cacheKey =
+            "embedded:" + path + ":" +
+            std::to_string(sourceSignature.first) + ":" +
+            std::to_string(sourceSignature.second) + ":" +
+            std::to_string(index) + ":" +
+            (srgb ? "srgb:" : "linear:") +
+            (flipVertically ? "flip:" : "top-left:") + embeddedName;
         auto cached = m_textures.find(cacheKey);
         if (cached != m_textures.end()) return cached->second;
 
-        if (embedded->pcData && embedded->mWidth > 0 &&
-            !displayPath.empty() &&
-            m_embeddedSources.find(LowerAssetPath(displayPath)) ==
-                m_embeddedSources.end()) {
-            auto source = std::make_shared<EmbeddedTextureSource>();
-            source->displayPath = displayPath;
-            source->width = static_cast<int>(embedded->mWidth);
-            source->height = static_cast<int>(embedded->mHeight);
-            const std::size_t bytes = embedded->mHeight == 0
-                ? static_cast<std::size_t>(embedded->mWidth)
-                : static_cast<std::size_t>(embedded->mWidth) *
-                      static_cast<std::size_t>(embedded->mHeight) * 4u;
-            source->data.assign(
-                reinterpret_cast<const unsigned char*>(embedded->pcData),
-                reinterpret_cast<const unsigned char*>(embedded->pcData) + bytes);
+        if (embedded->pcData && embedded->mWidth > 0 && !displayPath.empty()) {
+            auto& source = importedSources[index];
+            if (!source) {
+                source = std::make_shared<EmbeddedTextureSource>();
+                source->displayPath = displayPath;
+                source->width = static_cast<int>(embedded->mWidth);
+                source->height = static_cast<int>(embedded->mHeight);
+                const std::size_t bytes = embedded->mHeight == 0
+                    ? static_cast<std::size_t>(embedded->mWidth)
+                    : static_cast<std::size_t>(embedded->mWidth) *
+                          static_cast<std::size_t>(embedded->mHeight) * 4u;
+                source->data.assign(
+                    reinterpret_cast<const unsigned char*>(embedded->pcData),
+                    reinterpret_cast<const unsigned char*>(embedded->pcData) +
+                        bytes);
+            }
             auto remember = [&](const std::string& key) {
                 if (!key.empty()) m_embeddedSources[key] = source;
             };
@@ -2533,23 +2640,7 @@ AssetManager::LoadedModel AssetManager::LoadModel(const std::string& originalPat
     }
 
     m_models[path] = out;
-    {
-        const std::string resolved = ResolvePath(path);
-        std::error_code ec;
-        const uint64_t fileSize =
-            std::filesystem::is_regular_file(resolved, ec)
-                ? static_cast<uint64_t>(std::filesystem::file_size(resolved, ec))
-                : 0;
-        uint64_t fileTime = 0;
-        if (!ec) {
-            const auto time = std::filesystem::last_write_time(resolved, ec);
-            if (!ec) {
-                fileTime = static_cast<uint64_t>(
-                    time.time_since_epoch().count());
-            }
-        }
-        m_importedSignatures[path] = {fileSize, fileTime};
-    }
+    m_importedSignatures[path] = sourceSignature;
     spdlog::info("[AssetManager] === Loaded: {} ({} meshes, {} mats, {} bones) ===",
                  path, out.meshes.size(), out.materials.size(), nextBoneIndex);
     return out;
@@ -2567,8 +2658,12 @@ const AssetManager::LoadedModel& AssetManager::LoadModelRef(
 
     auto imported = m_importedModels.find(path);
     if (imported != m_importedModels.end()) {
-        const auto result = m_models.emplace(path, imported->second);
-        return result.first->second;
+        if (ImportedModelIsCurrent(path)) {
+            const auto result = m_models.emplace(path, imported->second);
+            return result.first->second;
+        }
+        m_importedModels.erase(imported);
+        m_importedSignatures.erase(path);
     }
 
     // Let the value API populate both caches, then return the stable entry.
