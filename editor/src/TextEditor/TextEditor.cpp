@@ -50,7 +50,7 @@ TextEditor::TextEditor()
 	, mShowWhitespaces(true)
 	, mStartTime(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count())
 {
-	SetPalette(GetDarkPalette());
+	SetPalette(GetVSCodeDarkPalette());
 	SetLanguageDefinition(LanguageDefinition::HLSL());
 	mLines.push_back(Line());
 }
@@ -2052,6 +2052,35 @@ const TextEditor::Palette & TextEditor::GetDarkPalette()
 			0x40000000, // Current line fill
 			0x40808080, // Current line fill (inactive)
 			0x40a0a0a0, // Current line edge
+		} };
+	return p;
+}
+
+const TextEditor::Palette & TextEditor::GetVSCodeDarkPalette()
+{
+	// VS Code Dark+ token colors.
+	const static Palette p = { {
+			IM_COL32(0xD4, 0xD4, 0xD4, 0xFF), // Default
+			IM_COL32(0x56, 0x9C, 0xD6, 0xFF), // Keyword
+			IM_COL32(0xB5, 0xCE, 0xA8, 0xFF), // Number
+			IM_COL32(0xCE, 0x91, 0x78, 0xFF), // String
+			IM_COL32(0xCE, 0x91, 0x78, 0xFF), // Char literal
+			IM_COL32(0xD4, 0xD4, 0xD4, 0xFF), // Punctuation
+			IM_COL32(0xC5, 0x86, 0xC0, 0xFF), // Preprocessor
+			IM_COL32(0x9C, 0xDC, 0xFE, 0xFF), // Identifier
+			IM_COL32(0x4E, 0xC9, 0xB0, 0xFF), // Known identifier
+			IM_COL32(0xD7, 0xBA, 0x7D, 0xFF), // Preproc identifier
+			IM_COL32(0x6A, 0x99, 0x55, 0xFF), // Comment (single line)
+			IM_COL32(0x6A, 0x99, 0x55, 0xFF), // Comment (multi line)
+			IM_COL32(0x1E, 0x1E, 0x1E, 0xFF), // Background
+			IM_COL32(0xAE, 0xAF, 0xAD, 0xFF), // Cursor
+			IM_COL32(0x26, 0x4F, 0x78, 0x80), // Selection
+			IM_COL32(0xF4, 0x47, 0x47, 0x80), // ErrorMarker
+			IM_COL32(0xE5, 0x14, 0x00, 0x80), // Breakpoint
+			IM_COL32(0x85, 0x85, 0x85, 0xFF), // Line number
+			IM_COL32(0x28, 0x28, 0x28, 0x40), // Current line fill
+			IM_COL32(0x28, 0x28, 0x28, 0x20), // Current line fill (inactive)
+			IM_COL32(0x80, 0x80, 0x80, 0x40), // Current line edge
 		} };
 	return p;
 }

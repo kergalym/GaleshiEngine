@@ -266,6 +266,7 @@ public:
 	void Redo(int aSteps = 1);
 
 	static const Palette& GetDarkPalette();
+	static const Palette& GetVSCodeDarkPalette();
 	static const Palette& GetLightPalette();
 	static const Palette& GetRetroBluePalette();
 

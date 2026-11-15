@@ -15,7 +15,7 @@
         m_codeEditor.SetLanguageDefinition(
             cppMode || shader ? TextEditor::LanguageDefinition::CPlusPlus()
                               : TextEditor::LanguageDefinition::Lua());
-        m_codeEditor.SetPalette(TextEditor::GetDarkPalette());
+        m_codeEditor.SetPalette(TextEditor::GetVSCodeDarkPalette());
         m_codeEditor.SetText(text);
         m_codeEditorInitialized = true;
         m_codeEditorSyntaxErrors.clear();
@@ -629,7 +629,7 @@
                 m_codeEditorCppMode
                     ? TextEditor::LanguageDefinition::CPlusPlus()
                     : TextEditor::LanguageDefinition::Lua());
-            m_codeEditor.SetPalette(TextEditor::GetDarkPalette());
+            m_codeEditor.SetPalette(TextEditor::GetVSCodeDarkPalette());
             m_codeEditor.SetText(
                 "-- Select a .lua, .cpp, .glsl, .hlsl or .mat file from Content Browser");
             m_codeEditorInitialized = true;
