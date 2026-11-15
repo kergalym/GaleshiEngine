@@ -1,4 +1,5 @@
 #include "GaleshiEditorApp.hpp"
+#include "GaleshiEngine/Api/Version.hpp"
 
 
 
@@ -1356,6 +1357,39 @@ if (ImGui::BeginMenu("File")) {
                 } else {
                     StopPlay();
                 }
+            }
+            ImGui::End();
+        }
+
+        // Bottom status bar: app version on the left and the loaded scene in
+        // the bottom-right corner. The full path is in the scene tooltip.
+        const float statusBarHeight =
+            ImGui::GetTextLineHeight() + style.WindowPadding.y * 2.0f + 1.0f;
+        if (ImGui::BeginViewportSideBar(
+                "##EditorStatusBar", ImGui::GetMainViewport(),
+                ImGuiDir_Down, statusBarHeight,
+                ImGuiWindowFlags_NoScrollbar |
+                ImGuiWindowFlags_NoScrollWithMouse |
+                ImGuiWindowFlags_NoSavedSettings)) {
+            const std::string versionLabel =
+                std::string("v") + Galeshi::Api::VersionString();
+            ImGui::TextUnformatted(versionLabel.c_str());
+
+            const std::string sceneName = m_currentScenePath.empty()
+                ? "Untitled"
+                : std::filesystem::path(m_currentScenePath)
+                      .filename().string();
+            const std::string sceneLabel = "Scene: " + sceneName;
+            const float textWidth =
+                ImGui::CalcTextSize(sceneLabel.c_str()).x;
+            ImGui::SameLine();
+            const float rightEdge =
+                ImGui::GetCursorPosX() +
+                ImGui::GetContentRegionAvail().x;
+            ImGui::SetCursorPosX(rightEdge - textWidth);
+            ImGui::TextUnformatted(sceneLabel.c_str());
+            if (!m_currentScenePath.empty() && ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", m_currentScenePath.c_str());
             }
             ImGui::End();
         }
