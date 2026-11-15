@@ -49,8 +49,14 @@ void AISystem::Update(Scene& scene, float dt, NavigationSystem* navSystem) {
         glm::vec3 delta  = target - tc.position;
         float dist       = glm::length(delta);
 
-        // Reached current waypoint -> advance
-        if (dist < 0.05f) {
+        // Reached current waypoint -> advance. The final waypoint uses the
+        // agent's stopping distance so a target can be accepted before the
+        // exact point; intermediate waypoints still need a tight radius.
+        const bool finalWaypoint =
+            agent.currentWaypoint + 1 >= agent.path.size();
+        const float stopDistance =
+            finalWaypoint ? std::max(0.0f, agent.stoppingDistance) : 0.0f;
+        if (dist < 0.05f || (finalWaypoint && dist <= stopDistance)) {
             agent.currentWaypoint++;
             if (agent.currentWaypoint >= agent.path.size()) {
                 agent.path.clear();

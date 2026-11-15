@@ -565,15 +565,13 @@ bool BehaviorTreeFromJson(const nlohmann::json& json,
                                          0.05f, 0.0f, 60.0f);
                         break;
                     case Galeshi::BehaviorAction::MoveToTarget:
-                        ImGui::DragFloat("Arrive Range", &node.range,
-                                         0.05f, 0.0f, 20.0f);
                         ImGui::DragFloat("Acceptance Radius",
                                          &node.acceptanceRadius,
                                          0.05f, 0.0f, 20.0f);
                         if (ImGui::IsItemHovered()) {
                             ImGui::SetTooltip(
                                 "Distance at which the move counts as "
-                                "arrived.\n0 = automatic (Arrive Range x 0.25).");
+                                "arrived.\n0 = 0.25 m default.");
                         }
                         break;
                     case Galeshi::BehaviorAction::Patrol:

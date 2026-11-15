@@ -306,13 +306,29 @@ int TickAction(Scene& scene, TickContext& ctx, BehaviorTreeNode& node) {
 
             const glm::vec3 target = TargetPosition(scene, *ctx.perception);
             const float distance = ExtractionDistance(ctx.transform->position, target);
-            const float arrivalRadius = node.acceptanceRadius > 0.0f
+            // UE4-style: Acceptance Radius is the only stop distance.
+            // 0 falls back to 0.25 m so an unset node still stops short.
+            const float acceptanceRadius = node.acceptanceRadius > 0.0f
                 ? node.acceptanceRadius
-                : std::max(0.25f, node.range * 0.25f);
-            if (distance <= arrivalRadius) return kSuccess;
+                : 0.25f;
+            if (distance <= acceptanceRadius) {
+                // A path was already issued to the exact target. Without
+                // cancelling it, AISystem keeps walking into the goal even
+                // though the tree reports arrival.
+                if (ctx.agent) {
+                    ctx.agent->path.clear();
+                    ctx.agent->currentWaypoint = 0;
+                    ctx.agent->hasTarget = false;
+                }
+                return kSuccess;
+            }
 
             SetStateIfPresent(scene, ctx.entity, "Run");
             if (ctx.agent) {
+                // Keep the active path in sync with the node. Changing the
+                // acceptance radius must affect a chase already in progress,
+                // not only the next target that gets issued.
+                ctx.agent->stoppingDistance = acceptanceRadius;
                 const bool targetMoved = glm::distance(ctx.agent->targetPosition, target) > 0.75f;
                 if (ctx.agent->path.empty() && (!ctx.agent->hasTarget || targetMoved)) {
                     ctx.agent->targetPosition = target;
@@ -321,7 +337,8 @@ int TickAction(Scene& scene, TickContext& ctx, BehaviorTreeNode& node) {
                 return kRunning;
             }
 
-            const bool arrived = MoveDirectly(*ctx.transform, target, 3.0f, ctx.dt, 0.35f);
+            const bool arrived = MoveDirectly(*ctx.transform, target, 3.0f, ctx.dt,
+                                             acceptanceRadius);
             return arrived ? kSuccess : kRunning;
         }
 
@@ -335,6 +352,9 @@ int TickAction(Scene& scene, TickContext& ctx, BehaviorTreeNode& node) {
             SetStateIfPresent(scene, ctx.entity, "Walk");
             if (!ctx.agent) return kFailure;
 
+            // MoveToTarget overwrites this shared field; patrol points use
+            // the nav agent's default stop distance.
+            ctx.agent->stoppingDistance = 0.5f;
             if (ctx.agent->path.empty() && !ctx.agent->hasTarget) {
                 if (node.elapsed > 0.0f) {
                     node.elapsed -= std::max(0.0f, ctx.dt);
@@ -364,6 +384,14 @@ int TickAction(Scene& scene, TickContext& ctx, BehaviorTreeNode& node) {
                 node.elapsed = 0.0f;
                 node.lastStatus = kFailure;
                 return kFailure;
+            }
+            // Stop any chase path left over from the selector's Chase branch;
+            // otherwise the agent keeps walking into the target while it
+            // attacks.
+            if (ctx.agent) {
+                ctx.agent->path.clear();
+                ctx.agent->currentWaypoint = 0;
+                ctx.agent->hasTarget = false;
             }
             const glm::vec3 target = TargetPosition(scene, *ctx.perception);
             FaceTarget(*ctx.transform, target);
