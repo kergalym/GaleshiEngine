@@ -2634,7 +2634,7 @@ void GaleshiEditorApp::DrawDetails() {
         // --- Material preset export/import ------------------------------
         // One .matp per character in scripts/. The file is JSON with the
         // same material schema the scene uses, so it survives schema bumps.
-        if (!selectedPhysicsShapeWithMesh &&
+        if (!selectedPhysicsShapeWithMesh && !selectedIsLandscape &&
             (selectionHasMaterials || selectedHasOwnMesh)) {
             // The preset always targets the whole character: selecting any
             // sub-mesh walks up to the nearest skeletal ancestor, so the
@@ -2824,12 +2824,6 @@ void GaleshiEditorApp::DrawDetails() {
                                     matc->material->opacityMap;
                                 imported->specularMap =
                                     matc->material->specularMap;
-                                imported->landscapeAlbedoMap =
-                                    matc->material->landscapeAlbedoMap;
-                                imported->landscapeOrmMap =
-                                    matc->material->landscapeOrmMap;
-                                imported->landscapeNormalMap =
-                                    matc->material->landscapeNormalMap;
                                 *matc->material = *imported;
                                 matc->material->sceneOverride = true;
                                 return true;
