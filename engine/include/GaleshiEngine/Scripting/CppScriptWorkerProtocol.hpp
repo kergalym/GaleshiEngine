@@ -230,6 +230,8 @@ enum class CppWorkerRequest : uint32_t {
     SetVariable = 207,
     GetVariable = 208,
     FindAnimationEntity = 209,
+    SetCameraOrientToPlayer = 210,
+    GetCameraOrientToPlayer = 211,
 };
 
 constexpr std::size_t kCppWorkerTextSize = 512;

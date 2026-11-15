@@ -160,6 +160,13 @@ bool ScriptEngine::MakeWorkerCoreResponse(
             response.valid = 1;
         }
         break;
+    case CppWorkerRequest::GetCameraOrientToPlayer:
+        response.valid = m_orientToPlayer ? 1u : 0u;
+        break;
+    case CppWorkerRequest::SetCameraOrientToPlayer:
+        m_orientToPlayer = request.entity != 0;
+        response.valid = 1;
+        break;
     case CppWorkerRequest::CompileShader:
         if (m_compileShader) {
             std::string error;

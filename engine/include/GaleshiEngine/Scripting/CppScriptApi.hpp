@@ -536,9 +536,15 @@ struct GaleshiScriptApi {
     // Finds the first entity at or below root that owns an animation state
     // machine. Useful when a character is nested under a body/wrapper root.
     uint32_t (*find_animation_entity)(void* user, uint32_t root) = nullptr;
+
+    // Selects the gameplay camera's yaw/pitch source. When enabled the camera
+    // follows the Player root (useful when the visible character is rotated
+    // independently); when disabled it follows the nearest visual ancestor.
+    bool (*get_camera_orient_to_player)(void* user) = nullptr;
+    void (*set_camera_orient_to_player)(void* user, bool enabled) = nullptr;
 };
 
-inline constexpr uint32_t kGaleshiScriptApiVersion = 23;
+inline constexpr uint32_t kGaleshiScriptApiVersion = 24;
 
 inline float GaleshiInterpFactor(float deltaTime, float speed) {
     if (speed <= 0.0f) return 1.0f;

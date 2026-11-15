@@ -139,6 +139,10 @@ public:
                     std::function<glm::vec3()> getRight = {});
     void BindPlayer(std::function<bool()> getStrafing,
                     std::function<void(bool)> setStrafing);
+    bool CameraOrientToPlayer() const { return m_orientToPlayer; }
+    void SetCameraOrientToPlayer(bool enabled) {
+        m_orientToPlayer = enabled;
+    }
     void BindShader(
         std::function<bool(const std::string&, std::string&)> compileShader);
 
@@ -268,6 +272,7 @@ private:
     std::function<int()> m_getCameraMode;
     std::function<glm::vec3()> m_getCameraForward;
     std::function<glm::vec3()> m_getCameraRight;
+    bool m_orientToPlayer = false;
     std::function<bool()> m_getPlayerStrafing;
     std::function<void(bool)> m_setPlayerStrafing;
     std::function<bool(const std::string&, std::string&)> m_compileShader;

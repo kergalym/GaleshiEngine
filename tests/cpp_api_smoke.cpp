@@ -22,6 +22,11 @@ static void ExerciseApi(const GaleshiScriptApi* raw) {
     api.input.MouseDelta();
     api.input.MouseWheel();
 
+    api.camera.Forward();
+    api.camera.Movement(1.0f, 1.0f);
+    api.camera.SetOrientToPlayer(true);
+    api.camera.OrientToPlayer();
+
     api.physics.AttachBox(entity, {0.5f, 0.5f, 0.5f});
     api.physics.ApplyImpulse(entity, {0.0f, 1.0f, 0.0f});
     api.physics.CreateRagdoll(entity);

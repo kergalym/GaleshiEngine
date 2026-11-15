@@ -104,6 +104,7 @@
     entt::entity GaleshiEditorApp::FindGameplayCameraOrientationTarget(
         entt::entity cameraEntity) {
         auto& reg = m_scene.Registry();
+        const bool orientToPlayer = m_scripts.CameraOrientToPlayer();
         entt::entity characterAncestor = entt::null;
         entt::entity playerAncestor = entt::null;
         entt::entity current = cameraEntity;
@@ -111,11 +112,13 @@
             if (!reg.all_of<Galeshi::ParentComponent>(current)) break;
             current = reg.get<Galeshi::ParentComponent>(current).parent;
             if (current == entt::null) break;
-            if (reg.all_of<Galeshi::TransformComponent>(current) &&
-                (reg.all_of<Galeshi::PlayerTagComponent>(current) ||
-                 (reg.all_of<Galeshi::NameComponent>(current) &&
-                  reg.get<Galeshi::NameComponent>(current).name == "Player"))) {
-                playerAncestor = current;
+            if (orientToPlayer) {
+                if (reg.all_of<Galeshi::TransformComponent>(current) &&
+                    (reg.all_of<Galeshi::PlayerTagComponent>(current) ||
+                     (reg.all_of<Galeshi::NameComponent>(current) &&
+                      reg.get<Galeshi::NameComponent>(current).name == "Player"))) {
+                    playerAncestor = current;
+                }
             }
             if (characterAncestor == entt::null &&
                 (reg.all_of<Galeshi::SkeletalComponent>(current) ||
@@ -124,7 +127,9 @@
                 characterAncestor = current;
             }
         }
-        if (playerAncestor != entt::null) return playerAncestor;
+        if (orientToPlayer && playerAncestor != entt::null) {
+            return playerAncestor;
+        }
         return characterAncestor;
     }
 

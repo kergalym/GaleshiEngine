@@ -345,6 +345,10 @@ public:
         m_api.set_variable = &ScriptWorker::SetVariable;
         m_api.get_variable = &ScriptWorker::GetVariable;
         m_api.find_animation_entity = &ScriptWorker::FindAnimationEntity;
+        m_api.get_camera_orient_to_player =
+            &ScriptWorker::GetCameraOrientToPlayer;
+        m_api.set_camera_orient_to_player =
+            &ScriptWorker::SetCameraOrientToPlayer;
         m_api.get_axis_raw = &ScriptWorker::GetAxisRaw;
         m_api.is_mouse_button_down = &ScriptWorker::MouseButtonDown;
         m_api.get_mouse_position = &ScriptWorker::GetMousePosition;
@@ -2733,6 +2737,20 @@ private:
         if (!user) return;
         static_cast<ScriptWorker*>(user)->Request(
             CppWorkerRequest::SetPlayerStrafing,
+            enabled ? 1u : 0u);
+    }
+
+    static bool GetCameraOrientToPlayer(void* user) {
+        if (!user) return false;
+        return static_cast<ScriptWorker*>(user)
+            ->Request(CppWorkerRequest::GetCameraOrientToPlayer, UINT32_MAX)
+            .valid != 0;
+    }
+
+    static void SetCameraOrientToPlayer(void* user, bool enabled) {
+        if (!user) return;
+        static_cast<ScriptWorker*>(user)->Request(
+            CppWorkerRequest::SetCameraOrientToPlayer,
             enabled ? 1u : 0u);
     }
 

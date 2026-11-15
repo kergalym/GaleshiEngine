@@ -1418,6 +1418,17 @@ public:
             : Vec3{};
     }
 
+    bool OrientToPlayer() const {
+        return m_api && m_api->get_camera_orient_to_player &&
+               m_api->get_camera_orient_to_player(m_api->user);
+    }
+
+    void SetOrientToPlayer(bool enabled) const {
+        if (m_api && m_api->set_camera_orient_to_player) {
+            m_api->set_camera_orient_to_player(m_api->user, enabled);
+        }
+    }
+
 private:
     const GaleshiScriptApi* m_api = nullptr;
 };
