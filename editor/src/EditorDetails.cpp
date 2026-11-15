@@ -147,7 +147,15 @@ void GaleshiEditorApp::DrawDetails() {
             auto& nc = selected[0].GetComponent<Galeshi::NameComponent>();
             if (searchContains(nc.name.c_str())) detailsAnyMatch = true;
             char buf[256]; std::snprintf(buf, sizeof(buf), "%s", nc.name.c_str());
-            if (ImGui::InputText("Name", buf, sizeof(buf))) nc.name = buf;
+            const bool nameEdited = ImGui::InputText("Name", buf, sizeof(buf));
+            if (ImGui::IsItemActivated()) {
+                // Commit a previous field first; otherwise selecting another
+                // entity would overwrite its pending old name.
+                ProcessPendingEntityModelRename();
+                m_pendingModelRenameEntity = selected[0].Handle();
+                m_pendingModelRenameOldName = nc.name;
+            }
+            if (nameEdited) nc.name = buf;
         }
 
         // Player is a plain gameplay entity: only Name and Transform are

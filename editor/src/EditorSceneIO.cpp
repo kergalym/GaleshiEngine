@@ -60,6 +60,7 @@ bool IsInsideProject(const std::filesystem::path& scenePath,
     // -------------------------------------------------------------------
     void GaleshiEditorApp::PushHistory() {
         if (m_isRestoringHistory) return;
+        ProcessPendingEntityModelRename();
         std::string snap = m_serializer->SaveToString();
         if (m_historyIndex >= 0 && m_history[m_historyIndex] == snap) return;
 
@@ -130,6 +131,7 @@ bool IsInsideProject(const std::filesystem::path& scenePath,
     // -------------------------------------------------------------------
     void GaleshiEditorApp::SaveSceneToPath(const std::string& path) {
         if (!m_serializer || path.empty()) return;
+        ProcessPendingEntityModelRename();
         CaptureSceneViewState();
         SyncCodeEditorStateToSerializer();
         if (m_browser) {
@@ -176,6 +178,9 @@ bool IsInsideProject(const std::filesystem::path& scenePath,
 
     void GaleshiEditorApp::StopPlay() {
         if (!m_editor.isPlaying) return;
+        // Play edits are discarded when the snapshot is restored.
+        m_pendingModelRenameEntity = entt::null;
+        m_pendingModelRenameOldName.clear();
         SetViewportInputFocus(false);
         EndGameMouseLook();
         EndEditorMouseLook();

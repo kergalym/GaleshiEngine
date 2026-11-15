@@ -546,6 +546,25 @@
                       return a.material.get() < b.material.get();
                   });
 
+        // Entity names are authored data, not Assimp mesh names. Keep them
+        // when the replacement model recreates the primitive entities.
+        // shortcut: names follow primitive index; a replacement with reordered
+        // primitives can inherit a stale name, upgrade to material matching
+        // if that matters.
+        std::unordered_map<int, std::string> oldMeshNames;
+        for (entt::entity entity : oldMeshEntities) {
+            if (!reg.all_of<Galeshi::MeshComponent,
+                            Galeshi::NameComponent>(entity)) {
+                continue;
+            }
+            const int index =
+                reg.get<Galeshi::MeshComponent>(entity).meshIndex;
+            if (index >= 0) {
+                oldMeshNames[index] =
+                    reg.get<Galeshi::NameComponent>(entity).name;
+            }
+        }
+
         float oldHeight = 0.0f;
         {
             std::vector<std::shared_ptr<Galeshi::Mesh>> oldMeshes;
@@ -702,10 +721,14 @@
                 ++preservedMaterials;
             }
 
+            const auto oldName = oldMeshNames.find(static_cast<int>(i));
             const std::string meshName =
-                (i < newModel.meshNames.size() && !newModel.meshNames[i].empty())
-                    ? newModel.meshNames[i]
-                    : stem + "_" + std::to_string(i);
+                oldName != oldMeshNames.end() && !oldName->second.empty()
+                    ? oldName->second
+                    : (i < newModel.meshNames.size() &&
+                       !newModel.meshNames[i].empty())
+                        ? newModel.meshNames[i]
+                        : stem + "_" + std::to_string(i);
             auto meshEntity = m_scene.CreateEntity(meshName);
             meshEntity.AddComponent<Galeshi::ParentComponent>(
                 Galeshi::ParentComponent{modelContainer.Handle()});
@@ -1032,5 +1055,233 @@
             m_stateMachineEditorEntity = root.Handle();
             m_showStateMachineEditor = true;
         }
+    }
+
+
+
+    namespace {
+        std::string LowerAscii(std::string value) {
+            for (char& c : value) {
+                c = static_cast<char>(
+                    std::tolower(static_cast<unsigned char>(c)));
+            }
+            return value;
+        }
+
+        std::string SafeModelStem(const std::string& name);
+
+        bool ModelStemMatches(const std::string& path,
+                              const std::string& name) {
+            if (path.empty() || name.empty()) return false;
+            const std::string stem = LowerAscii(
+                std::filesystem::path(path).stem().string());
+            return stem == LowerAscii(name) ||
+                   stem == LowerAscii(SafeModelStem(name));
+        }
+
+        // A static model root has no source path of its own; its mesh
+        // children carry the same source. Only treat the root as the owner
+        // when every child agrees on one model.
+        std::string DescendantModelPath(Galeshi::Scene& scene,
+                                        entt::entity root) {
+            auto& reg = scene.Registry();
+            std::vector<entt::entity> descendants{root};
+            std::unordered_set<entt::entity> visited;
+            std::string common;
+            for (size_t head = 0; head < descendants.size(); ++head) {
+                const entt::entity current = descendants[head];
+                if (!visited.insert(current).second) continue;
+                auto children = reg.view<Galeshi::ParentComponent>();
+                for (auto child : children) {
+                    if (children.get<Galeshi::ParentComponent>(child).parent ==
+                        current) {
+                        descendants.push_back(child);
+                    }
+                }
+            }
+            for (entt::entity entity : descendants) {
+                if (entity == root) continue;
+                if (!reg.all_of<Galeshi::MeshComponent>(entity)) continue;
+                const auto& mesh = reg.get<Galeshi::MeshComponent>(entity);
+                if (mesh.sourceAssetPath.empty()) continue;
+                if (common.empty()) {
+                    common = mesh.sourceAssetPath;
+                } else if (common != mesh.sourceAssetPath) {
+                    return {};
+                }
+            }
+            return common;
+        }
+
+        std::string OwnedModelPath(Galeshi::Scene& scene, entt::entity entity,
+                                   const std::string& name) {
+            auto& reg = scene.Registry();
+            if (!reg.valid(entity)) return {};
+            if (auto* skel = reg.try_get<Galeshi::SkeletalComponent>(entity)) {
+                if (ModelStemMatches(skel->sourcePath, name)) {
+                    return skel->sourcePath;
+                }
+            }
+            if (auto* mesh = reg.try_get<Galeshi::MeshComponent>(entity)) {
+                if (ModelStemMatches(mesh->sourceAssetPath, name)) {
+                    return mesh->sourceAssetPath;
+                }
+            }
+            if (reg.all_of<Galeshi::ModelComponent>(entity)) {
+                const std::string path = DescendantModelPath(scene, entity);
+                if (ModelStemMatches(path, name)) return path;
+            }
+            return {};
+        }
+
+        std::string SafeModelStem(const std::string& name) {
+            std::string out;
+            out.reserve(name.size());
+            for (unsigned char c : name) {
+                if (c < 0x20) continue;
+                switch (c) {
+                    case '<': case '>': case ':': case '"': case '/':
+                    case '\\': case '|': case '?': case '*':
+                        out.push_back('_');
+                        break;
+                    default:
+                        out.push_back(static_cast<char>(c));
+                        break;
+                }
+            }
+            const size_t first = out.find_first_not_of(" .");
+            if (first == std::string::npos) return "Model";
+            out.erase(0, first);
+            const size_t last = out.find_last_not_of(" .");
+            out.erase(last + 1);
+            return out.empty() ? "Model" : out;
+        }
+    } // namespace
+
+
+
+    void GaleshiEditorApp::ProcessPendingEntityModelRename() {
+        if (m_pendingModelRenameEntity == entt::null) return;
+
+        const entt::entity entity = m_pendingModelRenameEntity;
+        const std::string oldName = m_pendingModelRenameOldName;
+        m_pendingModelRenameEntity = entt::null;
+        m_pendingModelRenameOldName.clear();
+
+        auto& reg = m_scene.Registry();
+        if (!reg.valid(entity) ||
+            !reg.all_of<Galeshi::NameComponent>(entity)) {
+            return;
+        }
+        const std::string newName =
+            reg.get<Galeshi::NameComponent>(entity).name;
+        if (oldName.empty() || oldName == newName) return;
+        RenameEntityModelAsset(entity, oldName, newName);
+    }
+
+
+
+    bool GaleshiEditorApp::RenameEntityModelAsset(
+        entt::entity entity, const std::string& oldName,
+        const std::string& newName) {
+        if (!m_assets || oldName.empty() || newName.empty() ||
+            oldName == newName) {
+            return false;
+        }
+
+        const std::string oldPath = OwnedModelPath(m_scene, entity, oldName);
+        if (oldPath.empty()) return false;
+
+        std::error_code ec;
+        const std::filesystem::path oldFile(m_assets->ResolvePath(oldPath));
+        if (!std::filesystem::is_regular_file(oldFile, ec) || ec) {
+            spdlog::warn(
+                "[Editor] Cannot rename model for entity '{}': '{}' is "
+                "missing",
+                newName, oldPath);
+            return false;
+        }
+
+        const std::filesystem::path newFile =
+            oldFile.parent_path() /
+            (SafeModelStem(newName) + oldFile.extension().string());
+        if (newFile == oldFile) return false;
+
+        const bool targetExists = std::filesystem::exists(newFile, ec);
+        if (ec) {
+            spdlog::error(
+                "[Editor] Cannot inspect model target '{}': {}",
+                newFile.string(), ec.message());
+            return false;
+        }
+        if (targetExists) {
+            std::error_code sameEc;
+            if (!std::filesystem::equivalent(oldFile, newFile, sameEc) ||
+                sameEc) {
+                spdlog::warn(
+                    "[Editor] Cannot rename model '{}' to '{}': target "
+                    "already exists",
+                    oldPath, newFile.string());
+                return false;
+            }
+        } else {
+            // shortcut: only the model file is renamed; external .bin and
+            // texture sidecars keep their names. Upgrade if multi-file glTF
+            // assets need their sidecars renamed too.
+            std::filesystem::rename(oldFile, newFile, ec);
+            if (ec)
+            {
+                spdlog::error(
+                    "[Editor] Failed to rename model file '{}' to '{}': {}",
+                    oldFile.string(), newFile.string(), ec.message());
+                return false;
+            }
+        }
+
+        const std::string newPath =
+            m_assets->MakeRelativePath(newFile.string());
+        if (newPath.empty() || newPath == oldPath) {
+            return false;
+        }
+
+        auto sameFile = [&](const std::string& path) {
+            if (path == oldPath) return true;
+            if (path.empty()) return false;
+            std::error_code sameEc;
+            return std::filesystem::equivalent(
+                       m_assets->ResolvePath(path), oldFile, sameEc) &&
+                   !sameEc;
+        };
+
+        auto& reg = m_scene.Registry();
+        reg.view<Galeshi::SkeletalComponent>().each(
+            [&](Galeshi::SkeletalComponent& skel) {
+                if (sameFile(skel.sourcePath)) skel.sourcePath = newPath;
+            });
+        reg.view<Galeshi::MeshComponent>().each(
+            [&](Galeshi::MeshComponent& mesh) {
+                if (sameFile(mesh.sourceAssetPath)) {
+                    mesh.sourceAssetPath = newPath;
+                }
+            });
+
+        std::unordered_set<Galeshi::Material*> visited;
+        auto updateMaterial = [&](const std::shared_ptr<Galeshi::Material>& mat) {
+            for (Galeshi::Material* m = mat.get();
+                 m && visited.insert(m).second; m = m->base.get()) {
+                if (sameFile(m->sourcePath)) m->sourcePath = newPath;
+            }
+        };
+        reg.view<Galeshi::MaterialComponent>().each(
+            [&](Galeshi::MaterialComponent& matc) {
+                updateMaterial(matc.material);
+            });
+
+        m_assets->AliasModelPath(oldPath, newPath);
+        spdlog::info(
+            "[Editor] Model file '{}' renamed to '{}' for entity '{}'; "
+            "the old file is kept for undo and other scenes",
+            oldPath, newPath, newName);
+        return true;
     }
 

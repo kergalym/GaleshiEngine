@@ -192,6 +192,8 @@
         m_boneAttachCharacter = entt::null;
         m_boneAttachEntity = entt::null;
         m_boneAttachBone.clear();
+        m_pendingModelRenameEntity = entt::null;
+        m_pendingModelRenameOldName.clear();
         m_scripts.ClearUIEvents();
         m_scripts.ClearTriggerEvents();
         m_audio.StopAll();

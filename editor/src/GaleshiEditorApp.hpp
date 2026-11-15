@@ -246,6 +246,15 @@ private:
 
     void Redo();
 
+    // Entity renames that own a model file are committed on focus loss or
+    // before a history/save snapshot, so the file name and scene paths change
+    // together. The old file stays available for undo and other scenes.
+    void ProcessPendingEntityModelRename();
+
+    bool RenameEntityModelAsset(entt::entity entity,
+                                const std::string& oldName,
+                                const std::string& newName);
+
     // -------------------------------------------------------------------
     // Save / Load / Delete
     // -------------------------------------------------------------------
@@ -354,6 +363,11 @@ private:
     // Prefer a Player in the camera's own hierarchy so a stray Player elsewhere
     // in the scene cannot make an attached camera jump away from its character.
     entt::entity FindGameplayCameraTarget(entt::entity cameraEntity);
+
+    // Yaw/pitch source for the gameplay camera. The position target may be a
+    // locked physics capsule, so the visible Player root is the orientation
+    // source when one exists.
+    entt::entity FindGameplayCameraOrientationTarget(entt::entity cameraEntity);
 
     bool SetGameplayCameraMode(int mode);
 
@@ -820,6 +834,7 @@ void DrawDetails();
     int                     m_gameLookSkipFrames = 0;
     entt::entity            m_activeGameCamera = entt::null;
     entt::entity            m_gameCameraTarget = entt::null;
+    entt::entity            m_gameCameraOrientationTarget = entt::null;
     glm::vec3               m_gameCameraPivotLocal{0.0f};
     glm::vec3               m_gameCameraEyeLocal{0.0f, 1.6f, 0.0f};
     glm::vec3               m_gameCameraBaseOffsetLocal{0.0f};
@@ -956,6 +971,8 @@ void DrawDetails();
     int  m_historyIndex = -1;
     bool m_isRestoringHistory = false;
     bool m_suppressHistory = false;
+    entt::entity m_pendingModelRenameEntity = entt::null;
+    std::string  m_pendingModelRenameOldName;
     bool m_wasUsingGizmo = false;
     bool m_wasSculpting = false;
     entt::entity m_pendingLandscapeBake = entt::null;

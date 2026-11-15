@@ -101,6 +101,35 @@
 
 
 
+    entt::entity GaleshiEditorApp::FindGameplayCameraOrientationTarget(
+        entt::entity cameraEntity) {
+        auto& reg = m_scene.Registry();
+        entt::entity characterAncestor = entt::null;
+        entt::entity playerAncestor = entt::null;
+        entt::entity current = cameraEntity;
+        for (int depth = 0; depth < 128; ++depth) {
+            if (!reg.all_of<Galeshi::ParentComponent>(current)) break;
+            current = reg.get<Galeshi::ParentComponent>(current).parent;
+            if (current == entt::null) break;
+            if (reg.all_of<Galeshi::TransformComponent>(current) &&
+                (reg.all_of<Galeshi::PlayerTagComponent>(current) ||
+                 (reg.all_of<Galeshi::NameComponent>(current) &&
+                  reg.get<Galeshi::NameComponent>(current).name == "Player"))) {
+                playerAncestor = current;
+            }
+            if (characterAncestor == entt::null &&
+                (reg.all_of<Galeshi::SkeletalComponent>(current) ||
+                 reg.all_of<Galeshi::ModelComponent>(current) ||
+                 reg.all_of<Galeshi::MeshComponent>(current))) {
+                characterAncestor = current;
+            }
+        }
+        if (playerAncestor != entt::null) return playerAncestor;
+        return characterAncestor;
+    }
+
+
+
     bool GaleshiEditorApp::SetGameplayCameraMode(int mode) {
         if (mode != GALESHI_CAMERA_THIRD_PERSON &&
             mode != GALESHI_CAMERA_FIRST_PERSON) {
@@ -321,11 +350,25 @@
         const bool validTarget =
             target != entt::null && m_scene.Registry().valid(target);
 
+        entt::entity orientationTarget =
+            FindGameplayCameraOrientationTarget(cameraEntity.Handle());
+        if (orientationTarget != m_gameCameraOrientationTarget) {
+            m_gameCameraOrientationTarget = orientationTarget;
+            m_gameCameraFollowValid = false;
+        }
+        const bool validOrientation =
+            orientationTarget != entt::null &&
+            m_scene.Registry().valid(orientationTarget);
+
         // The camera's own yaw/pitch follow the character model's yaw/pitch.
         // Deltas are applied to the captured base, so the view swings with
-        // the character; mouse-look still orbits on top of it.
+        // the character; mouse-look still orbits on top of it. A locked
+        // physics capsule cannot carry the character's yaw, so use the Player
+        // root (or the nearest visual ancestor) for orientation.
         if (validTarget) {
-            const glm::mat4 targetWorldNow = EntityWorldMatrix(target);
+            const entt::entity followTarget =
+                validOrientation ? orientationTarget : target;
+            const glm::mat4 targetWorldNow = EntityWorldMatrix(followTarget);
             const glm::vec3 targetForwardNow = glm::normalize(
                 glm::vec3(targetWorldNow *
                           glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
@@ -502,6 +545,7 @@
     bool GaleshiEditorApp::ActivateGameplayCamera() {
         m_usingGameCamera = true;
         m_gameCameraTarget = entt::null;
+        m_gameCameraOrientationTarget = entt::null;
         m_gameCameraPivotLocal = glm::vec3(0.0f);
         m_gameCameraEyeLocal = glm::vec3(0.0f, 1.6f, 0.0f);
         m_gameCameraBaseValid = false;

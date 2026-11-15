@@ -80,6 +80,10 @@ public:
     // Import through Assimp once and pin the result for later scene loads.
     // Scene loads never populate this cache; they only consume it.
     LoadedModel ImportModel(const std::string& path);
+    // Move the cached model from oldPath to newPath after an asset rename.
+    // The caller keeps the old file alive so undo and other scenes can still
+    // load it.
+    void AliasModelPath(const std::string& oldPath, const std::string& newPath);
     // Persist/restore the imported-model cache. The editor calls these on
     // scene save and application shutdown/startup.
     void SaveImportCache() const;

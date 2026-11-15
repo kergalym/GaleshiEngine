@@ -1477,6 +1477,31 @@ AssetManager::LoadedModel AssetManager::ImportModel(
     return model;
 }
 
+void AssetManager::AliasModelPath(const std::string& oldPath,
+                                  const std::string& newPath) {
+    const std::string oldRel = MakeRelativePath(oldPath);
+    const std::string newRel = MakeRelativePath(newPath);
+    if (oldRel.empty() || newRel.empty() || oldRel == newRel) return;
+
+    const auto model = m_models.find(oldRel);
+    if (model != m_models.end()) {
+        m_models[newRel] = std::move(model->second);
+        m_models.erase(model);
+    }
+    const auto imported = m_importedModels.find(oldRel);
+    if (imported != m_importedModels.end()) {
+        m_importedModels[newRel] = std::move(imported->second);
+        m_importedModels.erase(imported);
+    }
+    const auto signature = m_importedSignatures.find(oldRel);
+    if (signature != m_importedSignatures.end()) {
+        // Re-read the signature: the rename may have fallen back to a copy,
+        // which gets a fresh write time.
+        m_importedSignatures[newRel] = FileSignature(ResolvePath(newRel));
+        m_importedSignatures.erase(signature);
+    }
+}
+
 void AssetManager::SaveImportCache() const {
     const std::string path = ModelCachePath();
     if (path.empty()) return;
