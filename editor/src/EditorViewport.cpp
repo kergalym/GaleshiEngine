@@ -1541,6 +1541,41 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                 }
             }
 
+            // Cloth brush outline: a circle on the mesh surface so the
+            // painted footprint is visible before the first click.
+            if (!m_editor.isPlaying && m_clothBrushValid &&
+                m_editor.toolMode ==
+                    Galeshi::EditorState::ToolMode::PaintCloth) {
+                glm::vec3 normal = m_clothBrushNormal;
+                const float normalLengthSq = glm::dot(normal, normal);
+                normal = normalLengthSq > 1.0e-8f
+                    ? glm::normalize(normal)
+                    : glm::vec3(0.0f, 1.0f, 0.0f);
+                const glm::vec3 reference = std::abs(normal.y) < 0.99f
+                    ? glm::vec3(0.0f, 1.0f, 0.0f)
+                    : glm::vec3(1.0f, 0.0f, 0.0f);
+                const glm::vec3 tangent =
+                    glm::normalize(glm::cross(reference, normal));
+                const glm::vec3 bitangent = glm::cross(normal, tangent);
+                const glm::vec4 color = ImGui::GetIO().KeyAlt
+                    ? glm::vec4(1.0f, 0.25f, 0.20f, 1.0f)
+                    : glm::vec4(1.0f, 0.55f, 0.15f, 1.0f);
+                constexpr int segments = 64;
+                const float radius =
+                    std::max(0.05f, m_clothBrushRadius);
+                glm::vec3 previous(0.0f);
+                for (int i = 0; i <= segments; ++i) {
+                    const float angle = static_cast<float>(i) / segments *
+                                        6.2831853f;
+                    const glm::vec3 point = m_clothBrushCenter +
+                        (tangent * std::cos(angle) +
+                         bitangent * std::sin(angle)) * radius +
+                        normal * 0.01f;
+                    if (i > 0) m_debug->AddLine(previous, point, color);
+                    previous = point;
+                }
+            }
+
             // Camera gizmos (editor only): a small frustum makes the camera
             // object visible and clearly shows its viewing direction.
             if (!m_editor.isPlaying) {
@@ -1914,6 +1949,24 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     Galeshi::EditorState::ToolMode::PaintCloth &&
                 !uiOverlayConsumed &&
                 (!m_editor.isPlaying || !m_uiRuntime.IsPointerOverUI());
+            // Mesh picking is only meaningful for a model/skeletal root.
+            if (m_editor.clothPickMesh && sel &&
+                !sel.HasComponent<Galeshi::ModelComponent>() &&
+                !sel.HasComponent<Galeshi::SkeletalComponent>()) {
+                m_editor.clothPickMesh = false;
+            }
+            // The viewport picker normally selects the model/skeletal root.
+            // While Single Mesh is checked, keep picking away from that
+            // selection so a paint click cannot replace the mesh target.
+            if (m_editor.clothSingleMeshTarget != entt::null &&
+                (!m_scene.Registry().valid(
+                     m_editor.clothSingleMeshTarget) ||
+                 !sel ||
+                 sel.Handle() != m_editor.clothSingleMeshTarget)) {
+                m_editor.clothSingleMeshTarget = entt::null;
+            }
+            const bool clothMeshLocked =
+                m_editor.clothSingleMeshTarget != entt::null;
 
             // Landscape sculpting uses the same camera ray as picking, then
             // raycasts the actual height field instead of entity AABBs.
@@ -2128,6 +2181,10 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     ImGui::IsWindowHovered() &&
                     paintMouse.x >= imgMin.x && paintMouse.x <= imgMax.x &&
                     paintMouse.y >= imgMin.y && paintMouse.y <= imgMax.y;
+                const float clothBrushRadius = std::max(
+                    0.05f,
+                    m_editor.brushRadius * m_editor.clothBrushScale);
+                if (!overImage) m_clothBrushValid = false;
                 if (overImage) {
                     const float ndcX =
                         ((paintMouse.x - imgMin.x) / w) * 2.0f - 1.0f;
@@ -2157,13 +2214,72 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                             glm::vec3(inverseWorld * glm::vec4(rayDir, 0.0f)));
                     float hitDistance = 0.0f;
                     glm::vec3 localHit(0.0f);
-                    if (RaycastMeshLocal(*meshComponent.mesh, localOrigin,
-                                         localDirection, hitDistance,
-                                         localHit)) {
+                    bool meshHit = RaycastMeshLocal(
+                        *meshComponent.mesh, localOrigin, localDirection,
+                        hitDistance, localHit);
+                    if (!meshHit) {
+                        // Robust fallback for cloth meshes whose source pose
+                        // does not match the displayed/skinned surface: pick
+                        // the closest source vertex to the cursor ray inside
+                        // the world-space brush radius.
+                        const auto& probeVertices =
+                            meshComponent.mesh->Vertices();
+                        float bestDistance =
+                            std::numeric_limits<float>::max();
+                        glm::vec3 bestWorld(0.0f);
+                        for (const auto& vertex : probeVertices) {
+                            const glm::vec3 worldPosition = glm::vec3(
+                                world * glm::vec4(vertex.position, 1.0f));
+                            const float along = glm::dot(
+                                worldPosition - rayOrigin, rayDir);
+                            if (along <= 0.0f) continue;
+                            const glm::vec3 closest =
+                                rayOrigin + rayDir * along;
+                            const float distance = glm::length(
+                                worldPosition - closest);
+                            if (distance < bestDistance) {
+                                bestDistance = distance;
+                                bestWorld = worldPosition;
+                            }
+                        }
+                        if (bestDistance <= clothBrushRadius) {
+                            meshHit = true;
+                            localHit = glm::vec3(
+                                inverseWorld * glm::vec4(bestWorld, 1.0f));
+                        }
+                    }
+                    if (meshHit) {
                         const auto& vertices = meshComponent.mesh->Vertices();
                         if (cloth.paintWeights.size() != vertices.size()) {
                             cloth.paintWeights.resize(vertices.size(), 0.0f);
                         }
+
+                        // Brush cursor: world-space center and surface
+                        // normal from the nearest source vertex.
+                        m_clothBrushCenter = glm::vec3(
+                            world * glm::vec4(localHit, 1.0f));
+                        m_clothBrushRadius = clothBrushRadius;
+                        glm::vec3 localNormal(0.0f, 1.0f, 0.0f);
+                        float nearestNormalDistance =
+                            std::numeric_limits<float>::max();
+                        for (const auto& vertex : vertices) {
+                            const glm::vec3 delta =
+                                vertex.position - localHit;
+                            const float distance = glm::dot(delta, delta);
+                            if (distance < nearestNormalDistance) {
+                                nearestNormalDistance = distance;
+                                localNormal = vertex.normal;
+                            }
+                        }
+                        const glm::vec3 worldNormal = glm::mat3(
+                            glm::transpose(glm::inverse(world))) *
+                            localNormal;
+                        m_clothBrushNormal =
+                            glm::dot(worldNormal, worldNormal) > 1.0e-8f
+                                ? glm::normalize(worldNormal)
+                                : glm::vec3(0.0f, 1.0f, 0.0f);
+                        m_clothBrushValid = true;
+
                         const glm::vec3 scaleX(world[0]);
                         const glm::vec3 scaleY(world[1]);
                         const glm::vec3 scaleZ(world[2]);
@@ -2172,7 +2288,7 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                                               glm::length(scaleY),
                                               glm::length(scaleZ)}));
                         const float localRadius =
-                            m_editor.brushRadius / worldScale;
+                            clothBrushRadius / worldScale;
                         const bool erase = ImGui::GetIO().KeyAlt;
                         const bool leftClicked =
                             ImGui::IsMouseClicked(ImGuiMouseButton_Left);
@@ -2209,6 +2325,8 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                                 m_paintStampValid = true;
                             }
                         }
+                    } else {
+                        m_clothBrushValid = false;
                     }
                     }
                 }
@@ -2222,6 +2340,7 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                 }
             } else {
                 m_wasSculpting = false;
+                m_clothBrushValid = false;
             }
 
             // World position of the selected object (walk up parents)
@@ -2251,6 +2370,7 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
 
             // --- Gizmo: apply translation/rotation/scale to the ECS. ---
             if (selHasTf && !landscapeSculptActive && !clothPaintActive &&
+                !clothMeshLocked && !m_editor.clothPickMesh &&
                 !selectedIsUICanvas &&
                 !uiOverlayConsumed && !m_editor.isPlaying) {
                 ImGuizmo::SetDrawlist();
@@ -2350,6 +2470,7 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
 
             // Begin drag on LMB down over center
             if (!landscapeSculptActive && !clothPaintActive &&
+                !clothMeshLocked && !m_editor.clothPickMesh &&
                 !selectedIsUICanvas &&
                 !uiOverlayConsumed && !m_editor.isPlaying &&
                 ImGui::IsItemHovered() && !m_isDragging &&
@@ -2409,7 +2530,8 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
             }
 
             // Center hint circle (drag affordance)
-            if (selOnScreen && !selectedIsUICanvas && !m_editor.isPlaying) {
+            if (selOnScreen && !selectedIsUICanvas && !m_editor.isPlaying &&
+                !clothMeshLocked && !m_editor.clothPickMesh) {
                 ImU32 hintColor = overCenter ? IM_COL32(255, 220, 40, 220)
                                              : IM_COL32(255, 255, 255, 110);
                 ImGui::GetWindowDrawList()->AddCircle(
@@ -2418,10 +2540,11 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
             }
 
             if (!landscapeSculptActive && !clothPaintActive &&
-                !uiOverlayConsumed &&
+                !clothMeshLocked && !uiOverlayConsumed &&
                 ImGui::IsItemHovered() &&
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_isDragging &&
-                !overCenter && !ImGuizmo::IsOver()) {
+                (!overCenter || m_editor.clothPickMesh) &&
+                !ImGuizmo::IsOver()) {
                 ImVec2 mouse = ImGui::GetMousePos();
                 float mx = mouse.x - imgMin.x;
                 float my = mouse.y - imgMin.y;
@@ -2438,12 +2561,19 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
 
                 Galeshi::Entity bestHit;
                 float bestDist = 99999.0f;
+                const bool pickClothMesh = m_editor.clothPickMesh;
 
                 auto view = m_scene.Registry().view<Galeshi::TransformComponent>();
                 for (auto e : view) {
                     // UI canvases are viewport overlays, not 3D scene geometry.
                     if (m_scene.Registry().all_of<Galeshi::UICanvasComponent>(e))
                         continue;
+                    // Single-mesh cloth picking selects the actual sub-mesh,
+                    // never a bone or the model/skeletal root.
+                    if (pickClothMesh &&
+                        !m_scene.Registry().all_of<Galeshi::MeshComponent>(e)) {
+                        continue;
+                    }
                     // Invisible standalone collision shapes must not be
                     // selectable during Play.
                     if (m_editor.isPlaying &&
@@ -2495,7 +2625,9 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     const float hitDistance = tmin > 0.0f ? tmin : tmax;
                     if (hitDistance < bestDist) {
                         bestDist = hitDistance;
-                        bestHit = Galeshi::Entity(curr, &m_scene); // Select the root, not the bone.
+                        bestHit = pickClothMesh
+                            ? Galeshi::Entity(e, &m_scene)
+                            : Galeshi::Entity(curr, &m_scene);
                     }
                 }
 
@@ -2504,7 +2636,7 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                 auto colliderPickView = m_scene.Registry()
                     .view<Galeshi::ColliderComponent, Galeshi::TransformComponent>();
                 for (auto e : colliderPickView) {
-                    if (m_editor.isPlaying) continue;
+                    if (pickClothMesh || m_editor.isPlaying) continue;
                     const auto& collider =
                         colliderPickView.get<Galeshi::ColliderComponent>(e);
                     if (!collider.visibleInEditor) continue;
@@ -2565,9 +2697,16 @@ bool RaycastMeshLocal(const Galeshi::Mesh& mesh, const glm::vec3& origin,
                     }
                 }
 
-                if (bestHit) m_editor.Select(bestHit);
-                else m_editor.ClearSelection();
-
+                if (bestHit) {
+                    m_editor.Select(bestHit);
+                    if (pickClothMesh &&
+                        bestHit.HasComponent<Galeshi::MeshComponent>()) {
+                        m_editor.clothPickMesh = false;
+                        m_editor.clothSingleMeshTarget = bestHit.Handle();
+                    }
+                } else if (!pickClothMesh) {
+                    m_editor.ClearSelection();
+                }
 
             }
 

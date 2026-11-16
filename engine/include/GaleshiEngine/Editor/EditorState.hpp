@@ -61,9 +61,19 @@ public:
     float brushRadius = 4.0f;
     float brushStrength = 3.0f;
     float brushFalloff = 0.65f;
+    // Cloth brush size multiplier; the paint radius and outline both use it.
+    float clothBrushScale = 1.0f;
     float flattenHeight = 0.0f;
     float noiseFrequency = 0.15f;
     float terraceStep = 1.0f;
+
+    // Single-mesh cloth painting: viewport picking is ignored while this
+    // mesh is selected, so a click meant for painting cannot reselect the
+    // model/skeletal root instead of the cloth mesh.
+    entt::entity clothSingleMeshTarget = entt::null;
+    // While set, the next viewport click selects the mesh under the cursor
+    // instead of the model/skeletal root.
+    bool clothPickMesh = false;
 
     // --- Play Mode ---
     bool isPlaying = false;

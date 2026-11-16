@@ -982,6 +982,10 @@ void DrawDetails();
     float m_lastBrushRadius = 1.0f;
     glm::vec3 m_lastPaintLocal{0.0f};
     bool m_paintStampValid = false;
+    bool m_clothBrushValid = false;
+    glm::vec3 m_clothBrushCenter{0.0f};
+    glm::vec3 m_clothBrushNormal{0.0f, 1.0f, 0.0f};
+    float m_clothBrushRadius = 1.0f;
     std::mt19937 m_paintRng{0x51ed270bu};
     bool m_showAIDebug = true;
 

@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "GaleshiEngine/Assets/Mesh.hpp"
 #include "GaleshiEngine/Audio/AudioTypes.hpp"
 #include "GaleshiEngine/Renderer/PostProcessSettings.hpp"
 #include "GaleshiEngine/UI/UIWidgets.hpp"
@@ -451,6 +452,9 @@ struct SoftBodyComponent {
     std::vector<float> paintWeights;
     // Source mesh vertex -> welded soft-body vertex. Rebuilt at runtime.
     std::vector<uint32_t> simVertexMap;
+    // Authored mesh vertices captured before the first simulation rebuild.
+    // Runtime-only; Clear Paint restores them to undo simulated deformation.
+    std::vector<Vertex> restVertices;
 
     // Physical parameters used when the soft body is rebuilt.
     float mass = 1.0f;

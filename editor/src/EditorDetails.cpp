@@ -2073,6 +2073,8 @@ void GaleshiEditorApp::DrawDetails() {
             selected[0].GetComponent<Galeshi::RigidBodyComponent>().motionType !=
                 Galeshi::RigidBodyComponent::MotionType::Static;
         Galeshi::Entity clothTarget = FindClothMeshTarget(selected[0]);
+        // Mesh picking is only needed while a multi-mesh root is selected.
+        if (clothTarget) m_editor.clothPickMesh = false;
         if (!selectedIsLandscape && !dynamicPhysicsProxy && clothTarget) {
             auto* existingCloth =
                 reg.try_get<Galeshi::SoftBodyComponent>(clothTarget.Handle());
@@ -2111,6 +2113,10 @@ void GaleshiEditorApp::DrawDetails() {
                         }
                         const size_t vertexCount = mesh.mesh
                             ? mesh.mesh->Vertices().size() : 0;
+                        if (mesh.mesh &&
+                            cloth->restVertices.size() != vertexCount) {
+                            cloth->restVertices = mesh.mesh->Vertices();
+                        }
                         if (cloth->paintWeights.size() != vertexCount) {
                             cloth->paintWeights.assign(vertexCount, 0.0f);
                         }
@@ -2125,6 +2131,35 @@ void GaleshiEditorApp::DrawDetails() {
                         m_wasSculpting = false;
                         m_paintStampValid = false;
                     }
+                }
+                ImGui::SameLine();
+                bool singleMesh =
+                    m_editor.clothSingleMeshTarget == clothTarget.Handle();
+                if (ImGui::Checkbox("Single Mesh", &singleMesh)) {
+                    if (singleMesh) {
+                        m_editor.clothSingleMeshTarget = clothTarget.Handle();
+                        m_editor.clothPickMesh = false;
+                        // The viewport normally selects the model/skeletal
+                        // root. Select the mesh itself so the cloth target
+                        // survives the next click.
+                        m_editor.Select(clothTarget);
+                    } else {
+                        m_editor.clothSingleMeshTarget = entt::null;
+                    }
+                    m_wasSculpting = false;
+                    m_paintStampValid = false;
+                    m_clothBrushValid = false;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Lock cloth painting to this mesh; viewport clicks "
+                        "won't select the model root.");
+                }
+                ImGui::DragFloat("Brush Scale", &m_editor.clothBrushScale,
+                                 0.01f, 0.05f, 10.0f, "%.2f");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Multiplier for the cloth brush radius and outline.");
                 }
             }
 
@@ -2149,7 +2184,25 @@ void GaleshiEditorApp::DrawDetails() {
                     PushHistory();
                     std::fill(cloth->paintWeights.begin(),
                               cloth->paintWeights.end(), 0.0f);
-                    RebuildCloth(clothTarget);
+                    if (m_physics &&
+                        cloth->softBodyId != 0xFFFFFFFFu) {
+                        m_physics->DestroyBody(cloth->softBodyId);
+                        cloth->softBodyId = 0xFFFFFFFFu;
+                    }
+                    // Explicit restore point: only this button returns the
+                    // simulated mesh to its authored vertices.
+                    auto* meshComponent = reg.try_get<Galeshi::MeshComponent>(
+                        clothTarget.Handle());
+                    if (meshComponent && meshComponent->mesh &&
+                        cloth->restVertices.size() ==
+                            meshComponent->mesh->Vertices().size()) {
+                        meshComponent->mesh->UpdateVertexData(
+                            cloth->restVertices);
+                    }
+                    cloth->simVertexMap.clear();
+                    m_wasSculpting = false;
+                    m_paintStampValid = false;
+                    m_clothBrushValid = false;
                 }
                 ImGui::SameLine();
                 if (ImGui::Button("Rebuild Cloth")) {
@@ -2192,6 +2245,39 @@ void GaleshiEditorApp::DrawDetails() {
                 if (ImGui::Button("Rebuild With Properties")) {
                     PushHistory();
                     RebuildCloth(clothTarget);
+                }
+            }
+        } else if (!selectedIsLandscape && !dynamicPhysicsProxy &&
+                   (reg.all_of<Galeshi::ModelComponent>(
+                        selected[0].Handle()) ||
+                    reg.all_of<Galeshi::SkeletalComponent>(
+                        selected[0].Handle())) &&
+                   !reg.all_of<Galeshi::MeshComponent>(
+                       selected[0].Handle())) {
+            if (beginDetailsSection(
+                    "Cloth Painting", ImGuiTreeNodeFlags_DefaultOpen,
+                    "cloth painting fabric soft body paint mesh static "
+                    "skeletal simulation")) {
+                bool pickMesh = m_editor.clothPickMesh;
+                ImGui::TextDisabled(
+                    pickMesh
+                        ? "Click the cloth mesh in the viewport."
+                        : "Select the cloth sub-mesh to enable painting.");
+                if (ImGui::Checkbox("Single Mesh", &pickMesh)) {
+                    m_editor.clothPickMesh = pickMesh;
+                    if (pickMesh) {
+                        m_editor.toolMode =
+                            Galeshi::EditorState::ToolMode::Select;
+                        m_editor.clothSingleMeshTarget = entt::null;
+                        m_wasSculpting = false;
+                        m_paintStampValid = false;
+                        m_clothBrushValid = false;
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(
+                        "Click a mesh in the viewport to select the cloth "
+                        "sub-mesh instead of the model root.");
                 }
             }
         }

@@ -194,6 +194,8 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
         auto children = reg.view<Galeshi::ParentComponent>();
         std::vector<entt::entity> pending{selected.Handle()};
         std::vector<entt::entity> next;
+        entt::entity onlyMesh = entt::null;
+        int meshCount = 0;
         for (int depth = 0; depth < 128 && !pending.empty(); ++depth) {
             next.clear();
             for (entt::entity parent : pending) {
@@ -203,14 +205,25 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
                         continue;
                     }
                     if (reg.all_of<Galeshi::MeshComponent>(child)) {
-                        return Galeshi::Entity{child, &m_scene};
+                        // A sub-mesh that already owns cloth always wins.
+                        if (reg.all_of<Galeshi::SoftBodyComponent>(child)) {
+                            return Galeshi::Entity{child, &m_scene};
+                        }
+                        ++meshCount;
+                        if (meshCount == 1) onlyMesh = child;
                     }
                     next.push_back(child);
                 }
             }
             pending.swap(next);
         }
-        return {};
+        // A single-mesh model root (or root mesh) can be painted directly.
+        // Multi-mesh characters must select the cloth sub-mesh, otherwise the
+        // first mesh silently becomes the target (e.g. boots instead of a
+        // skirt on Qorlan).
+        return meshCount == 1
+            ? Galeshi::Entity{onlyMesh, &m_scene}
+            : Galeshi::Entity{};
     }
 
 
@@ -236,8 +249,24 @@ float ShorePaintWeight(float edgeDistance, float bankWidthUV) {
             return;
         }
         const auto& meshVertices = meshComponent->mesh->Vertices();
+        if (cloth->restVertices.size() != meshVertices.size()) {
+            cloth->restVertices = meshVertices;
+        }
         if (cloth->paintWeights.size() != meshVertices.size()) {
             cloth->paintWeights.resize(meshVertices.size(), 0.0f);
+        }
+        bool hasPaintedVertices = false;
+        for (float weight : cloth->paintWeights) {
+            if (weight > 1.0e-4f) {
+                hasPaintedVertices = true;
+                break;
+            }
+        }
+        if (!hasPaintedVertices) {
+            // No body to build. Mesh restoration is intentionally explicit:
+            // only the Clear Paint button puts simulated geometry back.
+            cloth->simVertexMap.clear();
+            return;
         }
 
         // Imported meshes split vertices at UV/normal seams. Weld identical

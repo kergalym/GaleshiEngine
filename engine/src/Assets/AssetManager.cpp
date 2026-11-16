@@ -39,7 +39,7 @@ namespace {
 constexpr char kModelCacheMagic[8] = {'G', 'A', 'M', 'C', 'A', 'C', 'H', '1'};
 // Bump whenever the cache format or the validation rules change: older files
 // may contain stale embedded textures under an already-updated model entry.
-constexpr uint32_t kModelCacheVersion = 2;
+constexpr uint32_t kModelCacheVersion = 3;
 
 void CacheWriteU32(std::vector<uint8_t>& out, uint32_t value) {
     for (int i = 0; i < 4; ++i) {
