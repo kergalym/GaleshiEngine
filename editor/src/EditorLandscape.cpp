@@ -572,6 +572,8 @@ bool SaveLandscapeMaskFile(const std::string& path,
         // Fold the material tint into the baked output so unpainted base
         // areas keep their authored color after albedoFactor is reset.
         const glm::vec4 albedoTint = material->albedoFactor;
+        const float layerMappingScale =
+            std::max(material->landscapeUvScale, 0.001f);
         const size_t expectedWeights =
             static_cast<size_t>(landscape.sizeX) * landscape.sizeZ;
         std::vector<float> weights(landscape.layers.size(), 0.0f);
@@ -586,6 +588,16 @@ bool SaveLandscapeMaskFile(const std::string& path,
                 const float u = (static_cast<float>(x) + 0.5f) /
                                 static_cast<float>(outputSize);
                 const float gx = u * static_cast<float>(landscape.sizeX);
+                const float tiledU = u * layerMappingScale;
+                const float tiledV = v * layerMappingScale;
+                const float wrappedU = tiledU - std::floor(tiledU);
+                const float wrappedV = tiledV - std::floor(tiledV);
+                const auto sampleTiled =
+                    [&](const LandscapeImage& image,
+                        const glm::vec4& fallback) {
+                        return SampleLandscapeImage(
+                            image, wrappedU, wrappedV, fallback);
+                    };
                 float layerWeightSum = 0.0f;
                 std::fill(weights.begin(), weights.end(), 0.0f);
                 for (size_t i = 0; i < weights.size(); ++i) {
@@ -602,6 +614,9 @@ bool SaveLandscapeMaskFile(const std::string& path,
                         : SampleLandscapeWeight(
                               landscape.layerWeights[i], landscape.sizeX,
                               landscape.sizeZ, gx, gz);
+                    weights[i] = std::pow(
+                        glm::clamp(weights[i], 0.0f, 1.0f),
+                        std::max(layer.blendContrast, 0.01f));
                     layerWeightSum += weights[i];
                 }
                 float baseWeight =
@@ -614,24 +629,21 @@ bool SaveLandscapeMaskFile(const std::string& path,
                 const float invTotal = 1.0f / totalWeight;
 
                 const glm::vec4 baseAlbedoColor =
-                    SampleLandscapeImage(baseAlbedo, u, v, white) *
+                    sampleTiled(baseAlbedo, white) *
                     albedoTint;
                 glm::vec4 baseOrmColor =
-                    SampleLandscapeImage(baseOrm, u, v, white);
+                    sampleTiled(baseOrm, white);
                 if (baseMetallic.Valid()) {
-                    baseOrmColor.b = SampleLandscapeImage(
-                        baseMetallic, u, v, white).r;
+                    baseOrmColor.b = sampleTiled(baseMetallic, white).r;
                 }
                 if (baseRoughness.Valid()) {
-                    baseOrmColor.g = SampleLandscapeImage(
-                        baseRoughness, u, v, white).r;
+                    baseOrmColor.g = sampleTiled(baseRoughness, white).r;
                 }
                 if (baseOcclusion.Valid()) {
-                    baseOrmColor.r = SampleLandscapeImage(
-                        baseOcclusion, u, v, white).r;
+                    baseOrmColor.r = sampleTiled(baseOcclusion, white).r;
                 }
                 const glm::vec4 baseNormalColor =
-                    SampleLandscapeImage(baseNormal, u, v, flatNormal);
+                    sampleTiled(baseNormal, flatNormal);
                 glm::vec4 albedo = baseAlbedoColor * baseWeight;
                 glm::vec4 orm = baseOrmColor * baseWeight;
                 glm::vec3 normal =
@@ -639,19 +651,51 @@ bool SaveLandscapeMaskFile(const std::string& path,
                     baseWeight;
                 for (size_t i = 0; i < weights.size(); ++i) {
                     if (weights[i] <= 1e-6f) continue;
-                    const glm::vec4 layerAlbedoColor =
-                        SampleLandscapeImage(
-                            layerAlbedo[i], u, v, baseAlbedoColor);
-                    const glm::vec4 layerOrmColor =
-                        SampleLandscapeImage(
-                            layerOrm[i], u, v, baseOrmColor);
+                    const auto& layer = landscape.layers[i];
+                    const float layerTiling =
+                        std::max(layer.tiling, 0.001f);
+                    const float layerU = tiledU * layerTiling;
+                    const float layerV = tiledV * layerTiling;
+                    const float layerWrappedU =
+                        layerU - std::floor(layerU);
+                    const float layerWrappedV =
+                        layerV - std::floor(layerV);
+                    const auto sampleLayer =
+                        [&](const LandscapeImage& image,
+                            const glm::vec4& fallback) {
+                            return SampleLandscapeImage(
+                                image, layerWrappedU, layerWrappedV,
+                                fallback);
+                        };
+                    glm::vec4 layerAlbedoColor =
+                        sampleLayer(layerAlbedo[i], baseAlbedoColor);
+                    const float luminance = glm::dot(
+                        glm::vec3(layerAlbedoColor),
+                        glm::vec3(0.299f, 0.587f, 0.114f));
+                    layerAlbedoColor = glm::vec4(
+                        glm::mix(glm::vec3(luminance),
+                                 glm::vec3(layerAlbedoColor),
+                                 1.0f - glm::clamp(
+                                     layer.desaturate, 0.0f, 1.0f)) *
+                            glm::vec3(layer.tint) *
+                            std::max(layer.diffuseMultiplier, 0.0f),
+                        layerAlbedoColor.a);
+                    glm::vec4 layerOrmColor =
+                        sampleLayer(layerOrm[i], baseOrmColor);
+                    layerOrmColor.g = glm::clamp(
+                        layerOrmColor.g *
+                            std::max(layer.roughnessMultiplier, 0.0f),
+                        0.0f, 1.0f);
                     const glm::vec4 layerNormalColor =
-                        SampleLandscapeImage(
-                            layerNormal[i], u, v, baseNormalColor);
+                        sampleLayer(layerNormal[i], baseNormalColor);
+                    glm::vec3 layerNormal =
+                        glm::vec3(layerNormalColor * 2.0f - 1.0f);
+                    layerNormal.x *= std::max(layer.normalStrength, 0.0f);
+                    layerNormal.y *= std::max(layer.normalStrength, 0.0f);
+                    layerNormal = glm::normalize(layerNormal);
                     albedo += layerAlbedoColor * weights[i];
                     orm += layerOrmColor * weights[i];
-                    normal += glm::vec3(layerNormalColor * 2.0f - 1.0f) *
-                              weights[i];
+                    normal += layerNormal * weights[i];
                 }
                 albedo *= invTotal;
                 orm *= invTotal;

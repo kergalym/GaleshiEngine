@@ -273,6 +273,14 @@ struct LandscapeLayer {
     std::vector<uint8_t> paintMask;
     int paintMaskSize = 0;
     std::string paintMaskPath;
+
+    float tiling = 1.0f;
+    float desaturate = 0.0f;
+    float diffuseMultiplier = 1.0f;
+    glm::vec4 tint{1.0f};
+    float roughnessMultiplier = 1.0f;
+    float normalStrength = 1.0f;
+    float blendContrast = 1.0f;
 };
 
 struct LandscapeComponent {

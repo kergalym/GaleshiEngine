@@ -1021,6 +1021,45 @@ void GaleshiEditorApp::DrawDetails() {
             ImGui::TextDisabled(
                 "Paint Landscape paints the active layer. Baked albedo, ORM "
                 "and normal maps are written to assets/textures/.");
+            if (auto* landscapeMaterial =
+                    reg.try_get<Galeshi::MaterialComponent>(
+                        selectedHandle)) {
+                if (landscapeMaterial->material) {
+                    ImGui::SetNextItemWidth(160.0f);
+                    if (ImGui::DragFloat(
+                            "Layer Mapping Scale",
+                            &landscapeMaterial->material->landscapeUvScale,
+                            0.01f, 0.01f, 128.0f)) {
+                        m_pendingLandscapeBake = selected[0].Handle();
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "UV multiplier for the painted landscape layers. "
+                            "Increase it to make the layer patterns finer.");
+                    }
+                    ImGui::SetNextItemWidth(160.0f);
+                    ImGui::DragFloat(
+                        "Automatic Pattern Strength",
+                        &landscapeMaterial->material->landscapeDetailStrength,
+                        0.01f, 0.0f, 1.0f);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "Built-in procedural detail for the landscape. "
+                            "Set to 0 to disable it; manual layer textures "
+                            "remain optional.");
+                    }
+                    ImGui::SetNextItemWidth(160.0f);
+                    ImGui::DragFloat(
+                        "Automatic Pattern Scale",
+                        &landscapeMaterial->material->landscapeDetailScale,
+                        0.01f, 1.0f, 16.0f);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(
+                            "Frequency of the built-in procedural pattern. "
+                            "Increase it for smaller detail.");
+                    }
+                }
+            }
 
             const size_t expectedVertices =
                 static_cast<size_t>(landscape.sizeX) *
@@ -1113,6 +1152,23 @@ void GaleshiEditorApp::DrawDetails() {
                                     &layer.ormSrgb);
                     DrawTextureSlot("Normal", layer.normalMap, false,
                                     &layer.normalSrgb);
+                    ImGui::DragFloat("Tiling", &layer.tiling, 0.01f, 0.01f,
+                                     64.0f);
+                    ImGui::SliderFloat("Desaturate", &layer.desaturate,
+                                       0.0f, 1.0f);
+                    ImGui::ColorEdit4("Tint", &layer.tint.x,
+                                      ImGuiColorEditFlags_NoInputs);
+                    ImGui::DragFloat("Diffuse Multiplier",
+                                     &layer.diffuseMultiplier, 0.01f, 0.0f,
+                                     4.0f);
+                    ImGui::DragFloat("Roughness Multiplier",
+                                     &layer.roughnessMultiplier, 0.01f, 0.0f,
+                                     4.0f);
+                    ImGui::DragFloat("Normal Strength",
+                                     &layer.normalStrength, 0.01f, 0.0f,
+                                     4.0f);
+                    ImGui::SliderFloat("Blend Contrast",
+                                       &layer.blendContrast, 0.01f, 8.0f);
                     if (ImGui::Button("- Remove Layer")) {
                         removeLayer = static_cast<int>(i);
                     }

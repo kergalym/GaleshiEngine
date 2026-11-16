@@ -483,9 +483,9 @@ void RenderSystem::Init(AssetManager* assets) {
     m_program = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_pbr.bin");
     m_gbufferProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_gbuffer.bin");
     m_terrainProg = ShaderManager::LoadProgram(
-        "shaders/vs_terrain.bin", "shaders/fs_pbr.bin");
+        "shaders/vs_terrain.bin", "shaders/fs_landscape.bin");
     m_terrainGbufferProg = ShaderManager::LoadProgram(
-        "shaders/vs_terrain.bin", "shaders/fs_gbuffer.bin");
+        "shaders/vs_terrain.bin", "shaders/fs_landscape_gbuffer.bin");
     m_unlitProg = ShaderManager::LoadProgram("shaders/vs_pbr.bin", "shaders/fs_unlit.bin");
     m_wireframeProg = ShaderManager::LoadProgram(
         "shaders/vs_pbr.bin", "shaders/fs_wireframe.bin");

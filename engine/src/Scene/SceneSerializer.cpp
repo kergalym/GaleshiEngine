@@ -1240,7 +1240,14 @@ json SceneSerializer::SaveToJson(bool includeEditorState) const {
                     {"ormSrgb", layer.ormSrgb},
                     {"normalSrgb", layer.normalSrgb},
                     {"paintMaskPath",
-                     m_assets.MakeRelativePath(layer.paintMaskPath)}
+                     m_assets.MakeRelativePath(layer.paintMaskPath)},
+                    {"tiling", layer.tiling},
+                    {"desaturate", layer.desaturate},
+                    {"diffuseMultiplier", layer.diffuseMultiplier},
+                    {"tint", Vec4ToJson(layer.tint)},
+                    {"roughnessMultiplier", layer.roughnessMultiplier},
+                    {"normalStrength", layer.normalStrength},
+                    {"blendContrast", layer.blendContrast}
                 });
             }
             json layerWeights = json::array();
@@ -2258,6 +2265,21 @@ bool SceneSerializer::LoadFromJson(const json& root,
                         loadLayerMap("ormMapPath", layer.ormSrgb);
                     layer.normalMap =
                         loadLayerMap("normalMapPath", layer.normalSrgb);
+                    layer.tiling = std::max(
+                        jlayer.value("tiling", 1.0f), 0.001f);
+                    layer.desaturate = glm::clamp(
+                        jlayer.value("desaturate", 0.0f), 0.0f, 1.0f);
+                    layer.diffuseMultiplier = std::max(
+                        jlayer.value("diffuseMultiplier", 1.0f), 0.0f);
+                    layer.tint = jlayer.contains("tint")
+                        ? Vec4FromJson(jlayer["tint"])
+                        : glm::vec4(1.0f);
+                    layer.roughnessMultiplier = std::max(
+                        jlayer.value("roughnessMultiplier", 1.0f), 0.0f);
+                    layer.normalStrength = std::max(
+                        jlayer.value("normalStrength", 1.0f), 0.0f);
+                    layer.blendContrast = std::max(
+                        jlayer.value("blendContrast", 1.0f), 0.01f);
                     landscape.layers.push_back(std::move(layer));
                 }
             }
