@@ -170,11 +170,25 @@ void main()
         T = dp2perp * duv1.x + dp1perp * duv2.x;
         B = dp2perp * duv1.y + dp1perp * duv2.y;
         float maxLen = max(dot(T, T), dot(B, B));
-        if (maxLen > 1e-12) {
+        if (maxLen > 1e-18) {
             float invmax = inversesqrt(maxLen);
             T *= invmax;
             B *= invmax;
             frameValid = true;
+        } else {
+            // Extreme close-up: screen-space derivatives collapse. Keep
+            // normal mapping alive with the interpolated mesh tangent.
+            float tangentLen2 = dot(v_tangent, v_tangent);
+            if (tangentLen2 > 1e-8) {
+                vec3 tangent = v_tangent * inversesqrt(tangentLen2);
+                T = tangent - N * dot(N, tangent);
+                float tlen2 = dot(T, T);
+                if (tlen2 > 1e-8) {
+                    T *= inversesqrt(tlen2);
+                    B = cross(N, T);
+                    frameValid = true;
+                }
+            }
         }
     }
     if (frameValid) {
